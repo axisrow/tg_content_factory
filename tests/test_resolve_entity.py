@@ -60,8 +60,9 @@ async def _fake_flood_wait(coro, **kw):
 
 def _make_pool():
     """Bare ClientPool with mocked get_available_client / release_client."""
+    from telethon_floodgate import ResolveRateLimiter
+
     from src.telegram.client_pool import ClientPool
-    from src.telegram.rate_limiter import ResolveRateLimiter
     pool = ClientPool.__new__(ClientPool)
     pool.release_client = AsyncMock()
     pool.get_available_client = AsyncMock()

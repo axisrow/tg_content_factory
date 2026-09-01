@@ -8,6 +8,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from telethon_floodgate import HandledFloodWaitError
 from tenacity import AsyncRetrying, RetryCallState, retry_if_exception_type
 from tenacity.wait import wait_exponential
 
@@ -44,7 +45,6 @@ from src.services.telegram_actions import (
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
-from src.telegram.flood_wait import HandledFloodWaitError
 from src.telegram.notifier import Notifier
 from src.telegram.reactions import TelegramReactionInvalidError
 from src.utils.safe_logging import elapsed_ms, query_log_fields

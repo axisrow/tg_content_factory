@@ -31,7 +31,7 @@ timeout constants (``WARM_*`` / ``REMOVE_CLIENT_DISCONNECT_TIMEOUT_SEC``) in
 their own namespaces; tests that ``patch``/``monkeypatch`` such a name must
 target the module that owns the call site (``pool_dialogs`` / ``pool_lifecycle``
 / ``pool_flood``), not ``client_pool``. The few re-exports below
-(``run_with_flood_wait``, ``adapt_transport_session``,
+(``adapt_transport_session``,
 ``load_live_usable_accounts``, ``ChannelForbidden``) keep the historical
 ``from src.telegram.client_pool import <name>`` imports working.
 
@@ -57,6 +57,7 @@ from datetime import datetime
 # #1046 split. The live call sites now live in the mixin modules, which import
 # these names into their own namespaces.
 from telethon.tl.types import ChannelForbidden  # noqa: F401
+from telethon_floodgate import FloodCircuitBreaker, ResolveRateLimiter, TelegramRateLimitGate
 
 from src.config import TelegramRuntimeConfig
 from src.database import Database
@@ -71,8 +72,6 @@ from src.telegram.backends import (
     TelethonCliBackend,
     adapt_transport_session,  # noqa: F401
 )
-from src.telegram.flood_breaker import FloodCircuitBreaker
-from src.telegram.flood_wait import run_with_flood_wait  # noqa: F401
 from src.telegram.mtproto_watchdog import MTProtoSecurityWatchdog
 from src.telegram.pool_dialogs import (
     DialogCacheEntry,
@@ -81,8 +80,6 @@ from src.telegram.pool_dialogs import (
 )
 from src.telegram.pool_flood import FloodRotationMixin
 from src.telegram.pool_lifecycle import ClientLifecycleMixin
-from src.telegram.rate_limit_gate import TelegramRateLimitGate
-from src.telegram.rate_limiter import ResolveRateLimiter
 from src.telegram.resolve_guard import ResolveGuardMixin
 from src.telegram.session_materializer import SessionMaterializer
 

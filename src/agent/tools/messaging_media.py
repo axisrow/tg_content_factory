@@ -5,6 +5,7 @@ import pathlib
 from typing import Any
 
 from claude_agent_sdk import tool
+from telethon_floodgate import HandledFloodWaitError
 
 from src.agent.tools._registry import _text_response, arg_bool, require_confirmation
 from src.agent.tools.messaging_schemas import DOWNLOAD_MEDIA_SCHEMA, PIN_MESSAGE_SCHEMA, UNPIN_MESSAGE_SCHEMA
@@ -15,7 +16,6 @@ from src.services.telegram_actions import (
     TelegramActionPathEscapeError,
     TelegramActionService,
 )
-from src.telegram.flood_wait import HandledFloodWaitError
 
 
 def _downloads_dir() -> pathlib.Path:

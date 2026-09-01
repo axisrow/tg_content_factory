@@ -8,13 +8,14 @@ from datetime import datetime
 from inspect import isawaitable
 from typing import TYPE_CHECKING
 
+from telethon_floodgate import (
+    is_transient_flood_wait_seconds,
+    sleep_for_flood_wait_seconds,
+)
+
 from src.telegram.collector_types import (
     AllCollectionClientsFloodedError,
     NoActiveCollectionClientsError,
-)
-from src.telegram.flood_wait import (
-    is_transient_flood_wait_seconds,
-    sleep_for_flood_wait_seconds,
 )
 
 if TYPE_CHECKING:

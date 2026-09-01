@@ -1,8 +1,7 @@
 from datetime import datetime, timezone
 
 import pytest
-
-from src.telegram.flood_wait import is_blocking_flood_wait_until
+from telethon_floodgate import is_blocking_flood_wait_until
 
 pytestmark = pytest.mark.real_tg_safe
 

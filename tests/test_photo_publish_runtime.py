@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 from telethon.errors import FloodWaitError
+from telethon_floodgate import HandledFloodWaitError
 
 from src.models import PhotoSendMode
 from src.services.photo_publish_service import PhotoPublishService
-from src.telegram.flood_wait import HandledFloodWaitError
 from tests.helpers import FakeCliTelethonClient
 
 

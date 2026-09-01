@@ -13,18 +13,19 @@ from telethon import TelegramClient
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon_cli import runtime as telethon_cli_runtime
 from telethon_cli.errors import CLIError
+from telethon_floodgate import (
+    FloodCircuitBreaker,
+    HandledFloodWaitError,
+    TelegramPeerRateLimitedError,
+    TelegramRateLimitedError,
+    TelegramRateLimitGate,
+    handle_flood_wait,
+)
 from telethon_floodgate.peer import peer_key
 
 from src.models import Account
 from src.telegram.auth import TelegramAuth
-from src.telegram.flood_breaker import FloodCircuitBreaker
-from src.telegram.flood_wait import HandledFloodWaitError, handle_flood_wait
 from src.telegram.mtproto_watchdog import bind_telethon_base_logger
-from src.telegram.rate_limit_gate import (
-    TelegramPeerRateLimitedError,
-    TelegramRateLimitedError,
-    TelegramRateLimitGate,
-)
 from src.telegram.reactions import normalize_outgoing_reaction_emoji
 from src.telegram.session_materializer import SessionMaterializer
 

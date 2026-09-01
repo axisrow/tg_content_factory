@@ -4,6 +4,7 @@ import inspect
 from typing import Any
 
 from claude_agent_sdk import tool
+from telethon_floodgate import HandledFloodWaitError, run_with_flood_wait_retry
 
 from src.agent.tools._formatters import format_sender_identity
 from src.agent.tools._registry import (
@@ -25,7 +26,6 @@ from src.services.telegram_actions import (
     TelegramActionClientUnavailableError,
     TelegramActionService,
 )
-from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait_retry
 from src.telegram.identity import extract_message_sender_identity
 from src.telegram.reactions import (
     fetch_message_reaction_users,

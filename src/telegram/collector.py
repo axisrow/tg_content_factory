@@ -12,6 +12,14 @@ import asyncio
 import logging
 from datetime import datetime
 
+from telethon_floodgate import (
+    RESOLVE_USERNAME_BACKOFF_BUFFER_SEC as RESOLVE_USERNAME_BACKOFF_BUFFER_SEC,
+)
+from telethon_floodgate import (
+    UsernameResolveFloodWaitDeferredError,
+    UsernameResolveRateLimitedError,
+)
+
 from src.config import SchedulerConfig
 from src.database import Database
 from src.live_runtime_pause import LiveRuntimePauseGate
@@ -43,13 +51,6 @@ from src.telegram.collector_types import (
     _StreamOutcome,
 )
 from src.telegram.notifier import Notifier
-from src.telegram.rate_limiter import (
-    RESOLVE_USERNAME_BACKOFF_BUFFER_SEC as RESOLVE_USERNAME_BACKOFF_BUFFER_SEC,
-)
-from src.telegram.rate_limiter import (
-    UsernameResolveFloodWaitDeferredError,
-    UsernameResolveRateLimitedError,
-)
 
 logger = logging.getLogger(__name__)
 

@@ -34,6 +34,7 @@ from telethon.tl.types import (
     PeerChat,
     PeerUser,
 )
+from telethon_floodgate import HandledFloodWaitError
 
 from src.config import SchedulerConfig, TelegramRuntimeConfig
 from src.models import Account, Channel, ChannelStats
@@ -50,7 +51,6 @@ from src.telegram.collector import (
     NoActiveStatsClientsError,
 )
 from src.telegram.collector_resolve import _resolve_by_numeric
-from src.telegram.flood_wait import HandledFloodWaitError
 from tests.helpers import (
     AsyncIterEmpty,
     AsyncIterMessages,

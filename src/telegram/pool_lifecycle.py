@@ -33,11 +33,12 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, cast
 
+from telethon_floodgate import run_with_flood_wait
+
 from src.database.live_accounts import load_live_usable_accounts
 from src.models import Account, TelegramUserInfo
 from src.telegram.account_lease_pool import AccountLease
 from src.telegram.backends import BackendClientLease, TelegramTransportSession
-from src.telegram.flood_wait import run_with_flood_wait
 from src.telegram.utils import normalize_utc
 from src.utils.safe_logging import mask_phone
 

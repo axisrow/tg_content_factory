@@ -10,10 +10,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from telethon_floodgate import HandledFloodWaitError, run_with_flood_wait
+
 from src.models import MessagesResult
 from src.telegram.client_pool import ClientPool
 from src.telegram.dm_history import read_dialog_history
-from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.utils.introspection import explicit_pool_method
 
 logger = logging.getLogger(__name__)

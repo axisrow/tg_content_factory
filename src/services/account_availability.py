@@ -12,8 +12,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from telethon_floodgate import is_blocking_flood_wait_until
+
 from src.models import AccountSessionStatus
-from src.telegram.flood_wait import is_blocking_flood_wait_until
 
 # Ordered roughly by severity. Mirrors the states rendered by the Settings page.
 AVAILABILITY_STATES = (

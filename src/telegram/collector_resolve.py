@@ -24,11 +24,10 @@ from typing import TYPE_CHECKING
 
 from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import PeerChannel, PeerChat
+from telethon_floodgate import HandledFloodWaitError, UsernameResolveRateLimitedError
 
 from src.database.live_accounts import account_row_exists
 from src.models import Channel
-from src.telegram.flood_wait import HandledFloodWaitError
-from src.telegram.rate_limiter import UsernameResolveRateLimitedError
 from src.utils.safe_logging import mask_phone
 
 if TYPE_CHECKING:

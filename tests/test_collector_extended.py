@@ -414,8 +414,9 @@ async def test_resolve_channel_entity_username_flood_keeps_resolve_username_oper
     """A FloodWait during the username resolve must surface as
     RESOLVE_USERNAME_OPERATION, NOT exc.info.operation — the subtle label the
     inline block preserved before the #923 extraction."""
+    from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError
+
     from src.telegram.collector import RESOLVE_USERNAME_OPERATION
-    from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
 
     channel = Channel(channel_id=123, title="Ch", username="somech")
     info = FloodWaitInfo(
@@ -439,7 +440,7 @@ async def test_resolve_channel_entity_username_flood_keeps_resolve_username_oper
 async def test_resolve_channel_entity_numeric_flood_uses_exc_operation(collector, mock_pool):
     """For the numeric (no-username) resolve, the flood operation comes from the
     exception, unlike the username path."""
-    from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
+    from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError
 
     channel = Channel(channel_id=123, title="Ch")  # no username
     info = FloodWaitInfo(

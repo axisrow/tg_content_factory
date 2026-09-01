@@ -107,8 +107,9 @@ class TestFormatAllFloodedDetail:
 
 class TestIsPremiumFlood:
     def test_premium_operations(self):
+        from telethon_floodgate import FloodWaitInfo
+
         from src.cli.commands.test import _is_premium_flood
-        from src.telegram.flood_wait import FloodWaitInfo
 
         for op in ("check_search_quota", "search_telegram_check_quota", "search_telegram"):
             info = FloodWaitInfo(
@@ -120,8 +121,9 @@ class TestIsPremiumFlood:
             assert _is_premium_flood(info) is True
 
     def test_non_premium_operation(self):
+        from telethon_floodgate import FloodWaitInfo
+
         from src.cli.commands.test import _is_premium_flood
-        from src.telegram.flood_wait import FloodWaitInfo
 
         info = FloodWaitInfo(
             operation="get_entity",
@@ -134,8 +136,9 @@ class TestIsPremiumFlood:
 
 class TestGetSearchResultFloodWait:
     def test_returns_flood_info(self):
+        from telethon_floodgate import FloodWaitInfo
+
         from src.cli.commands.test import _get_search_result_flood_wait
-        from src.telegram.flood_wait import FloodWaitInfo
 
         info = FloodWaitInfo(
             operation="search",
@@ -205,8 +208,9 @@ class TestPrintResult:
 class TestDecideLiveFloodAction:
     @pytest.mark.anyio
     async def test_no_availability_returns_skip(self):
+        from telethon_floodgate import FloodWaitInfo
+
         from src.cli.commands.test import _decide_live_test_flood_action
-        from src.telegram.flood_wait import FloodWaitInfo
 
         pool = MagicMock()
         pool.get_stats_availability = None
@@ -222,9 +226,10 @@ class TestDecideLiveFloodAction:
 
     @pytest.mark.anyio
     async def test_not_flooded_returns_rotate(self):
+        from telethon_floodgate import FloodWaitInfo
+
         from src.cli.commands.test import _decide_live_test_flood_action
         from src.telegram.client_pool import StatsClientAvailability
-        from src.telegram.flood_wait import FloodWaitInfo
 
         pool = MagicMock()
         pool.get_stats_availability = AsyncMock(

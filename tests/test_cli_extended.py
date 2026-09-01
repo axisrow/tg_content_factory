@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # between pydantic v2 and mcp SDK when both are installed.
 import pydantic.root_model  # noqa: F401
 import pytest
+from telethon_floodgate import FloodWaitInfo
 
 from src.config import AppConfig
 from src.models import Channel, ChannelStats, CollectionTaskStatus
-from src.telegram.flood_wait import FloodWaitInfo
 
 pytestmark = pytest.mark.aiosqlite_serial
 

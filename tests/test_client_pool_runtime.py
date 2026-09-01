@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from telethon.errors import FloodWaitError
 from telethon_cli.errors import CLIError
+from telethon_floodgate import HandledFloodWaitError
 
 from src.services.notification_target_service import NotificationTargetService
 from src.telegram.backends import TelegramTransportSession
-from src.telegram.flood_wait import HandledFloodWaitError
 from tests.helpers import FakeCliTelethonClient
 
 

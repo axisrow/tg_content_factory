@@ -2,9 +2,9 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from telethon_floodgate import is_blocking_flood_wait_until
 
 from src.models import AccountSessionStatus
-from src.telegram.flood_wait import is_blocking_flood_wait_until
 from src.web import deps
 
 router = APIRouter()

@@ -15,8 +15,7 @@ from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
-
-from src.telegram.flood_wait import FloodWaitInfo
+from telethon_floodgate import FloodWaitInfo
 
 
 @dataclass(slots=True)

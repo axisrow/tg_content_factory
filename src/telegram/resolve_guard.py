@@ -6,11 +6,12 @@ from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, cast
 
-from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
-from src.telegram.rate_limiter import (
+from telethon_floodgate import (
     GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC,
+    HandledFloodWaitError,
     ResolveRateLimiter,
     UsernameResolveRateLimitedError,
+    run_with_flood_wait,
 )
 
 if TYPE_CHECKING:

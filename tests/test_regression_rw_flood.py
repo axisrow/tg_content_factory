@@ -193,8 +193,9 @@ class TestSkipRemainingTgChecks:
 
 class TestGetLiveFloodAvailability:
     async def test_premium_flood(self):
+        from telethon_floodgate import FloodWaitInfo
+
         from src.cli.commands.test import _get_live_flood_availability
-        from src.telegram.flood_wait import FloodWaitInfo
         info = FloodWaitInfo(
             operation="search_telegram", wait_seconds=10,
             next_available_at_utc=datetime.now(timezone.utc), detail="test",
@@ -208,8 +209,9 @@ class TestGetLiveFloodAvailability:
         assert result is avail
 
     async def test_non_premium_flood(self):
+        from telethon_floodgate import FloodWaitInfo
+
         from src.cli.commands.test import _get_live_flood_availability
-        from src.telegram.flood_wait import FloodWaitInfo
         info = FloodWaitInfo(
             operation="get_entity", wait_seconds=10,
             next_available_at_utc=datetime.now(timezone.utc), detail="test",
@@ -220,8 +222,9 @@ class TestGetLiveFloodAvailability:
         assert result is avail
 
     async def test_no_getter(self):
+        from telethon_floodgate import FloodWaitInfo
+
         from src.cli.commands.test import _get_live_flood_availability
-        from src.telegram.flood_wait import FloodWaitInfo
         info = FloodWaitInfo(
             operation="get_entity", wait_seconds=10,
             next_available_at_utc=datetime.now(timezone.utc), detail="test",
@@ -235,8 +238,9 @@ class TestGetLiveFloodAvailability:
 
 class TestDecideLiveFloodActionExtended:
     async def test_all_flooded_short_wait(self):
+        from telethon_floodgate import FloodWaitInfo
+
         from src.cli.commands.test import _decide_live_test_flood_action
-        from src.telegram.flood_wait import FloodWaitInfo
         info = FloodWaitInfo(
             operation="get_entity", wait_seconds=5,
             next_available_at_utc=datetime.now(timezone.utc), detail="test",
@@ -250,8 +254,9 @@ class TestDecideLiveFloodActionExtended:
         assert decision.action == "wait_retry"
 
     async def test_all_flooded_long_wait(self):
+        from telethon_floodgate import FloodWaitInfo
+
         from src.cli.commands.test import _decide_live_test_flood_action
-        from src.telegram.flood_wait import FloodWaitInfo
         info = FloodWaitInfo(
             operation="get_entity", wait_seconds=600,
             next_available_at_utc=datetime.now(timezone.utc), detail="test",
@@ -268,8 +273,9 @@ class TestDecideLiveFloodActionExtended:
 
 class TestHandleLiveFloodWait:
     async def test_rotate_action(self):
+        from telethon_floodgate import FloodWaitInfo
+
         from src.cli.commands.test import _handle_live_flood_wait
-        from src.telegram.flood_wait import FloodWaitInfo
         info = FloodWaitInfo(
             operation="get_entity", wait_seconds=10,
             next_available_at_utc=datetime.now(timezone.utc), detail="flood", phone="+1111",
@@ -279,8 +285,9 @@ class TestHandleLiveFloodWait:
         await _handle_live_flood_wait(pool, "check", info)
 
     async def test_wait_retry_action(self):
+        from telethon_floodgate import FloodWaitInfo
+
         from src.cli.commands.test import _handle_live_flood_wait
-        from src.telegram.flood_wait import FloodWaitInfo
         info = FloodWaitInfo(
             operation="get_entity", wait_seconds=2,
             next_available_at_utc=datetime.now(timezone.utc), detail="flood", phone="+1111",
@@ -293,8 +300,9 @@ class TestHandleLiveFloodWait:
             await _handle_live_flood_wait(pool, "check", info)
 
     async def test_skip_action_raises(self):
+        from telethon_floodgate import FloodWaitInfo
+
         from src.cli.commands.test import TelegramLiveStepSkipError, _handle_live_flood_wait
-        from src.telegram.flood_wait import FloodWaitInfo
         info = FloodWaitInfo(
             operation="get_entity", wait_seconds=600,
             next_available_at_utc=datetime.now(timezone.utc), detail="flood", phone="+1111",
