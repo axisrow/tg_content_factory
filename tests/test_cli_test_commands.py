@@ -198,7 +198,7 @@ class TestFormatAllFloodedDetail:
 
 class TestGetSearchResultFloodWait:
     def test_with_flood_wait(self):
-        from src.telegram.flood_wait import FloodWaitInfo
+        from telethon_floodgate import FloodWaitInfo
 
         fw = FloodWaitInfo(
             phone="123",

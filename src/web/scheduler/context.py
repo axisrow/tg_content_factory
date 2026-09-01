@@ -16,6 +16,10 @@ from datetime import datetime, timezone
 from typing import NamedTuple
 
 from fastapi import Request
+from telethon_floodgate import (
+    is_blocking_flood_wait_until,
+    is_transient_flood_wait_seconds,
+)
 from typing_extensions import TypedDict
 
 from src.models import AccountSessionStatus, CollectionTask
@@ -26,10 +30,6 @@ from src.services.runtime_diagnostics import (
 from src.services.runtime_diagnostics import (
     evaluate_worker_heartbeat,
     running_task_stale_after,
-)
-from src.telegram.flood_wait import (
-    is_blocking_flood_wait_until,
-    is_transient_flood_wait_seconds,
 )
 from src.web import deps
 

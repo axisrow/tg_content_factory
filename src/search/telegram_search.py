@@ -7,13 +7,13 @@ import time
 from contextlib import asynccontextmanager
 from datetime import timezone
 
+from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitedError, run_with_flood_wait
+
 from src.models import Channel, Message, SearchResult
 from src.search.persistence import SearchPersistence
 from src.search.transformers import TelegramMessageTransformer
 from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
-from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
-from src.telegram.rate_limit_gate import TelegramRateLimitedError
 from src.utils.safe_logging import elapsed_ms, mask_phone, query_log_fields
 
 try:

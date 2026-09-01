@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError
 
 from src.config import SchedulerConfig
 from src.telegram.collector import Collector
-from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
 
 
 def _collector() -> Collector:

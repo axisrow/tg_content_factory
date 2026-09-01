@@ -6,16 +6,16 @@ import pytest
 from telethon import TelegramClient
 from telethon.sessions import MemorySession
 from telethon.tl.functions.messages import GetDialogsRequest
-
-from src.telegram.backends import TelegramTransportSession
-from src.telegram.flood_breaker import FloodCircuitBreaker
-from src.telegram.flood_wait import HandledFloodWaitError
-from src.telegram.rate_limit_gate import (
+from telethon_floodgate import (
+    FloodCircuitBreaker,
+    HandledFloodWaitError,
     RateLimitSpec,
     TelegramPeerRateLimitedError,
     TelegramRateLimitedError,
     TelegramRateLimitGate,
 )
+
+from src.telegram.backends import TelegramTransportSession
 
 
 class _Clock:
@@ -43,8 +43,9 @@ def test_sweep_budget_covers_every_pass_the_loop_will_attempt() -> None:
     loop's limiters (max passes, time budget, no-progress check) and the flood
     breaker are what bound a sweep — not a starved bucket.
     """
+    from telethon_floodgate.rate_limit_gate import DIALOG_SWEEP_MAX_CALLS
+
     from src.telegram.pool_dialogs import DIALOG_FETCH_MAX_PASSES
-    from src.telegram.rate_limit_gate import DIALOG_SWEEP_MAX_CALLS
 
     assert DIALOG_SWEEP_MAX_CALLS >= DIALOG_FETCH_MAX_PASSES
 

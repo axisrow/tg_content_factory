@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from fastapi import Request
+from telethon_floodgate import is_blocking_flood_wait_until
 
 from src.agent.manager import AgentManager
 from src.agent.models import VALID_AGENT_BACKENDS
@@ -51,7 +52,6 @@ from src.services.telegram_command_dispatcher import (
     REACTION_MIN_INTERVAL_SETTING,
 )
 from src.settings_utils import parse_float_setting, parse_int_setting
-from src.telegram.flood_wait import is_blocking_flood_wait_until
 from src.telegram.resolve_guard import (
     RESOLVE_BACKOFF_BY_PHONE_SETTING,
     parse_resolve_backoff_setting,

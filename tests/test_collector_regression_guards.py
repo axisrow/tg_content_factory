@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from telethon.errors import FloodWaitError
+from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError
 
 from src.config import SchedulerConfig
 from src.models import Channel
@@ -29,7 +30,6 @@ from src.telegram.collector import (
     Collector,
     NoActiveCollectionClientsError,
 )
-from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
 from tests.helpers import (
     AsyncIterMessages,
     FakeTelethonClient,

@@ -22,7 +22,7 @@ _FLOOD_DT = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
 
 def _flood_info(operation: str, *, wait_seconds: int = 5, detail: str = ""):
-    from src.telegram.flood_wait import FloodWaitInfo
+    from telethon_floodgate import FloodWaitInfo
 
     return FloodWaitInfo(
         operation=operation,

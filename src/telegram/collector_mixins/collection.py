@@ -12,6 +12,17 @@ from typing import TYPE_CHECKING
 
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import PeerChannel
+from telethon_floodgate import (
+    GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC,
+    HandledFloodWaitError,
+    TelegramRateLimitedError,
+    UsernameResolveFloodWaitDeferredError,
+    UsernameResolveRateLimitedError,
+    coerce_flood_wait_seconds,
+    is_transient_flood_wait_seconds,
+    run_with_flood_wait,
+    sleep_for_flood_wait_seconds,
+)
 
 from src.database import DatabaseBusyError
 from src.filters.criteria import (
@@ -38,19 +49,6 @@ from src.telegram.collector_types import (
     NoActiveCollectionClientsError,
     _format_channel_log_name,
     _StreamOutcome,
-)
-from src.telegram.flood_wait import (
-    HandledFloodWaitError,
-    coerce_flood_wait_seconds,
-    is_transient_flood_wait_seconds,
-    run_with_flood_wait,
-    sleep_for_flood_wait_seconds,
-)
-from src.telegram.rate_limit_gate import TelegramRateLimitedError
-from src.telegram.rate_limiter import (
-    GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC,
-    UsernameResolveFloodWaitDeferredError,
-    UsernameResolveRateLimitedError,
 )
 from src.utils.safe_logging import mask_phone
 

@@ -376,7 +376,7 @@ async def test_collect_channel_defers_when_resolve_rate_limited(db):
     """#551: when the per-account resolve limiter is exhausted, the live
     get_input_entity call must not fire; the caller must defer the task instead
     of completing it with zero collected messages."""
-    from src.telegram.rate_limiter import ResolveRateLimiter
+    from telethon_floodgate import ResolveRateLimiter
 
     ch = Channel(
         channel_id=1970788990,
@@ -2830,7 +2830,7 @@ async def test_collect_all_stats_skips_filtered(db):
 
 @pytest.mark.anyio
 async def test_collect_all_stats_defers_when_resolve_rate_limited(db):
-    from src.telegram.rate_limiter import ResolveRateLimiter
+    from telethon_floodgate import ResolveRateLimiter
 
     await db.add_channel(Channel(channel_id=1970788993, title="Stats Resolve 1", username="stats_1"))
     await db.add_channel(Channel(channel_id=1970788994, title="Stats Resolve 2", username="stats_2"))

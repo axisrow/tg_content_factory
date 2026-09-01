@@ -9,6 +9,7 @@ import time
 from collections.abc import Awaitable, Callable
 
 import typer
+from telethon_floodgate import HandledFloodWaitError, is_blocking_flood_wait_until
 
 from src.cli import runtime, worker_handoff
 from src.cli.commands.common import (
@@ -27,7 +28,6 @@ from src.services.telegram_actions import (
     TelegramActionService,
 )
 from src.services.telegram_command_service import TelegramCommandService
-from src.telegram.flood_wait import HandledFloodWaitError, is_blocking_flood_wait_until
 from src.telegram.reactions import (
     SUPPORTED_REACTION_EMOJIS_DISPLAY,
     TelegramReactionInvalidError,

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telethon.errors import FloodWaitError
+from telethon_floodgate import HandledFloodWaitError
 
 from src.models import Account
 from src.telegram.backends import (
@@ -16,7 +17,6 @@ from src.telegram.backends import (
     TelethonCliBackend,
     fetch_message_reaction_users_raw,
 )
-from src.telegram.flood_wait import HandledFloodWaitError
 from src.telegram.reactions import TelegramReactionInvalidError
 from tests.helpers import AsyncIterMessages, FakeCliTelethonClient
 

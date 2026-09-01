@@ -7,10 +7,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 from telethon.errors import FloodWaitError
+from telethon_floodgate import HandledFloodWaitError, ResolveRateLimiter, UsernameResolveRateLimitedError
 
 from src.telegram.client_pool import ClientPool
-from src.telegram.flood_wait import HandledFloodWaitError
-from src.telegram.rate_limiter import ResolveRateLimiter, UsernameResolveRateLimitedError
 from src.telegram.resolve_guard import (
     RESOLVE_BACKOFF_BY_PHONE_SETTING,
     RESOLVE_BACKOFF_LEGACY_SETTING,

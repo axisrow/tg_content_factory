@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import typer
+from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError, run_with_flood_wait
 
 from src.cli import runtime
 from src.cli.commands.common import (
@@ -26,7 +27,6 @@ from src.database import Database
 from src.filters.analyzer import ChannelAnalyzer
 from src.models import Message, SearchQuery
 from src.telegram.backends import adapt_transport_session
-from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError, run_with_flood_wait
 
 if TYPE_CHECKING:
     from src.config import AppConfig

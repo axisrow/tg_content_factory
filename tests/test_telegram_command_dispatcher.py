@@ -10,12 +10,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError
 
 from src.database import Database
 from src.models import Account, AccountSessionStatus, AccountSummary, TelegramCommand, TelegramCommandStatus
 from src.services import telegram_command_dispatcher as mod
 from src.services.telegram_command_dispatcher import TelegramCommandDispatcher, TelegramCommandRetryLaterError
-from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
 
 
 def _download_media_path_checks(actual_path: str, expected_file: Path, expected_dir: Path) -> tuple[bool, bool]:

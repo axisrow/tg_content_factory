@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import pytest
-
-from src.telegram.flood_breaker import (
+from telethon_floodgate import (
     FloodCircuitBreaker,
     TelegramOperationSuspendedError,
 )
@@ -47,7 +46,7 @@ async def test_transport_session_suspends_operation_after_repeated_floods():
         pool=pool,
     )
 
-    from src.telegram.flood_wait import HandledFloodWaitError
+    from telethon_floodgate import HandledFloodWaitError
 
     for _ in range(3):
         with pytest.raises(HandledFloodWaitError):
@@ -65,9 +64,9 @@ async def test_transport_session_success_clears_the_breaker():
     from unittest.mock import AsyncMock
 
     from telethon.errors import FloodWaitError
+    from telethon_floodgate import HandledFloodWaitError
 
     from src.telegram.backends import TelegramTransportSession
-    from src.telegram.flood_wait import HandledFloodWaitError
     from tests.helpers import FakeCliTelethonClient
 
     err = FloodWaitError(request=None, capture=0)

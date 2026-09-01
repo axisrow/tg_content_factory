@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from telethon_floodgate import ResolveRateLimiter
 
 from src.collection_queue import CollectionQueue
 from src.config import AppConfig, TelegramRuntimeConfig
@@ -28,7 +29,6 @@ from src.search.engine import SearchEngine
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
-from src.telegram.rate_limiter import ResolveRateLimiter
 from src.telegram.resolve_guard import ResolveGuardMixin
 from src.web.app import create_app
 
