@@ -426,3 +426,5 @@ async def test_send_message_with_unknown_peer_kind_degrades_to_category() -> Non
     # the account-wide send category (30/min) applies — quick repeats still pass.
     assert await session.send_message(12345, "a") == "ok"
     assert await session.send_message(12345, "b") == "ok"
+    # An entity peer_key cannot read at all yields None and also proceeds.
+    assert await session.send_message(object(), "c") == "ok"

@@ -460,31 +460,35 @@ class TelegramTransportSession:
         caption: str | None = None,
         schedule: Any = None,
     ) -> Any:
+        peer = peer_key(entity)
         return await self._run(
             "telegram_publish_files",
             self._client.send_file(entity, files, caption=caption, schedule=schedule),
-            gate_peer=peer_key(entity),
+            gate_peer=peer,
         )
 
     async def send_message(self, entity: Any, message: Any, **kwargs: Any) -> Any:
+        peer = peer_key(entity)
         return await self._run(
             "telegram_send_message",
             self._client.send_message(entity, message, **kwargs),
-            gate_peer=peer_key(entity),
+            gate_peer=peer,
         )
 
     async def forward_messages(self, entity: Any, messages: Any, from_peer: Any) -> Any:
+        peer = peer_key(entity)
         return await self._run(
             "telegram_forward_messages",
             self._client.forward_messages(entity, messages, from_peer),
-            gate_peer=peer_key(entity),
+            gate_peer=peer,
         )
 
     async def edit_message(self, entity: Any, message: int, text: str, **kwargs: Any) -> Any:
+        peer = peer_key(entity)
         return await self._run(
             "telegram_edit_message",
             self._client.edit_message(entity, message, text, **kwargs),
-            gate_peer=peer_key(entity),
+            gate_peer=peer,
         )
 
     async def pin_message(self, entity: Any, message: Any, *, notify: bool = False) -> Any:
