@@ -297,7 +297,7 @@ async def test_leave_channels_flood(mock_db, mock_auth):
     pool.clients = {"+7001": TelegramTransportSession(client, disconnect_on_close=False)}
 
     with (
-        patch("src.telegram.flood_wait.asyncio.sleep", AsyncMock()),
+        patch("telethon_floodgate.flood_wait.asyncio.sleep", AsyncMock()),
         patch("src.telegram.pool_dialogs.asyncio.sleep", AsyncMock()),
     ):
         res = await pool.leave_channels("+7001", [(123, "channel"), (456, "channel")])

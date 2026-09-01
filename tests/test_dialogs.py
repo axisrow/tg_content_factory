@@ -366,7 +366,7 @@ async def test_leave_channels_transient_flood_retries():
 
     dialogs = [(-100111, "channel"), (-100222, "supergroup")]
     with (
-        patch("src.telegram.flood_wait.asyncio.sleep", AsyncMock()),
+        patch("telethon_floodgate.flood_wait.asyncio.sleep", AsyncMock()),
         patch("src.telegram.pool_dialogs.asyncio.sleep", AsyncMock()),
     ):
         result = await ClientPool.leave_channels(pool, "+1234567890", dialogs)
@@ -582,7 +582,7 @@ async def test_delete_dialogs_transient_flood_retries():
 
     dialogs = [(999, "dm"), (888, "bot")]
     with (
-        patch("src.telegram.flood_wait.asyncio.sleep", AsyncMock()),
+        patch("telethon_floodgate.flood_wait.asyncio.sleep", AsyncMock()),
         patch("src.telegram.pool_dialogs.asyncio.sleep", AsyncMock()),
     ):
         result = await ClientPool.delete_dialogs(pool, "+1234567890", dialogs)
@@ -833,7 +833,7 @@ async def test_get_dialogs_for_phone_transient_flood_is_retried_not_propagated(d
         # Don't actually wait out the 23s flood — record that we would have.
         slept.append(info.wait_seconds)
 
-    with patch("src.telegram.flood_wait.sleep_for_handled_flood_wait", _record_sleep):
+    with patch("telethon_floodgate.flood_wait.sleep_for_handled_flood_wait", _record_sleep):
         result = await ClientPool._fetch_dialogs_for_phone(
             pool, "+1234567890", True, "full", "full"
         )
