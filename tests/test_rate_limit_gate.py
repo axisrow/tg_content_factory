@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from telethon import TelegramClient
 from telethon.sessions import MemorySession
@@ -10,6 +12,7 @@ from src.telegram.flood_breaker import FloodCircuitBreaker
 from src.telegram.flood_wait import HandledFloodWaitError
 from src.telegram.rate_limit_gate import (
     RateLimitSpec,
+    TelegramPeerRateLimitedError,
     TelegramRateLimitedError,
     TelegramRateLimitGate,
 )
@@ -320,3 +323,108 @@ async def test_unbound_session_is_noop_safe() -> None:
             return []
 
     assert await TelegramTransportSession(Client()).get_dialogs() == []
+
+
+# --- per-peer send gating (telethon-floodgate peer buckets) -----------------
+
+
+@pytest.mark.asyncio
+async def test_send_message_is_gated_per_peer() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def send_message(self, entity, message, **kwargs):
+            async def _result():
+                self.calls += 1
+                return "ok"
+
+            return _result()
+
+    clock = _Clock()
+
+    class Pool:
+        _rate_limit_gate = TelegramRateLimitGate(time_func=clock)
+
+    client = Client()
+    session = TelegramTransportSession(client, phone="+7000", pool=Pool())
+    peer = SimpleNamespace(user_id=42)
+
+    assert await session.send_message(peer, "hi") == "ok"
+    # The per-peer bucket (1/s for a user peer) refuses the immediate second send.
+    with pytest.raises(TelegramPeerRateLimitedError):
+        await session.send_message(peer, "again")
+    assert client.calls == 1, "refused send still reached Telegram"
+    # A different peer passes: the per-peer refusal did not burn the category slot.
+    assert await session.send_message(SimpleNamespace(user_id=43), "hi") == "ok"
+
+
+@pytest.mark.asyncio
+async def test_all_send_paths_pass_their_destination_as_peer() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        def _call(self, name):
+            async def _result():
+                self.sent.append(name)
+                return "ok"
+
+            return _result()
+
+        def send_message(self, entity, message, **kwargs):
+            return self._call("send_message")
+
+        def send_file(self, entity, files, *, caption=None, schedule=None):
+            return self._call("send_file")
+
+        def forward_messages(self, entity, messages, from_peer):
+            return self._call("forward_messages")
+
+        def edit_message(self, entity, message, text, **kwargs):
+            return self._call("edit_message")
+
+    clock = _Clock()
+
+    class Pool:
+        _rate_limit_gate = TelegramRateLimitGate(time_func=clock)
+
+    client = Client()
+    session = TelegramTransportSession(client, phone="+7001", pool=Pool())
+    peer = SimpleNamespace(user_id=7)
+
+    assert await session.send_message(peer, "m") == "ok"
+    clock.now += 1.0  # slide the 1/s user bucket between methods
+    assert await session.publish_files(peer, ["f"]) == "ok"
+    clock.now += 1.0
+    assert await session.forward_messages(peer, [1], SimpleNamespace(user_id=8)) == "ok"
+    clock.now += 1.0
+    assert await session.edit_message(peer, 1, "t") == "ok"
+    assert client.sent == ["send_message", "send_file", "forward_messages", "edit_message"]
+    # All four share the SAME per-peer bucket: an immediate fifth call is refused.
+    with pytest.raises(TelegramPeerRateLimitedError):
+        await session.send_message(peer, "m")
+
+
+@pytest.mark.asyncio
+async def test_send_message_with_unknown_peer_kind_degrades_to_category() -> None:
+    class Client:
+        def send_message(self, entity, message, **kwargs):
+            async def _result():
+                return "ok"
+
+            return _result()
+
+    clock = _Clock()
+
+    class Pool:
+        _rate_limit_gate = TelegramRateLimitGate(time_func=clock)
+
+    session = TelegramTransportSession(Client(), phone="+7002", pool=Pool())
+
+    # A bare int peer key ("id:12345") has no per-peer spec configured, so only
+    # the account-wide send category (30/min) applies — quick repeats still pass.
+    assert await session.send_message(12345, "a") == "ok"
+    assert await session.send_message(12345, "b") == "ok"
+    # An entity peer_key cannot read at all yields None and also proceeds.
+    assert await session.send_message(object(), "c") == "ok"

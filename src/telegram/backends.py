@@ -13,13 +13,18 @@ from telethon import TelegramClient
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon_cli import runtime as telethon_cli_runtime
 from telethon_cli.errors import CLIError
+from telethon_floodgate.peer import peer_key
 
 from src.models import Account
 from src.telegram.auth import TelegramAuth
 from src.telegram.flood_breaker import FloodCircuitBreaker
 from src.telegram.flood_wait import HandledFloodWaitError, handle_flood_wait
 from src.telegram.mtproto_watchdog import bind_telethon_base_logger
-from src.telegram.rate_limit_gate import TelegramRateLimitedError, TelegramRateLimitGate
+from src.telegram.rate_limit_gate import (
+    TelegramPeerRateLimitedError,
+    TelegramRateLimitedError,
+    TelegramRateLimitGate,
+)
 from src.telegram.reactions import normalize_outgoing_reaction_emoji
 from src.telegram.session_materializer import SessionMaterializer
 
@@ -206,12 +211,13 @@ class TelegramTransportSession:
         *,
         gate_reserved: bool = False,
         gate_category: str | None = None,
+        gate_peer: str | None = None,
         record_flood_breaker: bool = True,
     ) -> Any:
         try:
             self._check_flood_breaker(operation)
             if not gate_reserved:
-                self._reserve_gate_slot(operation, category=gate_category)
+                self._reserve_gate_slot(operation, category=gate_category, peer=gate_peer)
         except Exception:
             close = getattr(awaitable, "close", None)
             if close is not None:
@@ -286,6 +292,7 @@ class TelegramTransportSession:
         *,
         slots: int = 1,
         category: str | None = None,
+        peer: str | None = None,
     ) -> None:
         """Reserve a proactive slot; unbound adapter sessions remain no-op safe."""
         if self._pool is None or self._phone is None:
@@ -294,11 +301,22 @@ class TelegramTransportSession:
         if not isinstance(gate, TelegramRateLimitGate):
             return
         category = category or gate.category_for(operation)
-        if slots == 1:
+        if peer is not None:
+            retry_after = gate.try_acquire(self._phone, category, slots=slots, peer=peer)
+        elif slots == 1:
             retry_after = gate.try_acquire(self._phone, category)
         else:
             retry_after = gate.try_acquire(self._phone, category, slots=slots)
         if retry_after > 0:
+            if peer is not None:
+                self._logger.info(
+                    "%s: per-peer %s rate-limited for %s; retry in %.1fs",
+                    operation,
+                    peer,
+                    self._phone,
+                    retry_after,
+                )
+                raise TelegramPeerRateLimitedError(self._phone, peer, retry_after)
             raise TelegramRateLimitedError(self._phone, category, retry_after)
 
     def _flood_breaker(self) -> FloodCircuitBreaker | None:
@@ -442,27 +460,35 @@ class TelegramTransportSession:
         caption: str | None = None,
         schedule: Any = None,
     ) -> Any:
+        peer = peer_key(entity)
         return await self._run(
             "telegram_publish_files",
             self._client.send_file(entity, files, caption=caption, schedule=schedule),
+            gate_peer=peer,
         )
 
     async def send_message(self, entity: Any, message: Any, **kwargs: Any) -> Any:
+        peer = peer_key(entity)
         return await self._run(
             "telegram_send_message",
             self._client.send_message(entity, message, **kwargs),
+            gate_peer=peer,
         )
 
     async def forward_messages(self, entity: Any, messages: Any, from_peer: Any) -> Any:
+        peer = peer_key(entity)
         return await self._run(
             "telegram_forward_messages",
             self._client.forward_messages(entity, messages, from_peer),
+            gate_peer=peer,
         )
 
     async def edit_message(self, entity: Any, message: int, text: str, **kwargs: Any) -> Any:
+        peer = peer_key(entity)
         return await self._run(
             "telegram_edit_message",
             self._client.edit_message(entity, message, text, **kwargs),
+            gate_peer=peer,
         )
 
     async def pin_message(self, entity: Any, message: Any, *, notify: bool = False) -> Any:
