@@ -6,10 +6,11 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 
+from telethon_floodgate import run_with_flood_wait
+
 from src.models import PhotoSendMode
 from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
-from src.telegram.flood_wait import run_with_flood_wait
 
 logger = logging.getLogger(__name__)
 

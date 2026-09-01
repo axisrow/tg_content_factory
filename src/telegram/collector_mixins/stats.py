@@ -9,6 +9,12 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError
+from telethon_floodgate import (
+    HandledFloodWaitError,
+    UsernameResolveFloodWaitDeferredError,
+    UsernameResolveRateLimitedError,
+    run_with_flood_wait,
+)
 
 from src.models import Channel, ChannelStats
 from src.telegram.backends import adapt_transport_session
@@ -16,11 +22,6 @@ from src.telegram.collector_resolve import TRANSIENT_REVIEW_REASONS, _channel_pe
 from src.telegram.collector_types import (
     AllStatsClientsFloodedError,
     NoActiveStatsClientsError,
-)
-from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
-from src.telegram.rate_limiter import (
-    UsernameResolveFloodWaitDeferredError,
-    UsernameResolveRateLimitedError,
 )
 
 if TYPE_CHECKING:

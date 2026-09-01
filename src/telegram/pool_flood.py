@@ -25,13 +25,14 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from src.database.live_accounts import load_live_usable_accounts
-from src.telegram.backends import TelegramTransportSession
-from src.telegram.flood_wait import (
+from telethon_floodgate import (
     FLOOD_WAIT_RETRY_BUFFER_SEC,
     TRANSIENT_FLOOD_WAIT_MAX_SEC,
     is_transient_flood_wait_seconds,
 )
+
+from src.database.live_accounts import load_live_usable_accounts
+from src.telegram.backends import TelegramTransportSession
 from src.telegram.utils import normalize_utc
 
 if TYPE_CHECKING:

@@ -10,13 +10,14 @@ from datetime import datetime, timezone
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
-from src.agent.runtime_context import AgentRuntimeContext
-from src.telegram.flood_wait import (
+from telethon_floodgate import (
     flood_wait_remaining_seconds,
     is_blocking_flood_wait_until,
     is_transient_flood_wait_until,
     sleep_for_flood_wait_seconds,
 )
+
+from src.agent.runtime_context import AgentRuntimeContext
 from src.utils.datetime import try_parse_utc_datetime
 from src.utils.introspection import explicit_pool_method
 

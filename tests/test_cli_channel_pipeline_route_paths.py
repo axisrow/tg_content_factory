@@ -865,8 +865,9 @@ class TestCLITestHelpers:
     def test_is_premium_flood(self):
         from datetime import datetime, timezone
 
+        from telethon_floodgate import FloodWaitInfo
+
         from src.cli.commands.test import _is_premium_flood
-        from src.telegram.flood_wait import FloodWaitInfo
 
         _now = datetime.now(timezone.utc)
         info_premium = FloodWaitInfo(

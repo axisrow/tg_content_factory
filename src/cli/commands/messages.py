@@ -7,6 +7,7 @@ import io
 import json
 
 import typer
+from telethon_floodgate import HandledFloodWaitError, run_with_flood_wait
 
 from src.cli import runtime
 from src.cli.commands.common import (
@@ -17,7 +18,6 @@ from src.cli.commands.common import (
     run_async,
 )
 from src.models import Message
-from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.telegram.reactions import (
     fetch_message_reaction_users,
     format_message_reactions,

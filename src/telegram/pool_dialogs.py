@@ -41,6 +41,15 @@ from telethon.errors import (
 )
 from telethon.tl.types import Channel as TLChannel
 from telethon.tl.types import ChannelForbidden, Chat, PeerChannel, PeerChat, PeerUser, TypeInputPeer
+from telethon_floodgate import (
+    TRANSIENT_FLOOD_WAIT_RETRY_BUDGET_SEC,
+    HandledFloodWaitError,
+    TelegramRateLimitedError,
+    is_blocking_flood_wait_until,
+    is_transient_flood_wait_seconds,
+    run_with_flood_wait,
+    run_with_flood_wait_retry,
+)
 
 from src.database.live_accounts import load_live_usable_accounts
 from src.parsers import bare_channel_id
@@ -48,15 +57,6 @@ from src.telegram.backends import (
     TelegramTransportSession,
     adapt_transport_session,
 )
-from src.telegram.flood_wait import (
-    TRANSIENT_FLOOD_WAIT_RETRY_BUDGET_SEC,
-    HandledFloodWaitError,
-    is_blocking_flood_wait_until,
-    is_transient_flood_wait_seconds,
-    run_with_flood_wait,
-    run_with_flood_wait_retry,
-)
-from src.telegram.rate_limit_gate import TelegramRateLimitedError
 from src.telegram.utils import normalize_utc
 
 if TYPE_CHECKING:

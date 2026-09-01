@@ -804,8 +804,9 @@ async def test_get_dialogs_for_phone_transient_flood_is_retried_not_propagated(d
     """
     from datetime import datetime, timezone
 
+    from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError
+
     from src.telegram.client_pool import ClientPool
-    from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
 
     pool = _sweep_pool(db)
     partial_dialog = _make_channel_dialog(-100999, title="Partial Channel", message_id=7)
@@ -1092,8 +1093,9 @@ async def test_get_dialogs_for_phone_flood_stale_cache_is_flagged_partial(db):
 @pytest.mark.anyio
 async def test_get_dialogs_for_phone_empty_partial_uses_stale_cache(db):
     """A flood before the first dialog must not turn a populated cache empty (#1379)."""
+    from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError
+
     from src.telegram.client_pool import ClientPool
-    from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
 
     phone = "+1234567890"
     await db.repos.dialog_cache.replace_dialogs(phone, list(_FAKE_DIALOGS))
@@ -1226,8 +1228,9 @@ def _sweep_pool(db, phone: str = "+1234567890"):
     (#1359): the multi-pass tests passed while the feature was inert in
     production. Wiring the real gate keeps these tests honest.
     """
+    from telethon_floodgate import TelegramRateLimitGate
+
     from src.telegram.client_pool import ClientPool
-    from src.telegram.rate_limit_gate import TelegramRateLimitGate
 
     pool = MagicMock(spec=ClientPool)
     pool._db = db
@@ -1369,8 +1372,9 @@ async def test_multi_pass_sweep_survives_the_rate_limit_gate(db):
     one, so the feature was inert in production while the tests — which never
     wired a gate onto the pool — reported success.
     """
+    from telethon_floodgate import TelegramRateLimitGate
+
     from src.telegram.client_pool import ClientPool
-    from src.telegram.rate_limit_gate import TelegramRateLimitGate
 
     pool = _sweep_pool(db)
     assert isinstance(pool._rate_limit_gate, TelegramRateLimitGate), (
@@ -1412,8 +1416,9 @@ async def test_partial_sweep_reports_rows_actually_written(db):
     — yet the warning used to announce the whole result as saved, which is the
     same misleading success #1350 exists to remove.
     """
+    from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError
+
     from src.telegram.client_pool import ClientPool
-    from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
 
     pool = _sweep_pool(db)
     reached = _make_channel_dialog(-1001, title="Reached", message_id=11)
@@ -1447,8 +1452,9 @@ async def test_partial_sweep_reports_rows_actually_written(db):
 
 async def test_sweep_keeps_progress_on_blocking_flood(db):
     """A long flood ends the sweep partial, but what arrived is persisted."""
+    from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError
+
     from src.telegram.client_pool import ClientPool
-    from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
 
     pool = _sweep_pool(db)
     kept = _make_channel_dialog(-1001, title="Kept", message_id=11)
@@ -1603,8 +1609,9 @@ async def test_sweep_ends_partial_when_the_gate_refuses_the_next_pass(db):
     DIALOGS_SPEC allows one stream_dialogs per minute and the limiter refuses
     reservations beyond max_calls, so a second pass is genuinely unavailable.
     """
+    from telethon_floodgate import TelegramRateLimitedError
+
     from src.telegram.client_pool import ClientPool
-    from src.telegram.rate_limit_gate import TelegramRateLimitedError
 
     pool = _sweep_pool(db)
     kept = _make_channel_dialog(-1001, title="Kept", message_id=11)
