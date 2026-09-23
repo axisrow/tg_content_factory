@@ -662,6 +662,72 @@ async def test_run_loop_marks_invalid_reaction_failed_without_calling_telegram()
     assert kwargs["result_payload"]["emoji"] == "✅"
 
 
+async def test_run_loop_survives_non_busy_claim_error():
+    """Regression #1234: a non-busy exception while claiming (non-retryable
+    OperationalError, row→model conversion failure on a corrupted queue row)
+    must not kill the dispatcher task — a dead loop leaves every command
+    PENDING forever while the worker heartbeat keeps publishing. The loop must
+    back off and then claim/dispatch the next command."""
+    db = _mock_db()
+    command = TelegramCommand(id=11, command_type="no_such_handler", payload={})
+    claim = AsyncMock(side_effect=[ValueError("corrupted row"), command])
+    db.repos.telegram_commands.claim_next_command = claim
+    d = _dispatcher(db=db)
+
+    async def _update_and_stop(*args, **kwargs):
+        d._stop_event.set()
+
+    db.repos.telegram_commands.update_command = AsyncMock(side_effect=_update_and_stop)
+
+    await d._run_loop()
+
+    assert claim.await_count == 2
+    db.repos.telegram_commands.update_command.assert_awaited_once()
+    kwargs = db.repos.telegram_commands.update_command.await_args.kwargs
+    assert kwargs["status"] == TelegramCommandStatus.FAILED
+
+
+async def test_run_loop_survives_command_row_with_corrupted_created_at(db):
+    """End-to-end #1234 trigger: a queue row whose created_at is not ISO makes
+    claim_next_command raise (parse_datetime → ValueError in _to_command) right
+    after the PENDING→RUNNING commit. The dispatcher must skip the poison row
+    and keep serving the rest of the queue instead of dying with every
+    remaining command PENDING."""
+    await db.execute_write(
+        "INSERT INTO telegram_commands (command_type, payload, status, created_at) VALUES (?, ?, ?, ?)",
+        ("dialogs.poison_row", "{}", "pending", "not-a-date"),
+    )
+    good_id = await db.repos.telegram_commands.create_command(
+        TelegramCommand(command_type="no_such_handler", payload={})
+    )
+    d = TelegramCommandDispatcher(db, _mock_pool())
+    updates: list[tuple[tuple, dict]] = []
+
+    async def _update_and_stop(*args, **kwargs):
+        d._stop_event.set()
+
+    real_update = db.repos.telegram_commands.update_command
+
+    async def _update_and_stop_recording(*args, **kwargs):
+        updates.append((args, kwargs))
+        d._stop_event.set()
+        await real_update(*args, **kwargs)
+
+    db.repos.telegram_commands.update_command = _update_and_stop_recording
+
+    await d._run_loop()
+
+    assert len(updates) == 1
+    assert updates[0][0][0] == good_id
+    assert updates[0][1]["status"] == TelegramCommandStatus.FAILED
+    # The poison row was claimed (flipped RUNNING) before the conversion
+    # failed; it must not re-enter or block the queue afterwards.
+    rows = await db.execute_fetchall(
+        "SELECT status FROM telegram_commands WHERE command_type = 'dialogs.poison_row'"
+    )
+    assert [r["status"] for r in rows] == ["running"]
+
+
 # ---------------------------------------------------------------------------
 # Per-phone reaction rate-limit: real enforcement, key consistency, and the
 # memory-growth guard (#1030, epic #1024 tier-1).

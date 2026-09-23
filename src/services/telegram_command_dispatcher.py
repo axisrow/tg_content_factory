@@ -156,175 +156,191 @@ class TelegramCommandDispatcher(
     async def _run_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
-                if self._live_runtime_pause_gate is not None:
-                    resumed = await self._live_runtime_pause_gate.wait_if_paused(
-                        stop_event=self._stop_event,
-                    )
-                    if not resumed:
-                        break
-                command = await self._db.repos.telegram_commands.claim_next_command()
-            except DatabaseBusyError:
-                # Transient lock while claiming — never let it kill the loop
-                # ("Task exception was never retrieved"). Back off and retry.
-                logger.warning("telegram_command_dispatcher: DB busy while claiming command; retrying")
+                await self._run_iteration()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Last-resort guard (#1234): any non-busy failure anywhere in an
+                # iteration — a non-retryable OperationalError, a busy COMMIT
+                # (Database.transaction only retries BEGIN), a row→model
+                # ValueError on a corrupted queue row — must not kill the task:
+                # a dead dispatcher leaves every command PENDING while the
+                # worker heartbeat keeps publishing. Back off and continue; the
+                # structured retry/requeue handling stays in _run_iteration.
+                logger.exception("telegram_command_dispatcher: iteration failed; backing off")
                 await asyncio.sleep(1.0)
-                continue
-            if command is None:
-                await asyncio.sleep(1.0)
-                continue
-            started_at = time.monotonic()
-            is_auth_command = command.command_type.startswith("auth.")
-            is_search_command = command.command_type == "search.telegram"
-            phone = str(command.payload.get("phone", "")).strip()
+
+    async def _run_iteration(self) -> None:
+        try:
+            if self._live_runtime_pause_gate is not None:
+                resumed = await self._live_runtime_pause_gate.wait_if_paused(
+                    stop_event=self._stop_event,
+                )
+                if not resumed:
+                    return
+            command = await self._db.repos.telegram_commands.claim_next_command()
+        except DatabaseBusyError:
+            # Transient lock while claiming — never let it kill the loop
+            # ("Task exception was never retrieved"). Back off and retry.
+            logger.warning("telegram_command_dispatcher: DB busy while claiming command; retrying")
+            await asyncio.sleep(1.0)
+            return
+        if command is None:
+            await asyncio.sleep(1.0)
+            return
+        started_at = time.monotonic()
+        is_auth_command = command.command_type.startswith("auth.")
+        is_search_command = command.command_type == "search.telegram"
+        phone = str(command.payload.get("phone", "")).strip()
+        if is_auth_command:
+            logger.info(
+                "telegram_auth_command start command_id=%s command_type=%s phone=%s",
+                command.id,
+                command.command_type,
+                phone,
+            )
+        elif is_search_command:
+            search_fields = query_log_fields(str(command.payload.get("query", "")))
+            logger.info(
+                "telegram_search_command start command_id=%s mode=%s limit=%s channel_id=%s "
+                "query_hash=%s query_len=%d",
+                command.id,
+                command.payload.get("mode", "telegram"),
+                command.payload.get("limit", 50),
+                command.payload.get("channel_id"),
+                search_fields["query_hash"],
+                search_fields["query_len"],
+            )
+        try:
+            result = await self._dispatch(command.command_type, command.payload)
+        except asyncio.CancelledError:
+            await self._update_command_safely(
+                command.id,
+                status=TelegramCommandStatus.PENDING,
+                error="cancelled while running; reset for retry",
+                log_action="pending after cancellation",
+                retry_busy=False,
+            )
+            raise
+        except TelegramCommandRetryLaterError as exc:
+            logger.info(
+                "Telegram command delayed: id=%s type=%s run_after=%s reason=%s",
+                command.id,
+                command.command_type,
+                exc.run_after.isoformat(),
+                exc.reason,
+            )
+            await self._update_command_safely(
+                command.id,
+                status=TelegramCommandStatus.PENDING,
+                error=exc.reason,
+                result_payload=exc.result_payload or {},
+                payload=command.payload,
+                run_after=exc.run_after,
+                log_action="pending for retry",
+            )
+        except HandledFloodWaitError as exc:
+            run_after = exc.info.next_available_at_utc + timedelta(seconds=1)
+            logger.info(
+                "Telegram command delayed by flood-wait: id=%s type=%s run_after=%s reason=%s",
+                command.id,
+                command.command_type,
+                run_after.isoformat(),
+                exc.info.detail,
+            )
+            await self._update_command_safely(
+                command.id,
+                status=TelegramCommandStatus.PENDING,
+                error=exc.info.detail,
+                result_payload={
+                    "state": "waiting_flood_wait",
+                    "operation": exc.info.operation,
+                    "phone": exc.info.phone,
+                    "wait_seconds": exc.info.wait_seconds,
+                    "next_available_at_utc": exc.info.next_available_at_utc.isoformat(),
+                },
+                payload=command.payload,
+                run_after=run_after,
+                log_action="pending after flood-wait",
+            )
+        except (TelegramReactionInvalidError, ReactionInvalidError) as exc:
+            logger.info(
+                "Telegram command rejected invalid reaction: id=%s type=%s error=%s",
+                command.id,
+                command.command_type,
+                str(exc),
+            )
+            await self._update_command_safely(
+                command.id,
+                status=TelegramCommandStatus.FAILED,
+                error=str(exc),
+                result_payload={
+                    "state": "invalid_reaction",
+                    "emoji": command.payload.get("emoji"),
+                },
+                payload=command.payload,
+                log_action="failed after invalid reaction",
+            )
+        except Exception as exc:
+            duration_ms = elapsed_ms(started_at)
             if is_auth_command:
-                logger.info(
-                    "telegram_auth_command start command_id=%s command_type=%s phone=%s",
+                logger.exception(
+                    "telegram_auth_command error command_id=%s command_type=%s phone=%s duration_ms=%d error=%s",
                     command.id,
                     command.command_type,
                     phone,
+                    duration_ms,
+                    str(exc),
                 )
             elif is_search_command:
                 search_fields = query_log_fields(str(command.payload.get("query", "")))
-                logger.info(
-                    "telegram_search_command start command_id=%s mode=%s limit=%s channel_id=%s "
-                    "query_hash=%s query_len=%d",
+                logger.exception(
+                    "telegram_search_command error command_id=%s mode=%s duration_ms=%d "
+                    "error=%s query_hash=%s",
                     command.id,
                     command.payload.get("mode", "telegram"),
-                    command.payload.get("limit", 50),
-                    command.payload.get("channel_id"),
-                    search_fields["query_hash"],
-                    search_fields["query_len"],
-                )
-            try:
-                result = await self._dispatch(command.command_type, command.payload)
-            except asyncio.CancelledError:
-                await self._update_command_safely(
-                    command.id,
-                    status=TelegramCommandStatus.PENDING,
-                    error="cancelled while running; reset for retry",
-                    log_action="pending after cancellation",
-                    retry_busy=False,
-                )
-                raise
-            except TelegramCommandRetryLaterError as exc:
-                logger.info(
-                    "Telegram command delayed: id=%s type=%s run_after=%s reason=%s",
-                    command.id,
-                    command.command_type,
-                    exc.run_after.isoformat(),
-                    exc.reason,
-                )
-                await self._update_command_safely(
-                    command.id,
-                    status=TelegramCommandStatus.PENDING,
-                    error=exc.reason,
-                    result_payload=exc.result_payload or {},
-                    payload=command.payload,
-                    run_after=exc.run_after,
-                    log_action="pending for retry",
-                )
-            except HandledFloodWaitError as exc:
-                run_after = exc.info.next_available_at_utc + timedelta(seconds=1)
-                logger.info(
-                    "Telegram command delayed by flood-wait: id=%s type=%s run_after=%s reason=%s",
-                    command.id,
-                    command.command_type,
-                    run_after.isoformat(),
-                    exc.info.detail,
-                )
-                await self._update_command_safely(
-                    command.id,
-                    status=TelegramCommandStatus.PENDING,
-                    error=exc.info.detail,
-                    result_payload={
-                        "state": "waiting_flood_wait",
-                        "operation": exc.info.operation,
-                        "phone": exc.info.phone,
-                        "wait_seconds": exc.info.wait_seconds,
-                        "next_available_at_utc": exc.info.next_available_at_utc.isoformat(),
-                    },
-                    payload=command.payload,
-                    run_after=run_after,
-                    log_action="pending after flood-wait",
-                )
-            except (TelegramReactionInvalidError, ReactionInvalidError) as exc:
-                logger.info(
-                    "Telegram command rejected invalid reaction: id=%s type=%s error=%s",
-                    command.id,
-                    command.command_type,
+                    duration_ms,
                     str(exc),
-                )
-                await self._update_command_safely(
-                    command.id,
-                    status=TelegramCommandStatus.FAILED,
-                    error=str(exc),
-                    result_payload={
-                        "state": "invalid_reaction",
-                        "emoji": command.payload.get("emoji"),
-                    },
-                    payload=command.payload,
-                    log_action="failed after invalid reaction",
-                )
-            except Exception as exc:
-                duration_ms = elapsed_ms(started_at)
-                if is_auth_command:
-                    logger.exception(
-                        "telegram_auth_command error command_id=%s command_type=%s phone=%s duration_ms=%d error=%s",
-                        command.id,
-                        command.command_type,
-                        phone,
-                        duration_ms,
-                        str(exc),
-                    )
-                elif is_search_command:
-                    search_fields = query_log_fields(str(command.payload.get("query", "")))
-                    logger.exception(
-                        "telegram_search_command error command_id=%s mode=%s duration_ms=%d "
-                        "error=%s query_hash=%s",
-                        command.id,
-                        command.payload.get("mode", "telegram"),
-                        duration_ms,
-                        str(exc),
-                        search_fields["query_hash"],
-                    )
-                else:
-                    logger.exception("Telegram command failed: id=%s type=%s", command.id, command.command_type)
-                await self._update_command_safely(
-                    command.id,
-                    status=TelegramCommandStatus.FAILED,
-                    error=str(exc),
-                    payload=command.payload,
-                    log_action="failed after dispatch error",
+                    search_fields["query_hash"],
                 )
             else:
-                if is_auth_command:
-                    duration_ms = elapsed_ms(started_at)
-                    logger.info(
-                        "telegram_auth_command success command_id=%s command_type=%s phone=%s duration_ms=%d",
-                        command.id,
-                        command.command_type,
-                        phone,
-                        duration_ms,
-                    )
-                elif is_search_command:
-                    duration_ms = elapsed_ms(started_at)
-                    result_payload = result.get("result") or {}
-                    logger.info(
-                        "telegram_search_command success command_id=%s mode=%s duration_ms=%d "
-                        "total=%s result_error=%s",
-                        command.id,
-                        command.payload.get("mode", "telegram"),
-                        duration_ms,
-                        result_payload.get("total"),
-                        bool(result_payload.get("error")),
-                    )
-                await self._update_command_safely(
+                logger.exception("Telegram command failed: id=%s type=%s", command.id, command.command_type)
+            await self._update_command_safely(
+                command.id,
+                status=TelegramCommandStatus.FAILED,
+                error=str(exc),
+                payload=command.payload,
+                log_action="failed after dispatch error",
+            )
+        else:
+            if is_auth_command:
+                duration_ms = elapsed_ms(started_at)
+                logger.info(
+                    "telegram_auth_command success command_id=%s command_type=%s phone=%s duration_ms=%d",
                     command.id,
-                    status=TelegramCommandStatus.SUCCEEDED,
-                    result_payload=self._unwrap_result_payload(result),
-                    payload=result.get("payload_update"),
-                    log_action="succeeded",
+                    command.command_type,
+                    phone,
+                    duration_ms,
                 )
+            elif is_search_command:
+                duration_ms = elapsed_ms(started_at)
+                result_payload = result.get("result") or {}
+                logger.info(
+                    "telegram_search_command success command_id=%s mode=%s duration_ms=%d "
+                    "total=%s result_error=%s",
+                    command.id,
+                    command.payload.get("mode", "telegram"),
+                    duration_ms,
+                    result_payload.get("total"),
+                    bool(result_payload.get("error")),
+                )
+            await self._update_command_safely(
+                command.id,
+                status=TelegramCommandStatus.SUCCEEDED,
+                result_payload=self._unwrap_result_payload(result),
+                payload=result.get("payload_update"),
+                log_action="succeeded",
+            )
 
     @staticmethod
     def _unwrap_result_payload(result: object) -> dict:
