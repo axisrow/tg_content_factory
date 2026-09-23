@@ -160,6 +160,52 @@ async def test_list_pending_moderation_returns_runs(db):
 
 
 @pytest.mark.anyio
+async def test_set_moderation_status_cannot_flip_terminal_publish_states(db):
+    """Moderation decisions must not flip publishing/published runs (issue 1234)."""
+    repo = db.repos.generation_runs
+    published_id = await repo.create_run(42, "published-prompt")
+    await repo.set_moderation_status(published_id, "approved")
+    assert await repo.claim_for_publish(published_id, "approved") is True
+    await repo.set_published_at(published_id)
+
+    await repo.set_moderation_status(published_id, "approved")
+    assert (await repo.get(published_id)).moderation_status == "published"
+
+    publishing_id = await repo.create_run(42, "publishing-prompt")
+    await repo.set_moderation_status(publishing_id, "approved")
+    assert await repo.claim_for_publish(publishing_id, "approved") is True
+
+    await repo.set_moderation_status(publishing_id, "rejected")
+    assert (await repo.get(publishing_id)).moderation_status == "publishing"
+
+
+@pytest.mark.anyio
+async def test_set_moderation_status_bulk_cannot_flip_terminal_publish_states(db):
+    """Bulk decisions carry the same terminal-state guard (issue 1234)."""
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "published-prompt")
+    await repo.set_moderation_status(run_id, "approved")
+    assert await repo.claim_for_publish(run_id, "approved") is True
+    await repo.set_published_at(run_id)
+
+    await repo.set_moderation_status_bulk([run_id], "rejected")
+
+    assert (await repo.get(run_id)).moderation_status == "published"
+
+
+@pytest.mark.anyio
+async def test_set_moderation_status_allows_redecision_from_approved(db):
+    """Non-terminal re-decisions stay allowed: approved -> rejected (issue 1234)."""
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "redecision-prompt")
+    await repo.set_moderation_status(run_id, "approved")
+
+    await repo.set_moderation_status(run_id, "rejected")
+
+    assert (await repo.get(run_id)).moderation_status == "rejected"
+
+
+@pytest.mark.anyio
 async def test_generation_runs_repo_hydrates_quality_fields(db):
     repo = db.repos.generation_runs
     run_id = await repo.create_run(42, "quality-prompt")

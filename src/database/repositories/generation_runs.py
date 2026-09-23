@@ -125,12 +125,20 @@ class GenerationRunsRepository:
         Invariant: a run is never simultaneously ``pending`` and carrying a
         ``published_at``. ``list_pending_moderation`` surfaces ``pending`` +
         ``approved`` (drafts and approved-but-not-yet-delivered runs).
+
+        State machine (issue 1234): a moderation decision must not flip a
+        terminal publish state — ``publishing`` is owned by the claim/release/
+        refresh trio and ``published`` only by :meth:`set_published_at`. The
+        guard lives in the WHERE clause so the check and the write stay
+        atomic; writes from those states are no-ops. Re-decisions between
+        non-terminal states (``approved`` ↔ ``rejected``) stay allowed.
         """
         assert self._database is not None, (
             "GenerationRunsRepository.set_moderation_status requires a Database reference"
         )
         await self._database.execute_write(
-            "UPDATE generation_runs SET moderation_status = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE generation_runs SET moderation_status = ?, updated_at = datetime('now') "
+            "WHERE id = ? AND moderation_status NOT IN ('publishing', 'published')",
             (status, run_id),
         )
 
@@ -188,7 +196,10 @@ class GenerationRunsRepository:
             return
         async with self._database.transaction() as conn:
             await conn.executemany(
-                "UPDATE generation_runs SET moderation_status = ?, updated_at = datetime('now') WHERE id = ?",
+                # Same terminal-state guard as set_moderation_status (issue 1234):
+                # a bulk decision must not flip publishing/published runs either.
+                "UPDATE generation_runs SET moderation_status = ?, updated_at = datetime('now') "
+                "WHERE id = ? AND moderation_status NOT IN ('publishing', 'published')",
                 [(status, run_id) for run_id in run_ids],
             )
 
