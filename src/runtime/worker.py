@@ -218,6 +218,11 @@ async def _publish_scheduler_jobs_snapshot(container) -> None:
     jobs = []
     if hasattr(container.scheduler, "get_potential_jobs"):
         jobs = await container.scheduler.get_potential_jobs()
+    getter = getattr(container.scheduler, "get_all_jobs_next_run", None)
+    next_runs = getter() if callable(getter) else {}
+    for job in jobs:
+        next_run = next_runs.get(job.get("job_id"))
+        job["next_run"] = next_run.isoformat() if next_run else None
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(snapshot_type="scheduler_jobs", payload={"jobs": jobs})
     )

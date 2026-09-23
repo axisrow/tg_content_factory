@@ -129,8 +129,11 @@ class GenerationRunsRepository:
         assert self._database is not None, (
             "GenerationRunsRepository.set_moderation_status requires a Database reference"
         )
+        if status not in {"approved", "rejected"}:
+            raise ValueError(f"Unsupported moderation transition: {status}")
         await self._database.execute_write(
-            "UPDATE generation_runs SET moderation_status = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE generation_runs SET moderation_status = ?, updated_at = datetime('now') "
+            "WHERE id = ? AND moderation_status = 'pending'",
             (status, run_id),
         )
 

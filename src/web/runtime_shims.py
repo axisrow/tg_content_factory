@@ -100,6 +100,7 @@ class SnapshotSchedulerManager:
         self._default_interval_minutes = default_interval_minutes
         self._is_running = False
         self._interval_minutes = default_interval_minutes
+        self._snapshot_jobs: list[dict] = []
 
     @property
     def is_running(self) -> bool:
@@ -129,10 +130,16 @@ class SnapshotSchedulerManager:
         snapshot = await self._db.repos.runtime_snapshots.get_snapshot("scheduler_jobs")
         payload = snapshot.payload if snapshot is not None else {}
         jobs = payload.get("jobs", [])
-        return jobs if isinstance(jobs, list) else []
+        self._snapshot_jobs = jobs if isinstance(jobs, list) else []
+        return self._snapshot_jobs
 
     def get_all_jobs_next_run(self) -> dict[str, object]:
-        return {}
+        # The worker snapshot is the source of truth in web-only mode.
+        return {
+            str(job["job_id"]): job.get("next_run")
+            for job in self._snapshot_jobs
+            if isinstance(job, dict) and "job_id" in job
+        }
 
     async def trigger_warm_background(self) -> None:
         # Live warm-dialogs runs only inside the worker process. In web mode
