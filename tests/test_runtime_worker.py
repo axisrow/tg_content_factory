@@ -136,16 +136,68 @@ async def test_publish_snapshots_scheduler_status():
     assert payload["interval_minutes"] == 30
 
 
+class _StubScheduler:
+    """Scheduler double with real attribute semantics (no MagicMock leakage)."""
+
+    def __init__(self, jobs, next_runs=None):
+        self.is_running = True
+        self.interval_minutes = 60
+        self._jobs = jobs
+        self._next_runs = next_runs if next_runs is not None else {}
+
+    async def get_potential_jobs(self):
+        return self._jobs
+
+    def get_all_jobs_next_run(self):
+        return self._next_runs
+
+
+class _StubSchedulerNoNextRun:
+    """No get_all_jobs_next_run at all — worker's callable-guard must default to {}."""
+
+    def __init__(self, jobs):
+        self.is_running = True
+        self.interval_minutes = 60
+        self._jobs = jobs
+
+    async def get_potential_jobs(self):
+        return self._jobs
+
+
 async def test_publish_snapshots_scheduler_jobs():
     container = _make_container()
-    container.scheduler.get_potential_jobs = AsyncMock(return_value=[{"name": "collect_all"}])
+    container.scheduler = _StubScheduler(
+        [{"name": "collect_all", "job_id": "collect_all"}],
+        {"collect_all": datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)},
+    )
     with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
         mock_notif_svc.return_value.get_status = AsyncMock(return_value=None)
         await _publish_snapshots(container)
 
     calls = container.db.repos.runtime_snapshots.upsert_snapshot.call_args_list
     jobs_call = [c for c in calls if c[0][0].snapshot_type == "scheduler_jobs"][0]
-    assert jobs_call[0][0].payload["jobs"] == [{"name": "collect_all"}]
+    assert jobs_call[0][0].payload["jobs"] == [
+        {
+            "name": "collect_all",
+            "job_id": "collect_all",
+            "next_run": "2026-09-23T12:00:00+00:00",
+        }
+    ]
+
+
+async def test_publish_snapshots_scheduler_jobs_without_next_run_source():
+    """A scheduler without get_all_jobs_next_run snapshots jobs with next_run=None."""
+    container = _make_container()
+    container.scheduler = _StubSchedulerNoNextRun([{"name": "collect_all", "job_id": "collect_all"}])
+    with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
+        mock_notif_svc.return_value.get_status = AsyncMock(return_value=None)
+        await _publish_snapshots(container)
+
+    calls = container.db.repos.runtime_snapshots.upsert_snapshot.call_args_list
+    jobs_call = [c for c in calls if c[0][0].snapshot_type == "scheduler_jobs"][0]
+    assert jobs_call[0][0].payload["jobs"] == [
+        {"name": "collect_all", "job_id": "collect_all", "next_run": None}
+    ]
 
 
 async def test_publish_snapshots_notification_bot():
