@@ -38,6 +38,7 @@ from src.services.unified_dispatcher import UnifiedDispatcher
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
+from src.telegram.dm_listener import DmListener
 from src.telegram.notifier import Notifier
 from src.web.log_handler import LogBuffer
 from src.web.runtime_shims import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
@@ -87,4 +88,7 @@ class AppContainer:
     agent_manager: AgentManager | None = None
     translation_service: TranslationService | None = None
     llm_provider_service: RuntimeProviderRegistry | None = None
+    # Real-time incoming-DM listener (#1426): built only in worker mode, so a
+    # split deployment can never double-listen on the same accounts.
+    dm_listener: DmListener | None = None
     shutting_down: bool = False
