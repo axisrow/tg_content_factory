@@ -28,8 +28,9 @@ receive would accumulate an unbounded lag; only sending is pause-gated.
 
 The event bus of the tg_messenger reference implementation drops old items at
 100 per subscriber; here the handler only does ``put_nowait`` into an unbounded
-queue (DMs are low-volume) and the consumer task does all further work, so no
-event is lost.
+queue (DMs are low-volume) and the consumer task does all further work, so
+nothing is dropped at the queue boundary — end-to-end persistence arrives with
+the storage stage (#1427).
 """
 
 from __future__ import annotations
