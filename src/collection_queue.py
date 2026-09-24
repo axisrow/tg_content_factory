@@ -8,6 +8,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
+from telethon_floodgate import TelegramRateLimitedError
+
 from src.database import Database, DatabaseBusyError
 from src.database.bundles import ChannelBundle
 from src.live_runtime_pause import LiveRuntimePauseGate
@@ -29,6 +31,10 @@ logger = logging.getLogger(__name__)
 # the only place that normalises a busy lock into DatabaseBusyError. So a busy read
 # must be matched by BOTH type and message. Messages mirror facade._SQLITE_BUSY_MESSAGES.
 _SQLITE_BUSY_MESSAGES = ("database is locked", "database table is locked", "database is busy")
+
+# Slack added on top of the gate's exact retry_after so the rescheduled run
+# does not land a millisecond before the sliding window actually reopens.
+GATE_RATE_LIMIT_RETRY_BUFFER_SEC = 5.0
 
 
 def _is_transient_busy_error(exc: BaseException) -> bool:
@@ -599,6 +605,33 @@ class CollectionQueue:
                 task_id,
                 channel.channel_id,
                 run_after.isoformat(),
+                exc.phone,
+            )
+            return True, False
+        if isinstance(exc, TelegramRateLimitedError):
+            # The calibrated gate (#1418) legitimately binds on peak collector
+            # minutes (media 50/min vs the 48/min history cap): deferring the
+            # task is the designed outcome, not a failure — mirror the
+            # resolve-rate-limited branch above.
+            run_after = datetime.now(timezone.utc) + timedelta(
+                seconds=exc.retry_after_sec + GATE_RATE_LIMIT_RETRY_BUFFER_SEC
+            )
+            note = (
+                "Отложено: gate "
+                f"{exc.category} rate-limited до {run_after.astimezone(timezone.utc).isoformat()}"
+            )
+            self._retried_tasks.discard(task_id)
+            await self._channels.reschedule_collection_task(task_id, run_after=run_after, note=note)
+            self._schedule_requeue_after_delay(
+                task_id=task_id, channel=channel, force=force, full=full, run_after=run_after
+            )
+            logger.warning(
+                "Rescheduled collection task %d for channel %d until %s: "
+                "gate %s rate-limited on %s",
+                task_id,
+                channel.channel_id,
+                run_after.isoformat(),
+                exc.category,
                 exc.phone,
             )
             return True, False

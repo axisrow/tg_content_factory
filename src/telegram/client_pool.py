@@ -57,7 +57,12 @@ from datetime import datetime
 # #1046 split. The live call sites now live in the mixin modules, which import
 # these names into their own namespaces.
 from telethon.tl.types import ChannelForbidden  # noqa: F401
-from telethon_floodgate import FloodCircuitBreaker, ResolveRateLimiter, TelegramRateLimitGate
+from telethon_floodgate import (
+    FloodCircuitBreaker,
+    RateLimitSpec,
+    ResolveRateLimiter,
+    TelegramRateLimitGate,
+)
 
 from src.config import TelegramRuntimeConfig
 from src.database import Database
@@ -89,6 +94,20 @@ logger = logging.getLogger(__name__)
 # now live only in the module that uses them (``pool_dialogs`` / ``pool_lifecycle``);
 # a test that needs to shrink a timeout patches that owning module. They are NOT
 # duplicated here — nothing reads ``client_pool.<CONST>`` any more (#1046 cleanup).
+
+
+# Phase 2 calibration of the gate's ``history`` category (#1418, epic #1331).
+# The released telethon-floodgate 0.1.0 default (600/min) never bound: the
+# production app.log shows 209 FLOOD_WAITs on messages.getHistory with
+# collector peaks of 115 channel fetches per minute, far below that guard.
+# 24/30s is the empirically measured Telegram boundary (30 requests in ~30s,
+# the 31st returned FLOOD_WAIT_3) with a 20% margin.  Peak collector bursts
+# (p95 74-101 fetches/min) stretch instead of flooding; incremental min_id
+# collection catches deferred channels on the next pass.  Other categories
+# had no flood signal in the logs and keep the package defaults pending a
+# larger sample.  Keep in sync with the package default; drop the override
+# once a released telethon-floodgate ships this value (#1418).
+HISTORY_CALIBRATED_SPEC = RateLimitSpec(max_calls=24, window_sec=30.0)
 
 
 @dataclass(frozen=True)
@@ -172,10 +191,14 @@ class ClientPool(
         self._dialog_refresh_tasks: dict[tuple[str, str], asyncio.Task[list[dict]]] = {}
         self._premium_flood_wait_until: dict[str, datetime] = {}
         self._resolve_rate_limiter = ResolveRateLimiter()
-        # Central proactive gate.  Category limits are conservative operating
-        # defaults calibrated from the available production signals; keep the
-        # registry injectable for future recalibration (#1331).
-        self._rate_limit_gate = TelegramRateLimitGate()
+        # Central proactive gate.  ``history`` is calibrated from the
+        # production log sample (#1418); the remaining categories are the
+        # package's conservative operating defaults pending production
+        # signals — keep the registry injectable for future recalibration
+        # (#1331).
+        self._rate_limit_gate = TelegramRateLimitGate(
+            category_limits={"history": HISTORY_CALIBRATED_SPEC},
+        )
         # Reactive counterpart to the gate (#1330/#1368): the gate paces calls
         # against guessed limits, the breaker stops an (operation, phone) pair
         # that Telegram is already flood-waiting instead of hammering on.
