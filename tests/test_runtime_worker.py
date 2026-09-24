@@ -38,6 +38,8 @@ def _make_container(**overrides):
     container.db.get_accounts = AsyncMock(return_value=overrides.get("accounts", []))
     container.db.repos.runtime_snapshots = MagicMock()
     container.db.repos.runtime_snapshots.upsert_snapshot = AsyncMock()
+    # Web-режим не строит слушатель; worker-тесты задают свой стаб.
+    container.dm_listener = overrides.get("dm_listener", None)
 
     target_service = MagicMock()
     target_status = NotificationTargetStatus(
@@ -279,6 +281,36 @@ async def test_publish_snapshots_notification_bot_timeout_is_nonfatal(caplog):
     assert bot_payload["configured"] is False
     assert "Notification bot snapshot timed out (network); continuing" in caplog.text
     assert "Traceback" not in caplog.text
+
+
+async def test_publish_snapshots_dm_listener_status():
+    dm_listener = SimpleNamespace(
+        status=lambda: {"running": True, "accounts": {"+123": {"attached": True}}}
+    )
+    container = _make_container(dm_listener=dm_listener)
+    container.db.repos.incoming_dms = MagicMock()
+    container.db.repos.incoming_dms.count_unprocessed = AsyncMock(return_value=3)
+    with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
+        mock_notif_svc.return_value.get_status = AsyncMock(return_value=None)
+        await _publish_snapshots(container)
+
+    calls = container.db.repos.runtime_snapshots.upsert_snapshot.call_args_list
+    dm_call = [c for c in calls if c[0][0].snapshot_type == "dm_listener_status"][0]
+    payload = dm_call[0][0].payload
+    assert payload["running"] is True
+    assert payload["unprocessed"] == 3
+    assert "timestamp" in payload
+
+
+async def test_publish_snapshots_without_dm_listener_skips_dm_snapshot():
+    container = _make_container(dm_listener=None)
+    with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
+        mock_notif_svc.return_value.get_status = AsyncMock(return_value=None)
+        await _publish_snapshots(container)
+
+    calls = container.db.repos.runtime_snapshots.upsert_snapshot.call_args_list
+    types = [c[0][0].snapshot_type for c in calls]
+    assert "dm_listener_status" not in types
 
 
 async def test_publish_worker_down_snapshot_for_decrypt_failure():

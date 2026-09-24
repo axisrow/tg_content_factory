@@ -350,10 +350,36 @@ class RuntimeSnapshot(BaseModel):
 DIALOGS_HISTORY_SNAPSHOT_TTL_SECONDS = 300
 
 
+# Журнал входящих DM (#1427) хранит текст личной переписки, поэтому, как и
+# dialogs_history, обязан иметь конечный срок жизни, а не копиться бессрочно.
+# TTL длиннее, чем у кэша диалогов: журнал должен пережить рестарт воркера и
+# дожить до разбора этапами догона/черновиков (#1416 → 2.3/2.4). Prune
+# выполняется при каждой записи журнала.
+INCOMING_DM_JOURNAL_TTL_SECONDS = 24 * 60 * 60
+
+
 # Channel rating (#966): two-axis verdict (usefulness × genre) for a channel,
 # produced by ChannelAnalysisService (logic ported from the removed ai_detect_tool seed, #781).
 ChannelUsefulness = Literal["useful", "useless"]
 ChannelGenre = Literal["ad", "infobiz", "aggregator", "copy", "original"]
+
+
+class IncomingDm(BaseModel):
+    """Одна запись журнала входящих DM (#1427).
+
+    Пишется слушателем #1426 через персист-колбэк; уникальность
+    `(phone, chat_id, message_id)` делает запись идемпотентной при догоне.
+    `processed` — признак разбора этапами 2.3/2.4.
+    """
+
+    id: int | None = None
+    phone: str
+    chat_id: int
+    message_id: int
+    text: str | None = None
+    message_date: datetime | None = None
+    received_at: datetime | None = None
+    processed: bool = False
 
 
 class ChannelRating(BaseModel):
