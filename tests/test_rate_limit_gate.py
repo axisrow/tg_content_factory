@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from telethon import TelegramClient
@@ -16,6 +17,7 @@ from telethon_floodgate import (
 )
 
 from src.telegram.backends import TelegramTransportSession
+from src.telegram.client_pool import HISTORY_CALIBRATED_SPEC
 
 
 class _Clock:
@@ -429,3 +431,41 @@ async def test_send_message_with_unknown_peer_kind_degrades_to_category() -> Non
     assert await session.send_message(12345, "b") == "ok"
     # An entity peer_key cannot read at all yields None and also proceeds.
     assert await session.send_message(object(), "c") == "ok"
+
+
+def test_pool_applies_production_history_calibration() -> None:
+    """The pool's gate must ship the #1418 calibrated history spec.
+
+    The released floodgate default (600/min) never bound: production peaks ran
+    at 115 fetches/min.  The override lives in the pool, so the pool is what
+    this pins; the remaining categories must stay untouched package defaults.
+    """
+    from src.telegram.client_pool import ClientPool
+
+    pool = ClientPool(MagicMock(api_id=1, api_hash="h"), MagicMock())
+    history = pool._rate_limit_gate._limiters["history"]
+    assert history._max_calls == 24
+    assert history._window_sec == 30.0
+    # Untouched categories keep their package defaults.
+    send = pool._rate_limit_gate._limiters["send"]
+    assert (send._max_calls, send._window_sec) == (30, 60.0)
+
+
+def test_history_calibration_stops_a_collector_burst_before_telegram() -> None:
+    """A peak burst (p95 74-101 fetches/min in app.log) defers, not floods.
+
+    24 calls fit the calibrated 30s window; the 25th is refused before any
+    Telegram call, and the budget returns once the window slides.
+    """
+    clock = _Clock()
+    gate = TelegramRateLimitGate(
+        category_limits={"history": HISTORY_CALIBRATED_SPEC},
+        time_func=clock,
+    )
+    for _ in range(HISTORY_CALIBRATED_SPEC.max_calls):
+        assert gate.try_acquire("+7001", "history") == 0.0
+    deferred = gate.try_acquire("+7001", "history")
+    assert deferred > 0
+    # Sliding window: after the window passes, the bucket accepts again.
+    clock.now += HISTORY_CALIBRATED_SPEC.window_sec
+    assert gate.try_acquire("+7001", "history") == 0.0
