@@ -13,7 +13,7 @@ from src.database import Database
 from src.database.repositories.accounts import AccountSessionDecryptError
 from src.models import TelegramCommand, TelegramCommandStatus
 from src.search.engine import SearchEngine
-from src.web.bootstrap import _log_task_exception, build_web_container, start_container
+from src.web.bootstrap import _log_task_exception, build_web_container, start_container, stop_container
 from src.web.log_handler import LogBuffer
 from src.web.runtime_shims import SnapshotClientPool
 
@@ -261,11 +261,17 @@ async def test_start_container_web_mode_skips_telegram_runtime(tmp_path):
     container.scheduler.load_settings = AsyncMock()
     container.unified_dispatcher = AsyncMock()
     container.unified_dispatcher.start = AsyncMock()
+    container.dm_listener = AsyncMock()
+    container.dm_listener.start = AsyncMock()
 
     try:
         await start_container(container)
         container.pool.initialize.assert_not_called()
         container.unified_dispatcher.start.assert_not_called()
+        # Web runtime must never start the DM listener (#1426): `serve` with
+        # its embedded worker plus a standalone worker would otherwise put
+        # two listeners on the same accounts.
+        container.dm_listener.start.assert_not_called()
         container.scheduler.load_settings.assert_not_called()
     finally:
         await db.close()
@@ -286,11 +292,14 @@ async def test_start_container_worker_mode_initializes_runtime(tmp_path):
     container.scheduler.load_settings = AsyncMock()
     container.unified_dispatcher = AsyncMock()
     container.unified_dispatcher.start = AsyncMock()
+    container.dm_listener = AsyncMock()
+    container.dm_listener.start = AsyncMock()
 
     try:
         await start_container(container)
         container.pool.initialize.assert_awaited_once()
         container.unified_dispatcher.start.assert_awaited_once()
+        container.dm_listener.start.assert_awaited_once()
         container.scheduler.load_settings.assert_awaited_once()
     finally:
         await db.close()
@@ -402,6 +411,7 @@ async def test_start_container_worker_startup_phase_order(tmp_path):
     container.telegram_command_dispatcher = SimpleNamespace(
         start=async_step("telegram_command_dispatcher.start")
     )
+    container.dm_listener = SimpleNamespace(start=async_step("dm_listener.start"))
     container.ai_search = SimpleNamespace(initialize=sync_step("ai_search.initialize"))
     container.agent_manager = SimpleNamespace(
         refresh_settings_cache=async_step("agent.preflight"),
@@ -426,12 +436,46 @@ async def test_start_container_worker_startup_phase_order(tmp_path):
         "queue.db_pull",
         "unified_dispatcher.start",
         "telegram_command_dispatcher.start",
+        "dm_listener.start",
         "ai_search.initialize",
         "agent.preflight",
         "agent.initialize",
         "scheduler.load_settings",
         "scheduler.start",
     ]
+
+
+@pytest.mark.anyio
+async def test_stop_container_stops_dm_listener_before_pool_disconnect(tmp_path):
+    """The DM listener must detach its handlers while clients are still alive —
+    stop BEFORE pool.disconnect_all() (#1426)."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    order: list[str] = []
+
+    def async_step(name: str):
+        async def _step(*_args, **_kwargs):
+            order.append(name)
+
+        return _step
+
+    container = _make_container(db)
+    container.shutting_down = False
+    container.scheduler = SimpleNamespace(stop=async_step("scheduler.stop"))
+    container.telegram_command_dispatcher = SimpleNamespace(stop=async_step("tcd.stop"))
+    container.dm_listener = SimpleNamespace(stop=async_step("dm_listener.stop"))
+    container.collector = SimpleNamespace(cancel=async_step("collector.cancel"))
+    container.bg_tasks = set()
+    container.pool = SimpleNamespace(disconnect_all=async_step("pool.disconnect_all"))
+    container.auth = SimpleNamespace(cleanup=async_step("auth.cleanup"))
+
+    try:
+        await stop_container(container)
+    finally:
+        await db.close()
+
+    assert order.index("dm_listener.stop") < order.index("pool.disconnect_all")
 
 
 @pytest.mark.anyio
