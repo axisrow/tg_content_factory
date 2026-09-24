@@ -534,6 +534,9 @@ async def test_publish_snapshots_basic():
     mock_runtime_snapshots.upsert_snapshot = AsyncMock()
     container.db = MagicMock()
     container.db.repos.runtime_snapshots = mock_runtime_snapshots
+    # dm_listener=None: web-контейнер без слушателя; bare MagicMock иначе
+    # просачивается в _publish_dm_listener_status_snapshot (#1427).
+    container.dm_listener = None
 
     # pool with clients
     pool = MagicMock()
@@ -585,6 +588,9 @@ async def test_publish_snapshots_with_available_notification():
     mock_runtime_snapshots.upsert_snapshot = AsyncMock()
     container.db = MagicMock()
     container.db.repos.runtime_snapshots = mock_runtime_snapshots
+    # dm_listener=None: web-контейнер без слушателя; bare MagicMock иначе
+    # просачивается в _publish_dm_listener_status_snapshot (#1427).
+    container.dm_listener = None
 
     pool = MagicMock()
     pool.clients = {}
@@ -627,6 +633,9 @@ async def test_publish_snapshots_notification_exception():
     mock_runtime_snapshots.upsert_snapshot = AsyncMock()
     container.db = MagicMock()
     container.db.repos.runtime_snapshots = mock_runtime_snapshots
+    # dm_listener=None: web-контейнер без слушателя; bare MagicMock иначе
+    # просачивается в _publish_dm_listener_status_snapshot (#1427).
+    container.dm_listener = None
 
     pool = MagicMock()
     pool.clients = {}

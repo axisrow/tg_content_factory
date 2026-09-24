@@ -143,6 +143,21 @@ CREATE TABLE IF NOT EXISTS runtime_snapshots (
     PRIMARY KEY (snapshot_type, scope)
 );
 
+CREATE TABLE IF NOT EXISTS incoming_dms (
+    id INTEGER PRIMARY KEY,
+    phone TEXT NOT NULL,
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    text TEXT,
+    message_date TEXT,
+    received_at TEXT DEFAULT (datetime('now')),
+    processed INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(phone, chat_id, message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_incoming_dms_received_at
+    ON incoming_dms(received_at);
+
 CREATE TABLE IF NOT EXISTS channel_ratings (
     channel_id INTEGER PRIMARY KEY,
     title TEXT,

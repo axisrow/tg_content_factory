@@ -590,3 +590,53 @@ async def test_log_task_exception_silent_on_cancel(caplog):
         _log_task_exception(task)
 
     assert caplog.records == []
+
+
+@pytest.mark.anyio
+async def test_persist_incoming_dm_records_journal_entry(db):
+    """#1427: персист-колбэк слушателя пишет DM в журнал."""
+    from datetime import datetime, timezone
+
+    from src.telegram.dm_listener import IncomingDmEvent
+    from src.web.bootstrap import _persist_incoming_dm
+
+    received = datetime.now(timezone.utc)
+    await _persist_incoming_dm(
+        db,
+        IncomingDmEvent(
+            phone="+111",
+            chat_id=42,
+            message_id=7,
+            text="hi",
+            message_date=received,
+            received_at=received,
+        ),
+    )
+
+    count = await db.repos.incoming_dms.count_unprocessed()
+    assert count == 1
+
+
+@pytest.mark.anyio
+async def test_persist_incoming_dm_skips_event_without_ids(db, caplog):
+    """Без (chat_id, message_id) запись неидемпотентна — пропуск с предупреждением."""
+    from datetime import datetime, timezone
+
+    from src.telegram.dm_listener import IncomingDmEvent
+    from src.web.bootstrap import _persist_incoming_dm
+
+    with caplog.at_level("WARNING", logger="src.web.bootstrap"):
+        await _persist_incoming_dm(
+            db,
+            IncomingDmEvent(
+                phone="+111",
+                chat_id=None,
+                message_id=None,
+                text="hi",
+                message_date=None,
+                received_at=datetime.now(timezone.utc),
+            ),
+        )
+
+    assert await db.repos.incoming_dms.count_unprocessed() == 0
+    assert any("without chat_id" in r.message for r in caplog.records)

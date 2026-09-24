@@ -30,6 +30,7 @@ from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
 from src.database.repositories.generated_images import GeneratedImagesRepository
 from src.database.repositories.generation_runs import GenerationRunsRepository
+from src.database.repositories.incoming_dms import IncomingDmsRepository
 from src.database.repositories.messages import MessageSearchPage, MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.notified_messages import NotifiedMessagesRepository
@@ -210,6 +211,7 @@ class Database:
         self._generated_images = GeneratedImagesRepository(read_db, database=self)
         self._pipeline_templates = PipelineTemplatesRepository(read_db, database=self)
         self._pipeline_action_log = PipelineActionLogRepository(read_db, database=self)
+        self._incoming_dms = IncomingDmsRepository(read_db, database=self)
         self._repos = DatabaseRepositories(
             accounts=self._accounts,
             channels=self._channels,
@@ -233,6 +235,7 @@ class Database:
             runtime_snapshots=self._runtime_snapshots,
             channel_ratings=self._channel_ratings,
             pipeline_action_log=self._pipeline_action_log,
+            incoming_dms=self._incoming_dms,
             decisions=self._decisions,
         )
 
