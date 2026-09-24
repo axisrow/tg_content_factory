@@ -349,7 +349,9 @@ async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = No
     await _publish_scheduler_jobs_snapshot(container)
     await _publish_collection_queue_status_snapshot(container, now)
     await _publish_notification_target_status_snapshot(container, stop_event)
-    # Last: публикация не должна отсекать остальные снапшоты, если упадёт.
+    # Last: предыдущие снапшоты к этому моменту уже опубликованы, так что
+    # сбой здесь их не отсекает; сам вылет уходит в heartbeat-цикл, где
+    # обрабатывается (DatabaseBusyError/Exception) и републикуется через 5с.
     dm_listener = getattr(container, "dm_listener", None)
     if dm_listener is not None:
         await _publish_dm_listener_status_snapshot(container, dm_listener, now)
