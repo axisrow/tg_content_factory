@@ -41,6 +41,7 @@ from src.settings_utils import parse_int_setting
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
+from src.telegram.dm_listener import DmListener
 from src.telegram.notifier import Notifier
 from src.utils.asyncio import make_log_task_exception_callback
 from src.web.container import AppContainer, WebClientPool, WebCollector, WebScheduler
@@ -253,6 +254,7 @@ async def build_container_with_templates(
     collection_queue = None
     unified_dispatcher = None
     telegram_command_dispatcher = None
+    dm_listener = None
     agent_manager = None
     live_runtime_pause_gate = LiveRuntimePauseGate() if runtime_mode == "worker" else None
     collector: WebCollector
@@ -338,6 +340,10 @@ async def build_container_with_templates(
             live_runtime_pause_gate=live_runtime_pause_gate,
             notifier=notifier,
         )
+        # Worker-only (#1426): `serve` (embedded worker) and a standalone
+        # `worker` must never both listen on the same accounts, so web mode
+        # gets no listener at all.
+        dm_listener = DmListener(live_pool, db)
         agent_manager = AgentManager(
             db,
             config,
@@ -388,6 +394,7 @@ async def build_container_with_templates(
         task_enqueuer=task_enqueuer,
         unified_dispatcher=unified_dispatcher,
         telegram_command_dispatcher=telegram_command_dispatcher,
+        dm_listener=dm_listener,
         search_engine=search_engine,
         ai_search=ai_search,
         scheduler=scheduler,
@@ -529,6 +536,13 @@ async def _start_dispatchers_ai_and_agent(
             result = start()
             if inspect.isawaitable(result):
                 await result
+    dm_listener = getattr(container, "dm_listener", None)
+    if runtime_mode == "worker" and dm_listener is not None:
+        start = getattr(dm_listener, "start", None)
+        if callable(start):
+            result = start()
+            if inspect.isawaitable(result):
+                await result
     logger.info("startup: dispatcher done (%.1fs)", time.monotonic() - t_start)
     container.ai_search.initialize()
     logger.info("startup: ai_search done (%.1fs)", time.monotonic() - t_start)
@@ -613,6 +627,10 @@ async def stop_container(container: AppContainer) -> None:
         await _stop_step("unified_dispatcher", container.unified_dispatcher.stop())
     if container.telegram_command_dispatcher is not None:
         await _stop_step("telegram_command_dispatcher", container.telegram_command_dispatcher.stop())
+    # The DM listener must detach its handlers while clients are still alive —
+    # stop it BEFORE pool.disconnect_all() (#1426).
+    if container.dm_listener is not None:
+        await _stop_step("dm_listener", container.dm_listener.stop())
     if container.collection_queue is not None:
         await _stop_step(
             "collection_queue",
