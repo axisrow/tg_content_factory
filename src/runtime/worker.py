@@ -300,6 +300,32 @@ async def _publish_notification_target_status_snapshot(
     )
 
 
+async def _publish_dm_listener_status_snapshot(
+    container, dm_listener, now: datetime
+) -> None:
+    """Статус слушателя входящих DM (#1427) — через runtime_snapshots, по назначению.
+
+    Сам журнал сообщений живёт в таблице `incoming_dms` (порядок и история),
+    сюда попадает только живость/счётчик неразобранного. Публикация заодно
+    дочищает протухший журнал: prune-on-write работает, только пока приходят
+    новые записи, а heartbeat (каждые ~5с при живом воркере) снимает протухшее
+    и из затихших диалогов — гарант «приватный текст не дольше TTL, пока жив
+    воркер» (ревью #1440).
+    """
+    await container.db.repos.incoming_dms.prune_expired()
+    unprocessed = await container.db.repos.incoming_dms.count_unprocessed()
+    await container.db.repos.runtime_snapshots.upsert_snapshot(
+        RuntimeSnapshot(
+            snapshot_type="dm_listener_status",
+            payload={
+                **dm_listener.status(),
+                "unprocessed": unprocessed,
+                "timestamp": now.isoformat(),
+            },
+        )
+    )
+
+
 async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = None) -> None:
     now = datetime.now(timezone.utc)
     connected_phones = sorted(getattr(container.pool, "clients", {}).keys())
@@ -323,6 +349,12 @@ async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = No
     await _publish_scheduler_jobs_snapshot(container)
     await _publish_collection_queue_status_snapshot(container, now)
     await _publish_notification_target_status_snapshot(container, stop_event)
+    # Last: предыдущие снапшоты к этому моменту уже опубликованы, так что
+    # сбой здесь их не отсекает; сам вылет уходит в heartbeat-цикл, где
+    # обрабатывается (DatabaseBusyError/Exception) и републикуется через 5с.
+    dm_listener = getattr(container, "dm_listener", None)
+    if dm_listener is not None:
+        await _publish_dm_listener_status_snapshot(container, dm_listener, now)
 
 
 async def _run_worker_async(config: AppConfig) -> None:

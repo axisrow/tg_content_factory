@@ -27,6 +27,7 @@ from src.database.bundles import (
 )
 from src.database.repositories.accounts import AccountSessionDecryptError
 from src.live_runtime_pause import LiveRuntimePauseGate
+from src.models import IncomingDm
 from src.scheduler.service import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
@@ -41,7 +42,7 @@ from src.settings_utils import parse_int_setting
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
-from src.telegram.dm_listener import DmListener
+from src.telegram.dm_listener import DmListener, IncomingDmEvent
 from src.telegram.notifier import Notifier
 from src.utils.asyncio import make_log_task_exception_callback
 from src.web.container import AppContainer, WebClientPool, WebCollector, WebScheduler
@@ -62,6 +63,27 @@ _log_task_exception = make_log_task_exception_callback(
     level="warning",
     message="startup background task %s failed",
 )
+
+
+async def _persist_incoming_dm(db, dm: IncomingDmEvent) -> None:
+    """Персист колбэка слушателя DM (#1427): журнал входящих с TTL/prune."""
+    if dm.chat_id is None or dm.message_id is None:
+        # Без (chat_id, message_id) запись не идемпотентна — UNIQUE-ключ
+        # журнала неполный; такое событие пропускаем с предупреждением.
+        logger.warning(
+            "dm_storage: DM without chat_id/message_id from %s; skipping", dm.phone
+        )
+        return
+    await db.repos.incoming_dms.record(
+        IncomingDm(
+            phone=dm.phone,
+            chat_id=dm.chat_id,
+            message_id=dm.message_id,
+            text=dm.text,
+            message_date=dm.message_date,
+            received_at=dm.received_at,
+        )
+    )
 
 
 def _connected_pool_count(pool: object) -> int:
@@ -343,7 +365,9 @@ async def build_container_with_templates(
         # Worker-only (#1426): `serve` (embedded worker) and a standalone
         # `worker` must never both listen on the same accounts, so web mode
         # gets no listener at all.
-        dm_listener = DmListener(live_pool, db)
+        dm_listener = DmListener(
+            live_pool, db, event_callback=lambda dm: _persist_incoming_dm(db, dm)
+        )
         agent_manager = AgentManager(
             db,
             config,
