@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from telethon_floodgate import TelegramRateLimitedError
 
 from src.collection_queue import CollectionQueue
 from src.database import Database
@@ -75,6 +76,15 @@ class _UsernameResolveRateLimitedCollector(_FakeCollector):
         self.calls.append(channel.channel_id)
         self.full_calls.append(full)
         raise UsernameResolveRateLimitedError("+7001", 28.2)
+
+
+class _GateRateLimitedCollector(_FakeCollector):
+    async def collect_single_channel(
+        self, channel, *, full=False, progress_callback=None, force=False, cancel_event=None
+    ):
+        self.calls.append(channel.channel_id)
+        self.full_calls.append(full)
+        raise TelegramRateLimitedError("+7001", "history", 17.0)
 
 
 class _BlockingCollector:
@@ -317,6 +327,54 @@ async def test_username_resolve_rate_limit_keeps_task_pending(tmp_path):
         assert task.run_after is not None
         assert task.run_after >= before + timedelta(seconds=33)
         assert "resolve_username rate-limited" in (task.note or "")
+
+        queue.start_db_pull(interval=0.02)
+        try:
+            await asyncio.sleep(0.12)
+        finally:
+            await queue.stop_db_pull()
+
+        assert task_id in queue._known_task_ids
+        assert len(queue._delayed_requeues) == 1
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_gate_rate_limit_keeps_task_pending(tmp_path):
+    """A calibrated-gate deferral reschedules instead of failing (#1418).
+
+    Once the history category binds on peak collector minutes,
+    TelegramRateLimitedError reaches the queue's main path and must take the
+    same reschedule route as the neighbouring resolve-rate-limited branch —
+    not FAILED + logger.exception noise on every peak.
+    """
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+
+        collector = _GateRateLimitedCollector()
+        queue = CollectionQueue(collector, db)
+        channel = (await db.get_channels(active_only=True))[0]
+        before = datetime.now(timezone.utc)
+        task_id = await queue.enqueue(channel)
+
+        deadline = asyncio.get_event_loop().time() + 2.0
+        while asyncio.get_event_loop().time() < deadline:
+            task = await db.get_collection_task(task_id)
+            if task.status == "pending" and task.run_after is not None:
+                break
+            await asyncio.sleep(0.05)
+
+        task = await db.get_collection_task(task_id)
+        assert task.status == "pending"
+        assert task.error is None
+        assert task.run_after is not None
+        # retry_after (17s) + the 5s reschedule buffer.
+        assert task.run_after >= before + timedelta(seconds=22)
+        assert "gate history rate-limited" in (task.note or "")
 
         queue.start_db_pull(interval=0.02)
         try:
