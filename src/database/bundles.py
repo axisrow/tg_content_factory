@@ -28,6 +28,7 @@ from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
 from src.database.repositories.generated_images import GeneratedImagesRepository
 from src.database.repositories.generation_runs import GenerationRunsRepository
+from src.database.repositories.incoming_dms import IncomingDmsRepository
 from src.database.repositories.messages import MessageSearchPage, MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.notified_messages import NotifiedMessagesRepository
@@ -97,6 +98,7 @@ class DatabaseRepositories:
     runtime_snapshots: RuntimeSnapshotsRepository
     channel_ratings: ChannelRatingsRepository
     pipeline_action_log: PipelineActionLogRepository
+    incoming_dms: IncomingDmsRepository
     notified_messages: NotifiedMessagesRepository
     decisions: DecisionsRepository
 
