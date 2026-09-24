@@ -289,7 +289,18 @@ async def test_publish_snapshots_dm_listener_status():
     )
     container = _make_container(dm_listener=dm_listener)
     container.db.repos.incoming_dms = MagicMock()
+    container.db.repos.incoming_dms.prune_expired = AsyncMock(return_value=0)
     container.db.repos.incoming_dms.count_unprocessed = AsyncMock(return_value=3)
+    with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
+        mock_notif_svc.return_value.get_status = AsyncMock(return_value=None)
+        await _publish_snapshots(container)
+
+    # Heartbeat — единственный гарантированно периодический путь: prune
+    # обязателен, иначе протухший текст затихших диалогов живёт вечно
+    # (ревью #1440). Prune до подсчёта: счётчик после чистки.
+    container.db.repos.incoming_dms.prune_expired.assert_awaited_once()
+    calls = [name for name, *_ in container.db.repos.incoming_dms.mock_calls]
+    assert calls.index("prune_expired") < calls.index("count_unprocessed")
     with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
         mock_notif_svc.return_value.get_status = AsyncMock(return_value=None)
         await _publish_snapshots(container)
