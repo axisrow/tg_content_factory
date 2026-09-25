@@ -78,6 +78,7 @@ from src.telegram.backends import (
     adapt_transport_session,  # noqa: F401
 )
 from src.telegram.mtproto_watchdog import MTProtoSecurityWatchdog
+from src.telegram.outgoing_ceiling import OutgoingRateCeiling
 from src.telegram.pool_dialogs import (
     DialogCacheEntry,
     DialogFetchStats,  # noqa: F401
@@ -108,6 +109,19 @@ logger = logging.getLogger(__name__)
 # larger sample.  Keep in sync with the package default; drop the override
 # once a released telethon-floodgate ships this value (#1418).
 HISTORY_CALIBRATED_SPEC = RateLimitSpec(max_calls=24, window_sec=30.0)
+
+# Process-wide outgoing ceiling (#1417).  The per-account
+# gate buckets above are independent, so N accounts can fire N synchronized
+# bursts in the same second with every account inside its own limit — the
+# 2026-08-26 production log shows four accounts flood-waited together at
+# 21:00:15.  One shared window paces ALL outgoing transport calls in this
+# process and bound sessions WAIT on it instead of refusing.  PLACEHOLDER
+# pending calibration (epic #1331 step 0.2, not a final value): 120/30s
+# leaves a single account ~2.5x headroom over its calibrated history pace
+# (24/30s), so legit stream_messages pagination never defers, while the
+# observed restart burst (656 calls in second 0, #1419) stretches over
+# ~2.7 min and a ten-account 300/min send volley is capped at ~4 calls/s.
+PROCESS_OUTGOING_SPEC = RateLimitSpec(max_calls=120, window_sec=30.0)
 
 
 @dataclass(frozen=True)
@@ -203,6 +217,9 @@ class ClientPool(
         # against guessed limits, the breaker stops an (operation, phone) pair
         # that Telegram is already flood-waiting instead of hammering on.
         self._flood_breaker = FloodCircuitBreaker()
+        # Process-wide ceiling over ALL outgoing calls (#1417): the per-account
+        # gate buckets above cannot see an aggregate volley, this one can.
+        self._outgoing_ceiling = OutgoingRateCeiling(PROCESS_OUTGOING_SPEC)
         self._resolve_username_backoff_until_utc: dict[str, datetime] = {}
         self._resolve_ramp_up_until_utc: dict[str, datetime] = {}
         self._resolve_ramp_up_last_call_utc: dict[str, datetime] = {}

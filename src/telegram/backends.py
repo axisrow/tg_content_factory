@@ -26,6 +26,7 @@ from telethon_floodgate.peer import peer_key
 from src.models import Account
 from src.telegram.auth import TelegramAuth
 from src.telegram.mtproto_watchdog import bind_telethon_base_logger
+from src.telegram.outgoing_ceiling import OutgoingRateCeiling
 from src.telegram.reactions import normalize_outgoing_reaction_emoji
 from src.telegram.session_materializer import SessionMaterializer
 
@@ -219,6 +220,9 @@ class TelegramTransportSession:
             self._check_flood_breaker(operation)
             if not gate_reserved:
                 self._reserve_gate_slot(operation, category=gate_category, peer=gate_peer)
+            # Order per #1417: the per-account gate may refuse (cheap, sync),
+            # then the process-wide ceiling paces what it allowed (waits).
+            await self._await_outgoing_ceiling()
         except Exception:
             close = getattr(awaitable, "close", None)
             if close is not None:
@@ -245,6 +249,7 @@ class TelegramTransportSession:
         try:
             self._check_flood_breaker(operation)
             self._reserve_gate_slot(operation)
+            await self._await_outgoing_ceiling()
         except Exception:
             close = getattr(iterator, "aclose", None)
             if close is not None:
@@ -319,6 +324,20 @@ class TelegramTransportSession:
                 )
                 raise TelegramPeerRateLimitedError(self._phone, peer, retry_after)
             raise TelegramRateLimitedError(self._phone, category, retry_after)
+
+    async def _await_outgoing_ceiling(self) -> None:
+        """Pace this call through the pool's process-wide outgoing ceiling.
+
+        WAITS instead of refusing (#1417) — unlike the per-account gate, no
+        caller needs a new exception handler.  Unbound adapter sessions remain
+        no-op safe, mirroring ``_reserve_gate_slot``.
+        """
+        if self._pool is None or self._phone is None:
+            return
+        ceiling = getattr(self._pool, "_outgoing_ceiling", None)
+        if not isinstance(ceiling, OutgoingRateCeiling):
+            return
+        await ceiling.acquire()
 
     def _flood_breaker(self) -> FloodCircuitBreaker | None:
         """The pool's breaker, when this session is bound to one."""
