@@ -172,7 +172,11 @@ async def _page_context(request: Request) -> dict:
             pipeline = item.get("pipeline") if isinstance(item, dict) else None
             if pipeline is None or pipeline.id is None:
                 continue
-            job_id = f"pipeline_run_{pipeline.id}"
+            # content_generate_<id> is the single periodic generation job since
+            # #835/2 (pipeline_run_<id> is enqueued as a task, not scheduled,
+            # and sync_pipeline_jobs removes leftovers) — looking up
+            # pipeline_run_ made this column empty in both runtime modes. (#1439)
+            job_id = f"content_generate_{pipeline.id}"
             nr = cast(datetime | None, all_jobs.get(job_id))
             next_runs[pipeline.id] = nr.isoformat() if nr else None
     except Exception:
