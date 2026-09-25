@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.models import Account
+from src.models import Account, ContentPipeline, RuntimeSnapshot
 
 
 async def _quality_provider(**kwargs):
@@ -931,3 +931,40 @@ async def test_auto_select_pipeline_variant_uses_quality_score(client):
     run = await db.repos.generation_runs.get(run_id)
     assert run.selected_variant == 1
     assert run.generated_text == "winner"
+
+
+@pytest.mark.anyio
+async def test_pipelines_fragment_shows_next_run_in_web_mode(web_mode_app):
+    """#1439: next_run must not silently vanish on the pipelines page in web
+    mode. Two defects on this path: the shim's get_all_jobs_next_run() handed
+    raw isoformat strings to the handler (whose .isoformat() call raised and was
+    swallowed), and _page_context never rebound the scheduler_jobs snapshot."""
+    app, container = web_mode_app
+    pipeline_id = await container.db.repos.content_pipelines.add(
+        ContentPipeline(name="Scheduled Pipeline"), source_channel_ids=[], targets=[]
+    )
+    await container.db.repos.runtime_snapshots.upsert_snapshot(
+        RuntimeSnapshot(
+            snapshot_type="scheduler_jobs",
+            payload={"jobs": [
+                {
+                    "job_id": f"pipeline_run_{pipeline_id}",
+                    "interval_minutes": 60,
+                    "next_run": "2030-01-01T12:00:00+00:00",
+                },
+            ]},
+        )
+    )
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as c:
+        resp = await c.get("/pipelines/fragments/list")
+    assert resp.status_code == 200
+    assert "Scheduled Pipeline" in resp.text
+    # Renders only when next_runs[pipeline.id] is truthy — it was always empty
+    # in web mode before the fix.
+    assert "следующий:" in resp.text

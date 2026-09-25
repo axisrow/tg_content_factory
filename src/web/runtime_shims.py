@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from src.database import Database
-from src.utils.datetime import try_parse_datetime
+from src.utils.datetime import try_parse_datetime, try_parse_utc_datetime
 
 
 class SnapshotClientPool:
@@ -131,12 +131,16 @@ class SnapshotSchedulerManager:
         payload = snapshot.payload if snapshot is not None else {}
         jobs = payload.get("jobs", [])
         self._snapshot_jobs = jobs if isinstance(jobs, list) else []
-        return self._snapshot_jobs
+        return list(self._snapshot_jobs)
 
     def get_all_jobs_next_run(self) -> dict[str, object]:
-        # The worker snapshot is the source of truth in web-only mode.
+        # The worker snapshot is the source of truth in web-only mode. The
+        # worker publishes next_run as isoformat strings; parse them back to
+        # aware datetimes so the type contract matches the live
+        # SchedulerManager (naive strings are treated as UTC, unparseable or
+        # absent values become None). (#1439)
         return {
-            str(job["job_id"]): job.get("next_run")
+            str(job["job_id"]): try_parse_utc_datetime(job.get("next_run"))
             for job in self._snapshot_jobs
             if isinstance(job, dict) and "job_id" in job
         }

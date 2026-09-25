@@ -163,6 +163,10 @@ async def _page_context(request: Request) -> dict:
     next_runs: dict[int, str | None] = {}
     try:
         scheduler = deps.get_scheduler(request)
+        # The web-mode shim reads next_run from the scheduler_jobs snapshot
+        # bound by get_potential_jobs(); rebind per render (same pattern as
+        # _build_jobs_context) so a fresh container is not silently empty. (#1439)
+        await scheduler.get_potential_jobs()
         all_jobs = scheduler.get_all_jobs_next_run()
         for item in items:
             pipeline = item.get("pipeline") if isinstance(item, dict) else None
