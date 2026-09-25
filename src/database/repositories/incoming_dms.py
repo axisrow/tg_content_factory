@@ -58,7 +58,11 @@ class IncomingDmsRepository:
         )
 
     async def record(
-        self, dm: IncomingDm, *, ttl_seconds: int = INCOMING_DM_JOURNAL_TTL_SECONDS
+        self,
+        dm: IncomingDm,
+        *,
+        ttl_seconds: int = INCOMING_DM_JOURNAL_TTL_SECONDS,
+        processed: bool = False,
     ) -> bool:
         """Записать входящее DM; True — строка новая, False — дубль (уже в журнале).
 
@@ -66,6 +70,11 @@ class IncomingDmsRepository:
         dialogs_history). Это покрывает только активные диалоги: когда новые
         записи перестают приходить, DELETE не выполняется — протухшее
         дочищает `prune_expired()` в heartbeat воркера.
+
+        `processed` — готовит ли черновик этап 2.4 (#1428): догон пишет
+        False только для свежих входящих в режиме full, всё остальное —
+        True. Повторная запись дубля значение НЕ меняет (INSERT OR IGNORE),
+        поэтому повторный догон не откатывает разобранное.
         """
         assert self._database is not None, (
             "IncomingDmsRepository.record requires a Database reference"
@@ -74,8 +83,8 @@ class IncomingDmsRepository:
             cur = await conn.execute(
                 """
                 INSERT OR IGNORE INTO incoming_dms
-                    (phone, chat_id, message_id, text, message_date, received_at)
-                VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')))
+                    (phone, chat_id, message_id, text, message_date, received_at, processed)
+                VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?)
                 """,
                 (
                     dm.phone,
@@ -84,11 +93,21 @@ class IncomingDmsRepository:
                     dm.text,
                     dm.message_date.isoformat() if dm.message_date else None,
                     dm.received_at.isoformat() if dm.received_at else None,
+                    1 if processed else 0,
                 ),
             )
             inserted = cur.rowcount > 0
             await conn.execute(_PRUNE_SQL, (f"-{ttl_seconds} seconds",))
         return inserted
+
+    async def max_message_id(self, phone: str, chat_id: int) -> int:
+        """Водяной знак догона: максимум message_id журнала диалога, 0 если пусто."""
+        cur = await self._db.execute(
+            "SELECT MAX(message_id) AS n FROM incoming_dms WHERE phone = ? AND chat_id = ?",
+            (phone, chat_id),
+        )
+        row = await cur.fetchone()
+        return int(row["n"]) if row and row["n"] is not None else 0
 
     async def prune_expired(
         self, older_than_seconds: int = INCOMING_DM_JOURNAL_TTL_SECONDS

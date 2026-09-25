@@ -25,6 +25,8 @@ second cache here would just add a staleness window we don't control.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from tg_messenger.core.client import StandaloneTelegramClient
 from tg_messenger.core.models import Message as _TgMessengerMessage
 
@@ -83,4 +85,30 @@ async def read_dialog_history(
         client_factory=_client_factory(client),
     )
     messages = await standalone.history(peer, limit=limit, offset_id=offset_id)
+    return [_to_dialog_message(msg) for msg in messages]
+
+
+async def read_dialog_history_since(
+    client: object,
+    *,
+    api_id: int,
+    api_hash: str,
+    peer: Any,
+    min_id: int = 0,
+    limit: int = 200,
+) -> list[DialogMessage]:
+    """Read messages newer than ``min_id`` via tg_messenger's `history_since`.
+
+    `history_since` — намеренно некэшированный путь (в отличие от `history()`
+    с TTL-кэшем), созданный ровно для синхронизации по водяному знаку; догон
+    #1428 читает только его. Same invariants as `read_dialog_history`: no
+    connect/disconnect, no event handlers on a client we don't own.
+    """
+    standalone = StandaloneTelegramClient(
+        api_id,
+        api_hash,
+        external_session="",
+        client_factory=_client_factory(client),
+    )
+    messages = await standalone.history_since(peer, min_id=min_id, limit=limit)
     return [_to_dialog_message(msg) for msg in messages]
