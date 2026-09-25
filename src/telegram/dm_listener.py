@@ -94,11 +94,16 @@ class DmListener:
         *,
         reconcile_interval: float = RECONCILE_INTERVAL_SEC,
         event_callback: Callable[[IncomingDmEvent], Awaitable[None]] | None = None,
+        catchup: Any | None = None,
     ):
         self._pool = pool
         self._db = db
         self._reconcile_interval = reconcile_interval
         self._event_callback = event_callback
+        # Догон пропущенного (#1428): сервис с .schedule(phones); зовётся на
+        # каждый attach — старт воркера, замена клиента, reattach после
+        # восстановления — то есть ровно когда слушатель мог что-то пропустить.
+        self._catchup = catchup
         self._event_cls = events.NewMessage(incoming=True, func=_is_private_dm)
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
@@ -182,6 +187,8 @@ class DmListener:
             return
         self._attached[phone] = _Attachment(client=client, callback=callback)
         logger.info("dm_listener: listening for DMs on %s", phone)
+        if self._catchup is not None:
+            self._catchup.schedule([phone])
 
     def _detach(self, phone: str) -> None:
         attachment = self._attached.pop(phone, None)
