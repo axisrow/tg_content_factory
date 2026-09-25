@@ -42,6 +42,7 @@ from src.settings_utils import parse_int_setting
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
+from src.telegram.dm_catchup import DmCatchupService
 from src.telegram.dm_listener import DmListener, IncomingDmEvent
 from src.telegram.notifier import Notifier
 from src.utils.asyncio import make_log_task_exception_callback
@@ -277,6 +278,7 @@ async def build_container_with_templates(
     unified_dispatcher = None
     telegram_command_dispatcher = None
     dm_listener = None
+    dm_catchup = None
     agent_manager = None
     live_runtime_pause_gate = LiveRuntimePauseGate() if runtime_mode == "worker" else None
     collector: WebCollector
@@ -365,8 +367,10 @@ async def build_container_with_templates(
         # Worker-only (#1426): `serve` (embedded worker) and a standalone
         # `worker` must never both listen on the same accounts, so web mode
         # gets no listener at all.
+        dm_catchup = DmCatchupService(live_pool, db)
         dm_listener = DmListener(
-            live_pool, db, event_callback=lambda dm: _persist_incoming_dm(db, dm)
+            live_pool, db, event_callback=lambda dm: _persist_incoming_dm(db, dm),
+            catchup=dm_catchup,
         )
         agent_manager = AgentManager(
             db,
@@ -419,6 +423,7 @@ async def build_container_with_templates(
         unified_dispatcher=unified_dispatcher,
         telegram_command_dispatcher=telegram_command_dispatcher,
         dm_listener=dm_listener,
+        dm_catchup=dm_catchup,
         search_engine=search_engine,
         ai_search=ai_search,
         scheduler=scheduler,
@@ -652,7 +657,10 @@ async def stop_container(container: AppContainer) -> None:
     if container.telegram_command_dispatcher is not None:
         await _stop_step("telegram_command_dispatcher", container.telegram_command_dispatcher.stop())
     # The DM listener must detach its handlers while clients are still alive —
-    # stop it BEFORE pool.disconnect_all() (#1426).
+    # stop it BEFORE pool.disconnect_all() (#1426). The catch-up pass is
+    # cancelled with it: its reads ride the same pool clients.
+    if container.dm_catchup is not None:
+        await _stop_step("dm_catchup", container.dm_catchup.stop())
     if container.dm_listener is not None:
         await _stop_step("dm_listener", container.dm_listener.stop())
     if container.collection_queue is not None:

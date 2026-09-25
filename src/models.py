@@ -383,6 +383,63 @@ class IncomingDm(BaseModel):
     processed: bool = False
 
 
+# Режимы догона пропущенного DM (#1428, эпик #1416 этап 2.3):
+# full — догнать всё, свежее ждёт черновик (processed=0);
+# journal_only — догнать в журнал на просмотр, черновики автомат не готовит;
+# ignore — догон не работает, только живые события слушателя.
+DmCatchupMode = Literal["full", "journal_only", "ignore"]
+
+DM_CATCHUP_SETTING_KEY = "dm_catchup"
+
+# Входящее старше порога не получает автоматического черновика — защита от
+# неловких поздних ответов после долгого простоя воркера.
+DM_CATCHUP_DEFAULT_STALENESS_SEC = 3600
+
+
+class DmCatchupOverride(BaseModel):
+    """Переопределение догона для одного аккаунта или диалога (#1428).
+
+    `None`-поля наследуют значение с предыдущего уровня приоритета
+    (диалог > аккаунт > глобально) поканально, а не всё-или-ничего.
+    """
+
+    mode: DmCatchupMode | None = None
+    staleness_sec: int | None = None
+
+
+class DmCatchupSettings(BaseModel):
+    """Настройки догона пропущенного DM (#1428): глобаль + переопределения.
+
+    Приоритет: `dialogs[f"{phone}:{chat_id}"]` > `accounts[phone]` > глобаль.
+    Хранится в settings-таблице под ключом `DM_CATCHUP_SETTING_KEY` (JSON);
+    читается догоном на каждый проход, поэтому смена режима не требует
+    перезапуска.
+    """
+
+    mode: DmCatchupMode = "journal_only"
+    staleness_sec: int = DM_CATCHUP_DEFAULT_STALENESS_SEC
+    accounts: dict[str, DmCatchupOverride] = Field(default_factory=dict)
+    dialogs: dict[str, DmCatchupOverride] = Field(default_factory=dict)
+
+    def resolve(
+        self, phone: str, chat_id: int | None = None
+    ) -> tuple[DmCatchupMode, int]:
+        """Эффективные (режим, порог давности) для диалога аккаунта."""
+        mode: DmCatchupMode = self.mode
+        staleness = self.staleness_sec
+        for override in (
+            self.accounts.get(phone),
+            self.dialogs.get(f"{phone}:{chat_id}") if chat_id is not None else None,
+        ):
+            if override is None:
+                continue
+            if override.mode is not None:
+                mode = override.mode
+            if override.staleness_sec is not None:
+                staleness = override.staleness_sec
+        return mode, staleness
+
+
 class ChannelRating(BaseModel):
     """Двухосный вердикт о канале (#966): полезность × жанр.
 

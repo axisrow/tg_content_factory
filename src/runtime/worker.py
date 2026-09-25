@@ -314,14 +314,18 @@ async def _publish_dm_listener_status_snapshot(
     """
     await container.db.repos.incoming_dms.prune_expired()
     unprocessed = await container.db.repos.incoming_dms.count_unprocessed()
+    payload: dict[str, Any] = {
+        **dm_listener.status(),
+        "unprocessed": unprocessed,
+        "timestamp": now.isoformat(),
+    }
+    catchup = getattr(container, "dm_catchup", None)
+    if catchup is not None:
+        payload["catchup"] = catchup.status()
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(
             snapshot_type="dm_listener_status",
-            payload={
-                **dm_listener.status(),
-                "unprocessed": unprocessed,
-                "timestamp": now.isoformat(),
-            },
+            payload=payload,
         )
     )
 
