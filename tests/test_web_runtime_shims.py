@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 from src.web.runtime_shims import (
@@ -185,6 +186,52 @@ async def test_snapshot_scheduler_get_potential_jobs_no_snapshot():
     mgr = SnapshotSchedulerManager(db, 60)
     jobs = await mgr.get_potential_jobs()
     assert jobs == []
+
+
+async def test_snapshot_scheduler_next_run_contract_matches_live_manager():
+    """#1439: the worker publishes next_run as isoformat strings; the shim must
+    return aware datetimes like the live SchedulerManager does (naive -> UTC,
+    unparseable/absent -> None) — pipelines/handlers calls .isoformat() on them."""
+    db = _mock_db()
+    snapshot = MagicMock(payload={"jobs": [
+        {"job_id": "pipeline_run_1", "next_run": "2030-01-01T12:00:00+00:00"},
+        {"job_id": "collect_all", "next_run": "2030-01-01T15:00:00"},
+        {"job_id": "garbage", "next_run": "not-a-date"},
+        {"job_id": "absent"},
+    ]})
+    db.repos.runtime_snapshots.get_snapshot.return_value = snapshot
+    mgr = SnapshotSchedulerManager(db, 60)
+    await mgr.get_potential_jobs()
+    result = mgr.get_all_jobs_next_run()
+    assert set(result) == {"pipeline_run_1", "collect_all", "garbage", "absent"}
+    aware = result["pipeline_run_1"]
+    assert isinstance(aware, datetime)
+    assert aware.tzinfo is not None
+    assert aware == datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
+    naive = result["collect_all"]
+    assert isinstance(naive, datetime)
+    assert naive.tzinfo is not None
+    assert naive.utcoffset() == timedelta(0)
+    assert naive == datetime(2030, 1, 1, 15, 0, tzinfo=timezone.utc)
+    assert result["garbage"] is None
+    assert result["absent"] is None
+
+
+async def test_snapshot_scheduler_get_potential_jobs_returns_copy():
+    """#1439: mutating the returned list must not corrupt the shim's snapshot
+    state (previously the internal list was handed out directly)."""
+    db = _mock_db()
+    snapshot = MagicMock(payload={"jobs": [
+        {"job_id": "collect_all", "next_run": "2030-01-01T12:00:00+00:00"},
+    ]})
+    db.repos.runtime_snapshots.get_snapshot.return_value = snapshot
+    mgr = SnapshotSchedulerManager(db, 60)
+    jobs = await mgr.get_potential_jobs()
+    jobs.clear()
+    jobs.append({"job_id": "evil", "next_run": "2031-01-01T00:00:00+00:00"})
+    assert mgr.get_all_jobs_next_run() == {
+        "collect_all": datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc),
+    }
 
 
 async def test_snapshot_scheduler_noop_methods():

@@ -163,12 +163,20 @@ async def _page_context(request: Request) -> dict:
     next_runs: dict[int, str | None] = {}
     try:
         scheduler = deps.get_scheduler(request)
+        # The web-mode shim reads next_run from the scheduler_jobs snapshot
+        # bound by get_potential_jobs(); rebind per render (same pattern as
+        # _build_jobs_context) so a fresh container is not silently empty. (#1439)
+        await scheduler.get_potential_jobs()
         all_jobs = scheduler.get_all_jobs_next_run()
         for item in items:
             pipeline = item.get("pipeline") if isinstance(item, dict) else None
             if pipeline is None or pipeline.id is None:
                 continue
-            job_id = f"pipeline_run_{pipeline.id}"
+            # content_generate_<id> is the single periodic generation job since
+            # #835/2 (pipeline_run_<id> is enqueued as a task, not scheduled,
+            # and sync_pipeline_jobs removes leftovers) — looking up
+            # pipeline_run_ made this column empty in both runtime modes. (#1439)
+            job_id = f"content_generate_{pipeline.id}"
             nr = cast(datetime | None, all_jobs.get(job_id))
             next_runs[pipeline.id] = nr.isoformat() if nr else None
     except Exception:
