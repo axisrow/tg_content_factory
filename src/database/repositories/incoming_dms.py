@@ -109,6 +109,35 @@ class IncomingDmsRepository:
         row = await cur.fetchone()
         return int(row["n"]) if row and row["n"] is not None else 0
 
+    async def get_catchup_cursor(self, phone: str, chat_id: int) -> int:
+        """Курсор догона #1428: ниже MAX журнала — живые вставки его не двигают.
+
+        Сдвигается только после успешного persist страницы догона, поэтому
+        сообщение, пропущенное в даунтайм и записанное живьём соседом сверху,
+        остаётся достижимым для следующего прохода.
+        """
+        cur = await self._db.execute(
+            "SELECT cursor FROM dm_catchup_cursors WHERE phone = ? AND chat_id = ?",
+            (phone, chat_id),
+        )
+        row = await cur.fetchone()
+        return int(row["cursor"]) if row else 0
+
+    async def set_catchup_cursor(self, phone: str, chat_id: int, cursor: int) -> None:
+        """Сдвинуть курсор догона после успешного persist страницы (upsert)."""
+        assert self._database is not None, (
+            "IncomingDmsRepository.set_catchup_cursor requires a Database reference"
+        )
+        await self._database.execute_write(
+            """
+            INSERT INTO dm_catchup_cursors (phone, chat_id, cursor, updated_at)
+            VALUES (?, ?, ?, datetime('now'))
+            ON CONFLICT(phone, chat_id)
+            DO UPDATE SET cursor = excluded.cursor, updated_at = datetime('now')
+            """,
+            (phone, chat_id, int(cursor)),
+        )
+
     async def prune_expired(
         self, older_than_seconds: int = INCOMING_DM_JOURNAL_TTL_SECONDS
     ) -> int:

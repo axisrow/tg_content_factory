@@ -81,6 +81,23 @@ async def test_max_message_id_is_dialog_watermark(dms_repo):
     assert await dms_repo.max_message_id("+111", 42) == 9
 
 
+async def test_catchup_cursor_upsert_per_dialog(dms_repo):
+    """Курсор догона: 0 на пустом, upsert по (phone, chat_id), живые вставки
+    журнала его не двигают."""
+    assert await dms_repo.get_catchup_cursor("+111", 42) == 0
+
+    await dms_repo.set_catchup_cursor("+111", 42, 10)
+    await dms_repo.set_catchup_cursor("+111", 42, 12)  # upsert, не дубль
+    await dms_repo.set_catchup_cursor("+111", 43, 5)
+
+    assert await dms_repo.get_catchup_cursor("+111", 42) == 12
+    assert await dms_repo.get_catchup_cursor("+111", 43) == 5
+    assert await dms_repo.get_catchup_cursor("+222", 42) == 0
+
+    await dms_repo.record(_dm(chat_id=42, message_id=99))
+    assert await dms_repo.get_catchup_cursor("+111", 42) == 12
+
+
 async def test_uniqueness_is_per_dialog_not_global(dms_repo):
     assert await dms_repo.record(_dm(chat_id=1, message_id=7)) is True
     # Тот же message_id в другом диалоге — отдельное сообщение.
