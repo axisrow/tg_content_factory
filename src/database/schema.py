@@ -158,6 +158,17 @@ CREATE TABLE IF NOT EXISTS incoming_dms (
 CREATE INDEX IF NOT EXISTS idx_incoming_dms_received_at
     ON incoming_dms(received_at);
 
+-- Отдельный курсор догона пропущенного DM (#1428): живые вставки в журнал
+-- двигают MAX(message_id) и отсекали бы ещё не дочитанное на уровне запроса;
+-- курсор знает только догон и сдвигается после успешного persist страницы.
+CREATE TABLE IF NOT EXISTS dm_catchup_cursors (
+    phone TEXT NOT NULL,
+    chat_id INTEGER NOT NULL,
+    cursor INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (phone, chat_id)
+);
+
 CREATE TABLE IF NOT EXISTS channel_ratings (
     channel_id INTEGER PRIMARY KEY,
     title TEXT,

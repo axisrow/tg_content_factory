@@ -1,11 +1,12 @@
 """Догон пропущенного входящего DM (#1428, эпик #1416 этап 2.3).
 
 Слушатель #1426 получает только живые события; всё, что пришло, пока он не
-работал (рестарт, падение, замена клиента), догоняет этот сервис: по
-водяному знаку журнала (`MAX(message_id)` на диалог) дочитывает историю через
-некэшированный `history_since` и дописывает журнал `incoming_dms`. Повторная
-доставка безопасна: UNIQUE(phone, chat_id, message_id) делает запись
-идемпотентной, а INSERT OR IGNORE не трогает `processed` уже записанных строк.
+работал (рестарт, падение, замена клиента), догоняет этот сервис: по курсору
+догона (`dm_catchup_cursors`, отдельный от журнала — живые вставки его не
+двигают) дочитывает историю через некэшированный `history_since` и дописывает
+журнал `incoming_dms`. Повторная доставка безопасна: UNIQUE(phone, chat_id,
+message_id) делает запись идемпотентной, а INSERT OR IGNORE не трогает
+`processed` уже записанных строк.
 
 Три режима (глобаль + переопределения на аккаунт и диалог, см.
 `DmCatchupSettings`): `full` — догнать, свежее ждёт черновик (processed=0);
@@ -175,20 +176,23 @@ class DmCatchupService:
         if mode == "ignore":
             stats["skipped"] += 1
             return "skipped"
-        watermark = await self._db.repos.incoming_dms.max_message_id(phone, chat_id)
+        # Курсор догона, а не MAX(message_id) журнала: живые вставки слушателя
+        # двигают максимум журнала и отсекали бы недочитанное прямо в запросе.
+        cursor = await self._db.repos.incoming_dms.get_catchup_cursor(phone, chat_id)
         if not await self._acquire_history_slot(phone):
             return "deferred"
         auth = getattr(self._pool, "_auth", None)
         try:
-            entity = await self._pool.resolve_dialog_entity(
-                client, phone, chat_id, target_type="dm"
-            )
+            # Резолв с warm-then-retry прогревает кэш и валидирует peer, но в
+            # history_since передаётся ЧИСЛОВОЙ id: адаптер делает int(peer)
+            # над каждой страницей, а int(InputPeerUser) — TypeError.
+            await self._pool.resolve_dialog_entity(client, phone, chat_id, target_type="dm")
             messages = await read_dialog_history_since(
                 client,
                 api_id=auth.api_id,
                 api_hash=auth.api_hash,
-                peer=entity,
-                min_id=watermark,
+                peer=chat_id,
+                min_id=cursor,
                 limit=CATCHUP_PAGE_LIMIT,
             )
         except HandledFloodWaitError:
@@ -202,6 +206,7 @@ class DmCatchupService:
             logger.warning("dm_catchup: %s chat %s не резолвится: %s", phone, chat_id, exc)
             stats["errors"] += 1
             return "error"
+        page_top: int | None = None
         for msg in messages:
             if msg.out:
                 continue  # журнал — только входящие, как у живого слушателя
@@ -222,6 +227,11 @@ class DmCatchupService:
                 stats["stored"] += 1
             else:
                 stats["already"] += 1
+            page_top = msg.id if page_top is None else max(page_top, msg.id)
+        if page_top is not None:
+            # Только после persist всей страницы: падение посреди цикла не
+            # двигает курсор, повторный проход дочитает (дубли молчат).
+            await self._db.repos.incoming_dms.set_catchup_cursor(phone, chat_id, page_top)
         return "ok"
 
     async def _acquire_history_slot(self, phone: str) -> bool:

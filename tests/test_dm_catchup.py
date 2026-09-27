@@ -46,10 +46,12 @@ def _flood_info(seconds: int) -> FloodWaitInfo:
 
 
 class _FakeMessage:
-    def __init__(self, id: int, *, out: bool = False, date: datetime | None = None, text="т"):
+    def __init__(self, id: int, *, out: bool = False, date: datetime | None = "now", text="т"):
         self.id = id
         self.out = out
-        self.date = date if date is not None else _utc(minutes=-1)
+        # date="now" — свежая дата по умолчанию; явный None проходит как None
+        # (ветка «нет даты → консервативно stale» в догона).
+        self.date = _utc(minutes=-1) if date == "now" else date
         self.text = text
         self.dialog_id = 0
         self.sender_id = None
@@ -79,10 +81,11 @@ class _FakePool:
 
 
 def _stub_history_since(messages_by_chat: dict[int, list[_FakeMessage]]):
-    """Стаб транспортного слоя: peer.user_id → страница истории (хронологическая)."""
+    """Стаб транспортного слоя: числовой peer (как в реальном адаптере,
+    который делает int(peer)) → страница истории (хронологическая)."""
 
     async def _fake(client, *, api_id, api_hash, peer, min_id=0, limit=200):
-        chat_id = peer.user_id
+        chat_id = int(peer)
         page = [m for m in messages_by_chat.get(chat_id, []) if m.id > min_id]
         client.history_calls.append({"chat_id": chat_id, "min_id": min_id, "limit": limit})
         return page[-limit:]
@@ -203,58 +206,68 @@ async def test_staleness_threshold_old_gets_no_draft(tmp_path, monkeypatch):
         await db.close()
 
 
-async def test_redelivery_does_not_flip_processed_back(tmp_path, monkeypatch):
-    """Повторная доставка не откатывает разобранное (гонка со слушателем).
+async def test_missing_date_treated_as_stale(tmp_path, monkeypatch):
+    """Сообщение без даты консервативно считается старым: показ, без черновика."""
+    db = await _make_db(tmp_path)
+    try:
+        stub = _stub_history_since({42: [_FakeMessage(10, date=None)]})
+        monkeypatch.setattr(dm_catchup, "read_dialog_history_since", stub)
+        await db.set_setting(
+            DM_CATCHUP_SETTING_KEY, DmCatchupSettings(mode="full").model_dump_json()
+        )
+        service = DmCatchupService(_FakePool(_FakeRawClient()), db)
 
-    Сценарий из дизайн-заметки #1440: слушатель записал сообщение, пока догон
-    уже читал страницу с меньшим водяным знаком. Страница догона содержит
-    дубликат — INSERT OR IGNORE молчит, processed=1 не сбрасывается.
+        await service.run_for_phone("+111")
+
+        assert await db.repos.incoming_dms.count_unprocessed() == 0
+        assert await _journal_processed(db) == {10: True}
+    finally:
+        await db.close()
+
+
+async def test_redelivery_does_not_flip_processed_back(tmp_path, monkeypatch):
+    """Гонка со слушателем (дизайн-заметка #1440): курсор догона не двигают
+    живые вставки. 10 в журнале, 11 пропущено в даунтайм, 12 записано живьём
+    (processed=1) до прохода — проход с курсора 10 дочитывает 11, дубль 12
+    молчит и не сбрасывает решение.
     """
     db = await _make_db(tmp_path)
     try:
-        stub = _stub_history_since({42: [_FakeMessage(12)]})
+        stub = _stub_history_since({42: [_FakeMessage(11), _FakeMessage(12)]})
         monkeypatch.setattr(dm_catchup, "read_dialog_history_since", stub)
         await db.set_setting(
             DM_CATCHUP_SETTING_KEY,
             DmCatchupSettings(mode="full", staleness_sec=3600).model_dump_json(),
         )
+        await db.repos.incoming_dms.record(_journal_dm(10), processed=True)
+        await db.repos.incoming_dms.set_catchup_cursor("+111", 42, 10)
+        # «Слушатель» записал 12 живьём, пока догон не дошёл до диалога.
+        await db.repos.incoming_dms.record(_journal_dm(12), processed=True)
         service = DmCatchupService(_FakePool(_FakeRawClient()), db)
-
-        # Водяной знак прохода — 11; в этот же момент «слушатель» успевает
-        # записать 12 как разобранное, и страница догона несёт дубликат.
-        original_max = db.repos.incoming_dms.max_message_id
-        raced = False
-
-        async def _racing_max(phone: str, chat_id: int) -> int:
-            nonlocal raced
-            watermark = await original_max(phone, chat_id)
-            if not raced:
-                raced = True
-                await db.repos.incoming_dms.record(
-                    IncomingDm(
-                        phone="+111",
-                        chat_id=42,
-                        message_id=12,
-                        message_date=_utc(minutes=-1),
-                        received_at=_utc(minutes=-1),
-                    ),
-                    processed=True,
-                )
-            return watermark
-
-        monkeypatch.setattr(db.repos.incoming_dms, "max_message_id", _racing_max)
 
         stats = await service.run_for_phone("+111")
 
-        assert stats["stored"] == 0
-        assert stats["already"] == 1
-        assert await _journal_processed(db) == {12: True}  # решение цело
+        assert stats["stored"] == 1  # 11 найдена — не потеряна гонкой
+        assert stats["already"] == 1  # 12 — дубль живой вставки
+        assert await _journal_processed(db) == {10: True, 11: False, 12: True}
+        assert await db.repos.incoming_dms.get_catchup_cursor("+111", 42) == 12
     finally:
         await db.close()
 
 
-async def test_watermark_resumes_from_journal_max(tmp_path, monkeypatch):
-    """Водяной знак: повторный проход читает историю от MAX(message_id) журнала."""
+def _journal_dm(message_id: int) -> IncomingDm:
+    return IncomingDm(
+        phone="+111",
+        chat_id=42,
+        message_id=message_id,
+        text="т",
+        message_date=_utc(minutes=-1),
+        received_at=_utc(minutes=-1),
+    )
+
+
+async def test_cursor_resumes_after_stored_page(tmp_path, monkeypatch):
+    """Курсор догона: повторный проход читает историю от последней страницы."""
     db = await _make_db(tmp_path)
     try:
         client = _FakeRawClient()
@@ -265,12 +278,54 @@ async def test_watermark_resumes_from_journal_max(tmp_path, monkeypatch):
         )
         service = DmCatchupService(_FakePool(client), db)
         await service.run_for_phone("+111")
+        assert await db.repos.incoming_dms.get_catchup_cursor("+111", 42) == 11
 
         await service.run_for_phone("+111")
 
         calls_42 = [call for call in client.history_calls if call["chat_id"] == 42]
         assert calls_42[-1]["min_id"] == 11
         assert await _journal_processed(db) == {10: False, 11: False}
+    finally:
+        await db.close()
+
+
+async def test_peer_passed_as_int_not_entity(tmp_path, monkeypatch):
+    """Адаптер history_since делает int(peer): передаётся числовой id, а не
+    резолвнутый InputPeer (int(InputPeerUser) — TypeError, регресс Codex-ревью).
+    """
+    db = await _make_db(tmp_path)
+    try:
+        seen_peers: list[object] = []
+
+        async def _capture(cl, *, api_id, api_hash, peer, min_id=0, limit=200):
+            seen_peers.append(peer)
+            return []
+
+        monkeypatch.setattr(dm_catchup, "read_dialog_history_since", _capture)
+        service = DmCatchupService(_FakePool(_FakeRawClient()), db)
+
+        await service.run_for_phone("+111")
+
+        assert seen_peers, "history_since не вызван"
+        assert all(isinstance(peer, int) for peer in seen_peers)
+    finally:
+        await db.close()
+
+
+async def test_flood_does_not_advance_cursor(tmp_path, monkeypatch):
+    """Курсор сдвигается только после persist: флуд на диалоге не теряет хвост."""
+    db = await _make_db(tmp_path)
+    try:
+        async def _flood(cl, *, api_id, api_hash, peer, min_id=0, limit=200):
+            raise HandledFloodWaitError(_flood_info(seconds=50000))
+
+        monkeypatch.setattr(dm_catchup, "read_dialog_history_since", _flood)
+        service = DmCatchupService(_FakePool(_FakeRawClient()), db)
+
+        stats = await service.run_for_phone("+111")
+
+        assert stats["errors"] == 2  # оба догоняемых диалога (dm + bot) отложены
+        assert await db.repos.incoming_dms.get_catchup_cursor("+111", 42) == 0
     finally:
         await db.close()
 
@@ -445,7 +500,7 @@ async def test_flood_wait_defers_dialog_not_pass(tmp_path, monkeypatch):
         downstream = _stub_history_since({43: [_FakeMessage(20)]})
 
         async def _flood_then_ok(cl, *, api_id, api_hash, peer, min_id=0, limit=200):
-            if peer.user_id == 42:
+            if peer == 42:
                 raise HandledFloodWaitError(_flood_info(seconds=50000))
             return await downstream(
                 cl, api_id=api_id, api_hash=api_hash, peer=peer, min_id=min_id, limit=limit
