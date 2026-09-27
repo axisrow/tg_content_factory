@@ -78,6 +78,14 @@ class _DialogRequestGateClient:
         # (check and record): re-checking the same (operation, phone) key
         # mid-stream would reject the stream's own half-open probe and strand
         # it — the stream can then never report back.
+        #
+        # Accepted trade (final review round on #1444): without a per-page
+        # check, an admitted stream keeps pulling pages after another caller
+        # trips their shared key OPEN.  For dialogs that scenario needs two
+        # concurrent same-phone sweeps, which pool_dialogs prevents by
+        # joining the in-flight refresh (pool_dialogs.py:1370); for history
+        # the base never checked pages at all.  Restore per-page checks when
+        # telethon-floodgate grows an OPEN-only, non-claiming peek.
         if self._page_category is not None:
             return self._session._run(
                 self._operation,

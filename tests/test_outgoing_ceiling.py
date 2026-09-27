@@ -408,6 +408,66 @@ async def test_history_page_flood_is_recorded_once_by_the_stream() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dialog_stream_pages_do_not_recheck_the_stream_breaker_probe() -> None:
+    """Same no-recheck guarantee for the dialogs proxy branch (page_category)."""
+    from telethon.tl.functions.messages import GetDialogsRequest
+    from telethon_floodgate import FloodCircuitBreaker
+
+    clock = _FakeClock()
+
+    class PageIterator:
+        def __init__(self, client_obj) -> None:
+            self.client = client_obj
+            self.page = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.page >= 1:
+                raise StopAsyncIteration
+            await self.client(
+                GetDialogsRequest(
+                    offset_date=None,
+                    offset_id=0,
+                    offset_peer=None,
+                    limit=1,
+                    hash=0,
+                )
+            )
+            self.page += 1
+            return self.page
+
+    class Client:
+        def iter_dialogs(self, **kwargs):
+            return PageIterator(self)
+
+        async def __call__(self, request):
+            pass
+
+    class Pool:
+        _rate_limit_gate = TelegramRateLimitGate(time_func=clock)
+        _flood_breaker = FloodCircuitBreaker(
+            threshold=1, cooldown_seconds=60.0, time_func=clock
+        )
+        _outgoing_ceiling = OutgoingRateCeiling(
+            RateLimitSpec(max_calls=10, window_sec=30.0), time_func=clock
+        )
+
+    Pool._flood_breaker.record_flood("telegram_stream_dialogs", "+7000")
+    clock.now += 61.0
+
+    session = TelegramTransportSession(Client(), phone="+7000", pool=Pool())
+    stream = session.stream_dialogs()
+    assert await stream.__anext__() == 1
+    with pytest.raises(StopAsyncIteration):
+        await stream.__anext__()
+    await stream.aclose()
+
+    assert Pool._flood_breaker._probe_in_flight == set()
+
+
+@pytest.mark.asyncio
 async def test_unbound_session_is_noop_safe_for_the_ceiling() -> None:
     class Client:
         def send_message(self, entity, message, **kwargs):
