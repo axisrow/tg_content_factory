@@ -116,8 +116,14 @@ async def test_volley_of_ten_accounts_is_paced_to_the_ceiling() -> None:
 
 
 @pytest.mark.asyncio
-async def test_gate_refusal_leaves_ceiling_budget_untouched() -> None:
-    """Gate refuses first (sync); the ceiling is charged only by passed calls."""
+async def test_gate_refusal_surrenders_its_ceiling_slot() -> None:
+    """Ceiling-first order: every limit holds at dispatch time (#1444 review).
+
+    The per-account gate is re-checked synchronously right before the RPC, so
+    a refused call has already drawn its ceiling slot; surrendering it to
+    window expiry is the accepted cost of dispatch-accurate per-account and
+    per-peer pacing.  A passed call is still charged exactly once everywhere.
+    """
     clock = _FakeClock()
     sleeper = _FakeSleep(clock)
 
@@ -127,7 +133,7 @@ async def test_gate_refusal_leaves_ceiling_budget_untouched() -> None:
             time_func=clock,
         )
         _outgoing_ceiling = OutgoingRateCeiling(
-            RateLimitSpec(max_calls=1, window_sec=60.0),
+            RateLimitSpec(max_calls=2, window_sec=60.0),
             time_func=clock,
             sleep_func=sleeper,
         )
@@ -141,8 +147,120 @@ async def test_gate_refusal_leaves_ceiling_budget_untouched() -> None:
     with pytest.raises(TelegramRateLimitedError):
         await session.send_message(SimpleNamespace(user_id=2), "b")
     assert len(client.sent_at) == 1, "refused send still reached Telegram"
-    assert len(Pool._outgoing_ceiling._limiter._calls["process"]) == 1
-    assert sleeper.waits == [], "a refusal must not spend time waiting on the ceiling"
+    # The refused call surrendered its ceiling slot (documented cost).
+    assert len(Pool._outgoing_ceiling._limiter._calls["process"]) == 2
+    assert sleeper.waits == [], "ceiling had room: no wait was needed"
+
+
+@pytest.mark.asyncio
+async def test_same_peer_sends_cannot_bundle_after_ceiling_wait() -> None:
+    """Two same-peer sends sharing a ceiling wait must not fire in one instant.
+
+    Codex repro on the pre-reorder code: both sends passed the 1/s peer gate
+    at reservation time, slept on the ceiling together, and dispatched in the
+    same tick.  With the ceiling first, the second send re-checks the peer
+    bucket at dispatch and is refused.
+    """
+    clock = _FakeClock()
+    sleeper = _FakeSleep(clock)
+
+    class Pool:
+        _rate_limit_gate = TelegramRateLimitGate(time_func=clock)
+        _outgoing_ceiling = OutgoingRateCeiling(
+            RateLimitSpec(max_calls=2, window_sec=30.0),
+            time_func=clock,
+            sleep_func=sleeper,
+        )
+
+    client = _RecordingClient(clock)
+    session = TelegramTransportSession(client, phone="+7000", pool=Pool())
+    peer = SimpleNamespace(user_id=7)
+
+    # Burn the ceiling before the volley: both sends will wait for t=1030.
+    await Pool._outgoing_ceiling.acquire()
+    await Pool._outgoing_ceiling.acquire()
+
+    first = asyncio.create_task(session.send_message(peer, "a"))
+    for _ in range(3):
+        await asyncio.sleep(0)
+    second = asyncio.create_task(session.send_message(peer, "b"))
+    results = await asyncio.gather(first, second, return_exceptions=True)
+
+    assert results[0] == "ok"
+    assert isinstance(results[1], TelegramRateLimitedError), (
+        "same-peer sends must not bundle into one instant after the wait"
+    )
+    assert len(client.sent_at) == 1
+    assert clock.now == 1030.0, "the second send was refused only after the wait"
+
+
+@pytest.mark.asyncio
+async def test_history_stream_pages_draw_ceiling_slots() -> None:
+    """Every raw GetHistory RPC of a stream charges the ceiling (#1444 review).
+
+    Telethon drives pages through ``iterator.client``; the bound proxy routes
+    them through ``_run`` with the gate skipped, so the #1418 history
+    calibration stays on logical streams while the ceiling sees each page.
+    """
+    from telethon.tl.functions.messages import GetHistoryRequest
+
+    clock = _FakeClock()
+    sleeper = _FakeSleep(clock)
+    page_calls: list[GetHistoryRequest] = []
+
+    class PageIterator:
+        def __init__(self, client_obj) -> None:
+            self.client = client_obj
+            self.page = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.page >= 2:
+                raise StopAsyncIteration
+            request = GetHistoryRequest(
+                peer=None,
+                offset_id=0,
+                offset_date=None,
+                add_offset=0,
+                limit=1,
+                max_id=0,
+                min_id=0,
+                hash=0,
+            )
+            await self.client(request)
+            self.page += 1
+            return self.page
+
+    class Client:
+        def iter_messages(self, entity, **kwargs):
+            return PageIterator(self)
+
+        async def __call__(self, request):
+            page_calls.append(request)
+
+    class Pool:
+        _rate_limit_gate = TelegramRateLimitGate(time_func=clock)
+        _outgoing_ceiling = OutgoingRateCeiling(
+            RateLimitSpec(max_calls=10, window_sec=30.0),
+            time_func=clock,
+            sleep_func=sleeper,
+        )
+
+    session = TelegramTransportSession(Client(), phone="+7000", pool=Pool())
+    stream = session.stream_messages("peer")
+    assert [await stream.__anext__(), await stream.__anext__()] == [1, 2]
+    with pytest.raises(StopAsyncIteration):
+        await stream.__anext__()
+    await stream.aclose()
+
+    assert len(page_calls) == 2
+    # Logical slot + two page slots: the ceiling never under-counts a stream.
+    assert len(Pool._outgoing_ceiling._limiter._calls["process"]) == 3
+    # The per-account history bucket is charged once (logical stream only).
+    history = Pool._rate_limit_gate._limiters["history"]._calls["+7000"]
+    assert len(history) == 1
 
 
 @pytest.mark.asyncio
@@ -227,3 +345,104 @@ async def test_ceiling_defer_is_exact_not_jittered() -> None:
 
     assert sleeper.waits == [30.0]
     assert clock.now == 1030.0
+
+
+# --- cancellation during the ceiling wait (dual review: MINOR, closed) -------
+
+
+class _ClosableAwaitable:
+    """Eager awaitable that records ``close()`` like an unstarted coroutine."""
+
+    def __init__(self) -> None:
+        self.closed = False
+        self.ran = False
+
+    def __await__(self):
+        if False:  # pragma: no cover - makes this a generator-based awaitable
+            yield
+        self.ran = True
+        return "ok"
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _HangingCeilingPool:
+    """Pool whose ceiling consumes the caller into an endless wait."""
+
+    def __init__(self) -> None:
+        self._outgoing_ceiling = OutgoingRateCeiling(
+            RateLimitSpec(max_calls=1, window_sec=60.0),
+            time_func=_FakeClock(),
+            sleep_func=self._hang,
+        )
+        self._outgoing_ceiling._limiter.try_acquire("process")
+
+    async def _hang(self, delay: float) -> None:
+        await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_wait_still_closes_the_eager_awaitable() -> None:
+    """Cancelling a caller suspended on the ceiling closes the eager call.
+
+    The ceiling wait is the first await point of ``_run``; before the
+    BaseException cleanup, cancellation there leaked an unstarted (and
+    never closed) Telethon coroutine.
+    """
+    pool = _HangingCeilingPool()
+    awaitable = _ClosableAwaitable()
+
+    class Client:
+        def send_message(self, entity, message, **kwargs):
+            return awaitable
+
+    session = TelegramTransportSession(Client(), phone="+7000", pool=pool)
+    task = asyncio.create_task(session.send_message(SimpleNamespace(user_id=1), "hi"))
+    for _ in range(5):
+        await asyncio.sleep(0)  # let the task suspend inside the ceiling wait
+    assert not awaitable.ran, "the call must not start before its ceiling slot"
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert awaitable.closed, "cancelled caller must close the eager awaitable"
+    assert not awaitable.ran
+
+
+@pytest.mark.asyncio
+async def test_cancelled_wait_still_closes_the_stream_iterator() -> None:
+    """Same cancellation window on the ``_stream`` path."""
+    pool = _HangingCeilingPool()
+
+    class Iterator:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):  # pragma: no cover - never iterated
+            raise StopAsyncIteration
+
+        async def aclose(self):
+            self.closed = True
+
+    iterator = Iterator()
+
+    class Client:
+        def iter_messages(self, entity, **kwargs):
+            return iterator
+
+    session = TelegramTransportSession(Client(), phone="+7000", pool=pool)
+    stream = session.stream_messages("peer")
+    task = asyncio.create_task(stream.__anext__())
+    for _ in range(5):
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await stream.aclose()
+
+    assert iterator.closed, "cancelled stream must aclose the inner iterator"
