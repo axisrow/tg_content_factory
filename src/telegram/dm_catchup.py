@@ -200,7 +200,9 @@ class DmCatchupService:
                 limit=CATCHUP_PAGE_LIMIT,
             )
             if len(messages) == CATCHUP_PAGE_LIMIT:
-                messages = await self._backfill_gap(client, auth, chat_id, cursor, messages)
+                messages = await self._backfill_gap(
+                    phone, client, auth, chat_id, cursor, messages
+                )
         except HandledFloodWaitError:
             # Нетранзиентный флуд: не hammer'им, диалог остаётся на следующий
             # триггер; проход продолжается с остальных диалогов.
@@ -251,6 +253,7 @@ class DmCatchupService:
 
     async def _backfill_gap(
         self,
+        phone: str,
         client: Any,
         auth: Any,
         chat_id: int,
@@ -264,12 +267,16 @@ class DmCatchupService:
         страницы исключил бы его навсегда. Читаем вниз от нижнего края
         страницы (per-call клиент делает history фактически некэшированным —
         см. `read_dialog_history_page`) до курсора или бюджета; возвращает
-        объединённый хронологический список.
+        объединённый хронологический список. Каждая страница — отдельный слот
+        гейта; насыщение гейта останавливает дочитку (курсор встанет на нижний
+        край прочитанного, остаток — следующий триггер).
         """
         for _ in range(CATCHUP_BACKFILL_PAGES):
             bottom = messages[0].id
             if bottom <= cursor + 1:
                 break  # дошли до курсора — диапазон покрыт полностью
+            if not await self._acquire_history_slot(phone):
+                break  # гейт насыщен: прочитанное фиксируем, остаток догонит
             older = await read_dialog_history_page(
                 client,
                 api_id=auth.api_id,
