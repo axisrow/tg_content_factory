@@ -118,11 +118,18 @@ class DmCatchupService:
             self._pending.clear()
             for phone in phones:
                 try:
-                    await self.run_for_phone(phone)
+                    stats = await self.run_for_phone(phone)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     logger.exception("dm_catchup: проход по %s упал", phone)
+                    continue
+                if stats.get("_continue"):
+                    # Полная страница = вероятно есть ещё: самозапланировать
+                    # следующий виток через single-flight (гейт по-прежнему
+                    # один слот на страницу); пустая/короткая страница
+                    # продолжения не просит — цикл терминируется.
+                    self.schedule([phone])
 
     # --- pass ---
 
@@ -154,13 +161,16 @@ class DmCatchupService:
                 outcome = await self._catch_up_dialog(
                     phone, client, int(dialog["channel_id"]), settings, now, stats
                 )
-                if outcome == "deferred":
+                if outcome == "ok_full":
+                    stats["_continue"] = True
+                elif outcome == "deferred":
                     # Гейт аккаунта насыщен — оставшиеся диалоги этого прохода
                     # отказались бы так же; догонит следующий триггер.
                     stats["deferred"] += 1 + (len(dialogs) - index - 1)
                     break
+        continue_pass = stats.pop("_continue", False)
         self._last_runs[phone] = {**stats, "finished_at": datetime.now(timezone.utc).isoformat()}
-        return stats
+        return {**stats, "_continue": continue_pass}
 
     async def _catch_up_dialog(
         self,
@@ -236,7 +246,10 @@ class DmCatchupService:
             await self._db.repos.incoming_dms.set_catchup_cursor(
                 phone, chat_id, max(msg.id for msg in messages)
             )
-        return "ok"
+        # Полная страница — вероятно есть ещё: проход просит продолжение
+        # (планировщик подхватит следующим витком; одна гейтованная страница
+        # за виток сохраняется).
+        return "ok_full" if len(messages) == CATCHUP_PAGE_LIMIT else "ok"
 
     async def _acquire_history_slot(self, phone: str) -> bool:
         """Слот гейта `history`: ждать, а не отказывать (#1417); False — насыщен."""

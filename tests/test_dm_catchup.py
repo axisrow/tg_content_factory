@@ -552,6 +552,38 @@ async def test_flood_wait_defers_dialog_not_pass(tmp_path, monkeypatch):
 # --- планировщик / жизненный цикл ---
 
 
+async def test_single_schedule_recovers_full_backlog(tmp_path, monkeypatch):
+    """Один schedule() догоняет весь backlog страницами без ручных вызовов:
+    продолжение запрашивает полная страница (регресс цикла-4: без continuation
+    200 хранились, а 1100 висели до рестарта). Старая страница не гасит свежие
+    пропущенные сверху: порог давности применяется к каждому сообщению.
+    """
+    db = await _make_db(tmp_path)
+    try:
+        client = _FakeRawClient()
+        stale_head = [_FakeMessage(i, date=_utc(hours=-2)) for i in range(1, 201)]
+        fresh_tail = [_FakeMessage(i) for i in range(201, 451)]
+        stub = _stub_history_since({42: stale_head + fresh_tail})
+        monkeypatch.setattr(dm_catchup, "read_dialog_history_since", stub)
+        await db.set_setting(
+            DM_CATCHUP_SETTING_KEY,
+            DmCatchupSettings(mode="full", staleness_sec=3600).model_dump_json(),
+        )
+        service = DmCatchupService(_FakePool(client), db)
+
+        service.schedule(["+111"])
+        await asyncio.wait_for(service._task, timeout=5)
+
+        assert await db.repos.incoming_dms.get_catchup_cursor("+111", 42) == 450
+        cur = await db.execute("SELECT COUNT(*) AS n FROM incoming_dms WHERE chat_id = 42")
+        assert (await cur.fetchone())["n"] == 450
+        # stale-голова (200) без черновиков, свежий хвост (250) ждёт их
+        assert await db.repos.incoming_dms.count_unprocessed() == 250
+        assert service.status()["running"] is False  # витки терминировались
+    finally:
+        await db.close()
+
+
 async def test_schedule_is_single_flight_and_drains_pending(tmp_path, monkeypatch):
     """Повторный schedule во время прохода не плодит задачи, но доносит телефоны."""
     db = await _make_db(tmp_path)
