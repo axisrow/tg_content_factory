@@ -334,6 +334,80 @@ async def test_stream_pages_do_not_recheck_the_stream_breaker_probe() -> None:
 
 
 @pytest.mark.asyncio
+async def test_history_page_flood_is_recorded_once_by_the_stream() -> None:
+    """A page flood surfaces as HandledFloodWaitError and feeds the breaker once.
+
+    Pages skip breaker recording themselves; the enclosing stream is the
+    sole recorder — verified here for the history path (the dialogs path has
+    its own test in test_rate_limit_gate.py).
+    """
+    from telethon.errors import FloodWaitError
+    from telethon.tl.functions.messages import GetHistoryRequest
+    from telethon_floodgate import FloodCircuitBreaker, HandledFloodWaitError
+
+    flood = FloodWaitError(request=None, capture=0)
+    flood.seconds = 23
+
+    class PageIterator:
+        def __init__(self, client_obj) -> None:
+            self.client = client_obj
+            self.page = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.page >= 2:
+                raise StopAsyncIteration
+            request = GetHistoryRequest(
+                peer=None,
+                offset_id=0,
+                offset_date=None,
+                add_offset=0,
+                limit=1,
+                max_id=0,
+                min_id=0,
+                hash=0,
+            )
+            await self.client(request)
+            self.page += 1
+            return self.page
+
+    class Client:
+        def __init__(self) -> None:
+            self.page_calls = 0
+
+        def iter_messages(self, entity, **kwargs):
+            return PageIterator(self)
+
+        async def __call__(self, request):
+            self.page_calls += 1
+            if self.page_calls == 2:
+                raise flood
+
+    class Pool:
+        _rate_limit_gate = TelegramRateLimitGate(time_func=_FakeClock())
+        _flood_breaker = FloodCircuitBreaker(
+            threshold=3, cooldown_seconds=300.0, time_func=_FakeClock()
+        )
+        _outgoing_ceiling = OutgoingRateCeiling(
+            RateLimitSpec(max_calls=10, window_sec=30.0), time_func=_FakeClock()
+        )
+
+    client = Client()
+    session = TelegramTransportSession(client, phone="+7000", pool=Pool())
+    stream = session.stream_messages("peer")
+    assert await stream.__anext__() == 1
+    with pytest.raises(HandledFloodWaitError):
+        await stream.__anext__()
+
+    assert client.page_calls == 2
+    key = ("telegram_stream_messages", "+7000")
+    breaker = Pool._flood_breaker._breakers[key]
+    assert breaker.fail_counter == 1, "the page flood is recorded exactly once"
+
+
+@pytest.mark.asyncio
 async def test_unbound_session_is_noop_safe_for_the_ceiling() -> None:
     class Client:
         def send_message(self, entity, message, **kwargs):
