@@ -25,6 +25,9 @@ second cache here would just add a staleness window we don't control.
 """
 from __future__ import annotations
 
+from typing import Any
+
+from telethon_floodgate import run_with_flood_wait_retry
 from tg_messenger.core.client import StandaloneTelegramClient
 from tg_messenger.core.models import Message as _TgMessengerMessage
 
@@ -84,3 +87,50 @@ async def read_dialog_history(
     )
     messages = await standalone.history(peer, limit=limit, offset_id=offset_id)
     return [_to_dialog_message(msg) for msg in messages]
+
+
+async def read_dialog_history_since(
+    client: object,
+    *,
+    api_id: int,
+    api_hash: str,
+    peer: Any,
+    min_id: int = 0,
+    limit: int = 200,
+) -> list[DialogMessage]:
+    """Read messages OLDEST-FIRST, strictly above ``min_id`` — catch-up page.
+
+    Это тот же «намеренно некэшированный путь», что tg_messenger `history_since`
+    (создан ровно для синхронизации по водяному знаку; никакого TTL-кэша), но с
+    обратным порядком выдачи: страница начинается от водяного знака, а не от
+    новейших. Догон #1428 читает диапазон непрерывно вверх — курсор всегда
+    остаётся точной нижней границей прочитанного, budget-обрыв не создаёт зазор
+    (новейшие-страницы при живом диалоге навсегда отсекали бы старый край).
+    Паттерн инкрементального коллектора проекта: ``min_id`` + ``reverse=True``.
+    Same invariants: no connect/disconnect, no event handlers on a client we
+    don't own; Message-модель tg_messenger не покидает модуль.
+    """
+    standalone = StandaloneTelegramClient(
+        api_id,
+        api_hash,
+        external_session="",
+        client_factory=_client_factory(client),
+    )
+    # iter_messages и _to_message — внутренности адаптера: публичного
+    # reverse-варианта у history_since нет, а обходить наш водяной знак
+    # через кэширующий history() нельзя. Оба вызова локальны и громко падают
+    # при несовместимом апгрейде пакета (AttributeError), не молча.
+    raw = await run_with_flood_wait_retry(
+        lambda: _collect_forward(standalone, peer, min_id, limit),
+        operation="history_since",
+    )
+    return [_to_dialog_message(standalone._to_message(m, dialog_id=int(peer))) for m in raw]
+
+
+async def _collect_forward(standalone: Any, peer: Any, min_id: int, limit: int) -> list:
+    return [
+        m
+        async for m in standalone._client.iter_messages(
+            peer, limit=limit, min_id=min_id, reverse=True
+        )
+    ]
