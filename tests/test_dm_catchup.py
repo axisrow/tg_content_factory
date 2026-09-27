@@ -82,13 +82,14 @@ class _FakePool:
 
 def _stub_history_since(messages_by_chat: dict[int, list[_FakeMessage]]):
     """Стаб транспортного слоя: числовой peer (как в реальном адаптере,
-    который делает int(peer)) → страница истории (хронологическая)."""
+    который делает int(peer)), страница СТАРЕЙШИХ выше min_id — forward-
+    семантика адаптера (reverse-паттерн инкрементального коллектора)."""
 
     async def _fake(client, *, api_id, api_hash, peer, min_id=0, limit=200):
         chat_id = int(peer)
         page = [m for m in messages_by_chat.get(chat_id, []) if m.id > min_id]
         client.history_calls.append({"chat_id": chat_id, "min_id": min_id, "limit": limit})
-        return page[-limit:]
+        return page[:limit]
 
     return _fake
 
@@ -312,63 +313,33 @@ async def test_peer_passed_as_int_not_entity(tmp_path, monkeypatch):
         await db.close()
 
 
-async def test_backfill_closes_gap_below_full_page(tmp_path, monkeypatch):
-    """Полная страница новейших не отсекает старый край зазора: пропущенная 11
-    дочитывается вниз до курсора, курсор встаёт на верх покрытия (цикл-2 ревью).
+async def test_backlog_progresses_without_gaps(tmp_path, monkeypatch):
+    """Крупный пропущенный объём догоняется страницами старейших-вверх: каждый
+    проход продвигает курсор ровно на прочитанное, без зазоров и потерь
+    (регресс цикла-2/3: новейшие-страницы + односторонний курсор исключали
+    непрочитанный хвост навсегда).
     """
     db = await _make_db(tmp_path)
     try:
-        full_page = [_FakeMessage(i) for i in range(12, 212)]  # новейшие 200
-        stub = _stub_history_since({42: full_page})
+        client = _FakeRawClient()
+        backlog = [_FakeMessage(i) for i in range(1, 1301)]
+        stub = _stub_history_since({42: backlog})
         monkeypatch.setattr(dm_catchup, "read_dialog_history_since", stub)
-        backfill_calls: list[int] = []
-
-        async def _page(cl, *, api_id, api_hash, peer, offset_id, limit=200):
-            backfill_calls.append(offset_id)
-            assert offset_id == 12
-            return [_FakeMessage(11)]
-
-        monkeypatch.setattr(dm_catchup, "read_dialog_history_page", _page)
         await db.set_setting(
             DM_CATCHUP_SETTING_KEY, DmCatchupSettings(mode="full").model_dump_json()
         )
-        await db.repos.incoming_dms.record(_journal_dm(10), processed=True)
-        await db.repos.incoming_dms.set_catchup_cursor("+111", 42, 10)
-        service = DmCatchupService(_FakePool(_FakeRawClient()), db)
+        service = DmCatchupService(_FakePool(client), db)
 
-        stats = await service.run_for_phone("+111")
+        for iteration in range(7):
+            stats = await service.run_for_phone("+111")
+            assert stats["stored"] == min(200, 1300 - 200 * iteration)
 
-        assert stats["stored"] == 201  # 11..211, включая пропущенную 11
-        assert backfill_calls == [12]  # зазор дочитан до курсора
-        assert await db.repos.incoming_dms.get_catchup_cursor("+111", 42) == 211
-        assert (await _journal_processed(db))[11] is False  # 11 не потеряна
-    finally:
-        await db.close()
-
-
-async def test_backfill_budget_defers_gap_without_loss(tmp_path, monkeypatch):
-    """Бюджет дочитки кончился — курсор встаёт на нижний край прочитанного,
-    остаток зазора остаётся на следующий триггер (ничего не исключено)."""
-    db = await _make_db(tmp_path)
-    try:
-        full_page = [_FakeMessage(i) for i in range(1101, 1301)]
-        stub = _stub_history_since({42: full_page})
-        monkeypatch.setattr(dm_catchup, "read_dialog_history_since", stub)
-
-        async def _page(cl, *, api_id, api_hash, peer, offset_id, limit=200):
-            top = offset_id - 1
-            return [_FakeMessage(i) for i in range(max(1, top - 199), top + 1)]
-
-        monkeypatch.setattr(dm_catchup, "read_dialog_history_page", _page)
-        await db.set_setting(
-            DM_CATCHUP_SETTING_KEY, DmCatchupSettings(mode="full").model_dump_json()
-        )
-        service = DmCatchupService(_FakePool(_FakeRawClient()), db)
-
-        stats = await service.run_for_phone("+111")
-
-        assert stats["stored"] == 1200  # 101..1300: страница + 5 страниц дочитки
-        assert await db.repos.incoming_dms.get_catchup_cursor("+111", 42) == 100
+        assert await db.repos.incoming_dms.get_catchup_cursor("+111", 42) == 1300
+        # непрерывность: весь диапазон в журнале, пропусков нет
+        cur = await db.execute("SELECT COUNT(*) AS n FROM incoming_dms WHERE chat_id = 42")
+        assert (await cur.fetchone())["n"] == 1300
+        calls = [call["min_id"] for call in client.history_calls if call["chat_id"] == 42]
+        assert calls == [0, 200, 400, 600, 800, 1000, 1200]
     finally:
         await db.close()
 
