@@ -112,3 +112,31 @@ async def read_dialog_history_since(
     )
     messages = await standalone.history_since(peer, min_id=min_id, limit=limit)
     return [_to_dialog_message(msg) for msg in messages]
+
+
+async def read_dialog_history_page(
+    client: object,
+    *,
+    api_id: int,
+    api_hash: str,
+    peer: Any,
+    offset_id: int,
+    limit: int = 200,
+) -> list[DialogMessage]:
+    """One history page older than ``offset_id``, chronological — gap backfill
+    для догона #1428.
+
+    Использует `history()`, а не `history_since()`: у догрузки зазора нет
+    водяного знака, нужна страница от offset_id вниз. Требование «некэшированный
+    путь» не страдает — клиент строится на каждый вызов, TTL-кэш истории не
+    получает попаданий и каждая страница это реальный сетевой запрос (см.
+    докстринг модуля).
+    """
+    standalone = StandaloneTelegramClient(
+        api_id,
+        api_hash,
+        external_session="",
+        client_factory=_client_factory(client),
+    )
+    messages = await standalone.history(peer, limit=limit, offset_id=offset_id)
+    return [_to_dialog_message(msg) for msg in messages]
