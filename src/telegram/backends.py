@@ -74,18 +74,24 @@ class _DialogRequestGateClient:
         if not isinstance(request, self._request_type):
             return self._client(request)
         awaitable = self._client(request)
+        # Pages outsource ALL breaker accounting to the enclosing stream
+        # (check and record): re-checking the same (operation, phone) key
+        # mid-stream would reject the stream's own half-open probe and strand
+        # it — the stream can then never report back.
         if self._page_category is not None:
             return self._session._run(
                 self._operation,
                 awaitable,
                 gate_category=self._page_category,
                 record_flood_breaker=False,
+                check_flood_breaker=False,
             )
         return self._session._run(
             self._operation,
             awaitable,
             gate_reserved=True,
             record_flood_breaker=False,
+            check_flood_breaker=False,
         )
 
     def iter_dialogs(self, *args: Any, **kwargs: Any) -> Any:
@@ -237,6 +243,7 @@ class TelegramTransportSession:
         gate_category: str | None = None,
         gate_peer: str | None = None,
         record_flood_breaker: bool = True,
+        check_flood_breaker: bool = True,
     ) -> Any:
         try:
             # Ceiling FIRST (dual review on #1444): every limit must hold at
@@ -249,7 +256,8 @@ class TelegramTransportSession:
             # the wait surrenders its ceiling slot to window expiry — an
             # accepted cost, refusals are rare since the #1418 calibration.
             await self._await_outgoing_ceiling()
-            self._check_flood_breaker(operation)
+            if check_flood_breaker:
+                self._check_flood_breaker(operation)
             if not gate_reserved:
                 self._reserve_gate_slot(operation, category=gate_category, peer=gate_peer)
         except BaseException:
