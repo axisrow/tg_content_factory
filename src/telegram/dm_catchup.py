@@ -40,14 +40,18 @@ from pydantic import ValidationError
 from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitGate
 
 from src.models import DM_CATCHUP_SETTING_KEY, DmCatchupSettings, IncomingDm
-from src.telegram.dm_history import read_dialog_history_since
+from src.telegram.dm_history import read_dialog_history_page, read_dialog_history_since
 
 logger = logging.getLogger(__name__)
 
-# Страница истории на диалог за один проход; зазор длиннее страницы (200+
-# пропущенных сообщений в одном диалоге) одним проходом не покрывается —
-# догоняется верхушка, более старый хвост разбирается вручную.
+# Страница истории на диалог за один запрос; зазор длиннее страницы дочитывается
+# обратно вниз до курсора (см. _backfill_gap), а не теряется.
 CATCHUP_PAGE_LIMIT = 200
+
+# Сколько дополнительных страниц вниз (от новейших к курсору) дочитывается за
+# один проход, если первая страница полная. Остаток зазора — следующий триггер:
+# курсор сдвигается только на нижний край реально прочитанного.
+CATCHUP_BACKFILL_PAGES = 5
 
 _GATE_HISTORY_CATEGORY = "history"
 _GATE_WAIT_ATTEMPTS = 2
@@ -195,6 +199,8 @@ class DmCatchupService:
                 min_id=cursor,
                 limit=CATCHUP_PAGE_LIMIT,
             )
+            if len(messages) == CATCHUP_PAGE_LIMIT:
+                messages = await self._backfill_gap(client, auth, chat_id, cursor, messages)
         except HandledFloodWaitError:
             # Нетранзиентный флуд: не hammer'им, диалог остаётся на следующий
             # триггер; проход продолжается с остальных диалогов.
@@ -206,7 +212,6 @@ class DmCatchupService:
             logger.warning("dm_catchup: %s chat %s не резолвится: %s", phone, chat_id, exc)
             stats["errors"] += 1
             return "error"
-        page_top: int | None = None
         for msg in messages:
             if msg.out:
                 continue  # журнал — только входящие, как у живого слушателя
@@ -227,12 +232,58 @@ class DmCatchupService:
                 stats["stored"] += 1
             else:
                 stats["already"] += 1
-            page_top = msg.id if page_top is None else max(page_top, msg.id)
-        if page_top is not None:
-            # Только после persist всей страницы: падение посреди цикла не
-            # двигает курсор, повторный проход дочитает (дубли молчат).
-            await self._db.repos.incoming_dms.set_catchup_cursor(phone, chat_id, page_top)
+        if messages:
+            # Курсор = гарантированно прочитанный диапазон (после persist,
+            # падение посреди цикла его не двигает): неполная страница или
+            # дочитка до курсора покрывают диапазон целиком; бэКфилл,
+            # оборванный бюджетом, — только свой диапазон, остаток зазора
+            # догоняет следующий триггер.
+            covered_to_top = len(messages) < CATCHUP_PAGE_LIMIT or (
+                messages[0].id <= cursor + 1
+            )
+            new_cursor = (
+                max(msg.id for msg in messages)
+                if covered_to_top
+                else messages[0].id - 1
+            )
+            await self._db.repos.incoming_dms.set_catchup_cursor(phone, chat_id, new_cursor)
         return "ok"
+
+    async def _backfill_gap(
+        self,
+        client: Any,
+        auth: Any,
+        chat_id: int,
+        cursor: int,
+        messages: list,
+    ) -> list:
+        """Дочитать зазор между курсором и полной страницей новейших.
+
+        `history_since` отдаёт НОВЕЙШИЕ limit выше курсора: при живом потоке
+        старый край зазора в страницу не попадает, и сдвиг курсора на верх
+        страницы исключил бы его навсегда. Читаем вниз от нижнего края
+        страницы (per-call клиент делает history фактически некэшированным —
+        см. `read_dialog_history_page`) до курсора или бюджета; возвращает
+        объединённый хронологический список.
+        """
+        for _ in range(CATCHUP_BACKFILL_PAGES):
+            bottom = messages[0].id
+            if bottom <= cursor + 1:
+                break  # дошли до курсора — диапазон покрыт полностью
+            older = await read_dialog_history_page(
+                client,
+                api_id=auth.api_id,
+                api_hash=auth.api_hash,
+                peer=chat_id,
+                offset_id=bottom,
+                limit=CATCHUP_PAGE_LIMIT,
+            )
+            if not older:
+                break
+            messages = older + messages
+            if len(older) < CATCHUP_PAGE_LIMIT:
+                break  # достигнуто начало истории — покрытие полное
+        return messages
 
     async def _acquire_history_slot(self, phone: str) -> bool:
         """Слот гейта `history`: ждать, а не отказывать (#1417); False — насыщен."""
