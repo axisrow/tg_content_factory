@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from telethon import TelegramClient
-from telethon.tl.functions.messages import GetDialogsRequest
+from telethon.tl.functions.messages import GetDialogsRequest, GetHistoryRequest
 from telethon_cli import runtime as telethon_cli_runtime
 from telethon_cli.errors import CLIError
 from telethon_floodgate import (
@@ -26,6 +26,7 @@ from telethon_floodgate.peer import peer_key
 from src.models import Account
 from src.telegram.auth import TelegramAuth
 from src.telegram.mtproto_watchdog import bind_telethon_base_logger
+from src.telegram.outgoing_ceiling import OutgoingRateCeiling
 from src.telegram.reactions import normalize_outgoing_reaction_emoji
 from src.telegram.session_materializer import SessionMaterializer
 
@@ -35,14 +36,17 @@ STREAM_ITERATOR_CLOSE_TIMEOUT_SEC = 10.0
 
 
 class _DialogRequestGateClient:
-    """Proxy a Telethon client so paginated dialog requests use the gate.
+    """Proxy a Telethon client so paginated requests pass transport gating.
 
-    ``TelegramClient.iter_dialogs`` returns a ``RequestIter`` whose ``client``
-    attribute is used for every page request.  Gating only the surrounding
-    iterator therefore reserves one slot but leaves later ``GetDialogsRequest``
-    calls unprotected.  The enclosing ``_run``/``_stream`` reserves the
-    logical-operation slot, while every page request uses a separate bounded
-    page budget through ``_run``.
+    ``TelegramClient.iter_dialogs``/``iter_messages`` return a ``RequestIter``
+    whose ``client`` attribute is used for every page request.  Gating only
+    the surrounding iterator therefore reserves one slot but leaves later
+    page RPCs unprotected.  The enclosing ``_run``/``_stream`` reserves the
+    logical-operation slot, while every page request is dispatched through
+    ``_run`` too: dialogs pages draw their own bounded page budget
+    (``page_category``), history pages charge only the process-wide ceiling
+    (``page_category=None`` -> ``gate_reserved=True``), keeping the #1418
+    per-account history calibration on logical streams.
     """
 
     def __init__(
@@ -50,10 +54,15 @@ class _DialogRequestGateClient:
         session: TelegramTransportSession,
         client: Any,
         operation: str,
+        *,
+        request_type: Any,
+        page_category: str | None,
     ) -> None:
         self._session = session
         self._client = client
         self._operation = operation
+        self._request_type = request_type
+        self._page_category = page_category
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
@@ -61,31 +70,57 @@ class _DialogRequestGateClient:
     def __call__(self, request: Any) -> Any:
         # Telethon keeps this client on emitted Dialog/Draft/Message objects.
         # Those objects may later use the client for unrelated requests; only
-        # the iterator's GetDialogsRequest pages belong to this page budget.
-        if not isinstance(request, GetDialogsRequest):
+        # the iterator's own page requests belong to the page budget.
+        if not isinstance(request, self._request_type):
             return self._client(request)
         awaitable = self._client(request)
+        # Pages outsource ALL breaker accounting to the enclosing stream
+        # (check and record): re-checking the same (operation, phone) key
+        # mid-stream would reject the stream's own half-open probe and strand
+        # it — the stream can then never report back.
+        #
+        # Accepted trade (final review round on #1444): without a per-page
+        # check, an admitted stream keeps pulling pages after another caller
+        # trips their shared key OPEN.  For dialogs that scenario needs two
+        # concurrent same-phone sweeps, which pool_dialogs prevents by
+        # joining the in-flight refresh (pool_dialogs.py:1370); for history
+        # the base never checked pages at all.  Restore per-page checks when
+        # telethon-floodgate grows an OPEN-only, non-claiming peek.
+        if self._page_category is not None:
+            return self._session._run(
+                self._operation,
+                awaitable,
+                gate_category=self._page_category,
+                record_flood_breaker=False,
+                check_flood_breaker=False,
+            )
         return self._session._run(
             self._operation,
             awaitable,
-            gate_category="dialogs_page",
+            gate_reserved=True,
             record_flood_breaker=False,
+            check_flood_breaker=False,
         )
 
     def iter_dialogs(self, *args: Any, **kwargs: Any) -> Any:
         iterator = self._client.iter_dialogs(*args, **kwargs)
-        _bind_dialog_request_gate(
+        _bind_page_request_gate(
             iterator,
             self._session,
             self._operation,
+            request_type=GetDialogsRequest,
+            page_category="dialogs_page",
         )
         return iterator
 
 
-def _bind_dialog_request_gate(
+def _bind_page_request_gate(
     iterator: Any,
     session: TelegramTransportSession,
     operation: str,
+    *,
+    request_type: Any,
+    page_category: str | None,
 ) -> Any:
     """Bind a page-request proxy to a Telethon ``RequestIter`` when possible."""
     pool = getattr(session, "_pool", None)
@@ -104,6 +139,8 @@ def _bind_dialog_request_gate(
             session,
             client,
             operation,
+            request_type=request_type,
+            page_category=page_category,
         )
     except (AttributeError, TypeError):
         # Third-party/fake iterators may expose a read-only client attribute.
@@ -214,12 +251,24 @@ class TelegramTransportSession:
         gate_category: str | None = None,
         gate_peer: str | None = None,
         record_flood_breaker: bool = True,
+        check_flood_breaker: bool = True,
     ) -> Any:
         try:
-            self._check_flood_breaker(operation)
+            # Ceiling FIRST (dual review on #1444): every limit must hold at
+            # DISPATCH time.  Waiting after the gate had spent per-account and
+            # per-peer slots lets independently permitted calls bundle into a
+            # burst the peer bucket already consumed (two same-peer sends
+            # firing in the same instant after a shared ceiling wait).
+            # Waiting first, then re-checking gate and breaker synchronously
+            # right before the RPC, keeps both accurate; a gate refusal after
+            # the wait surrenders its ceiling slot to window expiry — an
+            # accepted cost, refusals are rare since the #1418 calibration.
+            await self._await_outgoing_ceiling()
+            if check_flood_breaker:
+                self._check_flood_breaker(operation)
             if not gate_reserved:
                 self._reserve_gate_slot(operation, category=gate_category, peer=gate_peer)
-        except Exception:
+        except BaseException:
             close = getattr(awaitable, "close", None)
             if close is not None:
                 close()
@@ -243,9 +292,11 @@ class TelegramTransportSession:
 
     async def _stream(self, operation: str, iterator: AsyncIterator[Any]) -> AsyncIterator[Any]:
         try:
+            # Same ceiling-first order as _run (see there for the rationale).
+            await self._await_outgoing_ceiling()
             self._check_flood_breaker(operation)
             self._reserve_gate_slot(operation)
-        except Exception:
+        except BaseException:
             close = getattr(iterator, "aclose", None)
             if close is not None:
                 result = close()
@@ -319,6 +370,20 @@ class TelegramTransportSession:
                 )
                 raise TelegramPeerRateLimitedError(self._phone, peer, retry_after)
             raise TelegramRateLimitedError(self._phone, category, retry_after)
+
+    async def _await_outgoing_ceiling(self) -> None:
+        """Pace this call through the pool's process-wide outgoing ceiling.
+
+        WAITS instead of refusing (#1417) — unlike the per-account gate, no
+        caller needs a new exception handler.  Unbound adapter sessions remain
+        no-op safe, mirroring ``_reserve_gate_slot``.
+        """
+        if self._pool is None or self._phone is None:
+            return
+        ceiling = getattr(self._pool, "_outgoing_ceiling", None)
+        if not isinstance(ceiling, OutgoingRateCeiling):
+            return
+        await ceiling.acquire()
 
     def _flood_breaker(self) -> FloodCircuitBreaker | None:
         """The pool's breaker, when this session is bound to one."""
@@ -415,6 +480,8 @@ class TelegramTransportSession:
                 self,
                 self._client,
                 operation,
+                request_type=GetDialogsRequest,
+                page_category="dialogs_page",
             )
             awaitable = TelegramClient.get_dialogs(proxy)
         else:
@@ -434,10 +501,12 @@ class TelegramTransportSession:
         """
         operation = "telegram_stream_dialogs"
         iterator = self._client.iter_dialogs(**kwargs)
-        _bind_dialog_request_gate(
+        _bind_page_request_gate(
             iterator,
             self,
             operation,
+            request_type=GetDialogsRequest,
+            page_category="dialogs_page",
         )
         return self._stream(operation, iterator)
 
@@ -445,10 +514,20 @@ class TelegramTransportSession:
         return self.stream_dialogs()
 
     def stream_messages(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
-        return self._stream(
-            "telegram_stream_messages",
-            self._client.iter_messages(entity, **kwargs),
+        operation = "telegram_stream_messages"
+        iterator = self._client.iter_messages(entity, **kwargs)
+        # History pages are ceiling-only (gate_reserved=True inside the
+        # proxy): the #1418 history calibration (24/30s) prices LOGICAL
+        # streams, so per-account gating stays on the enclosing operation
+        # while every raw GetHistory RPC draws a process-wide ceiling slot.
+        _bind_page_request_gate(
+            iterator,
+            self,
+            operation,
+            request_type=GetHistoryRequest,
+            page_category=None,
         )
+        return self._stream(operation, iterator)
 
     def iter_messages(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
         return self.stream_messages(entity, **kwargs)
