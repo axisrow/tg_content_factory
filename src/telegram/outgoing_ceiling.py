@@ -4,11 +4,23 @@ Per-account gate buckets are independent, so ten accounts in one process can
 emit ten synchronized bursts without any single bucket refusing — production
 log 2026-08-26 21:00:15 shows four accounts flood-waited in the same second,
 each individually within its limits.  This coordinator shares ONE sliding
-window across every outgoing transport call in the process.
+window across every outgoing transport call of the process's live
+``ClientPool`` (the worker holds exactly one; the window is per-pool by
+construction).
 
 Semantics are "wait, don't refuse": callers await :meth:`acquire` instead of
 growing another exception-handling site, unlike the per-account gate whose
 ``TelegramRateLimitedError`` every caller must catch.
+
+Accounting: one slot per logical transport operation AND one per raw page
+RPC of a bound dialog/history stream — a stream therefore spends its logical
+slot plus its page slots (conservative over-count, never under).
+
+Fairness is best-effort: waiters retry at window expiry but fresh arrivals
+can barge, and a caller can lose repeated windows under sustained saturation
+(aggregate pacing — the safety property — holds throughout; no individual
+call is ever late enough to matter to Telegram).  A FIFO ticket queue is the
+upgrade path if calibration (#1331 step 0.2) shows starving workloads.
 
 Built on ``ResolveRateLimiter`` from telethon-floodgate — the same
 sliding-window math the per-account gate uses — rather than aiolimiter,
