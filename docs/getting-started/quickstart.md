@@ -1,67 +1,54 @@
 # Быстрый старт
 
-## 1. Добавить Telegram аккаунт
+Основной сценарий: агент кодирования (Claude Code, OpenCode, Codex) действует в Telegram через `tg-agent` CLI.
 
-Откройте Web UI → Settings → Auth и введите номер телефона. После получения кода подтвердите вход.
+## 1. Установить CLI и авторизовать аккаунт
 
-Или через CLI (интерактивно в браузере):
-
+```bash
+pip install tg-agent
+tg-agent account add      # интерактивно: телефон + код входа — вводит человек
+tg-agent account list     # проверка
 ```
-http://localhost:8080/auth/login
+
+`.env` с `TG_API_ID` / `TG_API_HASH` подхватывается автоматически. Подробности — [Установка](installation.md).
+
+## 2. Добавить скилл агенту
+
+Claude Code: `/plugin marketplace add axisrow/tg_content_factory` → `/plugin install tg-agent@tg-agent-marketplace`, либо `cp -r skills/tg-agent ~/.claude/skills/tg-agent`. OpenCode / Codex и другие — отдайте агенту `skills/tg-agent/SKILL.md` как инструкцию. Детали — [Установка](installation.md#для-агентов-кодирования).
+
+## 3. Дать агенту задачу
+
+- «покажи последние сообщения из @durov»
+- «собери новые посты из всех каналов и найди упоминания X»
+- «отправь этот текст в Избранное»
+
+## Команды напрямую
+
+```bash
+# Каналы
+tg-agent channel add @durov
+tg-agent channel import channels.txt
+tg-agent channel collect --channel-id -1001234567890
+
+# Поиск
+tg-agent search "ключевое слово" --limit 20
+tg-agent messages read @durov --limit 50 --format json
+
+# Планировщик
+tg-agent scheduler start
 ```
 
-## 2. Добавить каналы
+Полный каталог — [`skills/tg-agent/reference.md`](https://github.com/axisrow/tg_content_factory/blob/main/skills/tg-agent/reference.md) или `tg-agent --help`.
 
-=== "CLI"
-    ```bash
-    # Один канал
-    python -m src.main channel add @durov
+## Сбор по расписанию
 
-    # Импорт из файла
-    python -m src.main channel import channels.txt
-    ```
+Разовые действия агенту-демону не нужны. Непрерывный сбор и очереди — фоновый процесс:
 
-=== "Web"
-    Channels → Add Channel / Import
+```bash
+tg-agent worker           # шедулер, очереди, диспетчеры
+tg-agent scheduler status # проверка состояния
+```
 
-## 3. Собрать сообщения
+## Легаси-пути
 
-=== "CLI"
-    ```bash
-    # Все каналы
-    python -m src.main collect
-
-    # Один канал
-    python -m src.main channel collect --channel-id -1001234567890
-    ```
-
-=== "Web"
-    Channels → Collect All
-
-## 4. Поиск
-
-=== "CLI"
-    ```bash
-    python -m src.main search "ключевое слово" --limit 20
-    python -m src.main search "запрос" --mode semantic
-    ```
-
-=== "Web"
-    Главная страница (`/`) — поле поиска
-
-=== "Agent"
-    ```bash
-    python -m src.main agent chat "найди сообщения про AI за последнюю неделю"
-    ```
-
-## 5. Настроить планировщик
-
-=== "CLI"
-    ```bash
-    python -m src.main scheduler start
-    ```
-
-=== "Web"
-    Scheduler → Start
-
-Планировщик будет автоматически собирать новые сообщения и проверять поисковые запросы.
+Веб-панель, TUI, встроенный агент-чат и MCP-сервер — легаси: работают, но заморожены (bug fixes only). См. [Агенты и Telegram](../features/agent.md).

@@ -2,6 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Positioning (set 2026-09)
+
+tg-agent is a **dependency for coding agents** (Claude Code, OpenCode, Codex): an agent gets
+full-spectrum Telegram access through the `tg-agent` CLI plus the skill in `skills/tg-agent/`
+(plugin manifests in `.claude-plugin/`).
+
+- **Native path — CLI first.** New capabilities are designed, implemented and tested as CLI
+  commands (incl. real-TG manifest coverage) before any other surface. If a change affects the
+  agent-facing surface, update `skills/tg-agent/SKILL.md` / `skills/tg-agent/reference.md` in
+  the same PR.
+- **Legacy (frozen):** web dashboard, TUI, embedded agent chat (`agent chat`, SDK backends),
+  MCP server. They keep working; development is paused indefinitely. Bug fixes allowed,
+  features are not.
+- **Not legacy:** the worker runtime (collection queue, scheduler, dispatchers, snapshots) —
+  it is the engine behind scheduled collection and queued sends.
+- Keep `.claude-plugin/plugin.json` `version` in sync with `pyproject.toml` on release.
+
 ## Commands
 
 ```bash
@@ -12,7 +29,7 @@ pip install -e ".[dev]"
 # mutmut; the distribution name is tg-agent, not the repository name).
 python -m pip show tg-agent
 
-# Run the web server — spawns the embedded Telegram worker by default so a
+# Legacy web panel — spawns the embedded Telegram worker by default so a
 # single command gives you UI + actual collection (#457 round 4). For split
 # deployments (Docker/k8s) pass --no-worker and run `worker` separately.
 python -m src.main serve [--web-pass PASS] [--no-worker]
@@ -72,20 +89,20 @@ python -m src.main translate stats|detect|run|message
 python -m src.main settings get|set|info|server-time|agent|filter-criteria|reactions|semantic
 python -m src.main debug logs|memory|timing
 python -m src.main image generate|models|providers|generated
-python -m src.main mcp-server [--no-pool]   # expose agent tool registry as stdio MCP server (for external agents like Codex)
+python -m src.main mcp-server [--no-pool]   # LEGACY: stdio MCP bridge over the agent tool registry (frozen)
 ```
 
 CLI command for Telegram dialogs management is `dialogs`.
 
 ## Architecture
 
-Three layers: **CLI/Web** → **Telegram + Search + Scheduler + Agent/Pipeline** → **SQLite**
+Three layers: **CLI (native surface; web/TUI/agent-chat/MCP are legacy)** → **Telegram + Search + Scheduler + Agent/Pipeline** → **SQLite**
 
 - **Runtime split (web ↔ worker)**: since #444 the runtime consists of two `AppContainer` flavours keyed on `runtime_mode` ("web" vs "worker") in `src/web/bootstrap.py`. Since #457 round 4 they normally run in the **same process**: `serve` spawns an `EmbeddedWorker` (`src/web/embedded_worker.py`) as an asyncio task next to the web container. Pass `--no-worker` to run only the web side and start `python -m src.main worker` separately (Docker/k8s split deployments).
   - Web container (`runtime_mode="web"`) uses snapshot shims (`SnapshotClientPool`, `SnapshotCollector`, `SnapshotSchedulerManager` in `src/web/runtime_shims.py`). It does NOT open Telegram connections; UI actions enqueue work into `collection_tasks` / `telegram_commands` / task tables and read `runtime_snapshots` to render status.
   - Worker container (`runtime_mode="worker"`, either embedded or standalone via `src/runtime/worker.py`) owns the live `ClientPool`, `CollectionQueue`, `UnifiedDispatcher`, `TelegramCommandDispatcher`, and `SchedulerManager`, and publishes `runtime_snapshots` (heartbeat, accounts_status, scheduler_status, …) that the web side reads.
   - In web-mode `collection_queue = None` and `CollectionService` falls back to writing a PENDING row — the worker picks those up at startup via `CollectionQueue.requeue_startup_tasks()`.
-- CLI (`src/main.py` → `src/cli/commands/`) and Web (`src/web/`) are parallel entry points to the same logic
+- CLI (`src/main.py` → `src/cli/commands/`) is the primary entry point and the product contract for coding agents (see Positioning); Web (`src/web/`) is a legacy parallel entry to the same logic — keep it working, do not extend
 - Telegram layer: `ClientPool` manages multi-account connections, `Collector` fetches messages, `Notifier` sends alerts
 - Search layer: `SearchEngine` (local DB), `AISearchEngine` (LLM-powered)
 - Scheduler: APScheduler wrapper (`src/scheduler/manager.py`) triggers periodic collection
@@ -95,6 +112,7 @@ Three layers: **CLI/Web** → **Telegram + Search + Scheduler + Agent/Pipeline**
 - Parsers (`src/parsers.py`): identifier extraction for channel import — t.me links, @usernames, negative IDs; file parsing (txt/csv/xlsx)
 - Notification bot: personal bot created via BotFather through a connected account (`src/telegram/notifier.py`)
 - **Agent system**: four backends selected in `AgentManager.get_runtime_status()` (`src/agent/manager.py`) — auto-selection prefers `deepagents` when usable DB provider configs exist, then `claude-agent-sdk` (needs `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`), then `deepagents` again; the Codex SDK backend (`src/agent/codex_backend.py`) and the Google ADK backend (`src/agent/adk_backend.py`, Gemini models, needs `GOOGLE_API_KEY` / `GEMINI_API_KEY`) are intentionally NOT in the auto-fallback chain (each spawns a blocking out-of-process `mcp-server` subprocess) and are opt-in only via the dev-mode `agent_backend_override` setting. Both Codex and ADK reach the project tools over the same stdio MCP server (`python -m src.main mcp-server`) the in-process path serves
+- **Agent system is legacy** (2026-09, see Positioning): in-process agent chat (`agent chat`, TUI, web `/agent`), SDK backends and MCP — frozen: keep functional, no new features
 - **Provider system**: `ProviderService` auto-registers LLM providers from env vars (`OPENAI_API_KEY`, `COHERE_API_KEY`, `OLLAMA_BASE`, etc.); the text/LLM adapters in `src/services/provider_adapters.py` are lightweight HTTP wrappers (no heavy SDK deps). The image adapters in the same file use official SDKs where they are cheap and clearer (see Image generation below) — the principle is "no *heavy* SDK", not "no SDK at all"
 - **Content pipelines**: `PipelineService` + `ContentGenerationService` orchestrate generate → image → draft → notify → publish flow; tracked via `generation_runs` DB table
 - **Image generation**: `ImageGenerationService` routes to provider-specific adapters (Together/HuggingFace/OpenAI/Replicate/Codex) via `provider:model_id` convention; auto-registers from env vars; adapters defined in `src/services/provider_adapters.py`. Since #958 the OpenAI/Together/Replicate adapters drive official SDKs (`openai` for both OpenAI and Together's OpenAI-compatible endpoint; `replicate` `async_run` replacing the manual poll loop); HuggingFace stays on raw aiohttp on purpose (its SDK returns a `PIL.Image`, pulling Pillow, vs saving the raw bytes); Codex uses the `openai_codex` SDK. `openai` is a direct dep (already transitive via langchain-openai); `replicate` is lightweight (httpx+pydantic)
@@ -165,11 +183,11 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 ## Conventions
 
 - PRs touching pool/lease/session/security layers require dual review (Claude + Codex); reconcile disagreement against the code and prefer the deeper analysis.
-- CLI/Web parity: every web operation must have a CLI equivalent and vice versa
+- **CLI-first**: the CLI is the product contract for coding agents; every new capability lands as a CLI command first (with tests + real-TG manifest coverage) and updates `skills/tg-agent/SKILL.md` / `reference.md` when it changes the agent-facing surface. Legacy surfaces (see Positioning) are frozen — parity with them is no longer a requirement
 - Async everywhere (asyncio)
 - Pydantic v2 models (`model_validate`, not `parse_obj`)
 - Config via `config.yaml` with `${ENV_VAR}` substitution
-- Web auth: HTTP Basic Auth (password only via `WEB_PASS`, username hardcoded as "admin")
+- Web auth (legacy web panel): HTTP Basic Auth (password only via `WEB_PASS`, username hardcoded as "admin")
 - ruff for linting: line-length=120, target py311, rules E/F/I/N/W
 - Tests: pytest-asyncio with `asyncio_mode="auto"`
 - Session strings stored as `enc:v2:*` when `SESSION_ENCRYPTION_KEY` is set; startup fails fast if encrypted rows exist without key

@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tg-agent"
 version = "0.2.3"
-description = "Telegram Post Search & Monitoring"
+description = "Telegram automation dependency for coding agents — tg-agent CLI + skill for Claude Code, OpenCode, Codex"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
 authors = [
     {name = "Axisrow"}
 ]
-keywords = ["telegram", "search", "monitoring", "telethon", "collector"]
+keywords = ["telegram", "agent", "automation", "assistant", "telethon", "content"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

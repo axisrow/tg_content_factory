@@ -1,0 +1,11 @@
+{
+  "name": "tg-agent-marketplace",
+  "description": "tg-agent: Telegram automation skills for coding agents",
+  "owner": { "name": "axisrow" },
+  "plugins": [
+    {
+      "name": "tg-agent",
+      "source": "./"
+    }
+  ]
+}
