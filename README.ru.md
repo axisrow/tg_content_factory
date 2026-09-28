@@ -46,9 +46,11 @@ tg-agent account add
 **Claude Code** — оба пути равнозначны:
 
 ```
-/plugin marketplace add axisrow/tg_content_factory
+/plugin marketplace add https://github.com/axisrow/tg_content_factory
 /plugin install tg-agent@tg-agent-marketplace
 ```
+
+> Короткая форма (`axisrow/tg_content_factory`) клонирует по SSH — без GitHub SSH-ключей падает; используйте полный HTTPS-URL как выше. Если маркетплейс не виден сразу после `marketplace add`, выполните `/reload-plugins` перед `plugin install`.
 
 или скопируйте каталог скилла:
 

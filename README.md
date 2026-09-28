@@ -46,9 +46,13 @@ You will receive a Telegram login code — enter it yourself. Verify with `tg-ag
 **Claude Code** — both ways are equivalent:
 
 ```
-/plugin marketplace add axisrow/tg_content_factory
+/plugin marketplace add https://github.com/axisrow/tg_content_factory
 /plugin install tg-agent@tg-agent-marketplace
 ```
+
+> The short form (`axisrow/tg_content_factory`) clones over SSH — without GitHub SSH keys it
+> fails; use the full HTTPS URL as above. If the marketplace is not visible right after
+> `marketplace add`, run `/reload-plugins` before `plugin install`.
 
 or copy the skill folder:
 

@@ -14,7 +14,7 @@ tg-agent account list     # проверка
 
 ## 2. Добавить скилл агенту
 
-Claude Code: `/plugin marketplace add axisrow/tg_content_factory` → `/plugin install tg-agent@tg-agent-marketplace`, либо `cp -r skills/tg-agent ~/.claude/skills/tg-agent`. OpenCode / Codex и другие — отдайте агенту `skills/tg-agent/SKILL.md` как инструкцию. Детали — [Установка](installation.md#для-агентов-кодирования).
+Claude Code: `/plugin marketplace add https://github.com/axisrow/tg_content_factory` → `/plugin install tg-agent@tg-agent-marketplace`, либо `cp -r skills/tg-agent ~/.claude/skills/tg-agent`. OpenCode / Codex и другие — отдайте агенту `skills/tg-agent/SKILL.md` как инструкцию. Детали — [Установка](installation.md#для-агентов-кодирования).
 
 ## 3. Дать агенту задачу
 
