@@ -1,10 +1,12 @@
 # CLI Reference
 
+> `tg-agent` (ставится с пакетом) = `python -m src.main`; ниже команды показаны в `python -m`-форме. Каталог для агентов: `skills/tg-agent/reference.md`.
+
 ```
 python -m src.main [--config CONFIG] <command> [subcommand] [options]
 ```
 
-## serve
+## serve (легаси — веб-панель)
 
 ```bash
 python -m src.main serve [--web-pass PASS] [--no-worker]
