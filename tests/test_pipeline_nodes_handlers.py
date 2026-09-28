@@ -12,6 +12,7 @@ from src.services.pipeline_nodes.handlers import (
     ConditionHandler,
     DelayHandler,
     DeleteMessageHandler,
+    EditMessageHandler,
     FilterHandler,
     ForwardHandler,
     ImageGenerateHandler,
@@ -1386,3 +1387,99 @@ async def test_forward_skips_message_processed_in_prior_run():
         {"client_pool": MagicMock(), "telegram_actions": action_service, "db": db, "pipeline_id": 3},
     )
     action_service.forward_messages.assert_not_awaited()
+
+
+# ── EditMessageHandler ───────────────────────────────────────────────────────
+
+
+def _edit_services(text_edit_calls: AsyncMock, account_phone: str | None = "+70000000000") -> dict:
+    action_service = MagicMock()
+    action_service.edit_message = text_edit_calls
+    return {
+        "client_pool": MagicMock(),
+        "telegram_actions": action_service,
+        "account_phone": account_phone,
+        "pipeline_id": 7,
+    }
+
+
+@pytest.mark.anyio
+async def test_edit_no_client_pool():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg()])
+    with pytest.raises(RuntimeError, match="client_pool not available"):
+        await EditMessageHandler().execute({}, ctx, {})
+
+
+@pytest.mark.anyio
+async def test_edit_missing_text_records_error():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg()])
+    edit_calls = AsyncMock()
+    await EditMessageHandler().execute({}, ctx, _edit_services(edit_calls))
+    edit_calls.assert_not_awaited()
+    errors = ctx.get_errors()
+    assert errors and errors[0]["code"] == "missing_text"
+
+
+@pytest.mark.anyio
+async def test_edit_without_account_phone_records_error():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg()])
+    edit_calls = AsyncMock()
+    await EditMessageHandler().execute(
+        {"text": "sig"}, ctx, _edit_services(edit_calls, account_phone=None)
+    )
+    edit_calls.assert_not_awaited()
+    errors = ctx.get_errors()
+    assert errors and errors[0]["code"] == "no_account_phone"
+
+
+@pytest.mark.anyio
+async def test_edit_replace_success():
+    ctx = NodeContext()
+    m = _msg(text="old text", channel_id=-100123, message_id=55)
+    ctx.set_global("context_messages", [m])
+    edit_calls = AsyncMock()
+    await EditMessageHandler().execute({"text": "new text"}, ctx, _edit_services(edit_calls))
+    edit_calls.assert_awaited_once_with(
+        phone="+70000000000", chat_id=-100123, message_id=55, text="new text"
+    )
+
+
+@pytest.mark.anyio
+async def test_edit_append_joins_with_blank_line():
+    ctx = NodeContext()
+    m = _msg(text="post body", channel_id=-100123, message_id=56)
+    ctx.set_global("context_messages", [m])
+    edit_calls = AsyncMock()
+    await EditMessageHandler().execute(
+        {"text": "sig line", "mode": "append"}, ctx, _edit_services(edit_calls)
+    )
+    edit_calls.assert_awaited_once_with(
+        phone="+70000000000", chat_id=-100123, message_id=56, text="post body\n\nsig line"
+    )
+
+
+@pytest.mark.anyio
+async def test_edit_append_skips_already_appended():
+    ctx = NodeContext()
+    m = _msg(text="post body\n\nsig line", channel_id=-100123, message_id=57)
+    ctx.set_global("context_messages", [m])
+    edit_calls = AsyncMock()
+    await EditMessageHandler().execute(
+        {"text": "sig line", "mode": "append"}, ctx, _edit_services(edit_calls)
+    )
+    edit_calls.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_edit_append_skips_empty_text():
+    ctx = NodeContext()
+    m = _msg(text="", channel_id=-100123, message_id=58)
+    ctx.set_global("context_messages", [m])
+    edit_calls = AsyncMock()
+    await EditMessageHandler().execute(
+        {"text": "sig line", "mode": "append"}, ctx, _edit_services(edit_calls)
+    )
+    edit_calls.assert_not_awaited()

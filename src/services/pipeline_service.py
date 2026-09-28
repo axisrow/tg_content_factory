@@ -725,6 +725,7 @@ class PipelineService:
             "Keep all existing nodes unless explicitly asked to remove them. "
             "Valid node types: source, retrieve_context, llm_generate, llm_refine, "
             "image_generate, publish, notify, filter, delay, react, forward, delete_message, "
+            "edit_message, "
             "condition, search_query_trigger.\n\n"
             f"Current pipeline JSON:\n{current_graph_json}\n\n"
             f"Instruction: {instruction}\n\n"
