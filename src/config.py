@@ -12,6 +12,7 @@ import logging
 import os
 import re
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import yaml
 from pydantic import BaseModel, Field
@@ -155,11 +156,42 @@ class SecurityConfig(BaseModel):
 class TelegramRuntimeConfig(BaseModel):
     """Выбор Telegram-рантайма: режим бэкенда (`backend_mode`), транспорт CLI
     (`cli_transport`) и каталог кэша сессий (`session_cache_dir`). Все три можно
-    переопределить переменными `TG_*` при загрузке."""
+    переопределить переменными `TG_*` при загрузке; `proxy` (dict от
+    `parse_proxy_url`) задаётся только переменной `TG_PROXY`."""
 
     backend_mode: str = "auto"
     cli_transport: str = "hybrid"
     session_cache_dir: str = "data/telegram_sessions"
+    proxy: dict | None = None
+
+
+def parse_proxy_url(url: str) -> dict | None:
+    """Parse ``TG_PROXY`` into Telethon's ``proxy=`` dict; ``None`` for empty input.
+
+    Supported: ``socks5://[user:pass@]host:port`` and ``http://...``. Raises
+    ``ValueError`` on malformed input — fail fast at startup beats a silently
+    ignored proxy (pooled clients run with ``connection_retries=None``).
+    """
+    url = url.strip()
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in ("socks5", "http"):
+        raise ValueError(
+            f"TG_PROXY: unsupported scheme {parsed.scheme!r} (expected socks5:// or http://)"
+        )
+    if not parsed.hostname:
+        raise ValueError(f"TG_PROXY: missing host in {url!r}")
+    proxy: dict = {
+        "proxy_type": parsed.scheme,
+        "addr": parsed.hostname,
+        "port": parsed.port or (1080 if parsed.scheme == "socks5" else 8080),
+        "rdns": True,
+    }
+    if parsed.username or parsed.password:
+        proxy["username"] = unquote(parsed.username or "")
+        proxy["password"] = unquote(parsed.password or "")
+    return proxy
 
 
 class ProductionLimitsConfig(BaseModel):
@@ -267,6 +299,9 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
     env_session_cache_dir = os.environ.get("TG_SESSION_CACHE_DIR", "").strip()
     if env_session_cache_dir:
         config.telegram_runtime.session_cache_dir = env_session_cache_dir
+    env_proxy = os.environ.get("TG_PROXY", "").strip()
+    if env_proxy:
+        config.telegram_runtime.proxy = parse_proxy_url(env_proxy)
     if not config.agent.model:
         config.agent.model = os.environ.get("AGENT_MODEL", "").strip()
     if not config.agent.fallback_model:
