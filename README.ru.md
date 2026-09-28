@@ -2,71 +2,94 @@
 
 [![Release](https://img.shields.io/github/v/release/axisrow/tg_content_factory)](https://github.com/axisrow/tg_content_factory/releases)
 
-Персональный тулкит для мониторинга Telegram — сбор сообщений, поиск по каналам, уведомления по ключевым словам. Pet-проект для собственных нужд.
+Персональный инструмент автоматизации Telegram, созданный для управления **агентами кодирования** — Claude Code, OpenCode, Codex. Установите CLI, добавьте скилл — и ваш агент сможет действовать в Telegram за вас: читать и отправлять сообщения, управлять каналами и чатами, скачивать медиа, гонять контент-фабрику на LLM. Контент-фабрика (сбор → поиск → генерация → публикация) — один из модулей.
 
 [English version](README.md)
 
-## Что умеет
+## Как это устроено
 
-- **Все типы чатов** — каналы, супергруппы, гигагруппы, форумы, открытые и закрытые
-- **Мультиаккаунт** с автоматической ротацией при flood-wait
-- **3 режима поиска** — локальная БД (FTS5), напрямую через Telegram API, AI/LLM
-- Все результаты поиска кешируются в локальную SQLite базу
-- **Сбор по расписанию** — инкрементальный сбор сообщений по таймеру
-- **Мониторинг по ключевым словам** — текст и regex, уведомления через Telegram-бота
-- **Встроенный антиспам** — дедупликация, детекция низкоуникального контента, кросс-канальный спам, фильтры по подписчикам, фильтр нелатинского контента
-- **Очередь задач** — фоновая обработка с отслеживанием статуса
-- **Веб-панель** — FastAPI + Pico CSS, управление всем из браузера
-- **Безопасность** — шифрование сессий (Fernet + PBKDF2), пароль веб-панели, HTTP Basic fallback, HMAC-signed cookies
-- **Docker-ready**
+- **`tg-agent` CLI** — поверхность продукта: ~250 команд на весь спектр Telegram (`channel`, `dialogs`, `messages`, `search`, `pipeline`, `photo-loader`, `analytics`, `scheduler`, `account`, …). Каждая команда самодостаточна: открывает Telegram-подключение, делает работу, завершается. Демон не нужен.
+- **Скилл для агентов кодирования** — в репо лежит [скилл](skills/tg-agent/SKILL.md), который обучает агента каталогу команд, модели рантайма и правилам безопасности.
+- **`tg-agent worker`** — опциональный долгоживущий процесс для сбора по расписанию и очередей отправки.
 
-## Быстрый старт
+## Быстрый старт (агенты кодирования)
 
 ### Требования
 
 - Python 3.11+
 - API-ключи Telegram с [my.telegram.org/apps](https://my.telegram.org/apps)
 
-### Установка
+### 1. Установите CLI
 
 ```bash
 pip install tg-agent
 ```
 
-Или из исходников:
-
-```bash
-pip install .
-cp .env.example .env
-```
-
-Заполните `.env`:
+Создайте `.env` в рабочем каталоге (подхватывается каждой командой автоматически):
 
 ```
 TG_API_ID=ваш_api_id
 TG_API_HASH=ваш_api_hash
-WEB_PASS=ваш_пароль
-SESSION_ENCRYPTION_KEY=    # шифрование session string аккаунтов в БД
-LLM_API_KEY=               # опционально, для AI-поиска
-AGENT_MODEL=               # опционально, override модели Claude SDK
-AGENT_FALLBACK_MODEL=      # опционально, provider:model для deepagents fallback
-AGENT_FALLBACK_API_KEY=    # опционально, явный API key для fallback-провайдера
+SESSION_ENCRYPTION_KEY=    # опционально: шифрование session string в БД
 ```
 
-Запустите сервер — одна команда, всё работает:
+### 2. Авторизуйте аккаунт (интерактивно, один раз)
 
 ```bash
-python -m src.main serve
+tg-agent account add
 ```
 
-Откройте http://localhost:8080 в браузере и введите пароль из `WEB_PASS`.
+Код входа придёт в Telegram — вводите его сами. Проверка: `tg-agent account list`.
 
-### Split-деплой (Docker / k8s)
+### 3. Добавьте скилл своему агенту
 
-По умолчанию `serve` поднимает встроенный Telegram-воркер в том же процессе,
-поэтому одна команда `python -m src.main serve` даёт и веб-панель, и реальный
-сбор. Для Docker/k8s, где веб и воркер живут в разных контейнерах, передайте
-`--no-worker` и запустите отдельный воркер-сервис:
+**Claude Code** — оба пути равнозначны:
+
+```
+/plugin marketplace add axisrow/tg_content_factory
+/plugin install tg-agent@tg-agent-marketplace
+```
+
+или скопируйте каталог скилла:
+
+```bash
+cp -r skills/tg-agent ~/.claude/skills/tg-agent
+```
+
+**OpenCode / Codex / другие агенты** — отдайте агенту файл [`skills/tg-agent/SKILL.md`](skills/tg-agent/SKILL.md) как инструкцию (include в AGENTS.md, вложение в системный промпт и т.п.).
+
+### 4. Просто попросите агента
+
+- «Покажи вчерашние посты из @durov»
+- «Отправь этот черновик в Избранное»
+- «Собери новые сообщения из моих каналов и найди упоминания \<ключевое слово\>»
+
+## Что умеет
+
+- **Создан для агентов кодирования** — CLI это контракт: новые возможности сначала появляются как CLI-команды (и тестируются там), остальные поверхности — только если они вообще нужны
+- **Все типы чатов** — каналы, супергруппы, гигагруппы, форумы, открытые и закрытые
+- **Мультиаккаунт** с автоматической ротацией при flood-wait
+- **3 режима поиска** — локальная БД (FTS5), напрямую через Telegram API, AI/LLM
+- **Сбор по расписанию** — инкрементальный; живёт в фоновом `tg-agent worker`
+- **Мониторинг по ключевым словам** — текст и regex, уведомления через Telegram-бота
+- **Контент-фабрика** — LLM-пайплайны: генерация → модерация → публикация, с генерацией картинок
+- **Встроенный антиспам** — дедупликация, детекция низкоуникального контента, кросс-канальный спам, фильтры по подписчикам и языку
+- **Аналитика** — топ-посты, тренды, тепловые карты активности, трендовые темы и эмодзи
+- **Безопасность** — шифрование сессий (Fernet + PBKDF2), HMAC-signed cookies веб-панели
+- **Docker-ready**
+
+## Легаси-поверхности
+
+Они продолжают работать, но **заморожены**: разработка приостановлена на неопределённый срок, новые возможности на них не строятся. Активно развивается только CLI + скилл.
+
+- **Веб-панель** (FastAPI + Bootstrap 5) — `python -m src.main serve`, затем http://localhost:8080 (пароль из `WEB_PASS`)
+- **TUI** и **встроенный агент-чат** (`tg-agent agent chat`; бэкенды `claude-agent-sdk` / `deepagents`)
+- **MCP-сервер** (`python -m src.main mcp-server`)
+
+### Легаси: split-деплой (Docker / k8s)
+
+По умолчанию `serve` поднимает встроенный Telegram-воркер в том же процессе.
+Для split-деплоя передайте `--no-worker` и запустите отдельный воркер-сервис:
 
 ```bash
 # контейнер 1 — только веб-панель и API
@@ -112,16 +135,18 @@ search остаются целевым контрактом.
 |---|---|---|
 | `TG_API_ID` | Да | Telegram API ID |
 | `TG_API_HASH` | Да | Telegram API Hash |
-| `WEB_PASS` | Да | Пароль веб-панели |
 | `SESSION_ENCRYPTION_KEY` | Нет* | Ключ шифрования Telegram session string в БД |
+| `WEB_PASS` | —† | Пароль веб-панели (только легаси-дашборд) |
 | `LLM_API_KEY` | Нет | API-ключ для AI-поиска |
-| `ANTHROPIC_API_KEY` | Нет | API-ключ только для `claude-agent-sdk` |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Нет | OAuth токен только для `claude-agent-sdk` |
-| `AGENT_MODEL` | Нет | Override модели Claude SDK для `/agent` |
-| `AGENT_FALLBACK_MODEL` | Нет | `provider:model` для `deepagents` fallback в `/agent` |
-| `AGENT_FALLBACK_API_KEY` | Нет | Явный API key для LangChain fallback |
+| `ANTHROPIC_API_KEY` | —† | Только `claude-agent-sdk` (легаси встроенный агент-чат) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | —† | OAuth токен для `claude-agent-sdk` (легаси) |
+| `AGENT_MODEL` | —† | Override модели Claude SDK (легаси агент-чат) |
+| `AGENT_FALLBACK_MODEL` | —† | `provider:model` для `deepagents` fallback (легаси) |
+| `AGENT_FALLBACK_API_KEY` | —† | Явный API key для легаси fallback-провайдера |
 
 \* Если не задан, сессии хранятся в plaintext. Если в БД уже есть зашифрованные сессии (`enc:v*`), приложение не запустится пока ключ не будет указан.
+
+\† Только для легаси-поверхностей (веб-панель, встроенный агент-чат) — см. «Легаси-поверхности».
 
 ### config.yaml
 
@@ -130,51 +155,27 @@ search остаются целевым контрактом.
 | Секция | Описание |
 |---|---|
 | `telegram` | API-ключи (`api_id`, `api_hash`) |
-| `web` | Хост, порт, пароль (по умолчанию: `0.0.0.0:8080`) |
+| `web` | Хост, порт, пароль (по умолчанию: `0.0.0.0:8080`) — легаси веб-панель |
 | `scheduler` | Интервал сбора, задержки, лимиты, макс. flood wait |
 | `notifications` | `admin_chat_id` для уведомлений о совпадениях |
 | `database` | Путь к SQLite (по умолчанию: `data/tg_search.db`) |
-| `llm` | Провайдер LLM, модель, API-ключ, флаг включения |
+| `llm` | Провайдер LLM, модель, API-ключ — AI-поиск и контент-фабрика |
 | `security` | Настройки шифрования сессий |
 
-## CLI
+## Справочник CLI (выборочно)
 
 ```bash
-# Веб-сервер (по умолчанию поднимает встроенный Telegram-воркер)
-python -m src.main [--config CONFIG] serve [--web-pass PASS] [--no-worker]
-python -m src.main [--config CONFIG] stop
-python -m src.main [--config CONFIG] restart [--web-pass PASS]
-
-# Отдельный Telegram-воркер (нужен только с `serve --no-worker` в split-деплое)
-python -m src.main [--config CONFIG] worker
-
-# Разовый сбор
-python -m src.main [--config CONFIG] collect [--channel-id ID]
-
-# Поиск
-python -m src.main [--config CONFIG] search "запрос" [--limit N] [--mode MODE]
-
-# Управление каналами
-python -m src.main channel list|add|delete|toggle|collect|stats|refresh-types|import
-
-# Фильтры контента
-python -m src.main filter analyze|apply|reset|precheck
-
-# Ключевые слова
-python -m src.main keyword list|add|delete|toggle
-
-# Аккаунты
-python -m src.main account list|toggle|delete
-
-# Планировщик
-python -m src.main scheduler start|trigger|search
-
-# Бот уведомлений
-python -m src.main notification setup|status|delete
-
-# Диагностика и benchmark
-python -m src.main test all|read|write|telegram|benchmark
+tg-agent worker                                  # фоновый воркер: сбор по расписанию, очереди
+tg-agent channel collect --channel-id ID         # разовый инкрементальный сбор (без демона)
+tg-agent search "запрос" --limit 20              # поиск по собранной истории
+tg-agent messages read @channel --format json    # чтение истории сообщений
+tg-agent dialogs send                            # реальные действия в реальных чатах
+tg-agent pipeline generate                       # контент-фабрика на LLM
+tg-agent serve                                   # легаси веб-панель
 ```
+
+Полный каталог для агентов — [`skills/tg-agent/reference.md`](skills/tg-agent/reference.md); у каждой
+группы есть `--help`.
 
 ### `telethon-cli`
 
@@ -194,7 +195,7 @@ telethon-cli login
 telethon-cli users get-me --output json
 ```
 
-## Веб-интерфейс
+## Веб-интерфейс (легаси)
 
 | Страница | Путь | Описание |
 |---|---|---|
@@ -210,6 +211,7 @@ telethon-cli users get-me --output json
 ## Roadmap
 
 - Portable semantic search на обычной установке Python без обязательной runtime-загрузки SQLite extension
+- Рост возможностей для агентов: каждая новая фича появляется в CLI (и скилле) первой
 - LLM для фабрики контента
 - LLM для интеллектуального поиска
 - LLM для борьбы со спамом в чатах
@@ -221,7 +223,7 @@ telethon-cli users get-me --output json
  ```bash
  # Установка dev-зависимостей
  pip install -e ".[dev]"
- 
+
  # Параллельно запускаем только safe-подмножество
  pytest tests/ -v -m "not aiosqlite_serial" -n auto
 

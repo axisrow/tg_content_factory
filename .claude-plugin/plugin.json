@@ -1,0 +1,6 @@
+{
+  "name": "tg-agent",
+  "description": "Full-spectrum Telegram access for coding agents through the tg-agent CLI: channels, chats, messages, media, admin, content pipelines, analytics.",
+  "version": "0.2.3",
+  "author": { "name": "axisrow" }
+}
