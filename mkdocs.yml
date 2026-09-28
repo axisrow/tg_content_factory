@@ -1,5 +1,5 @@
 site_name: TG Agent
-site_description: Telegram Post Search, Monitoring & Content Automation
+site_description: Зависимость для агентов кодирования — tg-agent CLI: полный спектр действий с Telegram + контент-фабрика
 site_url: https://axisrow.github.io/tg_content_factory/
 repo_url: https://github.com/axisrow/tg_content_factory
 repo_name: axisrow/tg_content_factory
