@@ -64,6 +64,7 @@ TELEGRAM_ACTION_INVENTORY: tuple[TelegramActionInventoryItem, ...] = (
         cli="dialogs edit-message",
         web_command="dialogs.edit_message",
         agent_tool="edit_message",
+        pipeline_node="edit_message",
         backend_method="edit_message",
     ),
     TelegramActionInventoryItem(
