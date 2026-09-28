@@ -756,6 +756,7 @@ class PipelineNodeType(StrEnum):
     REACT = "react"
     FORWARD = "forward"
     DELETE_MESSAGE = "delete_message"
+    EDIT_MESSAGE = "edit_message"
     FETCH_MESSAGES = "fetch_messages"
     CONDITION = "condition"
     SEARCH_QUERY_TRIGGER = "search_query_trigger"

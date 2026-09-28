@@ -752,6 +752,130 @@ class DeleteMessageHandler(BaseNodeHandler):
             )
 
 
+class EditMessageHandler(BaseNodeHandler):
+    """Edit filtered messages: replace their text or append to it (requires Telegram client).
+
+    Node parameters: ``text`` (required, non-empty) and ``mode`` — ``"replace"``
+    (default) sets the message text as-is; ``"append"`` adds ``text`` after a
+    blank line to the existing text. Append skips messages whose text is empty
+    (nothing to append to) and ones already ending with ``text`` (idempotent
+    re-runs). The base text comes from the collected message (``message.text``);
+    # ponytail: edits made in Telegram after collection are not re-fetched —
+    fine for freshly-collected posts, switch to a live fetch if staleness bites.
+    """
+
+    async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
+        node_id = _current_node_id(services, default="edit_message")
+        client_pool = services.get("client_pool")
+        if client_pool is None:
+            context.record_error(
+                node_id=node_id,
+                code="no_client_pool",
+                detail="client_pool not available in services",
+            )
+            logger.warning("EditMessageHandler[%s]: no client_pool, skipping", node_id)
+            raise RuntimeError("EditMessageHandler: client_pool not available")
+
+        new_text = str(node_config.get("text", ""))
+        if not new_text:
+            context.record_error(
+                node_id=node_id,
+                code="missing_text",
+                detail="edit_message node requires a non-empty 'text' parameter",
+            )
+            return
+        append = str(node_config.get("mode", "replace")).strip().lower() == "append"
+
+        messages = context.get_global("context_messages", [])
+        resolved_phone = _resolve_account_phone(services.get("account_phone"), services, context)
+        if resolved_phone is None:
+            # edit_message pins a phone (unlike delete_messages it has no
+            # allow-any fallback): editing needs the admin account explicitly.
+            context.record_error(
+                node_id=node_id,
+                code="no_account_phone",
+                detail="edit_message requires account_phone to be set on the pipeline",
+            )
+            return
+        action_service = services.get("telegram_actions") or TelegramActionService(client_pool)
+        dedup_repo, processed_ids = await _dedup_context(services, node_id, "edit_message", node_config)
+        pipeline_id = services.get("pipeline_id")
+        skipped = 0
+
+        for message in messages:
+            if (message.channel_id, message.message_id) in processed_ids:
+                skipped += 1
+                continue
+            base_text = (message.text or "").rstrip()
+            if append:
+                if not base_text or base_text.endswith(new_text):
+                    # Nothing to append to, or the text is already there
+                    # (idempotent re-runs must not double the footer).
+                    skipped += 1
+                    continue
+                edit_text = f"{base_text}\n\n{new_text}"
+            else:
+                edit_text = new_text
+            try:
+                await action_service.edit_message(
+                    phone=resolved_phone,
+                    chat_id=message.channel_id,
+                    message_id=message.message_id,
+                    text=edit_text,
+                )
+                increment_action_count(context, "edit_message")
+                if dedup_repo is not None:
+                    await dedup_repo.log_action(
+                        pipeline_id, node_id, "edit_message", message.channel_id, message.message_id
+                    )
+                logger.info(
+                    "EditMessageHandler[%s]: edited message_id=%s channel_id=%s phone=%s mode=%s",
+                    node_id,
+                    message.message_id,
+                    message.channel_id,
+                    resolved_phone,
+                    "append" if append else "replace",
+                )
+            except TelegramActionClientUnavailableError:
+                context.record_error(
+                    node_id=node_id,
+                    code="no_available_client",
+                    detail=f"no client_pool slot available for phone={resolved_phone}",
+                )
+                break
+            except FloodWaitError as exc:
+                context.record_error(
+                    node_id=node_id,
+                    code="flood_wait",
+                    detail=f"FloodWaitError editing message {message.message_id}: {exc}",
+                    retry_after=int(getattr(exc, "seconds", 0) or 0),
+                )
+            except ChatWriteForbiddenError as exc:
+                context.record_error(
+                    node_id=node_id,
+                    code="chat_write_forbidden",
+                    detail=(
+                        f"ChatWriteForbiddenError editing message {message.message_id}: {exc}"
+                    ),
+                )
+            except Exception as exc:
+                context.record_error(
+                    node_id=node_id,
+                    code="unexpected_error",
+                    detail=f"{type(exc).__name__}: {exc}",
+                )
+                logger.warning(
+                    "EditMessageHandler[%s]: failed to edit message %s",
+                    node_id,
+                    message.message_id,
+                    exc_info=True,
+                )
+        if skipped:
+            logger.info(
+                "EditMessageHandler[%s]: skipped %d message(s)", node_id, skipped
+            )
+
+
 class ConditionHandler(BaseNodeHandler):
     """Branch execution based on a condition."""
 
