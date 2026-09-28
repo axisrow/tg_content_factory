@@ -128,7 +128,7 @@ async def init_pool(config, db: Database, *, phones: Iterable[str] | None = None
             )
             api_hash = stored_hash
 
-    auth = TelegramAuth(api_id, api_hash)
+    auth = TelegramAuth(api_id, api_hash, proxy=config.telegram_runtime.proxy)
     pool = ClientPool(
         auth,
         db,

@@ -255,7 +255,7 @@ async def build_container_with_templates(
         await db.set_setting("session_secret_key", session_secret)
 
     api_id, api_hash = await load_telegram_credentials(db, config)
-    auth = TelegramAuth(api_id, api_hash)
+    auth = TelegramAuth(api_id, api_hash, proxy=config.telegram_runtime.proxy)
     pool: WebClientPool
     search_pool: ClientPool | None
     if runtime_mode == "worker":

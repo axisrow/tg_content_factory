@@ -218,7 +218,7 @@ async def send_code_impl(
             print("Provide --api-id and --api-hash, or set them in config/DB.")
             return
 
-        auth = TelegramAuth(api_id, api_hash)
+        auth = TelegramAuth(api_id, api_hash, proxy=config.telegram_runtime.proxy)
         try:
             info = await auth.send_code(phone)
         except Exception as exc:
@@ -266,7 +266,7 @@ async def verify_code_impl(
             print("ERROR: API credentials not configured.")
             return
 
-        auth = TelegramAuth(api_id, api_hash)
+        auth = TelegramAuth(api_id, api_hash, proxy=config.telegram_runtime.proxy)
         try:
             session_string = await auth.sign_in_fresh(
                 phone, code, phone_code_hash,

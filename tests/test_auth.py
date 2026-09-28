@@ -33,6 +33,9 @@ class FakeCodeTypeCall:
     pass
 
 
+_PROXY_DICT = {"proxy_type": "socks5", "addr": "h", "port": 1080, "rdns": True}
+
+
 class TestDescribeCodeType:
     def test_app(self):
         with patch("src.telegram.auth.SentCodeTypeApp", FakeSentCodeTypeApp):
@@ -121,6 +124,34 @@ class TestSendCode:
 
         old_client.disconnect.assert_awaited_once()
         assert auth._pending["+1234567890"][0] is new_client
+
+    @pytest.mark.parametrize(
+        ("auth_kwargs", "expected_proxy"),
+        [({"proxy": _PROXY_DICT}, _PROXY_DICT), ({}, None)],
+    )
+    @pytest.mark.anyio
+    async def test_send_code_passes_proxy_to_telethon(self, auth_kwargs, expected_proxy):
+        auth = TelegramAuth(api_id=123, api_hash="abc", **auth_kwargs)
+        mock_client = MagicMock()
+        mock_client.connect = AsyncMock()
+        mock_client.disconnect = AsyncMock()
+        mock_client.session = SimpleNamespace(save=lambda: "session_str")
+        mock_client.send_code_request = AsyncMock(
+            return_value=SimpleNamespace(
+                phone_code_hash="hash1",
+                type=FakeSentCodeTypeApp(),
+                next_type=None,
+                timeout=60,
+            )
+        )
+
+        with (
+            patch("src.telegram.auth.TelegramClient", return_value=mock_client) as fake_tc,
+            patch("src.telegram.auth.SentCodeTypeApp", FakeSentCodeTypeApp),
+        ):
+            await auth.send_code("+1234567890")
+
+        assert fake_tc.call_args.kwargs["proxy"] == expected_proxy
 
 
 class TestResendCode:
