@@ -12,7 +12,7 @@ import pytest
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 
-from src.config import AppConfig
+from src.config import AppConfig, parse_proxy_url
 from src.database import Database
 from src.telegram.auth import TelegramAuth
 from src.telegram.session_materializer import SessionMaterializer
@@ -339,7 +339,15 @@ def real_pool_harness_factory(db, telethon_cli_spy, native_auth_spy, tmp_path):
 @pytest.fixture
 async def real_telegram_sandbox():
     cfg = _build_real_telegram_sandbox_config(os.environ)
-    client = TelegramClient(StringSession(cfg.session_string), cfg.api_id, cfg.api_hash)
+    # TG_PROXY is a network setting, not an identity var (identity vars are
+    # refused below) — the live sandbox honors it so gated real-TG runs work
+    # on networks where MTProto is blocked.
+    client = TelegramClient(
+        StringSession(cfg.session_string),
+        cfg.api_id,
+        cfg.api_hash,
+        proxy=parse_proxy_url(os.environ.get("TG_PROXY", "")),
+    )
     await client.connect()
     try:
         if not await client.is_user_authorized():

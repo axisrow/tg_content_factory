@@ -23,6 +23,9 @@ tg-agent --version
   **interactive** — the user must run `tg-agent account add` themselves (they receive a
   Telegram login code). Never try to automate the code entry.
 - `.env` from the current directory is picked up automatically.
+- If Telegram connections time out (MTProto IPs blocked on this network), set
+  `TG_PROXY=socks5://user:pass@host:port` (no-auth `socks5://host:port`, or
+  `http://host:port`) in `.env`. Unset/empty = direct connection.
 
 ## How to run commands
 

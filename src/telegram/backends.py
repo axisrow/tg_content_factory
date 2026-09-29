@@ -1074,6 +1074,11 @@ class TelethonCliBackend(TelegramBackend):
             client._connection_retries = None
             client._retry_delay = 2
             client.flood_sleep_threshold = 0
+            # Network-level MTProto proxy (TG_PROXY → Telethon proxy= dict);
+            # safe before connect(). Unrelated to _DialogRequestGateClient,
+            # whose "proxy" is a request wrapper, not a network route.
+            if self._auth.proxy is not None:
+                client.set_proxy(self._auth.proxy)
             if self.client_logger_provider is not None:
                 # create_client() does not expose Telethon's base_logger=, and
                 # MTProtoSender captures its logger in __init__ — rebind both

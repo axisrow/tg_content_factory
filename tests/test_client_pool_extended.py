@@ -28,6 +28,7 @@ def mock_auth():
     auth = MagicMock()
     auth.api_id = 12345
     auth.api_hash = "hash"
+    auth.proxy = None
     auth.create_client_from_session = AsyncMock()
     return auth
 
