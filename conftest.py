@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ast
-import math
 import os
 import re
 from functools import lru_cache
@@ -106,34 +105,28 @@ def _xdist_auto_worker_cap() -> int:
     return max(1, parsed_value)
 
 
-def _xdist_available_workers_for_load(cpu_count: int) -> int:
+def _xdist_available_workers(cpu_count: int) -> int:
     # On a dedicated CI runner (GitHub Actions always sets ``CI``) the host is ours
-    # alone, so the load-aware throttle below — which reserves a core and subtracts
-    # the rolling load average — only wastes parallelism (it caps a 4-vCPU runner to
-    # ~2 workers). Use every core there; xdist workers here are asyncio/sqlite and
-    # IO/await-bound, so oversubscription is cheap. Match a real CI flag, not just
-    # any non-empty value, so a stray ``CI=false``/``CI=0`` in a dev shell doesn't
-    # disable the throttle (review note, #974).
+    # alone; xdist workers here are asyncio/sqlite and IO/await-bound, so
+    # oversubscription is cheap — use every core (#944). Match a real CI flag, not
+    # just any non-empty value, so a stray ``CI=false``/``CI=0`` in a dev shell
+    # doesn't disable the throttle bypass (review note, #974).
     if os.environ.get("CI", "").strip().lower() in ("1", "true", "yes"):
         return max(1, cpu_count)
-    try:
-        current_load = os.getloadavg()[0]
-    except (AttributeError, OSError):
-        current_load = 0.0
-    # Local dev (#1463): only the load ABOVE cpu_count throttles. Load coming from
-    # other processes on an undersubscribed box (load 14.8 on 10 cores) used to
-    # collapse `-n auto` to 1 worker and stretch the full suite to ~10 minutes;
-    # reserving one core is still the rule, but an already-saturated machine no
-    # longer multiplies the subtraction.
-    busy_cores = max(0, math.ceil(current_load) - cpu_count)
-    return max(1, cpu_count - busy_cores - 1)
+    # Local dev (#1463): plain `cpu - 1` — one core reserved for the system, no
+    # load term. The #780 load-aware formula (`cpu - ceil(load) - 1`) read load
+    # average as free-CPU capacity; on the owner's 10-core laptop at load 14.8 it
+    # collapsed `-n auto` to 1 worker and stretched the full suite to ~10 minutes
+    # while the suite itself used ~0.5 cores — load average is a queue signal,
+    # not a free-CPU meter.
+    return max(1, cpu_count - 1)
 
 
 def pytest_xdist_auto_num_workers(config) -> int:
     if _should_force_single_worker(list(config.args)):
         return 1
     cpu_count = os.cpu_count() or 1
-    available_workers = _xdist_available_workers_for_load(cpu_count)
+    available_workers = _xdist_available_workers(cpu_count)
     return min(available_workers, _xdist_auto_worker_cap())
 
 
