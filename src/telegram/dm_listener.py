@@ -60,7 +60,11 @@ def _is_private_dm(event: Any) -> bool:
 
 @dataclass(frozen=True)
 class IncomingDmEvent:
-    """One incoming DM, normalized off the raw Telethon event."""
+    """One private-chat DM, normalized off the raw Telethon event.
+
+    ``out`` distinguishes the direction since #1453: the archive stores both
+    sides, the draft journal stays incoming-only.
+    """
 
     phone: str
     chat_id: int | None
@@ -68,6 +72,7 @@ class IncomingDmEvent:
     text: str | None
     message_date: datetime | None
     received_at: datetime
+    out: bool = False
 
 
 @dataclass(frozen=True)
@@ -104,7 +109,9 @@ class DmListener:
         # каждый attach — старт воркера, замена клиента, reattach после
         # восстановления — то есть ровно когда слушатель мог что-то пропустить.
         self._catchup = catchup
-        self._event_cls = events.NewMessage(incoming=True, func=_is_private_dm)
+        # Обе стороны (#1453): архив DM хранит и исходящие; направление
+        # несёт IncomingDmEvent.out, маршрутизацию делает персист-колбэк.
+        self._event_cls = events.NewMessage(func=_is_private_dm)
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         # ponytail: unbounded queue — the handler only put_nowaits and DM volume
@@ -221,6 +228,7 @@ class DmListener:
                 text=getattr(message, "text", None),
                 message_date=getattr(message, "date", None),
                 received_at=datetime.now(timezone.utc),
+                out=bool(getattr(message, "out", False)),
             )
             self._queue.put_nowait(dm)
             self._updates_received[phone] = self._updates_received.get(phone, 0) + 1

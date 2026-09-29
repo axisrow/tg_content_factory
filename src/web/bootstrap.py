@@ -27,7 +27,7 @@ from src.database.bundles import (
 )
 from src.database.repositories.accounts import AccountSessionDecryptError
 from src.live_runtime_pause import LiveRuntimePauseGate
-from src.models import IncomingDm
+from src.models import DmMessage, IncomingDm
 from src.scheduler.service import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
@@ -67,13 +67,32 @@ _log_task_exception = make_log_task_exception_callback(
 
 
 async def _persist_incoming_dm(db, dm: IncomingDmEvent) -> None:
-    """Персист колбэка слушателя DM (#1427): журнал входящих с TTL/prune."""
+    """Персист колбэка слушателя DM: архив обеих сторон (#1453) + журнал.
+
+    Архив `dm_messages` — вечное хранение без TTL, обе стороны. Журнал
+    `incoming_dms` (TTL 24ч, планка приватности черновик-ассистента) —
+    только входящие: исходящие никогда не получают черновик, processed=0
+    им не положен по смыслу этапа 2.4.
+    """
     if dm.chat_id is None or dm.message_id is None:
         # Без (chat_id, message_id) запись не идемпотентна — UNIQUE-ключ
         # журнала неполный; такое событие пропускаем с предупреждением.
         logger.warning(
             "dm_storage: DM without chat_id/message_id from %s; skipping", dm.phone
         )
+        return
+    await db.repos.dm_messages.record(
+        DmMessage(
+            phone=dm.phone,
+            chat_id=dm.chat_id,
+            message_id=dm.message_id,
+            out=dm.out,
+            text=dm.text,
+            message_date=dm.message_date,
+            received_at=dm.received_at,
+        )
+    )
+    if dm.out:
         return
     await db.repos.incoming_dms.record(
         IncomingDm(

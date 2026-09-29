@@ -39,7 +39,7 @@ from typing import Any
 from pydantic import ValidationError
 from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitGate
 
-from src.models import DM_CATCHUP_SETTING_KEY, DmCatchupSettings, IncomingDm
+from src.models import DM_CATCHUP_SETTING_KEY, DmCatchupSettings, DmMessage, IncomingDm
 from src.telegram.dm_history import read_dialog_history_since
 
 logger = logging.getLogger(__name__)
@@ -145,6 +145,7 @@ class DmCatchupService:
             "dialogs": 0,
             "stored": 0,
             "already": 0,
+            "archived": 0,
             "skipped": 0,
             "deferred": 0,
             "errors": 0,
@@ -217,6 +218,19 @@ class DmCatchupService:
             stats["errors"] += 1
             return "error"
         for msg in messages:
+            # Архив (#1453): обе стороны, без staleness-гейта — это хранилище
+            # данных, черновик-автомат его не читает.
+            await self._db.repos.dm_messages.record(
+                DmMessage(
+                    phone=phone,
+                    chat_id=chat_id,
+                    message_id=msg.id,
+                    out=msg.out,
+                    text=msg.text,
+                    message_date=msg.date,
+                )
+            )
+            stats["archived"] += 1
             if msg.out:
                 continue  # журнал — только входящие, как у живого слушателя
             stale = msg.date is None or (now - _ensure_aware(msg.date)) > timedelta(

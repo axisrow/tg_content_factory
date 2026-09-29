@@ -169,6 +169,24 @@ CREATE TABLE IF NOT EXISTS dm_catchup_cursors (
     PRIMARY KEY (phone, chat_id)
 );
 
+-- Постоянный архив личных сообщений, ОБЕ стороны (#1453). В отличие от
+-- журнала incoming_dms у архива нет TTL/prune: владелец запросил вечное
+-- хранение полной переписки; журнальная планка приватности 24ч не тронута.
+CREATE TABLE IF NOT EXISTS dm_messages (
+    id INTEGER PRIMARY KEY,
+    phone TEXT NOT NULL,
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    out INTEGER NOT NULL DEFAULT 0,
+    text TEXT,
+    message_date TEXT,
+    received_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(phone, chat_id, message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dm_messages_chat_date
+    ON dm_messages(phone, chat_id, message_date);
+
 CREATE TABLE IF NOT EXISTS channel_ratings (
     channel_id INTEGER PRIMARY KEY,
     title TEXT,

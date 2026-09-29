@@ -25,6 +25,7 @@ from src.database.repositories.content_pipelines import ContentPipelinesReposito
 from src.database.repositories.decisions import DecisionsRepository
 from src.database.repositories.dialog_batch import DialogBatchRepository
 from src.database.repositories.dialog_cache import DialogCacheRepository
+from src.database.repositories.dm_messages import DmMessagesRepository
 from src.database.repositories.filters import FilterRepository
 from src.database.repositories.generated_images import GeneratedImagesRepository
 from src.database.repositories.generation_runs import GenerationRunsRepository
@@ -99,6 +100,7 @@ class DatabaseRepositories:
     channel_ratings: ChannelRatingsRepository
     pipeline_action_log: PipelineActionLogRepository
     incoming_dms: IncomingDmsRepository
+    dm_messages: DmMessagesRepository
     notified_messages: NotifiedMessagesRepository
     decisions: DecisionsRepository
 

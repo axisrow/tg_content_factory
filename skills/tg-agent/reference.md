@@ -47,11 +47,16 @@ dialogs participants | edit-admin | edit-permissions | kick
 dialogs create-channel | create-group | leave | join
 dialogs queue | status | cancel | clear-pending
 dialogs cache-clear | cache-status
+dialogs archive-history
 ```
 
 All of these touch the user's live Telegram account — see Safety in SKILL.md.
 `dialogs send` posts a message to a chat by identifier; `dialogs queue`/`status` manage the
 send queue. `dialogs read` supports history reads with limits.
+`dialogs archive-history [--phone P] [--chat-id ID]` backfills the full personal-chat
+history (both directions) of an account into the local `dm_messages` archive — no TTL,
+idempotent/resumable. Local DB write, no Telegram send; still stop the worker first:
+it opens a second MTProto connection on the same session.
 
 ## content factory (LLM pipelines)
 

@@ -141,6 +141,26 @@ async def test_mode_full_journals_fresh_as_unprocessed(tmp_path, monkeypatch):
         await db.close()
 
 
+async def test_catchup_archives_both_directions_journal_incoming_only(tmp_path, monkeypatch):
+    """#1453: догон пишет каждую страницу в архив (обе стороны, без staleness),
+    журнал — только входящие, как и раньше."""
+    db = await _make_db(tmp_path)
+    try:
+        stub = _stub_history_since({42: [_FakeMessage(10), _FakeMessage(11, out=True)]})
+        monkeypatch.setattr(dm_catchup, "read_dialog_history_since", stub)
+        service = DmCatchupService(_FakePool(_FakeRawClient()), db)
+
+        stats = await service.run_for_phone("+111")
+
+        assert stats["archived"] == 2
+        incoming, outgoing = await db.repos.dm_messages.count_by_direction("+111")
+        assert (incoming, outgoing) == (1, 1)
+        cur = await db.execute("SELECT message_id FROM incoming_dms WHERE chat_id = 42")
+        assert [row["message_id"] for row in await cur.fetchall()] == [10]
+    finally:
+        await db.close()
+
+
 async def test_mode_journal_only_marks_everything_processed(tmp_path, monkeypatch):
     """«Нагнать, но не отвечать»: строки записаны, черновики автомат не готовит."""
     db = await _make_db(tmp_path)

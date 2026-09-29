@@ -149,6 +149,11 @@ CLI_REAL_TG_CLEANUP_COMMAND_CASES: set[tuple[str, ...]] = {
 
 CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("mcp-server",): "stdio MCP daemon serving the tool registry; not a Telegram leaf operation",
+    ("dialogs", "archive-history"): (
+        "bulk history backfill into the local dm_messages archive (#1453); "
+        "reads live Telegram for the whole account and requires the worker "
+        "stopped — covered by unit/integration tests, not a gated live case"
+    ),
     ("export", "telegram"): (
         "offline DB→file export (writes a data/exports tree, needs --channel-id); "
         "no live Telegram, covered by unit/integration tests"
