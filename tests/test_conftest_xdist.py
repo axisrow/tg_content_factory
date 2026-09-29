@@ -75,7 +75,10 @@ def test_xdist_auto_workers_ignore_extreme_load(monkeypatch) -> None:
     assert root_conftest.pytest_xdist_auto_num_workers(_config(["tests"])) == 7
 
 
-def test_xdist_available_workers_reserve_one_core() -> None:
+def test_xdist_available_workers_reserve_one_core(monkeypatch) -> None:
+    # Local branch only: unset CI so the #944 all-cores short-circuit (active on
+    # real runners) doesn't mask the `cpu - 1` path under test.
+    monkeypatch.delenv("CI", raising=False)
     assert root_conftest._xdist_available_workers(4) == 3
     assert root_conftest._xdist_available_workers(16) == 15
     assert root_conftest._xdist_available_workers(1) == 1
