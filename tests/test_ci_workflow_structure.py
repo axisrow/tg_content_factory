@@ -88,21 +88,65 @@ def test_lint_job_runs_ruff(ci_config: dict) -> None:
 def test_tests_job_runs_full_suite(ci_config: dict) -> None:
     """The tests job must run the full smoke + parallel + serial suite.
 
-    Guards against accidentally dropping a leg of the suite. The parallel-safe
-    leg uses `-n auto`; the serial leg uses the aiosqlite_serial marker; both
-    measure coverage so the fail_under gate has data.
+    Guards against accidentally dropping a leg of the suite. Each lane has two
+    legs (#1456): the PR leg runs bare (coverage instrumentation costs ~a third
+    of the wall time), the main (push) leg measures `src` for the fail_under
+    gate. The parallel-safe legs use `-n auto`; the serial legs use the
+    aiosqlite_serial marker with per-file parallelism.
     """
     steps = ci_config["jobs"]["tests"]["steps"]
-    runs = [s.get("run") or "" for s in steps]
-    assert any("-m smoke" in r for r in runs), "tests job must run the smoke preflight"
-    parallel = [r for r in runs if 'not aiosqlite_serial' in r and "-n auto" in r]
-    serial = [r for r in runs if "-m aiosqlite_serial" in r]
-    assert parallel, "tests job must run the parallel-safe leg with -n auto"
-    assert serial, "tests job must run the aiosqlite_serial leg"
-    assert all("--cov=src" in r for r in parallel + serial), "both test legs must measure coverage"
-    assert any("-n auto" in r and "--dist=loadfile" in r for r in serial), (
-        "aiosqlite_serial files must run in parallel while each file stays on one worker"
+    by_name = {s.get("name"): s for s in steps}
+
+    expected_names = (
+        "Pytest (smoke preflight)",
+        "Pytest (parallel-safe)",
+        "Pytest (parallel-safe, with coverage)",
+        "Pytest (aiosqlite serial, per-file parallel)",
+        "Pytest (aiosqlite serial, per-file parallel, with coverage)",
+        "Coverage report (combined)",
+        "Upload coverage artifact",
     )
+    missing = [n for n in expected_names if n not in by_name]
+    assert not missing, f"tests job is missing steps: {missing}"
+
+    smoke_run = by_name["Pytest (smoke preflight)"]["run"]
+    assert "-m smoke" in smoke_run, "tests job must run the smoke preflight"
+
+    pr_parallel = by_name["Pytest (parallel-safe)"]["run"]
+    main_parallel = by_name["Pytest (parallel-safe, with coverage)"]["run"]
+    pr_serial = by_name["Pytest (aiosqlite serial, per-file parallel)"]["run"]
+    main_serial = by_name["Pytest (aiosqlite serial, per-file parallel, with coverage)"]["run"]
+
+    assert 'not aiosqlite_serial' in pr_parallel and "-n auto" in pr_parallel
+    assert 'not aiosqlite_serial' in main_parallel and "-n auto" in main_parallel
+    for serial_run in (pr_serial, main_serial):
+        assert "-m aiosqlite_serial" in serial_run
+        assert "-n auto" in serial_run and "--dist=loadfile" in serial_run, (
+            "aiosqlite_serial files must run in parallel while each file stays on one worker"
+        )
+
+    # Coverage rides on main only (#1456): PR legs carry no --cov flag, main
+    # legs measure src, and the serial main leg appends to the parallel dataset.
+    assert "--cov" not in pr_parallel and "--cov" not in pr_serial, "PR legs must not measure coverage"
+    assert "--cov=src" in main_parallel and "--cov-report=" in main_parallel
+    assert "--cov=src" in main_serial and "--cov-append" in main_serial
+
+    # The coverage-producing legs and the steps that consume their data are
+    # main-only; the bare legs are PR-only.
+    push_only = (
+        "Pytest (parallel-safe, with coverage)",
+        "Pytest (aiosqlite serial, per-file parallel, with coverage)",
+        "Coverage report (combined)",
+        "Upload coverage artifact",
+    )
+    for name in push_only:
+        assert "github.event_name == 'push'" in (by_name[name].get("if") or ""), (
+            f"`{name}` must be conditioned on push (coverage is main-only, #1456)"
+        )
+    for name in ("Pytest (parallel-safe)", "Pytest (aiosqlite serial, per-file parallel)"):
+        assert "github.event_name == 'pull_request'" in (by_name[name].get("if") or ""), (
+            f"`{name}` must be the PR leg of its lane"
+        )
 
 
 def test_tests_job_does_not_use_testmon(ci_config: dict) -> None:
