@@ -971,7 +971,7 @@ class TestGetAccountInfoTool:
         ])
 
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
-        result = await handlers["get_account_info"]({"phone": "+8613*"})
+        result = await handlers["get_account_info"]({"phone": "+79000000003*"})
         text = _text(result)
 
         assert "+79000000003" in text
