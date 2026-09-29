@@ -18,6 +18,7 @@ from src.cli.commands.common import (
     apply_startup,
     run_async,
 )
+from src.cli.worker_handoff import serve_is_running
 from src.models import DialogMessage, TelegramCommandStatus
 from src.services.channel_service import ChannelService
 from src.services.telegram_actions import (
@@ -28,6 +29,7 @@ from src.services.telegram_actions import (
     TelegramActionService,
 )
 from src.services.telegram_command_service import TelegramCommandService
+from src.telegram.dm_archive import backfill_account
 from src.telegram.reactions import (
     SUPPORTED_REACTION_EMOJIS_DISPLAY,
     TelegramReactionInvalidError,
@@ -600,6 +602,37 @@ async def _dialogs_read(args, db, pool) -> None:
         print(f"Error reading history: {exc}")
 
 
+async def _dialogs_archive_history(args, db, pool) -> None:
+    """Backfill full DM history of an account into the dm_messages archive (#1453)."""
+    if serve_is_running(runtime.load_config(args.config)):
+        print("A running worker owns this Telegram session — stop it first")
+        print("(second MTProto connection on the same session = silent brick).")
+        return
+    phone = _resolve_phone(pool, args)
+    if phone is None:
+        return
+    chat_ids: set[int] | None = None
+    if args.chat_id:
+        try:
+            chat_ids = {int(args.chat_id)}
+        except ValueError:
+            print(f"Invalid --chat-id: {args.chat_id!r} — expected a numeric Telegram chat id.")
+            return
+    stats = await backfill_account(pool, db, phone, chat_ids=chat_ids)
+    incoming, outgoing = await db.repos.dm_messages.count_by_direction(phone)
+    print(
+        f"Archive for {phone}: dialogs={stats['dialogs']} "
+        f"archived_now={stats['archived']} errors={stats['errors']} | "
+        f"total incoming={incoming} outgoing={outgoing}"
+    )
+    if stats.get("incomplete"):
+        print(
+            "ПРОГОН НЕ ЗАВЕРШЁН: насыщен history-гейт или не сошёлся свежий "
+            "снимок диалогов. Запусти команду ещё раз — бэкфилл продолжится "
+            "с курсоров архива."
+        )
+
+
 async def _dialogs_participants(args, db, pool) -> None:
     phone = _resolve_phone(pool, args)
     if phone is None:
@@ -1164,6 +1197,7 @@ _DIALOGS_HANDLERS: dict[str, tuple[Callable[..., Awaitable[None]], bool]] = {
     "unpin-message": (_dialogs_unpin_message, False),
     "download-media": (_dialogs_download_media, False),
     "read": (_dialogs_read, False),
+    "archive-history": (_dialogs_archive_history, False),
     "participants": (_dialogs_participants, False),
     "edit-admin": (_dialogs_edit_admin, False),
     "edit-permissions": (_dialogs_edit_permissions, False),
@@ -1516,6 +1550,22 @@ def dialogs_read(
     _run_dialogs(
         ctx, "read", chat_id=chat_id, phone=phone, limit=limit, offset_id=offset_id, format=output_format.value
     )
+
+
+@dialogs_app.command("archive-history")
+def dialogs_archive_history(
+    ctx: typer.Context,
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    chat_id: str | None = typer.Option(None, "--chat-id", help="Backfill a single dialog by user ID"),
+) -> None:
+    """Backfill full DM history (both directions) into the local archive.
+
+    Reads every personal dialog of the account page by page and stores both
+    incoming and outgoing messages in the dm_messages table (no TTL).
+    Resumable: re-running skips already-archived history. Run it with the
+    worker STOPPED — it opens a second connection on the same session.
+    """
+    _run_dialogs(ctx, "archive-history", phone=phone, chat_id=chat_id)
 
 
 @dialogs_app.command("participants", context_settings=_NEG_ID_POSITIONAL)

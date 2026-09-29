@@ -183,3 +183,86 @@ def test_cli_dialogs_send_no_client(cli_db, capsys):
     )
     out = capsys.readouterr().out
     assert "unavailable" in out.lower()
+
+
+def test_cli_dialogs_archive_history_runs_backfill(cli_db, capsys):
+    """#1453: `dialogs archive-history` зовёт бэкфилл и печатает итог+разбивку."""
+    pool = _mock_pool()
+    with (
+        patch("src.cli.commands.dialogs.serve_is_running", return_value=False),
+        patch(
+            "src.cli.commands.dialogs.backfill_account",
+            new_callable=AsyncMock,
+            return_value={"dialogs": 2, "archived": 5, "errors": 1},
+        ) as fake_backfill,
+    ):
+        _run(_ns(dialogs_action="archive-history", phone="+1234567890", chat_id=None), pool, cli_db)
+
+    out = capsys.readouterr().out
+    assert "archived_now=5" in out
+    assert "errors=1" in out
+    assert "incoming=0" in out  # пустой cli_db — счётчики из архива
+    assert fake_backfill.await_args.args[2] == "+1234567890"
+    assert fake_backfill.await_args.kwargs["chat_ids"] is None
+
+
+def test_cli_dialogs_archive_history_refuses_running_worker(cli_db, capsys):
+    """Второй MTProto-коннект на сессии живого воркера = silent brick — отказ."""
+    pool = _mock_pool()
+    with (
+        patch("src.cli.commands.dialogs.serve_is_running", return_value=True),
+        patch("src.cli.commands.dialogs.backfill_account", new_callable=AsyncMock) as fake_backfill,
+    ):
+        _run(_ns(dialogs_action="archive-history", phone="+1234567890", chat_id=None), pool, cli_db)
+
+    out = capsys.readouterr().out
+    assert "stop it first" in out
+    fake_backfill.assert_not_awaited()
+
+
+def test_cli_dialogs_archive_history_single_chat(cli_db, capsys):
+    """--chat-id сужает прогон до одного диалога."""
+    pool = _mock_pool()
+    with (
+        patch("src.cli.commands.dialogs.serve_is_running", return_value=False),
+        patch(
+            "src.cli.commands.dialogs.backfill_account",
+            new_callable=AsyncMock,
+            return_value={"dialogs": 1, "archived": 3, "errors": 0},
+        ) as fake_backfill,
+    ):
+        _run(_ns(dialogs_action="archive-history", phone="+1234567890", chat_id="4242"), pool, cli_db)
+
+    assert fake_backfill.await_args.kwargs["chat_ids"] == {4242}
+
+
+def test_cli_dialogs_archive_history_rejects_non_numeric_chat_id(cli_db, capsys):
+    """Не-числовой --chat-id — дружелюбное сообщение, а не traceback (ревью #1455)."""
+    pool = _mock_pool()
+    with (
+        patch("src.cli.commands.dialogs.serve_is_running", return_value=False),
+        patch("src.cli.commands.dialogs.backfill_account", new_callable=AsyncMock) as fake_backfill,
+    ):
+        _run(_ns(dialogs_action="archive-history", phone="+1234567890", chat_id="abc"), pool, cli_db)
+
+    out = capsys.readouterr().out
+    assert "Invalid --chat-id" in out
+    fake_backfill.assert_not_awaited()
+
+
+def test_cli_dialogs_archive_history_incomplete_gate(cli_db, capsys):
+    """Насыщенный гейт помечает прогон незавершённым — CLI не печатает «готово» молча."""
+    pool = _mock_pool()
+    with (
+        patch("src.cli.commands.dialogs.serve_is_running", return_value=False),
+        patch(
+            "src.cli.commands.dialogs.backfill_account",
+            new_callable=AsyncMock,
+            return_value={"dialogs": 2, "archived": 1, "errors": 0, "incomplete": True},
+        ),
+    ):
+        _run(_ns(dialogs_action="archive-history", phone="+1234567890", chat_id=None), pool, cli_db)
+
+    out = capsys.readouterr().out
+    assert "НЕ ЗАВЕРШЁН" in out
+    assert "продолжится с курсоров" in out

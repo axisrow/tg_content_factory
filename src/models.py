@@ -383,6 +383,26 @@ class IncomingDm(BaseModel):
     processed: bool = False
 
 
+class DmMessage(BaseModel):
+    """Одна запись архива DM — ОБЕ стороны, без TTL (#1453).
+
+    В отличие от журнала `IncomingDm` (TTL 24ч, только входящие — планка
+    приватности черновик-ассистента) архив хранится вечно по явному запросу
+    владельца. Уникальность `(phone, chat_id, message_id)` делает запись
+    идемпотентной: живой слушатель, догон и бэкфилл пишут одно и то же
+    сообщение молча по одному разу.
+    """
+
+    id: int | None = None
+    phone: str
+    chat_id: int
+    message_id: int
+    out: bool = False
+    text: str | None = None
+    message_date: datetime | None = None
+    received_at: datetime | None = None
+
+
 # Режимы догона пропущенного DM (#1428, эпик #1416 этап 2.3):
 # full — догнать всё, свежее ждёт черновик (processed=0);
 # journal_only — догнать в журнал на просмотр, черновики автомат не готовит;

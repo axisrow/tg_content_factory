@@ -618,6 +618,37 @@ async def test_persist_incoming_dm_records_journal_entry(db):
 
 
 @pytest.mark.anyio
+async def test_persist_outgoing_dm_writes_archive_not_journal(db):
+    """#1453: исходящее событие — в архив (обе стороны), журнал не трогаем:
+    у исходящих нет черновика, processed=0 им не положен по смыслу."""
+    from datetime import datetime, timezone
+
+    from src.telegram.dm_listener import IncomingDmEvent
+    from src.web.bootstrap import _persist_incoming_dm
+
+    received = datetime.now(timezone.utc)
+    await _persist_incoming_dm(
+        db,
+        IncomingDmEvent(
+            phone="+111",
+            chat_id=42,
+            message_id=7,
+            text="мой ответ",
+            message_date=received,
+            received_at=received,
+            out=True,
+        ),
+    )
+
+    assert await db.repos.dm_messages.count("+111") == 1
+    incoming, outgoing = await db.repos.dm_messages.count_by_direction("+111")
+    assert (incoming, outgoing) == (0, 1)
+    assert await db.repos.incoming_dms.count_unprocessed() == 0
+    cur = await db.db.execute("SELECT COUNT(*) AS n FROM incoming_dms")
+    assert (await cur.fetchone())["n"] == 0
+
+
+@pytest.mark.anyio
 async def test_persist_incoming_dm_skips_event_without_ids(db, caplog):
     """Без (chat_id, message_id) запись неидемпотентна — пропуск с предупреждением."""
     from datetime import datetime, timezone
