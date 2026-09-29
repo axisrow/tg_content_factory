@@ -468,6 +468,11 @@ class CollectionQueue:
             )
             self._queue.task_done()
             return None
+
+        if self._shutdown_requested:
+            self._known_task_ids.discard(task_id)
+            self._queue.task_done()
+            return None
         if not channel.is_active:
             await self._channels.cancel_collection_task(
                 task_id,
@@ -478,11 +483,6 @@ class CollectionQueue:
                 task_id,
                 channel.channel_id,
             )
-            self._queue.task_done()
-            return None
-
-        if self._shutdown_requested:
-            self._known_task_ids.discard(task_id)
             self._queue.task_done()
             return None
         return channel
@@ -750,7 +750,8 @@ class CollectionQueue:
             reason=f"{CHANNEL_PRIVATE_DEACTIVATE_THRESHOLD} consecutive ChannelPrivateError",
         ) == 0:
             logger.info(
-                "Suppressed auto-deactivation of channel %d (pk=%d): operator kept it active",
+                "Suppressed auto-deactivation of channel %d (pk=%d): rowcount 0 "
+                "(operator-kept active or channel row removed)",
                 channel.channel_id,
                 channel.id,
             )
