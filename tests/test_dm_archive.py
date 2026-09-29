@@ -48,7 +48,10 @@ class _FakeRawClient:
         self.history_calls: list[dict] = []
 
     async def iter_dialogs(self):
-        return list(self._dialogs)
+        # Async-ИТЕРАТОР, как реальный Telethon _DialogsIter (регресс боевого
+        # прогона: await на списке фейка проходил, живой клиент падал).
+        for dialog in self._dialogs:
+            yield dialog
 
 
 class _FakePool:

@@ -80,10 +80,11 @@ async def backfill_account(
     stats: dict[str, Any] = {"dialogs": 0, "archived": 0, "errors": 0}
     # Живой iter_dialogs сразу же: заполняет кэш энтитий сессии — numeric-peer
     # lookups iter_messages ниже резолвятся без второго запроса (конвенция
-    # «entity cache», CLAUDE.md).
+    # «entity cache», CLAUDE.md). iter_dialogs — async-итератор, не awaitable:
+    # потребляем через async for (регресс боевого прогона #1455).
     dialogs = [
         dialog
-        for dialog in await client.iter_dialogs()
+        async for dialog in client.iter_dialogs()
         if dialog.is_user
         and (chat_ids is None or int(dialog.id) in chat_ids)
     ]
