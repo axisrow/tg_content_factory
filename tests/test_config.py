@@ -82,6 +82,25 @@ def test_parse_proxy_url_socks5_no_auth_omits_credentials():
     assert proxy == {"proxy_type": "socks5", "addr": "127.0.0.1", "port": 9050, "rdns": True}
 
 
+def test_parse_proxy_url_one_sided_credentials_set_only_present_field():
+    # A blank username must not reach python-socks as username="" — that would
+    # start a doomed SOCKS5 auth instead of passing just the password.
+    assert parse_proxy_url("socks5://:s3cret@h:1080") == {
+        "proxy_type": "socks5",
+        "addr": "h",
+        "port": 1080,
+        "rdns": True,
+        "password": "s3cret",
+    }
+    assert parse_proxy_url("socks5://uer@h:1080") == {
+        "proxy_type": "socks5",
+        "addr": "h",
+        "port": 1080,
+        "rdns": True,
+        "username": "uer",
+    }
+
+
 def test_parse_proxy_url_http_defaults_port():
     assert parse_proxy_url("http://proxy.local") == {
         "proxy_type": "http",
