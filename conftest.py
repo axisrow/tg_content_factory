@@ -111,17 +111,21 @@ def _xdist_available_workers_for_load(cpu_count: int) -> int:
     # alone, so the load-aware throttle below — which reserves a core and subtracts
     # the rolling load average — only wastes parallelism (it caps a 4-vCPU runner to
     # ~2 workers). Use every core there; xdist workers here are asyncio/sqlite and
-    # IO/await-bound, so oversubscription is cheap. Local dev stays load-aware so a
-    # busy laptop isn't hogged (#944). Match a real CI flag, not just any non-empty
-    # value, so a stray ``CI=false``/``CI=0`` in a dev shell doesn't disable the
-    # throttle (review note, #974).
+    # IO/await-bound, so oversubscription is cheap. Match a real CI flag, not just
+    # any non-empty value, so a stray ``CI=false``/``CI=0`` in a dev shell doesn't
+    # disable the throttle (review note, #974).
     if os.environ.get("CI", "").strip().lower() in ("1", "true", "yes"):
         return max(1, cpu_count)
     try:
         current_load = os.getloadavg()[0]
     except (AttributeError, OSError):
         current_load = 0.0
-    busy_cores = max(0, math.ceil(current_load))
+    # Local dev (#1463): only the load ABOVE cpu_count throttles. Load coming from
+    # other processes on an undersubscribed box (load 14.8 on 10 cores) used to
+    # collapse `-n auto` to 1 worker and stretch the full suite to ~10 minutes;
+    # reserving one core is still the rule, but an already-saturated machine no
+    # longer multiplies the subtraction.
+    busy_cores = max(0, math.ceil(current_load) - cpu_count)
     return max(1, cpu_count - busy_cores - 1)
 
 

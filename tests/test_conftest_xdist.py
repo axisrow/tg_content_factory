@@ -56,17 +56,38 @@ def test_xdist_auto_workers_are_capped_by_default(monkeypatch) -> None:
     assert root_conftest.pytest_xdist_auto_num_workers(_config(["tests"])) == 4
 
 
-def test_xdist_auto_workers_reduce_worker_count_when_cpu_is_busy(monkeypatch) -> None:
+def test_xdist_auto_workers_ignore_load_below_cores(monkeypatch) -> None:
+    # Load 12.8 on 16 cores means OTHER processes oversubscribe the box; the
+    # suite must not collapse to near-serial because of it (#1463).
     monkeypatch.setenv("TGCF_PYTEST_XDIST_WORKERS", "8")
     _set_cpu_state(monkeypatch, cpu_count=16, load_average=12.8)
 
-    assert root_conftest.pytest_xdist_auto_num_workers(_config(["tests"])) == 2
+    assert root_conftest.pytest_xdist_auto_num_workers(_config(["tests"])) == 8
+
+
+def test_xdist_auto_workers_reduce_only_for_load_above_cores(monkeypatch) -> None:
+    # Only the load ABOVE cpu_count throttles: 30 − 16 = 14 busy cores beyond
+    # capacity → 16 − 14 − 1 = 1.
+    monkeypatch.setenv("TGCF_PYTEST_XDIST_WORKERS", "8")
+    _set_cpu_state(monkeypatch, cpu_count=16, load_average=30.0)
+
+    assert root_conftest.pytest_xdist_auto_num_workers(_config(["tests"])) == 1
 
 
 def test_xdist_auto_workers_round_fractional_load_up(monkeypatch) -> None:
     _set_cpu_state(monkeypatch, cpu_count=4, load_average=0.95)
 
-    assert root_conftest._xdist_available_workers_for_load(4) == 2
+    assert root_conftest._xdist_available_workers_for_load(4) == 3
+
+
+def test_xdist_auto_workers_survive_overloaded_laptop(monkeypatch) -> None:
+    # The #1463 repro: 10-core laptop, load 14.8 (owner's machine mid-work).
+    # The old formula returned 1 worker (9m28s full suite); the new one keeps
+    # the default cap of 4.
+    monkeypatch.delenv("TGCF_PYTEST_XDIST_WORKERS", raising=False)
+    _set_cpu_state(monkeypatch, cpu_count=10, load_average=14.8)
+
+    assert root_conftest.pytest_xdist_auto_num_workers(_config(["tests"])) == 4
 
 
 def test_xdist_auto_workers_keep_one_worker_when_cpu_is_saturated(monkeypatch) -> None:
