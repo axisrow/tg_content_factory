@@ -188,9 +188,13 @@ def parse_proxy_url(url: str) -> dict | None:
         "port": parsed.port or (1080 if parsed.scheme == "socks5" else 8080),
         "rdns": True,
     }
-    if parsed.username or parsed.password:
-        proxy["username"] = unquote(parsed.username or "")
-        proxy["password"] = unquote(parsed.password or "")
+    # Set only the fields actually present: an empty username/password pair
+    # would make python-socks attempt SOCKS5 auth with a blank login and fail,
+    # instead of passing just the credential the URL carries.
+    if parsed.username:
+        proxy["username"] = unquote(parsed.username)
+    if parsed.password:
+        proxy["password"] = unquote(parsed.password)
     return proxy
 
 
