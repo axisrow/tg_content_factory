@@ -27,7 +27,7 @@ def mock_db():
             flood_wait_until=None,
         ),
         SimpleNamespace(
-            phone="+66982102247",
+            phone="+79000000001",
             is_primary=False,
             is_active=True,
             flood_wait_until=None,
@@ -648,7 +648,7 @@ class TestResolveEntityTool:
         mock_db.repos.settings.get = AsyncMock(return_value=None)
         handlers = _get_tool_handlers(mock_db, client_pool=pool)
 
-        await handlers["resolve_entity"]({"identifier": "@alxz500", "phone": "+66982102247"})
+        await handlers["resolve_entity"]({"identifier": "@alxz500", "phone": "+79000000001"})
 
         call_kwargs = pool.resolve_any_entity.call_args
         assert call_kwargs is not None

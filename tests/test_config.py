@@ -66,10 +66,10 @@ def test_load_config_reads_telegram_credentials_directly_from_env_without_placeh
 
 
 def test_parse_proxy_url_socks5_with_auth_unquotes_credentials():
-    proxy = parse_proxy_url("socks5://tg:p%40ss@85.136.181.198:1080")
+    proxy = parse_proxy_url("socks5://tg:p%40ss@203.0.113.10:1080")
     assert proxy == {
         "proxy_type": "socks5",
-        "addr": "85.136.181.198",
+        "addr": "203.0.113.10",
         "port": 1080,
         "rdns": True,
         "username": "tg",

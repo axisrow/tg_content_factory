@@ -2119,7 +2119,7 @@ class TestAgentManagerPermissionGate:
         await save_tool_permissions(
             db,
             {"pin_message": False, "list_channels": True},
-            phone="+66982102247",
+            phone="+79000000001",
         )
         set_gate(None)
         mgr = AgentManager(db)
@@ -2202,7 +2202,7 @@ class TestAgentManagerPermissionGate:
         await save_tool_permissions(
             db,
             {"pin_message": False, "list_channels": True},
-            phone="+66982102247",
+            phone="+79000000001",
         )
         mgr = AgentManager(db)
         mgr.enable_permission_gate()

@@ -594,19 +594,19 @@ class TestDeepagentsSyncGetAccountInfo:
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
         pool = MagicMock()
-        pool.clients = {"+66982102247": object(), "+66824602531": object()}
+        pool.clients = {"+79000000001": object(), "+79000000004": object()}
         pool.get_users_info = AsyncMock(return_value=[])
         mock_db.get_accounts = AsyncMock(return_value=[
             SimpleNamespace(
                 id=1,
-                phone="+66982102247",
+                phone="+79000000001",
                 is_active=True,
                 is_primary=True,
                 session_string="s",
             ),
             SimpleNamespace(
                 id=2,
-                phone="+66824602531",
+                phone="+79000000004",
                 is_active=True,
                 is_primary=False,
                 session_string="s",
@@ -618,8 +618,8 @@ class TestDeepagentsSyncGetAccountInfo:
         result = tool_map["get_account_info"]()
 
         assert "Runtime connected phones" in result
-        assert "+66982102247" in result
-        assert "+66824602531" in result
+        assert "+79000000001" in result
+        assert "+79000000004" in result
         assert "do not treat this as disconnected" in result
 
 

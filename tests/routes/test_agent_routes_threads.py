@@ -235,7 +235,7 @@ async def test_resolve_permission_session_choice_updates_gate(client, db):
     thread_id = await db.create_agent_thread("Perm")
     gate = PermissionGate()
     session_id = "web-session"
-    phone = "+66982102247"
+    phone = "+79000000001"
     client._transport_app.state.agent_manager.permission_gate = gate
     ctx = AgentRequestContext(
         session_id=session_id,
