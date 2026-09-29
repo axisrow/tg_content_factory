@@ -216,6 +216,29 @@ async def test_backfill_chat_ids_filter(tmp_path, monkeypatch):
         await db.close()
 
 
+async def test_backfill_long_flood_on_listing_raises_runtime_error(tmp_path):
+    """Долгий flood wait на листинге диалогов (GetDialogsRequest) — явная
+    ошибка, а не падение FloodWaitError из библиотеки (регресс боевого прогона).
+    """
+    db = await _make_db(tmp_path)
+    try:
+        class _FloodedListingClient:
+            async def iter_dialogs(self):
+                raise HandledFloodWaitError(_flood_info(seconds=50000))
+                yield  # недостижимый yield делает функцию async-генератором
+
+        try:
+            await backfill_account(
+                _FakePool(_FloodedListingClient()), db, "+111", progress=False
+            )
+        except RuntimeError as exc:
+            assert "листинг диалогов" in str(exc)
+        else:
+            raise AssertionError("ожидали RuntimeError при долгом flood на листинге")
+    finally:
+        await db.close()
+
+
 async def test_backfill_requires_connected_client(tmp_path):
     db = await _make_db(tmp_path)
     try:

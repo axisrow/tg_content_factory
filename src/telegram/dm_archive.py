@@ -24,7 +24,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitGate
+from telethon_floodgate import (
+    HandledFloodWaitError,
+    TelegramRateLimitGate,
+    run_with_flood_wait_retry,
+)
 
 from src.models import DmMessage
 from src.telegram.dm_history import read_dialog_history_since
@@ -78,16 +82,30 @@ async def backfill_account(
         raise RuntimeError(f"dm_archive: нет подключенного клиента для {phone}")
 
     stats: dict[str, Any] = {"dialogs": 0, "archived": 0, "errors": 0}
-    # Живой iter_dialogs сразу же: заполняет кэш энтитий сессии — numeric-peer
-    # lookups iter_messages ниже резолвятся без второго запроса (конвенция
-    # «entity cache», CLAUDE.md). iter_dialogs — async-итератор, не awaitable:
-    # потребляем через async for (регресс боевого прогона #1455).
-    dialogs = [
-        dialog
-        async for dialog in client.iter_dialogs()
-        if dialog.is_user
-        and (chat_ids is None or int(dialog.id) in chat_ids)
-    ]
+
+    async def _list_personal_dialogs() -> list[Any]:
+        # Живой iter_dialogs сразу же: заполняет кэш энтитий сессии — numeric-peer
+        # lookups iter_messages ниже резолвятся без второго запроса (конвенция
+        # «entity cache», CLAUDE.md). iter_dialogs — async-итератор, не awaitable
+        # (регресс боевого прогона #1455); GetDialogsRequest флудится как любой
+        # запрос — транзиентные ожидания внутри run_with_flood_wait_retry
+        # (второй регресс того же прогона: голый вызов упал на FloodWait 20s).
+        return [
+            dialog
+            async for dialog in client.iter_dialogs()
+            if dialog.is_user
+            and (chat_ids is None or int(dialog.id) in chat_ids)
+        ]
+
+    try:
+        dialogs = await run_with_flood_wait_retry(
+            _list_personal_dialogs, operation="dm_archive_dialogs"
+        )
+    except HandledFloodWaitError as exc:
+        raise RuntimeError(
+            "dm_archive: листинг диалогов упёрся в долгий flood wait — "
+            "перезапусти команду позже (прогон возобновляемый)"
+        ) from exc
     stats["dialogs"] = len(dialogs)
     for dialog in dialogs:
         chat_id = int(dialog.id)
