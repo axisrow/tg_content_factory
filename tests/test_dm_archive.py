@@ -188,6 +188,7 @@ async def test_backfill_gate_saturation_stops_before_reading(tmp_path, monkeypat
         stats = await backfill_account(pool, db, "+111", progress=False)
 
         assert stats["archived"] == 0
+        assert stats["incomplete"] is True  # CLI не напечатает «готово»
         assert gate.calls == 2  # выждал ожидание, второй отказ — стоп
         assert client.history_calls == []
     finally:

@@ -73,9 +73,9 @@ async def backfill_account(
     """
     session = pool.clients.get(phone)
     client = getattr(session, "raw_client", None)
-    if client is None:
-        raise RuntimeError(f"dm_archive: нет подключенного клиента для {phone}")
     auth = getattr(pool, "_auth", None)
+    if client is None or auth is None:
+        raise RuntimeError(f"dm_archive: нет подключенного клиента для {phone}")
 
     stats: dict[str, Any] = {"dialogs": 0, "archived": 0, "errors": 0}
     # Живой iter_dialogs сразу же: заполняет кэш энтитий сессии — numeric-peer
@@ -97,7 +97,9 @@ async def backfill_account(
             if not await _acquire_history_slot(pool, phone):
                 # Гейт аккаунта насыщен: диалог остаётся на повторный прогон —
                 # курсор не двигался, возобновление вернётся ровно сюда.
+                # Маркер незавершённости: CLI не должен печатать «готово».
                 logger.warning("dm_archive: гейт насыщен, стоп на %s chat %s", phone, chat_id)
+                stats["incomplete"] = True
                 return stats
             try:
                 messages = await read_dialog_history_since(
@@ -117,7 +119,7 @@ async def backfill_account(
                 stats["errors"] += 1
                 break
             for msg in messages:
-                await db.repos.dm_messages.record(
+                inserted = await db.repos.dm_messages.record(
                     DmMessage(
                         phone=phone,
                         chat_id=chat_id,
@@ -128,7 +130,8 @@ async def backfill_account(
                         received_at=datetime.now(timezone.utc),
                     )
                 )
-            stats["archived"] += len(messages)
+                if inserted:
+                    stats["archived"] += 1  # только новые: повторы бэкфилла не «архив»
             pages += 1
             if len(messages) < BACKFILL_PAGE_LIMIT:
                 break

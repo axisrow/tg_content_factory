@@ -234,3 +234,21 @@ def test_cli_dialogs_archive_history_single_chat(cli_db, capsys):
         _run(_ns(dialogs_action="archive-history", phone="+1234567890", chat_id="4242"), pool, cli_db)
 
     assert fake_backfill.await_args.kwargs["chat_ids"] == {4242}
+
+
+def test_cli_dialogs_archive_history_incomplete_gate(cli_db, capsys):
+    """Насыщенный гейт помечает прогон незавершённым — CLI не печатает «готово» молча."""
+    pool = _mock_pool()
+    with (
+        patch("src.cli.commands.dialogs.serve_is_running", return_value=False),
+        patch(
+            "src.cli.commands.dialogs.backfill_account",
+            new_callable=AsyncMock,
+            return_value={"dialogs": 2, "archived": 1, "errors": 0, "incomplete": True},
+        ),
+    ):
+        _run(_ns(dialogs_action="archive-history", phone="+1234567890", chat_id=None), pool, cli_db)
+
+    out = capsys.readouterr().out
+    assert "НЕ ЗАВЕРШЁН" in out
+    assert "продолжится с курсоров" in out

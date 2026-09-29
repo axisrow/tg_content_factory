@@ -619,6 +619,11 @@ async def _dialogs_archive_history(args, db, pool) -> None:
         f"archived_now={stats['archived']} errors={stats['errors']} | "
         f"total incoming={incoming} outgoing={outgoing}"
     )
+    if stats.get("incomplete"):
+        print(
+            "ПРОГОН НЕ ЗАВЕРШЁН: history-гейт аккаунта насыщен. "
+            "Запусти команду ещё раз — бэкфилл продолжится с курсоров архива."
+        )
 
 
 async def _dialogs_participants(args, db, pool) -> None:

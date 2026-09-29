@@ -219,8 +219,9 @@ class DmCatchupService:
             return "error"
         for msg in messages:
             # Архив (#1453): обе стороны, без staleness-гейта — это хранилище
-            # данных, черновик-автомат его не читает.
-            await self._db.repos.dm_messages.record(
+            # данных, черновик-автомат его не читает. Счётчик — только новые
+            # вставки: повторный догон не рапортует дубли как «архив».
+            inserted = await self._db.repos.dm_messages.record(
                 DmMessage(
                     phone=phone,
                     chat_id=chat_id,
@@ -230,7 +231,8 @@ class DmCatchupService:
                     message_date=msg.date,
                 )
             )
-            stats["archived"] += 1
+            if inserted:
+                stats["archived"] += 1
             if msg.out:
                 continue  # журнал — только входящие, как у живого слушателя
             stale = msg.date is None or (now - _ensure_aware(msg.date)) > timedelta(
