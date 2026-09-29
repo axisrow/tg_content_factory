@@ -615,7 +615,7 @@ async def test_telethon_cli_backend_disables_flood_auto_sleep(monkeypatch, tmp_p
         materialize=lambda phone, session_string: str(tmp_path / "session"),
         ensure_empty_env_file=lambda: str(tmp_path / ".env"),
     )
-    auth = SimpleNamespace(api_id=1, api_hash="hash")
+    auth = SimpleNamespace(api_id=1, api_hash="hash", proxy=None)
     backend = TelethonCliBackend(auth, materializer, transport="hybrid")
 
     lease = await backend.acquire_client(
@@ -624,6 +624,32 @@ async def test_telethon_cli_backend_disables_flood_auto_sleep(monkeypatch, tmp_p
 
     assert fake_client.flood_sleep_threshold == 0
     assert lease.phone == "+70001112233"
+    assert lease.backend_name == "telethon_cli"
+
+
+@pytest.mark.anyio
+async def test_telethon_cli_backend_applies_proxy_before_connect(monkeypatch, tmp_path):
+    """TG_PROXY travels through TelethonCliBackend as a pre-connect set_proxy call."""
+    fake_client = FakeCliTelethonClient()
+    fake_client.set_proxy = MagicMock()
+    monkeypatch.setattr(
+        "src.telegram.backends.telethon_cli_runtime.create_client",
+        lambda namespace: fake_client,
+    )
+
+    materializer = SimpleNamespace(
+        materialize=lambda phone, session_string: str(tmp_path / "session"),
+        ensure_empty_env_file=lambda: str(tmp_path / ".env"),
+    )
+    proxy = {"proxy_type": "socks5", "addr": "h", "port": 1080, "rdns": True}
+    auth = SimpleNamespace(api_id=1, api_hash="hash", proxy=proxy)
+    backend = TelethonCliBackend(auth, materializer, transport="hybrid")
+
+    lease = await backend.acquire_client(
+        Account(phone="+70001112233", session_string="session-xyz")
+    )
+
+    fake_client.set_proxy.assert_called_once_with(proxy)
     assert lease.backend_name == "telethon_cli"
 
 
@@ -640,7 +666,7 @@ async def test_telethon_cli_backend_disconnects_partial_client_on_acquire_error(
         materialize=lambda phone, session_string: str(tmp_path / "session"),
         ensure_empty_env_file=lambda: str(tmp_path / ".env"),
     )
-    auth = SimpleNamespace(api_id=1, api_hash="hash")
+    auth = SimpleNamespace(api_id=1, api_hash="hash", proxy=None)
     backend = TelethonCliBackend(auth, materializer, transport="hybrid")
 
     with pytest.raises(sqlite3.OperationalError, match="database is locked"):

@@ -1,8 +1,9 @@
 from pathlib import Path
 
+import pytest
 import yaml
 
-from src.config import AppConfig, load_config, resolve_session_encryption_secret
+from src.config import AppConfig, load_config, parse_proxy_url, resolve_session_encryption_secret
 
 
 def test_default_config():
@@ -59,6 +60,91 @@ def test_load_config_reads_telegram_credentials_directly_from_env_without_placeh
     assert config.web.port == 9090
     assert config.telegram.api_id == 77777
     assert config.telegram.api_hash == "hash-from-env"
+
+
+# --- TG_PROXY parsing (parse_proxy_url / load_config override) ---
+
+
+def test_parse_proxy_url_socks5_with_auth_unquotes_credentials():
+    proxy = parse_proxy_url("socks5://tg:p%40ss@85.136.181.198:1080")
+    assert proxy == {
+        "proxy_type": "socks5",
+        "addr": "85.136.181.198",
+        "port": 1080,
+        "rdns": True,
+        "username": "tg",
+        "password": "p@ss",
+    }
+
+
+def test_parse_proxy_url_socks5_no_auth_omits_credentials():
+    proxy = parse_proxy_url("socks5://127.0.0.1:9050")
+    assert proxy == {"proxy_type": "socks5", "addr": "127.0.0.1", "port": 9050, "rdns": True}
+
+
+def test_parse_proxy_url_one_sided_credentials_set_only_present_field():
+    # A blank username must not reach python-socks as username="" — that would
+    # start a doomed SOCKS5 auth instead of passing just the password.
+    assert parse_proxy_url("socks5://:s3cret@h:1080") == {
+        "proxy_type": "socks5",
+        "addr": "h",
+        "port": 1080,
+        "rdns": True,
+        "password": "s3cret",
+    }
+    assert parse_proxy_url("socks5://uer@h:1080") == {
+        "proxy_type": "socks5",
+        "addr": "h",
+        "port": 1080,
+        "rdns": True,
+        "username": "uer",
+    }
+
+
+def test_parse_proxy_url_http_defaults_port():
+    assert parse_proxy_url("http://proxy.local") == {
+        "proxy_type": "http",
+        "addr": "proxy.local",
+        "port": 8080,
+        "rdns": True,
+    }
+
+
+def test_parse_proxy_url_empty_returns_none():
+    assert parse_proxy_url("") is None
+    assert parse_proxy_url("   ") is None
+
+
+def test_parse_proxy_url_rejects_bad_scheme_and_missing_host():
+    with pytest.raises(ValueError, match="TG_PROXY"):
+        parse_proxy_url("ftp://h:1")
+    with pytest.raises(ValueError, match="TG_PROXY"):
+        parse_proxy_url("socks5://")
+
+
+def test_load_config_tg_proxy_env_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("TG_PROXY", "socks5://u:p@h:1080")
+    config = load_config(tmp_path / "missing.yaml")
+    assert config.telegram_runtime.proxy == {
+        "proxy_type": "socks5",
+        "addr": "h",
+        "port": 1080,
+        "rdns": True,
+        "username": "u",
+        "password": "p",
+    }
+
+
+def test_load_config_tg_proxy_unset_is_none(tmp_path, monkeypatch):
+    monkeypatch.delenv("TG_PROXY", raising=False)
+    config = load_config(tmp_path / "missing.yaml")
+    assert config.telegram_runtime.proxy is None
+
+
+def test_load_config_tg_proxy_malformed_fails_fast(tmp_path, monkeypatch):
+    monkeypatch.setenv("TG_PROXY", "ftp://h:1")
+    with pytest.raises(ValueError, match="TG_PROXY"):
+        load_config(tmp_path / "missing.yaml")
 
 
 def test_load_config_reads_telegram_credentials_from_env_when_config_missing(monkeypatch, tmp_path):

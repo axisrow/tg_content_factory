@@ -61,7 +61,7 @@ async def test_sign_in_fresh_success():
 
     captured_args = []
 
-    def fake_client(session, api_id, api_hash):
+    def fake_client(session, api_id, api_hash, **kwargs):
         captured_args.append(session)
         return mock_client
 

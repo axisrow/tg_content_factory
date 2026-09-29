@@ -133,9 +133,13 @@ def _describe_next_type(next_type: object | None) -> str | None:
 
 
 class TelegramAuth:
-    def __init__(self, api_id: int, api_hash: str):
+    def __init__(self, api_id: int, api_hash: str, proxy: dict | None = None):
         self._api_id = api_id
         self._api_hash = api_hash
+        # Network-level MTProto proxy (Telethon ``proxy=`` dict, see
+        # parse_proxy_url) applied to every client this factory builds;
+        # None = direct connection.
+        self._proxy = proxy
         self._pending: dict[str, tuple[TelegramClient, str]] = {}
 
     @property
@@ -145,6 +149,10 @@ class TelegramAuth:
     @property
     def api_hash(self) -> str:
         return self._api_hash
+
+    @property
+    def proxy(self) -> dict | None:
+        return self._proxy
 
     @property
     def is_configured(self) -> bool:
@@ -169,7 +177,7 @@ class TelegramAuth:
         started_at = time.monotonic()
         logger.info("auth.send_code start phone=%s", phone)
         await self._disconnect_pending_client(phone)
-        client = TelegramClient(StringSession(), self._api_id, self._api_hash)
+        client = TelegramClient(StringSession(), self._api_id, self._api_hash, proxy=self._proxy)
         try:
             logger.info(
                 "auth.send_code connect start phone=%s timeout_s=%s",
@@ -346,7 +354,9 @@ class TelegramAuth:
         """
         started_at = time.monotonic()
         logger.info("auth.sign_in_fresh start phone=%s", phone)
-        client = TelegramClient(StringSession(session_str), self._api_id, self._api_hash)
+        client = TelegramClient(
+            StringSession(session_str), self._api_id, self._api_hash, proxy=self._proxy
+        )
         try:
             logger.info(
                 "auth.sign_in_fresh connect start phone=%s timeout_s=%s",
@@ -425,6 +435,7 @@ class TelegramAuth:
         client = TelegramClient(
             StringSession(session_string), self._api_id, self._api_hash,
             connection_retries=None, retry_delay=2,
+            proxy=self._proxy,
             **extra_kwargs,
         )
         await client.connect()

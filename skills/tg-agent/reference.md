@@ -3,7 +3,8 @@
 Global form: `tg-agent [--config CONFIG] <group> <command> [args]`.
 Every group and command has `--help`. Where a `--format text|json|csv` flag exists, prefer
 `json` when you need to parse output. Config comes from `config.yaml` + `.env` in the working
-directory (auto-loaded).
+directory (auto-loaded). `TG_PROXY=socks5://user:pass@host:port` (or `http://...`) routes all
+Telegram traffic through that proxy when MTProto is blocked; unset = direct.
 
 Groups below mirror `tg-agent --help`. This file lists common commands and their notable
 flags; anything not listed — check `--help`.
