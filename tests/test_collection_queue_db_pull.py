@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from telethon.errors import ChannelPrivateError
 from telethon_floodgate import TelegramRateLimitedError
 
 from src.collection_queue import CollectionQueue
@@ -814,6 +815,129 @@ async def test_connection_error_queue_full_keeps_task_pending_for_pull_loop(tmp_
         queue._queue.task_done()
         assert await queue._ingest_pending_tasks() == 1
         assert task_id in queue._known_task_ids
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+# --- ChannelPrivateError auto-deactivation (#1451) ---
+
+
+async def _raise_private_error(queue: CollectionQueue, task_id: int, channel: Channel) -> None:
+    await queue._handle_collection_exception(
+        ChannelPrivateError(request=None),
+        task_id=task_id,
+        channel=channel,
+        force=False,
+        full=False,
+    )
+
+
+@pytest.mark.anyio
+async def test_channel_private_error_threshold_deactivates_channel(tmp_path):
+    """3 consecutive ChannelPrivateError → is_active=0 + type='unavailable' (#1451)."""
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+        channel = (await db.get_channels())[0]
+        queue = CollectionQueue(_FakeCollector(), db)
+        task_id = await _create_pending_task(db)
+        await db.repos.tasks.update_collection_task(task_id, "running")
+
+        await _raise_private_error(queue, task_id, channel)
+        await _raise_private_error(queue, task_id, channel)
+        assert queue._channel_private_error_counts[channel.id] == 2
+        assert (await db.repos.channels.get_channel_by_pk(channel.id)).is_active
+
+        await _raise_private_error(queue, task_id, channel)
+
+        refreshed = await db.repos.channels.get_channel_by_pk(channel.id)
+        assert not refreshed.is_active
+        assert refreshed.channel_type == "unavailable"
+        task = await db.get_collection_task(task_id)
+        assert task.status == "failed"
+        assert "ChannelPrivateError" in task.error
+        assert channel.id not in queue._channel_private_error_counts
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_collection_success_resets_private_error_streak(tmp_path):
+    """A successful collect breaks the streak — no deactivation from stale counts."""
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+        channel = (await db.get_channels())[0]
+        queue = CollectionQueue(_FakeCollector(), db)
+        task_id = await _create_pending_task(db)
+        await db.repos.tasks.update_collection_task(task_id, "running")
+
+        await _raise_private_error(queue, task_id, channel)
+        await _raise_private_error(queue, task_id, channel)
+        assert queue._channel_private_error_counts[channel.id] == 2
+
+        await queue._handle_collection_completion(
+            task_id, channel, 5, cancel_event=asyncio.Event(), force=False
+        )
+        assert not queue._channel_private_error_counts
+
+        await _raise_private_error(queue, task_id, channel)
+        await _raise_private_error(queue, task_id, channel)
+        assert (await db.repos.channels.get_channel_by_pk(channel.id)).is_active
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_human_active_decision_suppresses_auto_deactivation(tmp_path):
+    """Operator kept the channel active (human origin) → auto cannot flip it."""
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+        channel = (await db.get_channels())[0]
+        await db.set_channel_active(channel.id, True, origin="human", actor="tester")
+        queue = CollectionQueue(_FakeCollector(), db)
+        task_id = await _create_pending_task(db)
+        await db.repos.tasks.update_collection_task(task_id, "running")
+
+        for _ in range(3):
+            await _raise_private_error(queue, task_id, channel)
+
+        refreshed = await db.repos.channels.get_channel_by_pk(channel.id)
+        assert refreshed.is_active
+        assert refreshed.channel_type != "unavailable"
+        task = await db.get_collection_task(task_id)
+        assert task.status == "failed"
+        assert channel.id not in queue._channel_private_error_counts
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_pre_dispatch_skips_tasks_of_inactive_channel(tmp_path):
+    """A PENDING task of a deactivated channel is cancelled, not collected."""
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+        channel = (await db.get_channels())[0]
+        collector = _FakeCollector()
+        queue = CollectionQueue(collector, db)
+
+        task_id = await _create_pending_task(db)
+        await db.set_channel_active(channel.id, False)
+
+        assert await queue._ingest_pending_tasks() == 1
+        await queue._run_worker()
+
+        task = await db.get_collection_task(task_id)
+        assert task.status == "cancelled"
+        assert "деактивирован" in (task.note or "")
+        assert collector.calls == []
     finally:
         await queue.shutdown()
         await db.close()

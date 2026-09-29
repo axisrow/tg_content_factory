@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
+from telethon.errors import ChannelPrivateError
 from telethon_floodgate import TelegramRateLimitedError
 
 from src.database import Database, DatabaseBusyError
@@ -35,6 +36,11 @@ _SQLITE_BUSY_MESSAGES = ("database is locked", "database table is locked", "data
 # Slack added on top of the gate's exact retry_after so the rescheduled run
 # does not land a millisecond before the sliding window actually reopens.
 GATE_RATE_LIMIT_RETRY_BUFFER_SEC = 5.0
+
+# Consecutive ChannelPrivateError failures (no intervening success or other
+# error) before a channel is auto-deactivated (#1451). Owner decision: 3 — a
+# single failure can be account-rotation noise on a live channel.
+CHANNEL_PRIVATE_DEACTIVATE_THRESHOLD = 3
 
 
 def _is_transient_busy_error(exc: BaseException) -> bool:
@@ -77,6 +83,7 @@ class CollectionQueue:
         self._workers: list[asyncio.Task] = []
         self._active_task_ids: dict[int, asyncio.Event] = {}
         self._retried_tasks: set[int] = set()
+        self._channel_private_error_counts: dict[int, int] = {}
         self._delayed_requeues: set[asyncio.Task] = set()
         self._known_task_ids: set[int] = set()
         self._pull_task: asyncio.Task | None = None
@@ -461,6 +468,18 @@ class CollectionQueue:
             )
             self._queue.task_done()
             return None
+        if not channel.is_active:
+            await self._channels.cancel_collection_task(
+                task_id,
+                note="Канал деактивирован до начала сбора.",
+            )
+            logger.info(
+                "Task %d skipped: channel %d is inactive",
+                task_id,
+                channel.channel_id,
+            )
+            self._queue.task_done()
+            return None
 
         if self._shutdown_requested:
             self._known_task_ids.discard(task_id)
@@ -539,6 +558,8 @@ class CollectionQueue:
             messages_collected=count,
             note=note,
         )
+        if channel.id is not None:
+            self._channel_private_error_counts.pop(channel.id, None)
         logger.info("Collected %d messages from channel %d", count, channel.channel_id)
 
     async def _handle_collection_exception(
@@ -550,6 +571,11 @@ class CollectionQueue:
         loop's finally block. The ``isinstance`` chain mirrors the original
         except-clause precedence exactly. Split out of ``_run_single_worker`` (#922).
         """
+        # Any non-ChannelPrivateError outcome breaks the deactivation streak —
+        # including infra outages (flooded accounts, rate limits), so a dead
+        # channel must earn its own streak, not ride a busy network's.
+        if not isinstance(exc, ChannelPrivateError) and channel.id is not None:
+            self._channel_private_error_counts.pop(channel.id, None)
         if isinstance(exc, AllCollectionClientsFloodedError):
             run_after = exc.next_available_at + timedelta(seconds=5)
             note = (
@@ -657,6 +683,9 @@ class CollectionQueue:
                 len(drained_task_ids),
             )
             return False, True
+        if isinstance(exc, ChannelPrivateError):
+            await self._handle_channel_private_error(task_id, channel, exc)
+            return False, False
         if isinstance(exc, ConnectionError):
             outcome = await self._try_reconnect_and_requeue(task_id, channel, full, force, exc)
             if outcome == "requeued":
@@ -687,6 +716,52 @@ class CollectionQueue:
         )
         logger.exception("Collection failed for channel %d", channel.channel_id)
         return False, False
+
+    async def _handle_channel_private_error(
+        self, task_id: int, channel: Channel, exc: ChannelPrivateError
+    ) -> None:
+        """Count consecutive ChannelPrivateError failures per channel pk (#1451).
+
+        At ``CHANNEL_PRIVATE_DEACTIVATE_THRESHOLD`` auto-deactivate — the same
+        ``set_active(False, origin="auto")`` + ``type='unavailable'`` pair the
+        resolve-gone path uses (dispatcher channels_mixin). A human active
+        decision suppresses the deactivation (rowcount 0): log once and stop
+        counting.
+        """
+        self._retried_tasks.discard(task_id)
+        error = f"ChannelPrivateError: {exc}"[:500]
+        if channel.id is None:
+            await self._update_task_status_shutdown_safe(
+                task_id, CollectionTaskStatus.FAILED, error=error
+            )
+            return
+        streak = self._channel_private_error_counts.get(channel.id, 0) + 1
+        self._channel_private_error_counts[channel.id] = streak
+        # FAILED first: a busy-DB failure below must not strand the task RUNNING.
+        await self._update_task_status_shutdown_safe(
+            task_id, CollectionTaskStatus.FAILED, error=error
+        )
+        if streak < CHANNEL_PRIVATE_DEACTIVATE_THRESHOLD:
+            return
+        self._channel_private_error_counts.pop(channel.id, None)
+        if await self._channels.set_active(
+            channel.id,
+            False,
+            reason=f"{CHANNEL_PRIVATE_DEACTIVATE_THRESHOLD} consecutive ChannelPrivateError",
+        ) == 0:
+            logger.info(
+                "Suppressed auto-deactivation of channel %d (pk=%d): operator kept it active",
+                channel.channel_id,
+                channel.id,
+            )
+            return
+        await self._channels.set_type(channel.channel_id, "unavailable")
+        logger.warning(
+            "Channel %d (pk=%d) deactivated after %d consecutive ChannelPrivateError",
+            channel.channel_id,
+            channel.id,
+            CHANNEL_PRIVATE_DEACTIVATE_THRESHOLD,
+        )
 
     async def _run_worker(self) -> None:
         await self._run_single_worker()
