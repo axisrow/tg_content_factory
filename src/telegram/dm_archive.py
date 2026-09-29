@@ -97,15 +97,32 @@ async def backfill_account(
             and (chat_ids is None or int(dialog.id) in chat_ids)
         ]
 
-    try:
-        dialogs = await run_with_flood_wait_retry(
-            _list_personal_dialogs, operation="dm_archive_dialogs"
-        )
-    except HandledFloodWaitError as exc:
-        raise RuntimeError(
-            "dm_archive: листинг диалогов упёрся в долгий flood wait — "
-            "перезапусти команду позже (прогон возобновляемый)"
-        ) from exc
+    # Листинг сам себя флудит: попыток ~21 (чанки по 100 диалогов) подряд,
+    # ретрай обёртки перезапускает всё с нуля, а второй подряд FloodWait она
+    # уже отдаёт наверх. Пауза по водяному знаку и заново — листинг короткий,
+    # архив при этом ничего не теряет (регресс боевого прогона #1455).
+    dialogs: list[Any] = []
+    for listing_attempt in range(1, 4):
+        try:
+            dialogs = await run_with_flood_wait_retry(
+                _list_personal_dialogs, operation="dm_archive_dialogs"
+            )
+            break
+        except HandledFloodWaitError as exc:
+            if listing_attempt == 3:
+                raise RuntimeError(
+                    "dm_archive: листинг диалогов флудится дольше трёх пауз — "
+                    "перезапусти команду позже (прогон возобновляемый)"
+                ) from exc
+            pause = float(
+                getattr(getattr(exc, "info", None), "wait_seconds", 0) or 30
+            )
+            logger.info(
+                "dm_archive: листинг флудится, пауза %.0fs (попытка %d/3)",
+                pause,
+                listing_attempt,
+            )
+            await asyncio.sleep(pause + 1)
     stats["dialogs"] = len(dialogs)
     for dialog in dialogs:
         chat_id = int(dialog.id)

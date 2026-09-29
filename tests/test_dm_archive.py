@@ -216,17 +216,24 @@ async def test_backfill_chat_ids_filter(tmp_path, monkeypatch):
         await db.close()
 
 
-async def test_backfill_long_flood_on_listing_raises_runtime_error(tmp_path):
-    """Долгий flood wait на листинге диалогов (GetDialogsRequest) — явная
-    ошибка, а не падение FloodWaitError из библиотеки (регресс боевого прогона).
+async def test_backfill_listing_flood_retries_then_gives_up(tmp_path, monkeypatch):
+    """Листинг флудится: пауза по водяному знаку и заново; после трёх пауз —
+    явная ошибка. Реальный сон в тест не утекает (monkeypatch asyncio.sleep).
     """
     db = await _make_db(tmp_path)
-    try:
-        class _FloodedListingClient:
-            async def iter_dialogs(self):
-                raise HandledFloodWaitError(_flood_info(seconds=50000))
-                yield  # недостижимый yield делает функцию async-генератором
+    pauses: list[float] = []
 
+    async def _fake_sleep(seconds):
+        pauses.append(seconds)
+
+    monkeypatch.setattr(dm_archive.asyncio, "sleep", _fake_sleep)
+
+    class _FloodedListingClient:
+        async def iter_dialogs(self):
+            raise HandledFloodWaitError(_flood_info(seconds=20))
+            yield  # недостижимый yield делает функцию async-генератором
+
+    try:
         try:
             await backfill_account(
                 _FakePool(_FloodedListingClient()), db, "+111", progress=False
@@ -234,7 +241,47 @@ async def test_backfill_long_flood_on_listing_raises_runtime_error(tmp_path):
         except RuntimeError as exc:
             assert "листинг диалогов" in str(exc)
         else:
-            raise AssertionError("ожидали RuntimeError при долгом flood на листинге")
+            raise AssertionError("ожидали RuntimeError после трёх флуд-пауз")
+        # Патч asyncio.sleep глобален — в pauses попадают и внутренние
+        # транзиент-циклы обёртки; суть проверки: паузы по водяному знаку
+        # были и они не реального времени.
+        assert len(pauses) >= 2
+        assert all(p == 21.0 for p in pauses)  # wait_seconds + 1
+    finally:
+        await db.close()
+
+
+async def test_backfill_listing_flood_recovers_after_pause(tmp_path, monkeypatch):
+    """Первый листинг флудится, после паузы второй проходит — прогон идёт дальше."""
+    db = await _make_db(tmp_path)
+    attempts = {"n": 0}
+
+    async def _fake_sleep(seconds):
+        pass
+
+    monkeypatch.setattr(dm_archive.asyncio, "sleep", _fake_sleep)
+    monkeypatch.setattr(
+        dm_archive,
+        "read_dialog_history_since",
+        _stub_history_since({42: [_FakeMessage(10)]}),
+    )
+
+    class _FloodThenOkClient:
+        history_calls: list = []
+
+        async def iter_dialogs(self):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise HandledFloodWaitError(_flood_info(seconds=20))
+            yield _FakeDialog(42, "ДРУГ")
+
+    try:
+        stats = await backfill_account(
+            _FakePool(_FloodThenOkClient()), db, "+111", progress=False
+        )
+
+        assert attempts["n"] == 2
+        assert stats["archived"] == 1
     finally:
         await db.close()
 
