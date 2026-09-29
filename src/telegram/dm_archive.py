@@ -2,14 +2,20 @@
 
 Догон #1428 читает только выше курсора `dm_catchup_cursors`, а слушатель
 #1426 видит только живые события — глубокая история диалога обоим недостижима.
-Бэкфилл дополняет их: живой `iter_dialogs()` пула (НЕ `dialog_cache` — урок
-#1350 о молча замороженном кэше), страницы истории через готовый
-`read_dialog_history_since` (flood-retry внутри), каждая страница — в архив,
-обе стороны, идемпотентно по `UNIQUE(phone, chat_id, message_id)`.
+Бэкфилл дополняет их. Список диалогов каждый прогон берёт СВЕЖИМ — тем же
+движком, что `dialogs refresh` (`pool.get_dialogs_for_phone` с `refresh=True`:
+гейт `dialogs_page` на каждую страницу, дозагрузка с курсора, полный снапшот
+атомарно перезаписывает `dialog_cache`; решение владельца 2026-09-29 —
+«не обходить устаревший кэш, а загружать новый»). Тот же проход прогревает
+entity-кэш сессии, поэтому numeric-peer чтение истории ниже резолвится
+локально, без вторых запросов. История — страницы через готовый
+`read_dialog_history_since` (floodgate-ретрай внутри), каждая страница —
+в архив, обе стороны (люди, боты и Saved Messages), идемпотентно по
+`UNIQUE(phone, chat_id, message_id)`.
 
 Возобновляемость: курсор = `dm_messages.MAX(message_id)` диалога, поэтому
 убитый посреди прогон продолжается с места обрыва, а повторный — почти
-бесплатен (страница читается, вставки молчат). Инвариант `dm_history`
+бесплатен (снимок повторится, вставки молчат). Инвариант `dm_history`
 соблюдён: никаких connect/disconnect и обработчиков на клиенте пула.
 
 ЗАПУСК: только при остановленном воркере. Клиент бэкфилла открывает второй
@@ -26,8 +32,8 @@ from typing import Any
 
 from telethon_floodgate import (
     HandledFloodWaitError,
+    TelegramRateLimitedError,
     TelegramRateLimitGate,
-    run_with_flood_wait_retry,
 )
 
 from src.models import DmMessage
@@ -38,6 +44,10 @@ logger = logging.getLogger(__name__)
 # Страница истории на запрос: бэкфилл — разовый дренаж, крупная страница
 # экономит запросы; догон остаётся на 200 (#1428).
 BACKFILL_PAGE_LIMIT = 500
+
+# Личные диалоги архива: люди, боты и заметки себе (Saved Messages —
+# решение владельца 2026-09-29; снимок пишет их с типом "saved").
+_BACKFILL_DM_TYPES = ("dm", "bot", "saved")
 
 _GATE_HISTORY_CATEGORY = "history"
 _GATE_WAIT_ATTEMPTS = 2
@@ -70,10 +80,12 @@ async def backfill_account(
 ) -> dict[str, Any]:
     """Дочитать полную историю личных диалогов аккаунта в архив.
 
-    Личные диалоги = `User`-энтитии живого `iter_dialogs()` (люди и боты;
-    каналы/группы/боги — не DM, saved-заметки себе тоже мимо скоупа #1453).
-    `chat_ids` сужает прогон до конкретных диалогов. Прогресс печатается
-    по диалогам (CLI-путь синхронный и долгий).
+    Личные диалоги = типы dm/bot/saved свежего снимка
+    `get_dialogs_for_phone(include_dm=True, mode="full", refresh=True)` —
+    тот же движок, что у `dialogs refresh`: гейт на каждую страницу,
+    дозагрузка с курсора, полный снапшот; проход заодно прогревает
+    entity-кэш сессии. `chat_ids` сужает прогон до конкретных диалогов.
+    Прогресс печатается по диалогам (CLI-путь синхронный и долгий).
     """
     session = pool.clients.get(phone)
     client = getattr(session, "raw_client", None)
@@ -83,51 +95,41 @@ async def backfill_account(
 
     stats: dict[str, Any] = {"dialogs": 0, "archived": 0, "errors": 0}
 
-    async def _list_personal_dialogs() -> list[Any]:
-        # Живой iter_dialogs сразу же: заполняет кэш энтитий сессии — numeric-peer
-        # lookups iter_messages ниже резолвятся без второго запроса (конвенция
-        # «entity cache», CLAUDE.md). iter_dialogs — async-итератор, не awaitable
-        # (регресс боевого прогона #1455); GetDialogsRequest флудится как любой
-        # запрос — транзиентные ожидания внутри run_with_flood_wait_retry
-        # (второй регресс того же прогона: голый вызов упал на FloodWait 20s).
-        return [
-            dialog
-            async for dialog in client.iter_dialogs()
-            if dialog.is_user
-            and (chat_ids is None or int(dialog.id) in chat_ids)
-        ]
+    # Свежий снимок диалогов. Нетранзиентный флуд/лимит — СТОП, а не «следующий
+    # чат»: каждый следующий диалог снова триггерил бы листинг (паттерн бана
+    # #1330: 67 прогревов → бан 14.8ч). Прогон возобновляемый — повтор команды.
+    if progress:
+        print(f"dm_archive: {phone}: обновляю список чатов (свежий снимок)…", flush=True)
+    try:
+        snapshot = await pool.get_dialogs_for_phone(
+            phone, include_dm=True, mode="full", refresh=True
+        )
+    except (HandledFloodWaitError, TelegramRateLimitedError) as exc:
+        logger.warning(
+            "dm_archive: снимок диалогов %s не прошёл (%s); повтори команду позже",
+            phone,
+            exc,
+        )
+        stats["incomplete"] = True
+        return stats
+    if getattr(snapshot, "partial", False):
+        # Неполный список (бюджет/флуд/#1379-деградация со старым кэшем):
+        # чтение по нему промолчало бы о ненакрытых чатах — честнее стоп.
+        logger.warning("dm_archive: снимок диалогов %s неполный; повтори команду позже", phone)
+        stats["incomplete"] = True
+        return stats
 
-    # Листинг сам себя флудит: попыток ~21 (чанки по 100 диалогов) подряд,
-    # ретрай обёртки перезапускает всё с нуля, а второй подряд FloodWait она
-    # уже отдаёт наверх. Пауза по водяному знаку и заново — листинг короткий,
-    # архив при этом ничего не теряет (регресс боевого прогона #1455).
-    dialogs: list[Any] = []
-    for listing_attempt in range(1, 4):
-        try:
-            dialogs = await run_with_flood_wait_retry(
-                _list_personal_dialogs, operation="dm_archive_dialogs"
-            )
-            break
-        except HandledFloodWaitError as exc:
-            if listing_attempt == 3:
-                raise RuntimeError(
-                    "dm_archive: листинг диалогов флудится дольше трёх пауз — "
-                    "перезапусти команду позже (прогон возобновляемый)"
-                ) from exc
-            pause = float(
-                getattr(getattr(exc, "info", None), "wait_seconds", 0) or 30
-            )
-            logger.info(
-                "dm_archive: листинг флудится, пауза %.0fs (попытка %d/3)",
-                pause,
-                listing_attempt,
-            )
-            await asyncio.sleep(pause + 1)
+    dialogs = [
+        dialog
+        for dialog in snapshot
+        if dialog.get("channel_type") in _BACKFILL_DM_TYPES
+        and (chat_ids is None or int(dialog["channel_id"]) in chat_ids)
+    ]
     stats["dialogs"] = len(dialogs)
     for dialog in dialogs:
-        chat_id = int(dialog.id)
+        chat_id = int(dialog["channel_id"])
         cursor = await db.repos.dm_messages.max_message_id(phone, chat_id)
-        name = dialog.name or str(chat_id)
+        name = dialog.get("title") or str(chat_id)
         pages = 0
         while True:
             if not await _acquire_history_slot(pool, phone):

@@ -54,8 +54,11 @@ All of these touch the user's live Telegram account — see Safety in SKILL.md.
 `dialogs send` posts a message to a chat by identifier; `dialogs queue`/`status` manage the
 send queue. `dialogs read` supports history reads with limits.
 `dialogs archive-history [--phone P] [--chat-id ID]` backfills the full personal-chat
-history (both directions) of an account into the local `dm_messages` archive — no TTL,
-idempotent/resumable. Local DB write, no Telegram send; still stop the worker first:
+history (people, bots and Saved Messages, both directions) into the local `dm_messages`
+archive — no TTL, idempotent/resumable. Each run takes a FRESH dialog snapshot first
+(same engine as `dialogs refresh`, rate-limited per page), then reads history per chat;
+a partial snapshot or flood marks the run incomplete — rerun the command, it continues
+from archive cursors. Local DB write, no Telegram send; still stop the worker first:
 it opens a second MTProto connection on the same session.
 
 ## content factory (LLM pipelines)

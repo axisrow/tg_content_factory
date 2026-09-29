@@ -1,8 +1,10 @@
-"""Бэкфилл DM-архива (#1453): обе стороны, возобновление, флуд/гейт-лимиты.
+"""Бэкфилл DM-архива (#1453): обе стороны, свежий снимок, возобновление, гейты.
 
 Прогоны на real Database (архив — настоящий SQL) и фейк-пуле; история стабится
 на уровне `dm_archive.read_dialog_history_since` — того же транспортного шва,
-что у догона #1428.
+что у догона #1428. Список диалогов приходит из фейка
+`get_dialogs_for_phone` (сигнатура и результат зеркалят реальный
+`DialogFetchResult`: list[dict]-строк снимка + флаг `partial`).
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from typing import Any
 from telethon_floodgate import (
     FloodWaitInfo,
     HandledFloodWaitError,
+    TelegramRateLimitedError,
     TelegramRateLimitGate,
 )
 
@@ -35,32 +38,62 @@ def _flood_info(seconds: int) -> FloodWaitInfo:
     )
 
 
-class _FakeDialog:
-    def __init__(self, dialog_id: int, name: str, *, is_user: bool = True):
-        self.id = dialog_id
-        self.name = name
-        self.is_user = is_user
+def _dialog(channel_id: int, channel_type: str = "dm", title: str = "ЧАТ") -> dict:
+    """Строка снимка `get_dialogs_for_phone` — форма реального DialogFetchResult."""
+    return {
+        "channel_id": channel_id,
+        "title": title,
+        "username": None,
+        "channel_type": channel_type,
+        "deactivate": False,
+        "is_own": False,
+    }
+
+
+class _FakeSnapshot(list):
+    """Зеркало DialogFetchResult: список dict-строк + флаги результата."""
+
+    def __init__(self, dialogs: list[dict], *, partial: bool = False):
+        super().__init__(dialogs)
+        self.partial = partial
+        self.saved = len(dialogs)
 
 
 class _FakeRawClient:
-    def __init__(self, dialogs: list[_FakeDialog]):
-        self._dialogs = dialogs
+    def __init__(self):
         self.history_calls: list[dict] = []
-
-    async def iter_dialogs(self):
-        # Async-ИТЕРАТОР, как реальный Telethon _DialogsIter (регресс боевого
-        # прогона: await на списке фейка проходил, живой клиент падал).
-        for dialog in self._dialogs:
-            yield dialog
 
 
 class _FakePool:
-    def __init__(self, client: _FakeRawClient | None):
+    def __init__(
+        self,
+        client: _FakeRawClient | None = None,
+        snapshot: _FakeSnapshot | None = None,
+        *,
+        snapshot_error: Exception | None = None,
+    ):
         self.clients: dict[str, object] = {}
         if client is not None:
             self.clients["+111"] = SimpleNamespace(raw_client=client)
         self._auth = SimpleNamespace(api_id=1, api_hash="h")
         self._rate_limit_gate: Any = None
+        self.snapshot = snapshot if snapshot is not None else _FakeSnapshot([])
+        self.snapshot_error = snapshot_error
+        self.snapshot_calls: list[dict] = []
+
+    async def get_dialogs_for_phone(
+        self,
+        phone: str,
+        include_dm: bool = False,
+        mode: str = "channels_only",
+        refresh: bool = False,
+    ) -> _FakeSnapshot:
+        self.snapshot_calls.append(
+            {"phone": phone, "include_dm": include_dm, "mode": mode, "refresh": refresh}
+        )
+        if self.snapshot_error is not None:
+            raise self.snapshot_error
+        return self.snapshot
 
 
 class _FakeMessage:
@@ -91,28 +124,37 @@ async def _make_db(tmp_path):
     return db
 
 
-async def test_backfill_archives_both_directions_and_skips_non_users(tmp_path, monkeypatch):
-    """Личные диалоги (люди+боты) — обе стороны в архив; каналы/группы мимо."""
+async def test_backfill_archives_dm_bot_saved_and_skips_channels(tmp_path, monkeypatch):
+    """Люди+боты+Saved — обе стороны в архив; каналы/группы мимо.
+    Снимок запрашивается свежий (refresh=True, include_dm=True, mode=full).
+    """
     db = await _make_db(tmp_path)
     try:
-        client = _FakeRawClient([
-            _FakeDialog(42, "ДРУГ"),
-            _FakeDialog(43, "БОТ"),
-            _FakeDialog(44, "канал", is_user=False),
+        client = _FakeRawClient()
+        snapshot = _FakeSnapshot([
+            _dialog(42, "dm", "ДРУГ"),
+            _dialog(43, "bot", "БОТ"),
+            _dialog(44, "saved", "Избранное (Saved Messages)"),
+            _dialog(45, "channel", "канал"),
         ])
         stub = _stub_history_since({
             42: [_FakeMessage(10), _FakeMessage(11, out=True)],
             43: [_FakeMessage(20)],
+            44: [_FakeMessage(30, out=True), _FakeMessage(31, out=True)],
         })
         monkeypatch.setattr(dm_archive, "read_dialog_history_since", stub)
+        pool = _FakePool(client, snapshot)
 
-        stats = await backfill_account(_FakePool(client), db, "+111", progress=False)
+        stats = await backfill_account(pool, db, "+111", progress=False)
 
-        assert stats == {"dialogs": 2, "archived": 3, "errors": 0}
+        assert pool.snapshot_calls == [
+            {"phone": "+111", "include_dm": True, "mode": "full", "refresh": True}
+        ]
+        assert stats == {"dialogs": 3, "archived": 5, "errors": 0}
         incoming, outgoing = await db.repos.dm_messages.count_by_direction("+111")
-        assert (incoming, outgoing) == (2, 1)
+        assert (incoming, outgoing) == (2, 3)
         cur = await db.db.execute("SELECT DISTINCT chat_id FROM dm_messages ORDER BY chat_id")
-        assert [row["chat_id"] for row in await cur.fetchall()] == [42, 43]
+        assert [row["chat_id"] for row in await cur.fetchall()] == [42, 43, 44]
     finally:
         await db.close()
 
@@ -121,10 +163,10 @@ async def test_backfill_resumes_from_archive_watermark(tmp_path, monkeypatch):
     """Повторный прогон дочитывает только выше MAX(message_id) архива."""
     db = await _make_db(tmp_path)
     try:
-        client = _FakeRawClient([_FakeDialog(42, "ДРУГ")])
+        client = _FakeRawClient()
         stub = _stub_history_since({42: [_FakeMessage(10), _FakeMessage(11), _FakeMessage(12)]})
         monkeypatch.setattr(dm_archive, "read_dialog_history_since", stub)
-        pool = _FakePool(client)
+        pool = _FakePool(client, _FakeSnapshot([_dialog(42)]))
 
         await backfill_account(pool, db, "+111", progress=False)
         assert await db.repos.dm_messages.max_message_id("+111", 42) == 12
@@ -145,7 +187,7 @@ async def test_backfill_flood_skips_dialog_continues(tmp_path, monkeypatch):
     """Флуд на одном диалоге не срывает бэкфилл остальных; счётчик ошибок."""
     db = await _make_db(tmp_path)
     try:
-        client = _FakeRawClient([_FakeDialog(42, "ДРУГ"), _FakeDialog(43, "БОТ")])
+        client = _FakeRawClient()
         downstream = _stub_history_since({43: [_FakeMessage(20)]})
 
         async def _flood_then_ok(cl, *, api_id, api_hash, peer, min_id=0, limit=500):
@@ -156,8 +198,9 @@ async def test_backfill_flood_skips_dialog_continues(tmp_path, monkeypatch):
             )
 
         monkeypatch.setattr(dm_archive, "read_dialog_history_since", _flood_then_ok)
+        pool = _FakePool(client, _FakeSnapshot([_dialog(42), _dialog(43)]))
 
-        stats = await backfill_account(_FakePool(client), db, "+111", progress=False)
+        stats = await backfill_account(pool, db, "+111", progress=False)
 
         assert stats["errors"] == 1
         assert stats["archived"] == 1
@@ -181,10 +224,10 @@ async def test_backfill_gate_saturation_stops_before_reading(tmp_path, monkeypat
     """Насыщенный гейт закрывает прогон до чтения истории; курсор не тронут."""
     db = await _make_db(tmp_path)
     try:
-        client = _FakeRawClient([_FakeDialog(42, "ДРУГ")])
+        client = _FakeRawClient()
         stub = _stub_history_since({42: [_FakeMessage(10)]})
         monkeypatch.setattr(dm_archive, "read_dialog_history_since", stub)
-        pool = _FakePool(client)
+        pool = _FakePool(client, _FakeSnapshot([_dialog(42)]))
         gate = _AlwaysRefuseGate()
         pool._rate_limit_gate = gate
 
@@ -202,13 +245,12 @@ async def test_backfill_chat_ids_filter(tmp_path, monkeypatch):
     """chat_ids сужает прогон до указанных диалогов."""
     db = await _make_db(tmp_path)
     try:
-        client = _FakeRawClient([_FakeDialog(42, "ДРУГ"), _FakeDialog(43, "ДРУГ2")])
+        client = _FakeRawClient()
         stub = _stub_history_since({42: [_FakeMessage(10)], 43: [_FakeMessage(20)]})
         monkeypatch.setattr(dm_archive, "read_dialog_history_since", stub)
+        pool = _FakePool(client, _FakeSnapshot([_dialog(42), _dialog(43)]))
 
-        stats = await backfill_account(
-            _FakePool(client), db, "+111", chat_ids={43}, progress=False
-        )
+        stats = await backfill_account(pool, db, "+111", chat_ids={43}, progress=False)
 
         assert stats["dialogs"] == 1
         assert [call["chat_id"] for call in client.history_calls] == [43]
@@ -216,72 +258,46 @@ async def test_backfill_chat_ids_filter(tmp_path, monkeypatch):
         await db.close()
 
 
-async def test_backfill_listing_flood_retries_then_gives_up(tmp_path, monkeypatch):
-    """Листинг флудится: пауза по водяному знаку и заново; после трёх пауз —
-    явная ошибка. Реальный сон в тест не утекает (monkeypatch asyncio.sleep).
+async def test_backfill_snapshot_failure_stops_before_reading(tmp_path, monkeypatch):
+    """Нетранзиентный флуд/лимит на свежем снимке — стоп с incomplete,
+    ни одного чтения истории («следующий чат» снова триггерил бы листинг,
+    паттерн бана #1330).
     """
     db = await _make_db(tmp_path)
-    pauses: list[float] = []
-
-    async def _fake_sleep(seconds):
-        pauses.append(seconds)
-
-    monkeypatch.setattr(dm_archive.asyncio, "sleep", _fake_sleep)
-
-    class _FloodedListingClient:
-        async def iter_dialogs(self):
-            raise HandledFloodWaitError(_flood_info(seconds=20))
-            yield  # недостижимый yield делает функцию async-генератором
-
     try:
-        try:
-            await backfill_account(
-                _FakePool(_FloodedListingClient()), db, "+111", progress=False
+        for error in (
+            HandledFloodWaitError(_flood_info(seconds=50000)),
+            TelegramRateLimitedError("+111", "dialogs_page", 5.0),
+        ):
+            client = _FakeRawClient()
+            monkeypatch.setattr(
+                dm_archive, "read_dialog_history_since", _stub_history_since({42: [_FakeMessage(10)]})
             )
-        except RuntimeError as exc:
-            assert "листинг диалогов" in str(exc)
-        else:
-            raise AssertionError("ожидали RuntimeError после трёх флуд-пауз")
-        # Патч asyncio.sleep глобален — в pauses попадают и внутренние
-        # транзиент-циклы обёртки; суть проверки: паузы по водяному знаку
-        # были и они не реального времени.
-        assert len(pauses) >= 2
-        assert all(p == 21.0 for p in pauses)  # wait_seconds + 1
+            pool = _FakePool(client, snapshot_error=error)
+
+            stats = await backfill_account(pool, db, "+111", progress=False)
+
+            assert stats == {"dialogs": 0, "archived": 0, "errors": 0, "incomplete": True}
+            assert client.history_calls == []
+            assert await db.repos.dm_messages.count("+111") == 0
     finally:
         await db.close()
 
 
-async def test_backfill_listing_flood_recovers_after_pause(tmp_path, monkeypatch):
-    """Первый листинг флудится, после паузы второй проходит — прогон идёт дальше."""
+async def test_backfill_partial_snapshot_stops_before_reading(tmp_path, monkeypatch):
+    """Неполный снимок — стоп: чтение по нему промолчало бы о ненакрытых чатах."""
     db = await _make_db(tmp_path)
-    attempts = {"n": 0}
-
-    async def _fake_sleep(seconds):
-        pass
-
-    monkeypatch.setattr(dm_archive.asyncio, "sleep", _fake_sleep)
-    monkeypatch.setattr(
-        dm_archive,
-        "read_dialog_history_since",
-        _stub_history_since({42: [_FakeMessage(10)]}),
-    )
-
-    class _FloodThenOkClient:
-        history_calls: list = []
-
-        async def iter_dialogs(self):
-            attempts["n"] += 1
-            if attempts["n"] == 1:
-                raise HandledFloodWaitError(_flood_info(seconds=20))
-            yield _FakeDialog(42, "ДРУГ")
-
     try:
-        stats = await backfill_account(
-            _FakePool(_FloodThenOkClient()), db, "+111", progress=False
+        client = _FakeRawClient()
+        monkeypatch.setattr(
+            dm_archive, "read_dialog_history_since", _stub_history_since({42: [_FakeMessage(10)]})
         )
+        pool = _FakePool(client, _FakeSnapshot([_dialog(42)], partial=True))
 
-        assert attempts["n"] == 2
-        assert stats["archived"] == 1
+        stats = await backfill_account(pool, db, "+111", progress=False)
+
+        assert stats == {"dialogs": 0, "archived": 0, "errors": 0, "incomplete": True}
+        assert client.history_calls == []
     finally:
         await db.close()
 
