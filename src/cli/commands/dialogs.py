@@ -611,7 +611,13 @@ async def _dialogs_archive_history(args, db, pool) -> None:
     phone = _resolve_phone(pool, args)
     if phone is None:
         return
-    chat_ids = {int(args.chat_id)} if args.chat_id else None
+    chat_ids: set[int] | None = None
+    if args.chat_id:
+        try:
+            chat_ids = {int(args.chat_id)}
+        except ValueError:
+            print(f"Invalid --chat-id: {args.chat_id!r} — expected a numeric Telegram chat id.")
+            return
     stats = await backfill_account(pool, db, phone, chat_ids=chat_ids)
     incoming, outgoing = await db.repos.dm_messages.count_by_direction(phone)
     print(

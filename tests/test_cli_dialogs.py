@@ -236,6 +236,20 @@ def test_cli_dialogs_archive_history_single_chat(cli_db, capsys):
     assert fake_backfill.await_args.kwargs["chat_ids"] == {4242}
 
 
+def test_cli_dialogs_archive_history_rejects_non_numeric_chat_id(cli_db, capsys):
+    """Не-числовой --chat-id — дружелюбное сообщение, а не traceback (ревью #1455)."""
+    pool = _mock_pool()
+    with (
+        patch("src.cli.commands.dialogs.serve_is_running", return_value=False),
+        patch("src.cli.commands.dialogs.backfill_account", new_callable=AsyncMock) as fake_backfill,
+    ):
+        _run(_ns(dialogs_action="archive-history", phone="+1234567890", chat_id="abc"), pool, cli_db)
+
+    out = capsys.readouterr().out
+    assert "Invalid --chat-id" in out
+    fake_backfill.assert_not_awaited()
+
+
 def test_cli_dialogs_archive_history_incomplete_gate(cli_db, capsys):
     """Насыщенный гейт помечает прогон незавершённым — CLI не печатает «готово» молча."""
     pool = _mock_pool()
