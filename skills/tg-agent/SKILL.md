@@ -69,8 +69,9 @@ Sending a wrong message or kicking a wrong member is not reversible by you.
 ## Background collection
 
 One-off: `tg-agent channel collect --channel-id <id>` runs a collection synchronously and
-exits. Continuous/scheduled collection needs a separate long-lived process: the user starts
-`tg-agent worker` (e.g. in tmux or as a service). Check scheduler state with
+exits. Continuous/scheduled collection needs the long-lived daemon: `tg-agent restart`
+stops any previous daemon and starts the worker runtime — no web panel, no WEB_PASS
+required, managed via a PID file (`tg-agent stop` halts it). Check scheduler state with
 `tg-agent scheduler status`.
 
 ## Legacy surfaces — do not use for integration

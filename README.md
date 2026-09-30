@@ -176,13 +176,14 @@ Supports `${ENV_VAR}` substitution. Empty env vars are dropped (defaults apply).
 ## CLI reference (selected)
 
 ```bash
-tg-agent worker                                  # background worker: scheduled collection, queues
+tg-agent restart                                 # managed daemon: worker runtime, no web panel
+tg-agent worker                                  # same runtime without the stop-first step
 tg-agent channel collect --channel-id ID         # one-off incremental collection (no daemon)
 tg-agent search "query" --limit 20               # search collected history
 tg-agent messages read @channel --format json    # read message history
 tg-agent dialogs send                            # real actions in real chats
 tg-agent pipeline generate                       # LLM content factory
-tg-agent serve                                   # legacy web panel
+tg-agent serve                                   # legacy web panel (deprecated)
 ```
 
 Full catalog for agents — [`skills/tg-agent/reference.md`](skills/tg-agent/reference.md); every

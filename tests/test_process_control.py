@@ -10,6 +10,7 @@ from src.cli.process_control import (
     ProcessControlError,
     StopResult,
     ensure_server_not_running,
+    is_expected_server_process,
     pid_file_path,
     register_current_process,
     stop_server,
@@ -22,6 +23,24 @@ def test_pid_file_path_uses_database_path_suffix():
     config = AppConfig()
     config.database.path = "data/custom.db"
     assert pid_file_path(config) == Path("data/custom.pid")
+
+
+@pytest.mark.parametrize("daemon", ["serve", "worker", "restart"])
+def test_expected_server_process_matches_every_managed_daemon(daemon, monkeypatch):
+    """serve / worker / restart all own the sessions and the PID file."""
+    monkeypatch.setattr(
+        "src.cli.process_control._process_command",
+        lambda pid: f"/usr/bin/python -m src.main {daemon}",
+    )
+    assert is_expected_server_process(os.getpid()) is True
+
+
+def test_expected_server_process_rejects_unrelated_command(monkeypatch):
+    monkeypatch.setattr(
+        "src.cli.process_control._process_command",
+        lambda pid: "/usr/bin/python -m src.main dialogs list",
+    )
+    assert is_expected_server_process(os.getpid()) is False
 
 
 def test_register_and_unregister_current_process(tmp_path):

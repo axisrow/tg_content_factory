@@ -211,10 +211,40 @@ def test_worker_starts_runtime():
 
     cfg = make_app_config()
     with patch("src.cli.commands.worker.load_config", return_value=cfg), \
-         patch("src.cli.commands.worker.run_worker") as mock_run_worker:
+         patch("src.cli.commands.worker.register_current_process"), \
+         patch("src.cli.commands.worker.run_worker") as mock_run_worker, \
+         patch("src.cli.commands.worker.unregister_current_process") as mock_unreg:
         run(_args())
 
     mock_run_worker.assert_called_once_with(cfg)
+    mock_unreg.assert_called_once()
+
+
+def test_worker_registers_pid_and_survives_keyboard_interrupt():
+    """The managed worker daemon registers the PID file and unregisters on exit."""
+    from src.cli.commands.worker import run
+
+    cfg = make_app_config()
+    with patch("src.cli.commands.worker.load_config", return_value=cfg), \
+         patch("src.cli.commands.worker.pid_file_path", return_value="/tmp/test.pid"), \
+         patch("src.cli.commands.worker.register_current_process") as mock_reg, \
+         patch("src.cli.commands.worker.run_worker", side_effect=KeyboardInterrupt), \
+         patch("src.cli.commands.worker.unregister_current_process") as mock_unreg:
+        run(_args())  # KeyboardInterrupt is swallowed — same as serve
+
+    mock_reg.assert_called_once()
+    mock_unreg.assert_called_once()
+
+
+def test_worker_register_failure_exits():
+    from src.cli.commands.worker import run
+
+    cfg = make_app_config()
+    with patch("src.cli.commands.worker.load_config", return_value=cfg), \
+         patch("src.cli.commands.worker.register_current_process",
+               side_effect=RuntimeError("already running")):
+        with pytest.raises(SystemExit):
+            run(_args())
 
 
 # ---------------------------------------------------------------------------
@@ -274,10 +304,26 @@ def test_restart_success(capsys):
     with patch("src.cli.commands.server_control.load_config", return_value=cfg), \
          patch("src.cli.commands.server_control.stop_server", return_value=outcome), \
          patch("src.cli.commands.server_control.pid_file_path", return_value="/tmp/test.pid"), \
-         patch("src.cli.commands.serve.serve_web") as mock_serve:
+         patch("src.cli.commands.worker.serve_worker") as mock_worker:
         run_restart(_args())
     out = capsys.readouterr().out
     assert "подожду завершения активной задачи" in out
-    # restart stops the running server, then starts a fresh `serve` via the
-    # shared serve_web body (no more Namespace hand-off).
-    mock_serve.assert_called_once()
+    # restart stops the old daemon, then becomes the worker runtime — the
+    # automation-first default has no web panel (serve is the explicit
+    # legacy entry point).
+    mock_worker.assert_called_once_with("config.yaml")
+
+
+def test_restart_path_has_no_web_server():
+    """Structural guard: the restart path must not host the web panel.
+
+    The automation-first contract (#1446 successor): the default daemon is
+    the worker runtime — no uvicorn, no legacy `serve_web` hop.
+    """
+    from pathlib import Path
+
+    from src.cli.commands import server_control
+
+    source = Path(server_control.__file__).read_text(encoding="utf-8")
+    assert "uvicorn" not in source, "restart path must not host a web server"
+    assert "serve_web" not in source, "restart must not reuse the legacy serve body"
