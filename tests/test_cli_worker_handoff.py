@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pydantic.root_model  # noqa: F401
 import pytest
 
+from src.cli import worker_handoff
 from src.config import AppConfig
 from src.models import Channel, CollectionTaskStatus
 
@@ -52,6 +53,66 @@ def channel_cli(cli_db, cli_init_patch):
 
 def _add_channel(db, channel_id: int, title: str) -> int:
     return asyncio.run(db.add_channel(Channel(channel_id=channel_id, title=title)))
+
+
+def _load_unpatched_worker_handoff():
+    """Load a fresh worker_handoff module.
+
+    The autouse ``no_running_server`` fixture (tests/conftest.py) pins
+    ``serve_is_running`` to False in the real module for every test; these
+    unit tests need the real function, so load the file under a private name
+    (same pattern as tests/test_conftest_xdist.py).
+    """
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(worker_handoff.__file__)
+    spec = importlib.util.spec_from_file_location("worker_handoff_fresh", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_serve_is_running_accepts_worker_daemon(monkeypatch):
+    """The worker-only daemon (worker/restart cmdline) is a valid hand-off target."""
+    fresh = _load_unpatched_worker_handoff()
+
+    config = AppConfig()
+    monkeypatch.setattr(fresh, "read_pid", lambda path: 4242)
+    monkeypatch.setattr(fresh, "is_expected_server_process", lambda pid: True)
+    monkeypatch.setattr(
+        "src.cli.process_control._process_command",
+        lambda pid: "/usr/bin/python -m src.main restart",
+    )
+    assert fresh.serve_is_running(config) is True
+
+
+def test_serve_is_running_accepts_serve_with_embedded_worker(monkeypatch):
+    fresh = _load_unpatched_worker_handoff()
+
+    config = AppConfig()
+    monkeypatch.setattr(fresh, "read_pid", lambda path: 4242)
+    monkeypatch.setattr(fresh, "is_expected_server_process", lambda pid: True)
+    monkeypatch.setattr(
+        "src.cli.process_control._process_command",
+        lambda pid: "/usr/bin/python -m src.main serve",
+    )
+    assert fresh.serve_is_running(config) is True
+
+
+def test_serve_is_running_rejects_serve_no_worker(monkeypatch):
+    """`serve --no-worker` embeds no worker — not a hand-off target (black hole)."""
+    fresh = _load_unpatched_worker_handoff()
+
+    config = AppConfig()
+    monkeypatch.setattr(fresh, "read_pid", lambda path: 4242)
+    monkeypatch.setattr(fresh, "is_expected_server_process", lambda pid: True)
+    monkeypatch.setattr(
+        "src.cli.process_control._process_command",
+        lambda pid: "/usr/bin/python -m src.main serve --no-worker",
+    )
+    assert fresh.serve_is_running(config) is False
 
 
 def test_collect_hands_off_to_worker_when_serve_is_running(channel_cli, capsys):

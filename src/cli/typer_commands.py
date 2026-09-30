@@ -150,7 +150,7 @@ def serve(
 
 @app.command()
 def worker(ctx: typer.Context) -> None:
-    """Start Telegram worker runtime."""
+    """Start the Telegram worker runtime (managed daemon: PID file, no web panel)."""
     apply_startup(ctx)
     worker_cmd.serve_worker(ctx.obj.config)
 
@@ -162,19 +162,16 @@ def worker(ctx: typer.Context) -> None:
 
 @app.command()
 def stop(ctx: typer.Context) -> None:
-    """Stop web server started by this app."""
+    """Stop the managed daemon (worker or legacy serve) started by this app."""
     apply_startup(ctx)
     server_control_cmd.stop_web(ctx.obj.config)
 
 
 @app.command()
-def restart(
-    ctx: typer.Context,
-    web_pass: str | None = typer.Option(None, "--web-pass", help="Web panel password (overrides config)"),
-) -> None:
-    """Restart web server."""
+def restart(ctx: typer.Context) -> None:
+    """Restart the managed daemon: stop, then run the worker (no web panel)."""
     apply_startup(ctx)
-    server_control_cmd.restart_web(ctx.obj.config, web_pass=web_pass)
+    server_control_cmd.restart_web(ctx.obj.config)
 
 
 # --------------------------------------------------------------------------- #

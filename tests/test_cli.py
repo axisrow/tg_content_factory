@@ -952,7 +952,7 @@ class TestCLIServerControl:
             with pytest.raises(SystemExit, match="1"):
                 run_stop(_ns(command="stop"))
 
-    def test_restart_command_starts_serve_after_stop(self, capsys):
+    def test_restart_command_starts_worker_after_stop(self, capsys):
         from src.cli.commands.server_control import run_restart
         from src.cli.process_control import StopOutcome, StopResult
 
@@ -963,17 +963,16 @@ class TestCLIServerControl:
                 "Server stopped (PID 123).",
             ),
         ):
-            with patch("src.cli.commands.server_control.serve.serve_web") as mock_serve_web:
-                args = _ns(command="restart", web_pass="secret")
-                run_restart(args)
+            with patch("src.cli.commands.worker.serve_worker") as mock_worker:
+                run_restart(_ns(command="restart"))
 
         out = capsys.readouterr().out
         assert "Server stopped" in out
-        # restart starts a fresh serve via the shared serve_web body, threading
-        # the --web-pass override through (no Namespace hand-off).
-        mock_serve_web.assert_called_once_with("config.yaml", web_pass="secret")
+        # restart becomes the worker daemon — the automation-first default has
+        # no web panel (serve is the explicit legacy entry point).
+        mock_worker.assert_called_once_with("config.yaml")
 
-    def test_restart_command_starts_serve_when_not_running(self, capsys):
+    def test_restart_command_starts_worker_when_not_running(self, capsys):
         from src.cli.commands.server_control import run_restart
         from src.cli.process_control import StopOutcome, StopResult
 
@@ -984,13 +983,12 @@ class TestCLIServerControl:
                 "Server is not running (no PID file: data/tg_search.pid).",
             ),
         ):
-            with patch("src.cli.commands.server_control.serve.serve_web") as mock_serve_web:
-                args = _ns(command="restart", web_pass=None)
-                run_restart(args)
+            with patch("src.cli.commands.worker.serve_worker") as mock_worker:
+                run_restart(_ns(command="restart"))
 
         out = capsys.readouterr().out
         assert "not running" in out
-        mock_serve_web.assert_called_once_with("config.yaml", web_pass=None)
+        mock_worker.assert_called_once_with("config.yaml")
 
     def test_restart_command_exits_for_timeout(self):
         from src.cli.commands.server_control import run_restart
@@ -1043,9 +1041,9 @@ class TestCLIServerControl:
         mock_stop.assert_called_once()
 
         with patch("src.cli.typer_commands.server_control_cmd.restart_web") as mock_restart:
-            result = runner.invoke(app, ["restart", "--web-pass", "secret"])
+            result = runner.invoke(app, ["restart"])
         assert result.exit_code == 0, result.output
-        assert mock_restart.call_args.kwargs["web_pass"] == "secret"
+        mock_restart.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

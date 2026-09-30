@@ -33,13 +33,17 @@ pip install -e ".[dev]"
 # mutmut; the distribution name is tg-agent, not the repository name).
 python -m pip show tg-agent
 
-# Legacy web panel — spawns the embedded Telegram worker by default so a
-# single command gives you UI + actual collection (#457 round 4). For split
-# deployments (Docker/k8s) pass --no-worker and run `worker` separately.
-python -m src.main serve [--web-pass PASS] [--no-worker]
+# Managed daemon (automation-first default) — stop any previous daemon and
+# run the worker runtime in this process. No web panel, no WEB_PASS; the
+# PID file makes `stop`/`restart` and the CLI worker hand-off work.
+python -m src.main restart
 
-# Standalone Telegram worker — only needed alongside `serve --no-worker`.
+# Same worker runtime without the stop-first step (e.g. under tmux/systemd).
 python -m src.main worker
+
+# Legacy web panel (deprecated) — uvicorn + embedded worker by default.
+# For split deployments (Docker/k8s) pass --no-worker and run `worker`.
+python -m src.main serve [--web-pass PASS] [--no-worker]
 
 # Lint
 ruff check src/ tests/ conftest.py
@@ -80,7 +84,7 @@ python -m src.main scheduler start|trigger|status|stop|job-toggle|set-interval|t
 python -m src.main notification setup|status|delete|test|dry-run|set-account
 python -m src.main test all|read|write|telegram|benchmark
 
-python -m src.main stop|restart
+python -m src.main stop|restart   # restart = worker daemon, no web panel
 python -m src.main search-query list|get|add|edit|delete|toggle|run|stats
 python -m src.main pipeline list|show|add|dry-run-count|edit|delete|toggle|run|generate|generate-stream|runs|run-show|queue|moderation-list|moderation-view|publish|approve|reject|bulk-approve|bulk-reject|refinement-steps|export|import|templates|from-template|ai-edit|filter|node|edge|graph
 python -m src.main photo-loader dialogs|refresh|send|schedule-send|batch-create|batch-list|items|batch-cancel|auto-create|auto-list|auto-update|auto-toggle|auto-delete|run-due
@@ -102,7 +106,7 @@ CLI command for Telegram dialogs management is `dialogs`.
 
 Three layers: **CLI (native surface; web/TUI/agent-chat/MCP are legacy)** → **Telegram + Search + Scheduler + Agent/Pipeline** → **SQLite**
 
-- **Runtime split (web ↔ worker)**: since #444 the runtime consists of two `AppContainer` flavours keyed on `runtime_mode` ("web" vs "worker") in `src/web/bootstrap.py`. Since #457 round 4 they normally run in the **same process**: `serve` spawns an `EmbeddedWorker` (`src/web/embedded_worker.py`) as an asyncio task next to the web container. Pass `--no-worker` to run only the web side and start `python -m src.main worker` separately (Docker/k8s split deployments).
+- **Runtime split (web ↔ worker)**: since #444 the runtime consists of two `AppContainer` flavours keyed on `runtime_mode` ("web" vs "worker") in `src/web/bootstrap.py`. The **default daemon is worker-only** (automation-first): `restart`/`worker` run the standalone worker (`src/runtime/worker.py` — functionally identical to the embedded one) with the managed PID file and no web surface. `serve` is the legacy panel entry: it hosts uvicorn and spawns an `EmbeddedWorker` (`src/web/embedded_worker.py`) next to the web container; `--no-worker` runs only the web side (Docker/k8s split deployments).
   - Web container (`runtime_mode="web"`) uses snapshot shims (`SnapshotClientPool`, `SnapshotCollector`, `SnapshotSchedulerManager` in `src/web/runtime_shims.py`). It does NOT open Telegram connections; UI actions enqueue work into `collection_tasks` / `telegram_commands` / task tables and read `runtime_snapshots` to render status.
   - Worker container (`runtime_mode="worker"`, either embedded or standalone via `src/runtime/worker.py`) owns the live `ClientPool`, `CollectionQueue`, `UnifiedDispatcher`, `TelegramCommandDispatcher`, and `SchedulerManager`, and publishes `runtime_snapshots` (heartbeat, accounts_status, scheduler_status, …) that the web side reads.
   - In web-mode `collection_queue = None` and `CollectionService` falls back to writing a PENDING row — the worker picks those up at startup via `CollectionQueue.requeue_startup_tasks()`.

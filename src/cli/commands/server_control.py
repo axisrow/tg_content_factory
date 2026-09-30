@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from src.cli.commands import serve
+from src.cli.commands import worker
 from src.cli.process_control import ProcessControlError, StopResult, pid_file_path, stop_server
 from src.config import load_config
 
@@ -12,16 +12,16 @@ _GRACEFUL_STOP_NOTICE = (
     "подожду завершения активной задачи; остальные останутся pending в БД."
 )
 _GRACEFUL_RESTART_NOTICE = (
-    "Перезапускаю сервер gracefully. Если сейчас идёт сбор канала, "
+    "Перезапускаю воркер gracefully. Если сейчас идёт сбор канала, "
     "подожду завершения активной задачи; остальные останутся pending в БД."
 )
 
 
 def _stop_managed_server(config_path: str, notice: str) -> None:
-    """Stop the managed server, printing *notice* first; exit(1) on failure.
+    """Stop the managed daemon, printing *notice* first; exit(1) on failure.
 
     Shared by ``stop_web`` and ``restart_web`` — both gracefully terminate the
-    running server and exit non-zero if it is unmanaged or never stops.
+    running daemon and exit non-zero if it is unmanaged or never stops.
     """
     config = load_config(config_path)
     try:
@@ -36,14 +36,19 @@ def _stop_managed_server(config_path: str, notice: str) -> None:
 
 
 def stop_web(config_path: str) -> None:
-    """Stop the web server started by this app (graceful)."""
+    """Stop the managed daemon started by this app (graceful)."""
     _stop_managed_server(config_path, _GRACEFUL_STOP_NOTICE)
 
 
-def restart_web(config_path: str, *, web_pass: str | None = None) -> None:
-    """Restart the web server: stop gracefully, then start a fresh ``serve``."""
+def restart_web(config_path: str) -> None:
+    """Restart the managed daemon: stop gracefully, then run the worker.
+
+    The automation-first default daemon is the worker runtime WITHOUT the web
+    panel — no web server, no WEB_PASS. To host the (deprecated) web panel
+    use ``serve`` explicitly.
+    """
     _stop_managed_server(config_path, _GRACEFUL_RESTART_NOTICE)
-    serve.serve_web(config_path, web_pass=web_pass)
+    worker.serve_worker(config_path)
 
 
 def run_stop(args: argparse.Namespace) -> None:
@@ -51,4 +56,4 @@ def run_stop(args: argparse.Namespace) -> None:
 
 
 def run_restart(args: argparse.Namespace) -> None:
-    restart_web(args.config, web_pass=getattr(args, "web_pass", None))
+    restart_web(args.config)

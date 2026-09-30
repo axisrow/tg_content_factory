@@ -108,7 +108,9 @@ provider list | add | delete | probe | refresh | test-all
 debug logs | memory | timing
 test all | read | write | telegram | benchmark
 stop | restart
-serve [--web-pass PASS] [--no-worker]   # legacy web panel
+serve [--web-pass PASS] [--no-worker]   # legacy web panel (deprecated)
+worker                                  # default daemon: worker runtime, no web panel
+restart                                 # stop + start the worker daemon (managed PID file)
 agent threads | chat | messages | ...   # legacy embedded agent
 mcp-server [--no-pool]                  # legacy MCP bridge
 ```

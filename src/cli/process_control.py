@@ -24,6 +24,13 @@ class StopResult(Enum):
     TIMEOUT = "timeout"
 
 
+# `python -m src.main <name>` invocations that own the sessions and are managed
+# via the PID file. `restart` is itself a daemon: after stopping the previous
+# process it runs the worker in-process, so its cmdline stays `... restart`
+# (#automation-first default — the managed daemon has no web panel).
+_DAEMON_COMMANDS = {"serve", "worker", "restart"}
+
+
 @dataclass(frozen=True)
 class StopOutcome:
     result: StopResult
@@ -94,7 +101,7 @@ def is_expected_server_process(pid: int) -> bool:
 
     tokens = command.split()
     for index, token in enumerate(tokens[:-2]):
-        if token == "-m" and tokens[index + 1] == "src.main" and tokens[index + 2] == "serve":
+        if token == "-m" and tokens[index + 1] == "src.main" and tokens[index + 2] in _DAEMON_COMMANDS:
             return True
     return False
 

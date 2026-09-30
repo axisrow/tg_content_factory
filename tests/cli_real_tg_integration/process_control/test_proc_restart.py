@@ -1,9 +1,12 @@
-"""`restart` — stop the running serve and start a fresh one.
+"""`restart` — stop the managed daemon and become the worker-only replacement.
 
-1. Spawn `serve --no-worker`, wait for /health 200.
-2. Spawn `python -m src.main restart`. It internally invokes `stop` +
-   `serve` again, then blocks as the replacement server process.
-3. Tear down the new server through a final `stop`.
+1. Spawn `serve --no-worker`, wait for PID + /health 200 (legacy panel still
+   hosts HTTP).
+2. Spawn `python -m src.main restart`. It stops the serve and blocks as the
+   replacement daemon — the worker runtime WITHOUT a web panel: no /health,
+   no uvicorn, and its cmdline stays `src.main restart`.
+3. Verify the daemon is recognized as managed (pid file + cmdline), that
+   /health is NOT brought back, and tear it down through a final `stop`.
 """
 import subprocess
 
@@ -19,8 +22,18 @@ from tests.cli_real_tg_integration.conftest import (
 pytestmark = pytest.mark.real_tg_manual
 
 
+def _process_command(pid: int) -> str:
+    result = subprocess.run(
+        ["ps", "-o", "command=", "-p", str(pid)],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
 @pytest.mark.timeout(360)
-def test_proc_restart_brings_serve_back(run_cli_popen, cli_real_cli_env):
+def test_proc_restart_runs_worker_without_web_panel(run_cli_popen, cli_real_cli_env):
     skip_if_server_pid_exists(cli_real_cli_env)
     port = cli_real_cli_env.web_port
     proc = run_cli_popen("serve", "--no-worker")
@@ -45,9 +58,10 @@ def test_proc_restart_brings_serve_back(run_cli_popen, cli_real_cli_env):
 
     restart_proc = run_cli_popen("restart")
 
-    # After restart, /health should respond again. The new server PID is
-    # the restart subprocess itself; verify the PID changed to that process so
-    # we do not accidentally pass against an unrelated server on the same port.
+    # The restart subprocess becomes the replacement daemon (worker runtime,
+    # no web panel): the old serve must exit, the new PID is the restart
+    # process itself, and /health must NOT come back — automation-first
+    # default has no human-facing surface.
     try:
         proc.communicate(timeout=150)
     except subprocess.TimeoutExpired:
@@ -71,11 +85,22 @@ def test_proc_restart_brings_serve_back(run_cli_popen, cli_real_cli_env):
             f"stderr tail: {(stderr_text or '')[-500:]!r}"
         )
 
-    health_back = wait_for_http_200(f"http://127.0.0.1:{port}/health", timeout=20.0)
     if restart_proc.poll() is not None:
-        pytest.fail("`restart` exited before final `stop`; /health may belong to another process")
+        pytest.fail("`restart` exited before final `stop`; the PID may belong to another process")
     if read_pid_file(cli_real_cli_env.pid_path) != restart_proc.pid:
-        pytest.fail("post-restart /health was not backed by the PID registered by this test")
+        pytest.fail("post-restart PID file is not owned by the restart subprocess")
+    command = _process_command(restart_proc.pid)
+    if "src.main" not in command or "restart" not in command.split():
+        pytest.fail(
+            f"replacement daemon is not a `src.main restart` worker process: {command!r}"
+        )
+    if wait_for_http_200(f"http://127.0.0.1:{port}/health", timeout=5.0):
+        restart_proc.terminate()
+        pytest.fail(
+            "worker-only daemon answered /health — the web panel came back "
+            "through the automation-first default path"
+        )
+
     stop_proc = run_cli_popen("stop", capture_stdout=True)
     try:
         _, restart_stderr = restart_proc.communicate(timeout=150)
@@ -83,7 +108,7 @@ def test_proc_restart_brings_serve_back(run_cli_popen, cli_real_cli_env):
         restart_proc.kill()
         _, restart_stderr = restart_proc.communicate(timeout=5)
         pytest.fail(
-            f"restarted server did not exit after final `stop`: {restart_stderr[-500:]!r}"
+            f"restarted daemon did not exit after final `stop`: {restart_stderr[-500:]!r}"
         )
     try:
         stop_stdout, stop_stderr = stop_proc.communicate(timeout=10)
@@ -91,11 +116,10 @@ def test_proc_restart_brings_serve_back(run_cli_popen, cli_real_cli_env):
         stop_proc.kill()
         stop_stdout, stop_stderr = stop_proc.communicate(timeout=5)
         pytest.fail(
-            "final `stop` did not return after the restarted server exited; "
+            "final `stop` did not return after the restarted daemon exited; "
             f"stdout={stop_stdout!r} stderr={stop_stderr!r}"
         )
     assert stop_proc.returncode == 0, (
-        f"final `stop` failed and the restarted server is leaked. "
+        f"final `stop` failed and the restarted daemon is leaked. "
         f"stdout={stop_stdout!r} stderr={stop_stderr!r}"
     )
-    assert health_back, "`restart` did not bring /health back online within 20s"
