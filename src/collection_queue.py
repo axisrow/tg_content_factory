@@ -372,11 +372,20 @@ class CollectionQueue:
                 if not keep_known_task_id:
                     self._known_task_ids.discard(task_id)
                 self._queue.task_done()
+                await self._log_progress()
                 if stop_after_no_clients:
                     self._stop_workers = True
                     should_stop_workers = True
             if should_stop_workers:
                 break
+
+    async def _log_progress(self) -> None:
+        """«Сколько ещё собирать»: остаток незавершённых задач после каждой задачи."""
+        try:
+            left = await self._channels.tasks.count_active_channel_tasks()
+        except Exception:
+            return  # ponytail: прогресс-строка косметическая — не роняем воркер
+        logger.info("Collection queue progress: %d task(s) left to collect", left)
 
     def _build_collect_kwargs(
         self, task_id: int, *, full: bool, force: bool, cancel_event: asyncio.Event
