@@ -73,18 +73,18 @@ def test_stop_delegates():
     mock_stop.assert_called_once_with("config.yaml")
 
 
-def test_restart_threads_web_pass():
-    with patch("src.cli.typer_commands.server_control_cmd.restart_web") as mock_restart:
-        result = runner.invoke(app, ["restart", "--web-pass", "pw"])
-    assert result.exit_code == 0
-    mock_restart.assert_called_once_with("config.yaml", web_pass="pw")
-
-
-def test_restart_defaults_web_pass_to_none():
+def test_restart_starts_worker_daemon_without_web_pass():
+    """The managed daemon takes no web-pass: the worker has no web panel."""
     with patch("src.cli.typer_commands.server_control_cmd.restart_web") as mock_restart:
         result = runner.invoke(app, ["restart"])
     assert result.exit_code == 0
-    mock_restart.assert_called_once_with("config.yaml", web_pass=None)
+    mock_restart.assert_called_once_with("config.yaml")
+
+
+def test_restart_rejects_removed_web_pass_flag():
+    """--web-pass was removed from restart (serve-only option) — Typer exits 2."""
+    result = runner.invoke(app, ["restart", "--web-pass", "pw"])
+    assert result.exit_code != 0
 
 
 # --------------------------------------------------------------------------- #
