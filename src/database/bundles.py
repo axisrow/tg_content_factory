@@ -539,6 +539,10 @@ class ChannelBundle(_ChannelOps, _CollectionTaskCreateOps, _CollectionTaskReadOp
         """Задачи сбора каналов в статусе PENDING (для постановки в очередь воркером)."""
         return await self.tasks.get_pending_channel_tasks()
 
+    async def count_active_channel_tasks(self) -> int:
+        """Незавершённые задачи сбора каналов (PENDING + RUNNING); прогресс воркера."""
+        return await self.tasks.count_active_channel_tasks()
+
     async def delete_pending_channel_tasks(self) -> int:
         """Удалить все PENDING-задачи сбора каналов; вернуть число удалённых."""
         return await self.tasks.delete_pending_channel_tasks()

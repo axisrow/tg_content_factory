@@ -515,6 +515,21 @@ async def test_get_pending_channel_tasks(collection_tasks_repo):
     assert tasks[0].id == id2
 
 
+async def test_count_active_channel_tasks(collection_tasks_repo):
+    """Счётчик прогресса: только CHANNEL_COLLECT в PENDING/RUNNING."""
+    id1 = await collection_tasks_repo.create_collection_task(1, "Channel 1")
+    await collection_tasks_repo.create_collection_task(2, "Channel 2")
+    await collection_tasks_repo.create_stats_task(StatsAllTaskPayload(channel_ids=[1]))
+    await collection_tasks_repo.update_collection_task(id1, CollectionTaskStatus.RUNNING)
+
+    assert await collection_tasks_repo.count_active_channel_tasks() == 2
+
+    await collection_tasks_repo.update_collection_task(
+        id1, CollectionTaskStatus.COMPLETED, messages_collected=5
+    )
+    assert await collection_tasks_repo.count_active_channel_tasks() == 1
+
+
 async def test_reset_collection_task_to_pending(collection_tasks_repo):
     task_id = await collection_tasks_repo.create_collection_task(1, "Channel 1")
     await collection_tasks_repo.update_collection_task(task_id, CollectionTaskStatus.RUNNING)

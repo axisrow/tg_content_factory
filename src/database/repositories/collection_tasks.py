@@ -702,6 +702,24 @@ class CollectionTasksRepository:
         rows = await cur.fetchall()
         return [self._to_task(r) for r in rows]
 
+    async def count_active_channel_tasks(self) -> int:
+        """Сколько задач сбора каналов ещё не завершено (PENDING + RUNNING).
+
+        Прогресс-строка воркера («сколько ещё собирать»); отложенные по
+        ``run_after`` задачи тоже считаются — они ещё впереди.
+        """
+        cur = await self._db.execute(
+            "SELECT COUNT(*) FROM collection_tasks "
+            "WHERE task_type = ? AND status IN (?, ?)",
+            (
+                CollectionTaskType.CHANNEL_COLLECT.value,
+                CollectionTaskStatus.PENDING.value,
+                CollectionTaskStatus.RUNNING.value,
+            ),
+        )
+        row = await cur.fetchone()
+        return int(row[0]) if row is not None else 0
+
     async def delete_pending_channel_tasks(self) -> int:
         """Удалить все ожидающие задачи сбора (очистить очередь); вернуть число удалённых."""
         assert self._database is not None, (
