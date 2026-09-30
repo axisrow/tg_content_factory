@@ -1,7 +1,15 @@
 {
   "tag": "v0.2.4",
-  "title": "DM Archive, Floodgate Safety Stack & Coding-Agent Interop",
+  "title": "CLI + Skill First: Coding-Agent Integration, DM Archive & Floodgate Safety",
   "highlights": [
+    {
+      "title": "The primary mechanism: tg-agent CLI + skill for coding agents",
+      "description": "The project is repositioned as a dependency for coding agents (Claude Code, OpenCode, Codex): every capability lands as a Typer CLI command first and is documented in the bundled tg-agent skill — setup checks, a task→command map and safety rules for acting on a real Telegram account (#1446). The argparse framework is fully gone (#959, #1120-1163) — one consistent CLI with uniform --help — and a plugin manifest ships alongside (#1406). Four agent backends (claude-agent-sdk, deepagents, Codex SDK #757, Google ADK #943) embed the same tools in-process. The web panel and TUI keep working but are frozen; the CLI is the contract."
+    },
+    {
+      "title": "REST /api/tasks — external agents drive the worker over plain HTTP",
+      "description": "A unified jobs read-model over collection tasks, scheduler jobs, telegram commands and dispatcher work (#963, #981), plus REST create/claim/complete/fail for task types like dm_reply and chat_answer (#960-961, #978). Coding agents get a clean HTTP surface instead of process embedding."
+    },
     {
       "title": "Persistent DM Archive (both directions)",
       "description": "A real-time listener records every incoming and outgoing personal-chat message into a dedicated dm_messages store (#1438, #1427). A catch-up job recovers anything missed while offline, with three modes and staleness overrides (#1428), and `dialogs archive-history` backfills full history for people, bots and Saved Messages from a fresh dialog snapshot (#1455). Idempotent, resumable via per-chat cursors, survives restarts."
@@ -19,24 +27,12 @@
       "description": "Partial refreshes are preserved and surfaced instead of silently discarded (#1347, #1351, #1360), flood-degraded stale snapshots are flagged partial (#1358), truncated sweeps resume from a batch ledger (#1361, #1367), legacy groups resolve via PeerChat (#1353), and live dialog history is readable in CLI and web via tg_messenger (#1299)."
     },
     {
-      "title": "CLI migrated to Typer; positioned as a coding-agent dependency",
-      "description": "The argparse framework is fully gone (#959, #1120-1163): one consistent Typer CLI with uniform --help. The project is officially repositioned as a dependency for coding agents with a bundled agent skill (#1446) and a plugin system design (#1406)."
-    },
-    {
       "title": "SSO: session-string export/import on every surface",
       "description": "Move an authorized account between machines and pools via account export-session / import in the CLI, the web login form, and agent tools (#828, #1150-1159). Encrypted-at-rest sessions require an explicit key, enforced at startup (#1363)."
     },
     {
-      "title": "Unified Jobs read-model + REST task interop",
-      "description": "One dashboard and read API over collection tasks, scheduler jobs, telegram commands and dispatcher work (#963, #981). REST /api/tasks supports create/claim/complete/fail with dm_reply/chat_answer/fetch_* payload types (#960-961, #978), so external agents can drive the worker over plain HTTP."
-    },
-    {
       "title": "AI channel ratings",
       "description": "LLM-judged channel quality: channel_ratings storage with CSV seed, an `analytics channel-rating` CLI command, a web table, and a read tool for agents (#966-1001). Filter analysis gains --quick sampling of the last N messages per channel (#1138)."
-    },
-    {
-      "title": "Two new opt-in agent backends",
-      "description": "Codex SDK (#757) and Google ADK/Gemini (#943) join claude-agent-sdk and deepagents — four backends with auto-selection and dev-mode override. Failed turns now surface as errors instead of empty successes (#1269)."
     },
     {
       "title": "Telegram-Desktop-style export",
