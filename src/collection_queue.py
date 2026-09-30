@@ -382,7 +382,7 @@ class CollectionQueue:
     async def _log_progress(self) -> None:
         """«Сколько ещё собирать»: остаток незавершённых задач после каждой задачи."""
         try:
-            left = await self._channels.count_active_channel_tasks()
+            left = await self._channels.tasks.count_active_channel_tasks()
         except Exception:
             return  # ponytail: прогресс-строка косметическая — не роняем воркер
         logger.info("Collection queue progress: %d task(s) left to collect", left)
