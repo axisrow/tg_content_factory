@@ -17,6 +17,49 @@ from src.services.unified_dispatcher import HANDLED_TYPES
 pytestmark = pytest.mark.anyio
 
 
+async def test_concurrent_creates_with_one_key_store_one_task(route_client):
+    responses = await asyncio.gather(
+        *[
+            route_client.post("/api/tasks", json={"type": "dm_reply", "idempotency_key": "send-1"})
+            for _ in range(8)
+        ]
+    )
+    assert all(response.status_code == 201 for response in responses)
+    assert len({response.json()["id"] for response in responses}) == 1
+    db = route_client._transport_app.state.db
+    assert await db.repos.tasks.count_collection_tasks() == 1
+
+
+@pytest.mark.parametrize(
+    "endpoint,body", [("complete", {"result_payload": {"id": 1}}), ("fail", {"error": "boom"})]
+)
+async def test_concurrent_identical_reports_all_succeed(route_client, endpoint, body):
+    created = await route_client.post("/api/tasks", json={"type": "dm_reply"})
+    task_id = created.json()["id"]
+    await route_client.post("/api/tasks/claim", json={"types": ["dm_reply"]})
+    responses = await asyncio.gather(
+        *[route_client.post(f"/api/tasks/{task_id}/{endpoint}", json=body) for _ in range(8)]
+    )
+    assert all(response.status_code == 200 for response in responses)
+    assert all(response.json() == {"ok": True} for response in responses)
+
+
+async def test_concurrent_complete_and_fail_accept_only_one_outcome(route_client):
+    created = await route_client.post("/api/tasks", json={"type": "dm_reply"})
+    task_id = created.json()["id"]
+    await route_client.post("/api/tasks/claim", json={"types": ["dm_reply"]})
+    reports = [("complete", {"result_payload": {"id": 1}}), ("fail", {"error": "boom"})]
+    responses = await asyncio.gather(
+        *[route_client.post(f"/api/tasks/{task_id}/{endpoint}", json=body) for endpoint, body in reports]
+    )
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    original = (await route_client.get(f"/api/tasks/{task_id}")).json()
+    for (endpoint, body), response in zip(reports, responses, strict=True):
+        replay = await route_client.post(f"/api/tasks/{task_id}/{endpoint}", json=body)
+        assert replay.status_code == response.status_code
+    assert (await route_client.get(f"/api/tasks/{task_id}")).json() == original
+
+
 async def test_concurrent_claims_yield_the_task_to_exactly_one(route_client):
     created = await route_client.post(
         "/api/tasks", json={"type": "dm_reply", "payload": {"peer": "@bob", "text": "hi"}}

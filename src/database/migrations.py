@@ -80,6 +80,7 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
         "last_progress_at": "last_progress_at TEXT",
         # Interop tasks (#961): result written back by an external worker.
         "result_payload": "result_payload TEXT",
+        "idempotency_key": "idempotency_key TEXT",
     },
     "telegram_commands": {
         "run_after": "run_after TEXT",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+from src.database import Database
 from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.models import (
     CollectionTaskStatus,
@@ -79,6 +80,29 @@ def test_serialize_payload_stats_all():
 
 
 # create_collection_task tests
+
+
+async def test_generic_task_keys_persist_and_dedupe_across_connections(tmp_path):
+    path = str(tmp_path / "tasks.db")
+    first = Database(path)
+    second = Database(path)
+    try:
+        await first.initialize()
+        task_id = await first.repos.tasks.create_generic_task("dm_reply", idempotency_key="send-1")
+        await first.close()
+        await first.initialize()
+        assert await first.repos.tasks.create_generic_task("dm_reply", idempotency_key="send-1") == task_id
+
+        await second.initialize()
+        ids = await asyncio.gather(
+            first.repos.tasks.create_generic_task("dm_reply", idempotency_key="send-2"),
+            second.repos.tasks.create_generic_task("dm_reply", idempotency_key="send-2"),
+        )
+        assert ids[0] == ids[1] != task_id
+        assert await first.repos.tasks.count_collection_tasks() == 2
+    finally:
+        await second.close()
+        await first.close()
 
 
 async def test_create_collection_task_basic(collection_tasks_repo):

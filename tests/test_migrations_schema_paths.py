@@ -106,9 +106,32 @@ async def test_run_migrations_repairs_minimal_legacy_schema(fresh_db):
     } <= await _columns(fresh_db, "messages")
     assert {"is_premium", "flood_wait_until"} <= await _columns(fresh_db, "accounts")
     assert {"channel_type", "preferred_phone"} <= await _columns(fresh_db, "channels")
-    assert {"task_type", "run_after", "payload", "parent_task_id"} <= await _columns(
+    assert {"task_type", "run_after", "payload", "parent_task_id", "idempotency_key"} <= await _columns(
         fresh_db, "collection_tasks"
     )
+
+
+@pytest.mark.anyio
+async def test_task_idempotency_key_migration_is_nullable_unique_and_repeatable(fresh_db):
+    await fresh_db.executescript("""
+        CREATE TABLE collection_tasks (
+            id INTEGER PRIMARY KEY,
+            channel_id INTEGER,
+            status TEXT DEFAULT 'pending'
+        );
+        INSERT INTO collection_tasks (id) VALUES (1), (2);
+    """)
+    await run_migrations(fresh_db)
+    cur = await fresh_db.execute("SELECT idempotency_key FROM collection_tasks ORDER BY id")
+    assert [row[0] for row in await cur.fetchall()] == [None, None]
+    await fresh_db.execute("INSERT INTO collection_tasks (idempotency_key) VALUES ('send-1')")
+    await fresh_db.commit()
+
+    await run_migrations(fresh_db)
+    cur = await fresh_db.execute("SELECT id FROM collection_tasks WHERE idempotency_key = 'send-1'")
+    assert (await cur.fetchone())[0] == 3
+    with pytest.raises(aiosqlite.IntegrityError):
+        await fresh_db.execute("INSERT INTO collection_tasks (idempotency_key) VALUES ('send-1')")
 
 
 @pytest.mark.anyio
