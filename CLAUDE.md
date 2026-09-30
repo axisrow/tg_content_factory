@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 tg-agent is an **automation-first Telegram engine**: the contract consumers are programs —
 coding agents (Claude Code, OpenCode, Codex) get full-spectrum Telegram access through the
 `tg-agent` CLI plus the skill in `skills/tg-agent/` (plugin manifests in `.claude-plugin/`).
-No human-facing surface is part of the contract: the owner does not consume the product
-by looking at screens.
+No human-facing surface is part of the contract: humans are not consumers of this product —
+nobody looks at screens; every consumer is a program.
 
 - **Native path — CLI first.** New capabilities are designed, implemented and tested as CLI
   commands (incl. real-TG manifest coverage) before any other surface. If a change affects the
