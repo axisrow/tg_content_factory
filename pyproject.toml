@@ -1,5 +1,6 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+# setuptools>=77 required for PEP 639 SPDX `license` expressions.
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +8,7 @@ name = "tg-agent"
 version = "0.2.4"
 description = "Telegram automation dependency for coding agents — tg-agent CLI + skill for Claude Code, OpenCode, Codex"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.11"
 authors = [
     {name = "Axisrow"}
@@ -18,7 +19,6 @@ classifiers = [
     "Environment :: Console",
     "Environment :: Web Environment",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
