@@ -2,19 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Positioning (set 2026-09)
+## Positioning (automation-first, set 2026-09-30; was "dependency for coding agents", 2026-09)
 
-tg-agent is a **dependency for coding agents** (Claude Code, OpenCode, Codex): an agent gets
-full-spectrum Telegram access through the `tg-agent` CLI plus the skill in `skills/tg-agent/`
-(plugin manifests in `.claude-plugin/`).
+tg-agent is an **automation-first Telegram engine**: the contract consumers are programs —
+coding agents (Claude Code, OpenCode, Codex) get full-spectrum Telegram access through the
+`tg-agent` CLI plus the skill in `skills/tg-agent/` (plugin manifests in `.claude-plugin/`).
+No human-facing surface is part of the contract: the owner does not consume the product
+by looking at screens.
 
 - **Native path — CLI first.** New capabilities are designed, implemented and tested as CLI
   commands (incl. real-TG manifest coverage) before any other surface. If a change affects the
   agent-facing surface, update `skills/tg-agent/SKILL.md` / `skills/tg-agent/reference.md` in
   the same PR.
-- **Legacy (frozen):** web dashboard, TUI, embedded agent chat (`agent chat`, SDK backends),
-  MCP server. They keep working; development is paused indefinitely. Bug fixes allowed,
-  features are not.
+- **Deprecated (automation-first contract, 2026-09-30):** web dashboard, TUI, embedded agent
+  chat (`agent chat`, SDK backends), MCP server. They keep running but receive **no investment**:
+  no features and no proactive bug fixes — fixes only on an explicit owner request. Removal is a
+  standing candidate, decided separately.
+- **Not legacy:** the worker runtime (collection queue, scheduler, dispatchers, snapshots) —
 - **Not legacy:** the worker runtime (collection queue, scheduler, dispatchers, snapshots) —
   it is the engine behind scheduled collection and queued sends.
 - Keep `.claude-plugin/plugin.json` `version` in sync with `pyproject.toml` on release.
