@@ -1,0 +1,54 @@
+{
+  "tag": "v0.2.4",
+  "title": "DM Archive, Floodgate Safety Stack & Coding-Agent Interop",
+  "highlights": [
+    {
+      "title": "Persistent DM Archive (both directions)",
+      "description": "A real-time listener records every incoming and outgoing personal-chat message into a dedicated dm_messages store (#1438, #1427). A catch-up job recovers anything missed while offline, with three modes and staleness overrides (#1428), and `dialogs archive-history` backfills full history for people, bots and Saved Messages from a fresh dialog snapshot (#1455). Idempotent, resumable via per-chat cursors, survives restarts."
+    },
+    {
+      "title": "Flood safety rebuilt on the telethon-floodgate package",
+      "description": "The hand-rolled flood stack was replaced by the external telethon-floodgate package: per-peer send limits, a proactive dialogs-page gate, a calibrated history category and a process-wide outgoing ceiling (#1432, #1433, #1441, #1444, #1405, #1372). Ban-prone patterns like repeated warm-ups are structurally prevented, and CLI commands hand Telegram work to the running worker instead of competing for sessions (#1324)."
+    },
+    {
+      "title": "TG_PROXY — SOCKS5/HTTP proxy for all MTProto traffic",
+      "description": "On networks where Telegram IPs are blocked, set TG_PROXY=socks5://… or http://… and every connection (auth, pool, CLI, live-CLI tests) routes through it (#1450). Malformed proxy values fail fast at startup instead of being silently ignored."
+    },
+    {
+      "title": "Resilient dialog cache and sweeps",
+      "description": "Partial refreshes are preserved and surfaced instead of silently discarded (#1347, #1351, #1360), flood-degraded stale snapshots are flagged partial (#1358), truncated sweeps resume from a batch ledger (#1361, #1367), legacy groups resolve via PeerChat (#1353), and live dialog history is readable in CLI and web via tg_messenger (#1299)."
+    },
+    {
+      "title": "CLI migrated to Typer; positioned as a coding-agent dependency",
+      "description": "The argparse framework is fully gone (#959, #1120-1163): one consistent Typer CLI with uniform --help. The project is officially repositioned as a dependency for coding agents with a bundled agent skill (#1446) and a plugin system design (#1406)."
+    },
+    {
+      "title": "SSO: session-string export/import on every surface",
+      "description": "Move an authorized account between machines and pools via account export-session / import in the CLI, the web login form, and agent tools (#828, #1150-1159). Encrypted-at-rest sessions require an explicit key, enforced at startup (#1363)."
+    },
+    {
+      "title": "Unified Jobs read-model + REST task interop",
+      "description": "One dashboard and read API over collection tasks, scheduler jobs, telegram commands and dispatcher work (#963, #981). REST /api/tasks supports create/claim/complete/fail with dm_reply/chat_answer/fetch_* payload types (#960-961, #978), so external agents can drive the worker over plain HTTP."
+    },
+    {
+      "title": "AI channel ratings",
+      "description": "LLM-judged channel quality: channel_ratings storage with CSV seed, an `analytics channel-rating` CLI command, a web table, and a read tool for agents (#966-1001). Filter analysis gains --quick sampling of the last N messages per channel (#1138)."
+    },
+    {
+      "title": "Two new opt-in agent backends",
+      "description": "Codex SDK (#757) and Google ADK/Gemini (#943) join claude-agent-sdk and deepagents — four backends with auto-selection and dev-mode override. Failed turns now surface as errors instead of empty successes (#1269)."
+    },
+    {
+      "title": "Telegram-Desktop-style export",
+      "description": "Build Telegram Desktop-compatible exports with size-aware media download, plus offline text export and a worker-driven EXPORT task (#834, #937-939)."
+    },
+    {
+      "title": "Security hardening",
+      "description": "Web panel defaults locked down: 127.0.0.1 bind with weak-password fail-fast (#1305), password policy and auth throttling (#1339), CSV-injection/CSRF/ReDoS fixes (#846, #1256), and WAL-shared session materialization (#1323)."
+    },
+    {
+      "title": "Database performance",
+      "description": "FTS backfill with a 21 GB index drop (#945), configurable cache/mmap with PRAGMA optimize on close (#940), exact-COUNT removal from search (#824), and reaction aggregation instead of JSON scanning (#827) — snappy on multi-GB archives."
+    }
+  ]
+}
