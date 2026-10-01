@@ -191,15 +191,16 @@ class CollectionQueue:
             logger.info("Collection queue resumed")
 
     def _target_worker_count(self) -> int:
-        getter = getattr(self._collector, "collection_worker_count", None)
+        getter: Any = getattr(self._collector, "collection_worker_count", None)
         if callable(getter):
-            return max(1, int(getter()))
+            count: Any = getter()
+            return max(1, int(count))
         return 1
 
     async def _available_target_worker_count(self) -> int:
-        slot_getter = getattr(self._collector, "available_collection_slot_count", None)
+        slot_getter: Any = getattr(self._collector, "available_collection_slot_count", None)
         if callable(slot_getter):
-            slots = slot_getter()
+            slots: Any = slot_getter()
             if asyncio.iscoroutine(slots):
                 slots = await slots
             active_count = len(self._active_task_ids)
@@ -211,7 +212,7 @@ class CollectionQueue:
 
         getter = getattr(self._collector, "available_collection_worker_count", None)
         if callable(getter):
-            count = getter()
+            count: Any = getter()
             if asyncio.iscoroutine(count):
                 count = await count
             return max(1, int(count))
