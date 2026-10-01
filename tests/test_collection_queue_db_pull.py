@@ -13,7 +13,12 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from telethon.errors import ChannelPrivateError, TypeNotFoundError
+from telethon.errors import (
+    ChannelInvalidError,
+    ChannelPrivateError,
+    TypeNotFoundError,
+    UsernameNotOccupiedError,
+)
 from telethon_floodgate import TelegramRateLimitedError
 
 from src.collection_queue import CollectionQueue
@@ -168,6 +173,28 @@ class _ConnectionErrorCollector(_FakeCollector):
     ):
         self.calls.append(channel.channel_id)
         raise ConnectionError("connection reset")
+
+
+class _RaisingCollector(_FakeCollector):
+    """Collect raises ``exc`` forever, or for the first ``fail_times`` calls only.
+
+    Stands in for the Telegram-side flakiness (unknown TL constructors served
+    non-deterministically) that motivated the end-of-run retry pass.
+    """
+
+    def __init__(self, exc: BaseException, *, fail_times: int | None = None):
+        super().__init__()
+        self._exc = exc
+        self._fail_times = fail_times
+
+    async def collect_single_channel(
+        self, channel, *, full=False, progress_callback=None, force=False, cancel_event=None
+    ):
+        self.calls.append(channel.channel_id)
+        self.full_calls.append(full)
+        if self._fail_times is None or len(self.calls) <= self._fail_times:
+            raise self._exc
+        return 0
 
 
 async def _seed_channel(db: Database, channel_id: int = -1001) -> None:
@@ -889,13 +916,7 @@ async def test_connection_error_queue_full_keeps_task_pending_for_pull_loop(tmp_
 
 
 async def _raise_private_error(queue: CollectionQueue, task_id: int, channel: Channel) -> None:
-    await queue._handle_collection_exception(
-        ChannelPrivateError(request=None),
-        task_id=task_id,
-        channel=channel,
-        force=False,
-        full=False,
-    )
+    await _raise_collection_error(queue, task_id, channel, ChannelPrivateError(request=None))
 
 
 @pytest.mark.anyio
@@ -903,6 +924,7 @@ async def test_unknown_tl_type_is_skipped_with_warning_not_traceback(tmp_path, c
     """Telegram schema newer than Telethon: skip with one clear warning, no ERROR/traceback."""
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         channel = (await db.get_channels())[0]
@@ -919,7 +941,8 @@ async def test_unknown_tl_type_is_skipped_with_warning_not_traceback(tmp_path, c
                 full=False,
             )
 
-        assert outcome == (False, False)
+        # Retryable failure: the delayed requeue owns the task (flood-branch contract).
+        assert outcome == (True, False)
 
         records = [r for r in caplog.records if r.name == "src.collection_queue"]
         assert any(
@@ -927,10 +950,11 @@ async def test_unknown_tl_type_is_skipped_with_warning_not_traceback(tmp_path, c
         )
         assert not [r for r in records if r.levelno >= logging.ERROR or r.exc_info]
         task = await _get_task(db, task_id)
-        assert task.status == "failed"
-        assert "waiting for Telethon update" in (task.error or "")
-        assert "0x1c32b11c" in (task.error or "")
+        assert task.status == "pending"  # FAILED → rescheduled for the retry pass
+        assert "Retry pass 2/5" in (task.note or "")
     finally:
+        if queue is not None:
+            await queue._cancel_delayed_requeues()
         await db.close()
 
 
@@ -939,6 +963,7 @@ async def test_other_collection_errors_still_log_error_with_traceback(tmp_path, 
     """Only unknown TL types are downgraded to a warning; any other failure stays an ERROR."""
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         channel = (await db.get_channels())[0]
@@ -957,8 +982,11 @@ async def test_other_collection_errors_still_log_error_with_traceback(tmp_path, 
         errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
         assert len(errors) == 1 and errors[0].exc_info
         task = await _get_task(db, task_id)
-        assert task.error == "boom"
+        assert task.status == "pending"  # retryable: rescheduled, not terminal FAILED
+        assert "Retry pass 2/5" in (task.note or "")
     finally:
+        if queue is not None:
+            await queue._cancel_delayed_requeues()
         await db.close()
 
 
@@ -1050,6 +1078,206 @@ async def test_human_active_decision_suppresses_auto_deactivation(tmp_path):
         assert task.status == "failed"
         assert channel.id not in queue._channel_private_error_counts
     finally:
+        await db.close()
+
+
+# --- End-of-run retry pass (TypeNotFoundError flakiness, 2026-09-30) ---
+
+
+async def _raise_collection_error(
+    queue: CollectionQueue, task_id: int, channel: Channel, exc: Exception
+) -> None:
+    await queue._handle_collection_exception(
+        exc, task_id=task_id, channel=channel, force=False, full=False
+    )
+
+
+async def _wait_for_status(db: Database, task_id: int | None, status: str, timeout: float = 6.0):
+    deadline = asyncio.get_event_loop().time() + timeout
+    task = await _get_task(db, task_id)
+    while asyncio.get_event_loop().time() < deadline and task.status != status:
+        await asyncio.sleep(0.05)
+        task = await _get_task(db, task_id)
+    assert task.status == status, f"task {task_id}: expected {status!r}, got {task.status!r}"
+    return task
+
+
+@pytest.mark.anyio
+async def test_retry_pass_flaky_then_success_completes(tmp_path, monkeypatch):
+    """TypeNotFoundError once → FAILED → retry pass requeues → completed."""
+    monkeypatch.setattr(CollectionQueue, "RETRY_PASS_DELAY_SEC", 0)
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await _seed_channel(db)
+        collector = _RaisingCollector(TypeNotFoundError(0x1C32B11C, b"\x1c\xb12\x1c"), fail_times=1)
+        queue = _make_queue(collector, db)
+        channel = (await db.get_channels(active_only=True))[0]
+        task_id = await queue.enqueue(channel)
+
+        # The failed→requeued window is shorter than one poll tick at delay=0,
+        # so don't sample intermediate states: the completed status plus the
+        # attempt count prove the second pass ran.
+        await _wait_for_status(db, task_id, "completed")
+
+        assert collector.calls.count(channel.channel_id) == 2
+        assert task_id not in queue._retry_pass
+        task = await _get_task(db, task_id)
+        assert "Retry pass 2/5" in (task.note or "")
+    finally:
+        if queue is not None:
+            await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_retry_pass_caps_at_max_attempts(tmp_path, monkeypatch):
+    """A permanently flaky channel gets exactly RETRY_PASS_MAX_ATTEMPTS, then FAILED."""
+    monkeypatch.setattr(CollectionQueue, "RETRY_PASS_DELAY_SEC", 0)
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await _seed_channel(db)
+        collector = _RaisingCollector(TypeNotFoundError(0x1C32B11C, b"\x1c\xb12\x1c"))
+        queue = _make_queue(collector, db)
+        channel = (await db.get_channels(active_only=True))[0]
+        task_id = await queue.enqueue(channel)
+
+        await _wait_for_status(db, task_id, "failed")
+        deadline = asyncio.get_event_loop().time() + 6.0
+        while asyncio.get_event_loop().time() < deadline and len(collector.calls) < 5:
+            await asyncio.sleep(0.05)
+
+        assert len(collector.calls) == 5
+        await asyncio.sleep(0.25)  # settle: final flush ran, no 6th attempt may appear
+        assert len(collector.calls) == 5
+        assert not queue._retry_pass
+        task = await _get_task(db, task_id)
+        assert task.status == "failed"
+    finally:
+        if queue is not None:
+            await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_retry_pass_channel_invalid_is_retryable_to_cap(tmp_path, monkeypatch):
+    """ChannelInvalidError is NOT "deleted": retried to the cap (entity-cache loss)."""
+    monkeypatch.setattr(CollectionQueue, "RETRY_PASS_DELAY_SEC", 0)
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await _seed_channel(db)
+        collector = _RaisingCollector(ChannelInvalidError(request=None))
+        queue = _make_queue(collector, db)
+        channel = (await db.get_channels(active_only=True))[0]
+        task_id = await queue.enqueue(channel)
+
+        await _wait_for_status(db, task_id, "failed")
+        deadline = asyncio.get_event_loop().time() + 6.0
+        while asyncio.get_event_loop().time() < deadline and len(collector.calls) < 5:
+            await asyncio.sleep(0.05)
+
+        assert len(collector.calls) == 5
+        await asyncio.sleep(0.25)
+        assert len(collector.calls) == 5
+        assert not queue._retry_pass
+        task = await _get_task(db, task_id)
+        assert task.status == "failed"
+    finally:
+        if queue is not None:
+            await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_retry_pass_username_not_occupied_is_permanent(tmp_path, monkeypatch):
+    """Username vacant = channel deleted/renamed: single attempt, no retry pass."""
+    monkeypatch.setattr(CollectionQueue, "RETRY_PASS_DELAY_SEC", 0)
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await _seed_channel(db)
+        collector = _RaisingCollector(UsernameNotOccupiedError(request=None))
+        queue = _make_queue(collector, db)
+        channel = (await db.get_channels(active_only=True))[0]
+        task_id = await queue.enqueue(channel)
+
+        await _wait_for_status(db, task_id, "failed")
+        await asyncio.sleep(0.25)  # a retry pass would have fired within this window
+
+        assert len(collector.calls) == 1
+        assert not queue._retry_pass
+        assert queue._queue.empty()
+    finally:
+        if queue is not None:
+            await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_retry_pass_unknown_tl_type_warns_without_traceback(tmp_path, monkeypatch, caplog):
+    """Telegram schema newer than Telethon: skip with one clear warning, no ERROR/traceback."""
+    monkeypatch.setattr(CollectionQueue, "RETRY_PASS_DELAY_SEC", 0)
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await _seed_channel(db)
+        collector = _RaisingCollector(TypeNotFoundError(0x1C32B11C, b"\x1c\xb12\x1c"))
+        queue = _make_queue(collector, db)
+        channel = (await db.get_channels(active_only=True))[0]
+        with caplog.at_level(logging.WARNING, logger="src.collection_queue"):
+            task_id = await queue.enqueue(channel)
+            await _wait_for_status(db, task_id, "failed")
+            await asyncio.sleep(0.25)
+
+        records = [r for r in caplog.records if r.name == "src.collection_queue"]
+        assert any("waiting for Telethon update" in r.getMessage() for r in records)
+        assert not [r for r in records if r.levelno >= logging.ERROR or r.exc_info]
+        task = await _get_task(db, task_id)
+        assert "waiting for Telethon update" in (task.error or "")
+    finally:
+        if queue is not None:
+            await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_retry_pass_channel_private_keeps_own_branch(tmp_path):
+    """ChannelPrivateError stays on the streak/auto-deactivate path, never retried."""
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await _seed_channel(db)
+        channel = (await db.get_channels())[0]
+        assert channel.id is not None
+        queue = _make_queue(_FakeCollector(), db)
+        task_id = await _create_pending_task(db)
+        await db.repos.tasks.update_collection_task(task_id, "running")
+
+        await _raise_private_error(queue, task_id, channel)
+
+        task = await _get_task(db, task_id)
+        assert task.status == "failed"
+        assert queue._channel_private_error_counts[channel.id] == 1
+        assert task_id not in queue._retry_pass
+
+        # A generic failure registers in the retry pass and leaves the streak dict alone.
+        task2 = await _create_pending_task(db)
+        await db.repos.tasks.update_collection_task(task2, "running")
+        await _raise_collection_error(queue, task2, channel, RuntimeError("flap"))
+        assert task2 in queue._retry_pass
+        assert task2 in queue._known_task_ids  # owned by the delayed requeue
+    finally:
+        if queue is not None:
+            # The flap branch schedules a RETRY_PASS_DELAY_SEC delayed requeue timer.
+            await queue._cancel_delayed_requeues()
         await db.close()
 
 

@@ -443,6 +443,8 @@ class TestCollectionQueueExtraCoverage:
         fresh_ch = Channel(id=1, channel_id=100, title="test", is_filtered=False)
         channels.get_by_pk = AsyncMock(return_value=fresh_ch)
         channels.update_collection_task = AsyncMock()
+        # The generic-failure tail reschedules the task for the retry pass.
+        channels.reschedule_collection_task = AsyncMock()
         collector = MagicMock()
         collector.collect_single_channel = AsyncMock(
             side_effect=RuntimeError("boom")
@@ -459,6 +461,7 @@ class TestCollectionQueueExtraCoverage:
             await worker
         except asyncio.CancelledError:
             pass
+        await queue._cancel_delayed_requeues()
         # Should have marked task as FAILED
         calls = channels.update_collection_task.call_args_list
         assert any(
