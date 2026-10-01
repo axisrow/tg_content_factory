@@ -733,13 +733,15 @@ class CollectionQueue:
             return False, False
         self._retried_tasks.discard(task_id)
         unknown_tl = _is_unknown_tl_type_error(exc)
-        await self._update_task_status_shutdown_safe(
-            task_id, CollectionTaskStatus.FAILED, error=_UNKNOWN_TL_TYPE_NOTE if unknown_tl else str(exc)[:500],
-        )
+        error = str(exc)[:500]
+        if unknown_tl:
+            # ID of the unknown constructor: tells different TypeNotFoundErrors apart in DB/log.
+            ctor = cast(TypeNotFoundError, exc).invalid_constructor_id
+            error = f"{_UNKNOWN_TL_TYPE_NOTE} (constructor 0x{ctor:08x})"
+        await self._update_task_status_shutdown_safe(task_id, CollectionTaskStatus.FAILED, error=error)
         if unknown_tl:
             logger.warning(
-                "Skipping channel %d: Telegram schema is newer than Telethon — waiting for Telethon update",
-                channel.channel_id,
+                "Skipping channel %d: Telegram schema is newer than Telethon — %s", channel.channel_id, error
             )
         else:
             logger.exception("Collection failed for channel %d", channel.channel_id)

@@ -855,11 +855,14 @@ async def test_unknown_tl_type_is_skipped_with_warning_not_traceback(tmp_path, c
             )
 
         records = [r for r in caplog.records if r.name == "src.collection_queue"]
-        assert any("waiting for Telethon update" in r.getMessage() for r in records)
+        assert any(
+            "waiting for Telethon update" in r.getMessage() and "0x1c32b11c" in r.getMessage() for r in records
+        )
         assert not [r for r in records if r.levelno >= logging.ERROR or r.exc_info]
         task = await db.get_collection_task(task_id)
         assert task.status == "failed"
         assert "waiting for Telethon update" in (task.error or "")
+        assert "0x1c32b11c" in (task.error or "")
     finally:
         await db.close()
 
