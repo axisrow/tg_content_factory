@@ -24,6 +24,10 @@ from tests.helpers import AsyncIterEmpty as _AsyncIterEmpty
 from tests.helpers import AsyncIterMessages as _AsyncIterMessages
 from tests.helpers import FakeTelethonClient, make_mock_message, make_mock_pool, make_mock_reactions
 
+# Outer hang guard for tests whose own stream/cleanup timeouts are tens of ms: it must only fire on
+# a real hang, not on a loaded CI runner (0.2s flaked under xdist+coverage).
+_HANG_GUARD_SEC = 5.0
+
 
 def _legacy_collect_all_stats(
     *,
@@ -1508,7 +1512,7 @@ async def test_collect_channel_hanging_stream_times_out_and_releases_client(db):
 
     count = await asyncio.wait_for(
         collector._collect_channel(stored, force=True),
-        timeout=0.2,
+        timeout=_HANG_GUARD_SEC,
     )
 
     assert count == 0
@@ -1549,7 +1553,7 @@ async def test_collect_channel_hanging_stream_close_times_out_and_releases_clien
 
     count = await asyncio.wait_for(
         collector._collect_channel(stored, force=True),
-        timeout=0.2,
+        timeout=_HANG_GUARD_SEC,
     )
 
     assert count == 0
@@ -1588,7 +1592,7 @@ async def test_collect_channel_abandoned_stream_read_retires_client(db, monkeypa
 
     count = await asyncio.wait_for(
         collector._collect_channel(stored, force=True),
-        timeout=0.3,
+        timeout=_HANG_GUARD_SEC,
     )
     await asyncio.sleep(0.06)
 
