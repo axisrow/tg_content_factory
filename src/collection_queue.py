@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
-from telethon.errors import ChannelPrivateError
+from telethon.errors import ChannelPrivateError, TypeNotFoundError
 from telethon_floodgate import TelegramRateLimitedError
 
 from src.database import Database, DatabaseBusyError
@@ -57,6 +57,18 @@ def _is_transient_busy_error(exc: BaseException) -> bool:
         message = str(exc).lower()
         return any(part in message for part in _SQLITE_BUSY_MESSAGES)
     return False
+
+
+def _is_unknown_tl_type_error(exc: BaseException) -> bool:
+    """Telegram served a TL type newer than the installed Telethon schema.
+
+    The response cannot be parsed (unknown object length) and nothing local can
+    fix it — a skip with a clear warning beats an ERROR traceback per channel.
+    """
+    return isinstance(exc, TypeNotFoundError)
+
+
+_UNKNOWN_TL_TYPE_NOTE = "unknown Telegram TL type, waiting for Telethon update"
 
 
 class CollectionQueue:
@@ -720,10 +732,17 @@ class CollectionQueue:
             logger.exception("Collection failed for channel %d (reconnect failed)", channel.channel_id)
             return False, False
         self._retried_tasks.discard(task_id)
+        unknown_tl = _is_unknown_tl_type_error(exc)
         await self._update_task_status_shutdown_safe(
-            task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
+            task_id, CollectionTaskStatus.FAILED, error=_UNKNOWN_TL_TYPE_NOTE if unknown_tl else str(exc)[:500],
         )
-        logger.exception("Collection failed for channel %d", channel.channel_id)
+        if unknown_tl:
+            logger.warning(
+                "Skipping channel %d: Telegram schema is newer than Telethon — waiting for Telethon update",
+                channel.channel_id,
+            )
+        else:
+            logger.exception("Collection failed for channel %d", channel.channel_id)
         return False, False
 
     async def _handle_channel_private_error(

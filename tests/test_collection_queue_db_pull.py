@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from telethon.errors import ChannelPrivateError
+from telethon.errors import ChannelPrivateError, TypeNotFoundError
 from telethon_floodgate import TelegramRateLimitedError
 
 from src.collection_queue import CollectionQueue
@@ -831,6 +831,37 @@ async def _raise_private_error(queue: CollectionQueue, task_id: int, channel: Ch
         force=False,
         full=False,
     )
+
+
+@pytest.mark.anyio
+async def test_unknown_tl_type_is_skipped_with_warning_not_traceback(tmp_path, caplog):
+    """Telegram schema newer than Telethon: skip with one clear warning, no ERROR/traceback."""
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+        channel = (await db.get_channels())[0]
+        queue = CollectionQueue(_FakeCollector(), db)
+        task_id = await _create_pending_task(db)
+        await db.repos.tasks.update_collection_task(task_id, "running")
+
+        with caplog.at_level(logging.WARNING, logger="src.collection_queue"):
+            await queue._handle_collection_exception(
+                TypeNotFoundError(0x1C32B11C, b"\x1c\xb12\x1c"),
+                task_id=task_id,
+                channel=channel,
+                force=False,
+                full=False,
+            )
+
+        records = [r for r in caplog.records if r.name == "src.collection_queue"]
+        assert any("waiting for Telethon update" in r.getMessage() for r in records)
+        assert not [r for r in records if r.levelno >= logging.ERROR or r.exc_info]
+        task = await db.get_collection_task(task_id)
+        assert task.status == "failed"
+        assert "waiting for Telethon update" in (task.error or "")
+    finally:
+        await db.close()
 
 
 @pytest.mark.anyio
