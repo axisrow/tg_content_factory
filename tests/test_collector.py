@@ -1,11 +1,12 @@
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from telethon.errors import FloodWaitError, UsernameNotOccupiedError
+from telethon.errors import FloodWaitError, TypeNotFoundError, UsernameNotOccupiedError
 from telethon.tl.types import InputPeerChannel, PeerChannel
 
 from src.config import SchedulerConfig
@@ -586,6 +587,25 @@ async def test_collect_all_channels_continues_cache_only_during_backoff(db):
     assert stats["deferred"] == 2
     raw1.get_input_entity.assert_not_awaited()
     raw2.get_input_entity.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_collect_all_channels_unknown_tl_type_warns_not_error(db, caplog):
+    """Telegram schema newer than Telethon: one clear warning with the constructor id, no ERROR."""
+    await db.add_channel(Channel(channel_id=1970788993, title="New TL", username="new_tl"))
+    pool = make_mock_pool(clients={"+7001": object()})
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+    collector._collect_channel = AsyncMock(side_effect=TypeNotFoundError(0x1C32B11C, b"\x1c\xb12\x1c"))
+
+    with caplog.at_level(logging.WARNING):
+        stats = await collector.collect_all_channels()
+
+    assert stats["errors"] == 1
+    assert any(
+        "waiting for Telethon update" in r.getMessage() and "0x1c32b11c" in r.getMessage()
+        for r in caplog.records
+    )
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
 
 
 @pytest.mark.anyio

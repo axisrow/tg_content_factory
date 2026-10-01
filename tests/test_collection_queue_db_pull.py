@@ -846,13 +846,15 @@ async def test_unknown_tl_type_is_skipped_with_warning_not_traceback(tmp_path, c
         await db.repos.tasks.update_collection_task(task_id, "running")
 
         with caplog.at_level(logging.WARNING, logger="src.collection_queue"):
-            await queue._handle_collection_exception(
+            outcome = await queue._handle_collection_exception(
                 TypeNotFoundError(0x1C32B11C, b"\x1c\xb12\x1c"),
                 task_id=task_id,
                 channel=channel,
                 force=False,
                 full=False,
             )
+
+        assert outcome == (False, False)
 
         records = [r for r in caplog.records if r.name == "src.collection_queue"]
         assert any(
@@ -863,6 +865,34 @@ async def test_unknown_tl_type_is_skipped_with_warning_not_traceback(tmp_path, c
         assert task.status == "failed"
         assert "waiting for Telethon update" in (task.error or "")
         assert "0x1c32b11c" in (task.error or "")
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_other_collection_errors_still_log_error_with_traceback(tmp_path, caplog):
+    """Only unknown TL types are downgraded to a warning; any other failure stays an ERROR."""
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+        channel = (await db.get_channels())[0]
+        queue = CollectionQueue(_FakeCollector(), db)
+        task_id = await _create_pending_task(db)
+        await db.repos.tasks.update_collection_task(task_id, "running")
+
+        with caplog.at_level(logging.WARNING, logger="src.collection_queue"):
+            try:
+                raise RuntimeError("boom")
+            except RuntimeError as exc:
+                await queue._handle_collection_exception(
+                    exc, task_id=task_id, channel=channel, force=False, full=False
+                )
+
+        errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert len(errors) == 1 and errors[0].exc_info
+        task = await db.get_collection_task(task_id)
+        assert task.error == "boom"
     finally:
         await db.close()
 

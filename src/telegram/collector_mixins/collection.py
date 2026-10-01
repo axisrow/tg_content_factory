@@ -49,6 +49,7 @@ from src.telegram.collector_types import (
     NoActiveCollectionClientsError,
     _format_channel_log_name,
     _StreamOutcome,
+    unknown_tl_type_note,
 )
 from src.utils.safe_logging import mask_phone
 
@@ -378,7 +379,15 @@ class CollectionMixin:
                         stats["deferred"] += 1
                         continue
                     except Exception as e:
-                        logger.error("Error collecting channel %s: %s", channel.channel_id, e)
+                        tl_note = unknown_tl_type_note(e)
+                        if tl_note:
+                            logger.warning(
+                                "Skipping channel %s: Telegram schema is newer than Telethon — %s",
+                                channel.channel_id,
+                                tl_note,
+                            )
+                        else:
+                            logger.error("Error collecting channel %s: %s", channel.channel_id, e)
                         stats["errors"] += 1
             finally:
                 self._active_collection_count = max(0, self._active_collection_count - 1)
