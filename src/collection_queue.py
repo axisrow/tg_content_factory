@@ -23,6 +23,7 @@ from src.telegram.collector import (
     UsernameResolveFloodWaitDeferredError,
     UsernameResolveRateLimitedError,
 )
+from src.telegram.collector_types import unknown_tl_type_note
 
 logger = logging.getLogger(__name__)
 
@@ -179,15 +180,16 @@ class CollectionQueue:
             logger.info("Collection queue resumed")
 
     def _target_worker_count(self) -> int:
-        getter = getattr(self._collector, "collection_worker_count", None)
+        getter: Any = getattr(self._collector, "collection_worker_count", None)
         if callable(getter):
-            return max(1, int(getter()))
+            count: Any = getter()
+            return max(1, int(count))
         return 1
 
     async def _available_target_worker_count(self) -> int:
-        slot_getter = getattr(self._collector, "available_collection_slot_count", None)
+        slot_getter: Any = getattr(self._collector, "available_collection_slot_count", None)
         if callable(slot_getter):
-            slots = slot_getter()
+            slots: Any = slot_getter()
             if asyncio.iscoroutine(slots):
                 slots = await slots
             active_count = len(self._active_task_ids)
@@ -199,7 +201,7 @@ class CollectionQueue:
 
         getter = getattr(self._collector, "available_collection_worker_count", None)
         if callable(getter):
-            count = getter()
+            count: Any = getter()
             if asyncio.iscoroutine(count):
                 count = await count
             return max(1, int(count))
@@ -720,10 +722,16 @@ class CollectionQueue:
             logger.exception("Collection failed for channel %d (reconnect failed)", channel.channel_id)
             return False, False
         self._retried_tasks.discard(task_id)
+        tl_note = unknown_tl_type_note(exc)
         await self._update_task_status_shutdown_safe(
-            task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
+            task_id, CollectionTaskStatus.FAILED, error=tl_note or str(exc)[:500]
         )
-        logger.exception("Collection failed for channel %d", channel.channel_id)
+        if tl_note:
+            logger.warning(
+                "Skipping channel %d: Telegram schema is newer than Telethon — %s", channel.channel_id, tl_note
+            )
+        else:
+            logger.exception("Collection failed for channel %d", channel.channel_id)
         return False, False
 
     async def _handle_channel_private_error(
@@ -790,7 +798,7 @@ class CollectionQueue:
     async def _reset_task_to_pending_after_shutdown(self, task_id: int) -> None:
         reset = getattr(self._channels, "reset_collection_task_to_pending", None)
         if callable(reset):
-            await reset(task_id, note=self.SHUTDOWN_REQUEUE_NOTE)
+            await cast(Any, reset(task_id, note=self.SHUTDOWN_REQUEUE_NOTE))
             return
         await self._channels.update_collection_task(
             task_id,

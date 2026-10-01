@@ -1,11 +1,12 @@
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from telethon.errors import FloodWaitError, UsernameNotOccupiedError
+from telethon.errors import FloodWaitError, TypeNotFoundError, UsernameNotOccupiedError
 from telethon.tl.types import InputPeerChannel, PeerChannel
 
 from src.config import SchedulerConfig
@@ -22,6 +23,10 @@ from src.telegram.collector import (
 from tests.helpers import AsyncIterEmpty as _AsyncIterEmpty
 from tests.helpers import AsyncIterMessages as _AsyncIterMessages
 from tests.helpers import FakeTelethonClient, make_mock_message, make_mock_pool, make_mock_reactions
+
+# Outer hang guard for tests whose own stream/cleanup timeouts are tens of ms: it must only fire on
+# a real hang, not on a loaded CI runner (0.2s flaked under xdist+coverage).
+_HANG_GUARD_SEC = 5.0
 
 
 def _legacy_collect_all_stats(
@@ -589,6 +594,25 @@ async def test_collect_all_channels_continues_cache_only_during_backoff(db):
 
 
 @pytest.mark.anyio
+async def test_collect_all_channels_unknown_tl_type_warns_not_error(db, caplog):
+    """Telegram schema newer than Telethon: one clear warning with the constructor id, no ERROR."""
+    await db.add_channel(Channel(channel_id=1970788993, title="New TL", username="new_tl"))
+    pool = make_mock_pool(clients={"+7001": object()})
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+    collector._collect_channel = AsyncMock(side_effect=TypeNotFoundError(0x1C32B11C, b"\x1c\xb12\x1c"))
+
+    with caplog.at_level(logging.WARNING):
+        stats = await collector.collect_all_channels()
+
+    assert stats["errors"] == 1
+    assert any(
+        "waiting for Telethon update" in r.getMessage() and "0x1c32b11c" in r.getMessage()
+        for r in caplog.records
+    )
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+@pytest.mark.anyio
 async def test_collect_all_channels_continues_after_mid_run_resolve_flood(db):
     """#552/#790: when the FIRST channel of a run triggers a long resolve flood
     mid-run, the run must NOT abort. The backoff applies only to the flooded
@@ -1065,7 +1089,7 @@ async def test_get_media_type_document_video():
 
     attr = DocumentAttributeVideo(duration=10, w=100, h=100, round_message=False)
     doc = SimpleNamespace(attributes=[attr])
-    media = MessageMediaDocument(document=doc)
+    media = MessageMediaDocument(document=doc)  # pyright: ignore[reportArgumentType]  # duck-typed fake
 
     msg = SimpleNamespace(media=media)
     assert Collector._get_media_type(msg) == "video"
@@ -1081,7 +1105,7 @@ async def test_get_media_type_sticker():
 
     attr = DocumentAttributeSticker(alt="", stickerset=InputStickerSetEmpty())
     doc = SimpleNamespace(attributes=[attr])
-    media = MessageMediaDocument(document=doc)
+    media = MessageMediaDocument(document=doc)  # pyright: ignore[reportArgumentType]  # duck-typed fake
 
     msg = SimpleNamespace(media=media)
     assert Collector._get_media_type(msg) == "sticker"
@@ -1093,7 +1117,7 @@ async def test_get_media_type_voice():
 
     attr = DocumentAttributeAudio(duration=10, voice=True)
     doc = SimpleNamespace(attributes=[attr])
-    media = MessageMediaDocument(document=doc)
+    media = MessageMediaDocument(document=doc)  # pyright: ignore[reportArgumentType]  # duck-typed fake
 
     msg = SimpleNamespace(media=media)
     assert Collector._get_media_type(msg) == "voice"
@@ -1103,7 +1127,8 @@ async def test_get_media_type_voice():
 async def test_get_media_type_poll():
     from telethon.tl.types import MessageMediaPoll
 
-    msg = SimpleNamespace(media=MessageMediaPoll(poll=None, results=None))
+    poll = MessageMediaPoll(poll=None, results=None)  # pyright: ignore[reportArgumentType]  # empty poll is enough
+    msg = SimpleNamespace(media=poll)
     assert Collector._get_media_type(msg) == "poll"
 
 
@@ -1141,6 +1166,7 @@ async def test_extract_reactions_multiple():
 
     msg = SimpleNamespace(reactions=make_mock_reactions([("👍", 5), ("❤️", 3)]))
     result = Collector._extract_reactions(msg)
+    assert result is not None
     parsed = json.loads(result)
     assert len(parsed) == 2
     assert parsed[0] == {"emoji": "👍", "count": 5}
@@ -1151,8 +1177,9 @@ async def test_extract_reactions_multiple():
 async def test_extract_reactions_custom_emoji():
     import json
 
-    msg = SimpleNamespace(reactions=make_mock_reactions([(12345678, 2)]))
+    msg = SimpleNamespace(reactions=make_mock_reactions([(12345678, 2)]))  # pyright: ignore[reportArgumentType]
     result = Collector._extract_reactions(msg)
+    assert result is not None
     parsed = json.loads(result)
     assert parsed == [{"emoji": "custom:12345678", "count": 2}]
 
@@ -1365,6 +1392,7 @@ async def test_collect_channel_checks_notifications_on_persistence_error(db):
     assert updated.last_collected_id == 7
     # The notification check ran exactly once, covering the persisted batch A.
     check_mock.assert_awaited_once()
+    assert check_mock.await_args is not None
     checked_ids = {m.message_id for m in check_mock.await_args.args[0]}
     assert checked_ids == {6, 7}
 
@@ -1484,7 +1512,7 @@ async def test_collect_channel_hanging_stream_times_out_and_releases_client(db):
 
     count = await asyncio.wait_for(
         collector._collect_channel(stored, force=True),
-        timeout=0.2,
+        timeout=_HANG_GUARD_SEC,
     )
 
     assert count == 0
@@ -1525,7 +1553,7 @@ async def test_collect_channel_hanging_stream_close_times_out_and_releases_clien
 
     count = await asyncio.wait_for(
         collector._collect_channel(stored, force=True),
-        timeout=0.2,
+        timeout=_HANG_GUARD_SEC,
     )
 
     assert count == 0
@@ -1564,7 +1592,7 @@ async def test_collect_channel_abandoned_stream_read_retires_client(db, monkeypa
 
     count = await asyncio.wait_for(
         collector._collect_channel(stored, force=True),
-        timeout=0.3,
+        timeout=_HANG_GUARD_SEC,
     )
     await asyncio.sleep(0.06)
 
@@ -1969,7 +1997,7 @@ async def test_backfill_does_not_send_notification_queries(db):
     ch = Channel(channel_id=-100128, title="Test", username="test128", last_collected_id=0)
     await db.add_channel(ch)
     repo = db.repos.search_queries
-    await repo.add(SearchQuery(query="urgent", notify_on_collect=True))
+    await repo.add(SearchQuery(query="urgent", notify_on_collect=True, interval_minutes=60))
 
     mock_msgs = [_make_mock_message(i, text=f"urgent msg {i}") for i in range(1, 3)]
 
@@ -1996,7 +2024,7 @@ async def test_incremental_collection_sends_notification_queries(db):
     ch = Channel(channel_id=-100129, title="Test", username="test129", last_collected_id=10)
     await db.add_channel(ch)
     repo = db.repos.search_queries
-    await repo.add(SearchQuery(query="urgent", notify_on_collect=True))
+    await repo.add(SearchQuery(query="urgent", notify_on_collect=True, interval_minutes=60))
 
     mock_msgs = [_make_mock_message(11, text="urgent update")]
 
@@ -2021,7 +2049,7 @@ async def test_incremental_collection_sends_notifications_before_idle_timeout_re
     ch = Channel(channel_id=-100141, title="Test", username="test141", last_collected_id=10)
     await db.add_channel(ch)
     repo = db.repos.search_queries
-    await repo.add(SearchQuery(query="urgent", notify_on_collect=True))
+    await repo.add(SearchQuery(query="urgent", notify_on_collect=True, interval_minutes=60))
 
     class OneThenHangStream:
         def __init__(self, msg):
@@ -2476,6 +2504,7 @@ async def test_enqueue_all_channels_uses_incremental_queue_tasks(db):
     await queue._run_worker()
 
     collector.collect_single_channel.assert_awaited_once()
+    assert collector.collect_single_channel.await_args is not None
     _, kwargs = collector.collect_single_channel.await_args
     assert kwargs["force"] is True
     assert kwargs["full"] is False
@@ -2506,6 +2535,7 @@ async def test_collection_queue_force_tasks_default_to_incremental(db):
     await queue._run_worker()
 
     collector.collect_single_channel.assert_awaited_once()
+    assert collector.collect_single_channel.await_args is not None
     _, kwargs = collector.collect_single_channel.await_args
     assert kwargs["force"] is True
     assert kwargs["full"] is False
@@ -2535,6 +2565,7 @@ async def test_collection_queue_explicit_full_tasks_keep_full_collection(db):
     await queue._run_worker()
 
     collector.collect_single_channel.assert_awaited_once()
+    assert collector.collect_single_channel.await_args is not None
     _, kwargs = collector.collect_single_channel.await_args
     assert kwargs["force"] is True
     assert kwargs["full"] is True
@@ -2667,6 +2698,7 @@ async def test_requeue_startup_tasks_preserves_incremental_flag(db):
     await queue._run_worker()
 
     collector.collect_single_channel.assert_awaited_once()
+    assert collector.collect_single_channel.await_args is not None
     _, kwargs = collector.collect_single_channel.await_args
     assert kwargs["force"] is True
     assert kwargs["full"] is False
