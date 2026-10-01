@@ -8,7 +8,11 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
-from telethon.errors import ChannelPrivateError
+from telethon.errors import (
+    ChannelPrivateError,
+    UsernameInvalidError,
+    UsernameNotOccupiedError,
+)
 from telethon_floodgate import TelegramRateLimitedError
 
 from src.database import Database, DatabaseBusyError
@@ -60,9 +64,28 @@ def _is_transient_busy_error(exc: BaseException) -> bool:
     return False
 
 
+def _is_permanent_collection_error(exc: BaseException) -> bool:
+    """Username vacant/invalid = channel deleted or renamed; retrying is pointless.
+
+    ChannelPrivateError is deliberately absent: it never reaches the retry pass
+    (its own branch earlier in _handle_collection_exception handles the
+    deleted/kicked/made-private ambiguity via the streak-of-3 auto-deactivate).
+    ChannelInvalidError is deliberately retryable: in this deployment it is
+    usually the StringSession entity-cache loss after a restart (CLAUDE.md
+    "Entity cache") — the channel collects fine once dialogs are warmed; a truly
+    dead channel just exhausts its retry-pass attempts and stays FAILED.
+    """
+    return isinstance(exc, (UsernameNotOccupiedError, UsernameInvalidError))
+
+
 class CollectionQueue:
     DB_PULL_INTERVAL_SEC = 3.0
     NO_CLIENTS_RETRY_DELAY_SEC = 120
+    # Retry pass: total collection attempts a task gets (including the original)
+    # and the delay before a retry attempt starts — the delayed requeue rides the
+    # same reschedule path as the flood/gate retries.
+    RETRY_PASS_MAX_ATTEMPTS = 5
+    RETRY_PASS_DELAY_SEC = 30.0
     GRACEFUL_SHUTDOWN_TIMEOUT_SEC = 120.0
     FORCE_CANCEL_TIMEOUT_SEC = 10.0
     SHUTDOWN_REQUEUE_NOTE = "Остановка сервиса во время сбора; задача будет продолжена после запуска."
@@ -84,6 +107,10 @@ class CollectionQueue:
         self._workers: list[asyncio.Task] = []
         self._active_task_ids: dict[int, asyncio.Event] = {}
         self._retried_tasks: set[int] = set()
+        # Retry pass: task_id -> failed attempts in this run. In-memory on purpose:
+        # retry scope is one queue run; FAILED rows must not resurrect after a
+        # restart. Kept strictly separate from _channel_private_error_counts.
+        self._retry_pass: dict[int, int] = {}
         self._channel_private_error_counts: dict[int, int] = {}
         self._delayed_requeues: set[asyncio.Task] = set()
         self._known_task_ids: set[int] = set()
@@ -137,6 +164,7 @@ class CollectionQueue:
         cancel_event = self._active_task_ids.get(task_id)
         if cancel_event is not None:
             cancel_event.set()
+        self._retry_pass.pop(task_id, None)
         return await self._channels.cancel_collection_task(task_id, note=note)
 
     async def clear_pending_tasks(self) -> int:
@@ -153,6 +181,7 @@ class CollectionQueue:
         for task in list(self._delayed_requeues):
             task.cancel()
         self._delayed_requeues.clear()
+        self._retry_pass.clear()
         self._known_task_ids.clear()
         logger.info(
             "Cleared %d pending collection tasks from DB and %d queued items from memory",
@@ -365,6 +394,7 @@ class CollectionQueue:
                     task_id, channel, count, cancel_event=cancel_event, force=force
                 )
                 self._retried_tasks.discard(task_id)
+                self._retry_pass.pop(task_id, None)
             except Exception as exc:
                 keep_known_task_id, stop_after_no_clients = await self._handle_collection_exception(
                     exc, task_id=task_id, channel=channel, force=force, full=full
@@ -727,12 +757,41 @@ class CollectionQueue:
             task_id, CollectionTaskStatus.FAILED, error=tl_note or str(exc)[:500]
         )
         if tl_note:
+            # Retry pass still applies: Telegram serves new types unevenly across its servers.
             logger.warning(
                 "Skipping channel %d: Telegram schema is newer than Telethon — %s", channel.channel_id, tl_note
             )
         else:
             logger.exception("Collection failed for channel %d", channel.channel_id)
-        return False, False
+        if _is_permanent_collection_error(exc):
+            # Deleted/renamed channel: no point re-attempting this run.
+            self._retry_pass.pop(task_id, None)
+            return False, False
+        attempts = self._retry_pass.get(task_id, 0) + 1
+        if attempts >= self.RETRY_PASS_MAX_ATTEMPTS:
+            self._retry_pass.pop(task_id, None)  # exhausted: terminal FAILED
+            return False, False
+        self._retry_pass[task_id] = attempts
+        # Same delayed-requeue path as the flood/gate branches: the delay keeps the
+        # retry out of the fresh channels' way; restart-survival and single-pickup
+        # semantics are inherited from that machinery.
+        run_after = datetime.now(timezone.utc) + timedelta(seconds=self.RETRY_PASS_DELAY_SEC)
+        await self._channels.reschedule_collection_task(
+            task_id,
+            run_after=run_after,
+            note=f"Retry pass {attempts + 1}/{self.RETRY_PASS_MAX_ATTEMPTS}",
+        )
+        self._schedule_requeue_after_delay(
+            task_id=task_id, channel=channel, force=force, full=full, run_after=run_after
+        )
+        logger.warning(
+            "Retry pass: task %d re-enqueued for channel %d (attempt %d/%d)",
+            task_id,
+            channel.channel_id,
+            attempts + 1,
+            self.RETRY_PASS_MAX_ATTEMPTS,
+        )
+        return True, False
 
     async def _handle_channel_private_error(
         self, task_id: int, channel: Channel, exc: ChannelPrivateError
@@ -1061,4 +1120,5 @@ class CollectionQueue:
                 logger.exception("Failed to reset active collection task during shutdown")
         self._active_task_ids.clear()
         self._retried_tasks.clear()
+        self._retry_pass.clear()
         self._known_task_ids.clear()
