@@ -109,8 +109,12 @@ CREATE TABLE IF NOT EXISTS collection_tasks (
     started_at TEXT,
     completed_at TEXT,
     last_progress_at TEXT,
-    result_payload TEXT
+    result_payload TEXT,
+    idempotency_key TEXT
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_collection_tasks_idempotency_key
+    ON collection_tasks(idempotency_key);
 
 CREATE TABLE IF NOT EXISTS telegram_commands (
     id INTEGER PRIMARY KEY,

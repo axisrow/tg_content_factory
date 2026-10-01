@@ -40,6 +40,7 @@ def _check_payload_size(value: dict) -> dict:
 class CreateTaskRequest(BaseModel):
     type: str
     payload: dict = Field(default_factory=dict)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=255)
 
     _size = field_validator("payload")(_check_payload_size)
 
@@ -75,7 +76,9 @@ def _task_json(task) -> dict:
 async def create_task(request: Request, body: CreateTaskRequest):
     task_type = _require_external(body.type)
     tasks = deps.get_db(request).repos.tasks
-    task_id = await tasks.create_generic_task(task_type, payload=body.payload)
+    task_id = await tasks.create_generic_task(
+        task_type, payload=body.payload, idempotency_key=body.idempotency_key
+    )
     return JSONResponse({"id": task_id}, status_code=201)
 
 
@@ -126,8 +129,8 @@ async def get_task(request: Request, task_id: int):
 async def complete_task(request: Request, task_id: int, body: CompleteRequest):
     tasks = deps.get_db(request).repos.tasks
     await _load_external_task(tasks, task_id)
-    # required_status=RUNNING: only a claimed (RUNNING) task may be completed, so an
-    # external worker can't skip the atomic claim or replay-complete a finished task.
+    # Only RUNNING tasks can change. After a lost response (or concurrent report),
+    # reload the winning outcome rather than overwriting a terminal task.
     updated = await tasks.update_collection_task(
         task_id,
         CollectionTaskStatus.COMPLETED,
@@ -135,7 +138,11 @@ async def complete_task(request: Request, task_id: int, body: CompleteRequest):
         required_status=CollectionTaskStatus.RUNNING,
     )
     if not updated:
-        raise HTTPException(status_code=409, detail="Task is not in RUNNING state")
+        task = await _load_external_task(tasks, task_id)
+        if task.status != CollectionTaskStatus.COMPLETED or safe_json_dumps(
+            task.result_payload, sort_keys=True
+        ) != safe_json_dumps(body.result_payload, sort_keys=True):
+            raise HTTPException(status_code=409, detail="Task is not RUNNING or completion result conflicts")
     return JSONResponse({"ok": True})
 
 
@@ -150,5 +157,7 @@ async def fail_task(request: Request, task_id: int, body: FailRequest):
         required_status=CollectionTaskStatus.RUNNING,
     )
     if not updated:
-        raise HTTPException(status_code=409, detail="Task is not in RUNNING state")
+        task = await _load_external_task(tasks, task_id)
+        if task.status != CollectionTaskStatus.FAILED or task.error != body.error:
+            raise HTTPException(status_code=409, detail="Task is not RUNNING or failure report conflicts")
     return JSONResponse({"ok": True})

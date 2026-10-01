@@ -796,8 +796,14 @@ class CollectionTasksRepository:
         ) = None,
         run_after: datetime | None = None,
         parent_task_id: int | None = None,
+        idempotency_key: str | None = None,
     ) -> int:
-        """Поставить «генерическую» задачу диспетчера (PIPELINE_RUN, CONTENT_*, EXPORT…); вернуть её id."""
+        """Enqueue a generic task, or return the existing id for a supplied key.
+
+        Keys are unique across task types and retained for the row's lifetime.
+        The first request wins; replays never change the existing task.
+        Omitting the key preserves the unconditional-create behavior.
+        """
         assert self._database is not None, (
             "CollectionTasksRepository.create_generic_task requires a Database reference"
         )
@@ -808,8 +814,9 @@ class CollectionTasksRepository:
         cur = await self._database.execute_write(
             "INSERT INTO collection_tasks "
             "(channel_id, channel_title, channel_username, task_type,"
-            " run_after, payload, parent_task_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " run_after, payload, parent_task_id, created_at, idempotency_key) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(idempotency_key) DO NOTHING",
             (
                 None,
                 title or task_type_value,
@@ -819,8 +826,16 @@ class CollectionTasksRepository:
                 self._serialize_payload(payload),
                 parent_task_id,
                 created_at,
+                idempotency_key,
             ),
         )
+        if cur.rowcount == 0:
+            cur = await self._db.execute(
+                "SELECT id FROM collection_tasks WHERE idempotency_key = ?", (idempotency_key,)
+            )
+            row = await cur.fetchone()
+            assert row is not None
+            return row["id"]
         return cur.lastrowid or 0
 
     async def claim_next_due_generic_task(

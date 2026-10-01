@@ -21,6 +21,41 @@
 | POST | `/auth/resend-code` | Переотправить код |
 | POST | `/auth/verify-code` | Верифицировать код |
 
+## Interop tasks (`tg_messenger`)
+
+These JSON endpoints use the existing HTTP Basic authentication (`WEB_PASS`).
+Only `dm_reply`, `chat_answer`, `fetch_dialogs`, and `fetch_history` are allowed.
+
+| Method | Path | Response |
+|--------|------|----------|
+| POST | `/api/tasks` | `201 {"id": ...}` for both creation and keyed replay |
+| GET | `/api/tasks/{id}` | Current task state |
+| POST | `/api/tasks/claim` | Claimed task, or `204` when none is due |
+| POST | `/api/tasks/{id}/complete` | `200 {"ok": true}` on acceptance or identical replay |
+| POST | `/api/tasks/{id}/fail` | `200 {"ok": true}` on acceptance or identical replay |
+
+### Retry contract
+
+- Create accepts `{"type": "dm_reply", "payload": {...}, "idempotency_key": "client-generated-uuid"}`.
+  The key is optional/null; without it every request creates a new task. Non-null
+  keys must be strings of 1–255 characters, unique across all clients and task types
+  in the database. Persist a fresh key per logical operation and reuse it on retries.
+- A repeated key returns the original ID, even after completion or a server restart.
+  The first request wins: a different body with the same key does not replace the
+  stored type, payload, or status. Deduplication lasts for the task row's lifetime;
+  there is no key TTL.
+- Complete accepts `{"result_payload": {...}}` (defaults to `{}`); fail accepts
+  `{"error": "..."}`. Only a claimed (`running`) task can transition to a terminal
+  state. Repeating the same terminal status and result/error succeeds without
+  rewriting the task or its completion timestamp. JSON object key order does not
+  matter; changed values/types or a different error return `409`.
+- Complete-after-fail, fail-after-complete, and reports for pending/cancelled tasks
+  return `409`. Missing tasks remain `404`, internal task types remain `403`.
+- Claim behavior is unchanged and is **not retry-safe after an ambiguous network
+  failure**. Neither lease/TTL recovery nor claim tokens are included here; both
+  are deferred to [#1468](https://github.com/axisrow/tg_content_factory/issues/1468).
+  Messenger adoption is tracked in [axisrow/tg_messenger#228](https://github.com/axisrow/tg_messenger/issues/228).
+
 ## Channels
 
 | Method | Path | Описание |
