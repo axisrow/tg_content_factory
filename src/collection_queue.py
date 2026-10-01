@@ -798,7 +798,7 @@ class CollectionQueue:
     async def _reset_task_to_pending_after_shutdown(self, task_id: int) -> None:
         reset = getattr(self._channels, "reset_collection_task_to_pending", None)
         if callable(reset):
-            await reset(task_id, note=self.SHUTDOWN_REQUEUE_NOTE)
+            await cast(Any, reset(task_id, note=self.SHUTDOWN_REQUEUE_NOTE))
             return
         await self._channels.update_collection_task(
             task_id,

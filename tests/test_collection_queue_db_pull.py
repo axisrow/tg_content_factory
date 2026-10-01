@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from telethon.errors import ChannelPrivateError, TypeNotFoundError
@@ -24,8 +25,32 @@ from src.telegram.collector import (
 )
 from tests.helpers import wait_until
 
+if TYPE_CHECKING:
+    from src.models import CollectionTask
+    from src.telegram.collector import Collector
+
+
+def _make_queue(collector: object, db: Database) -> CollectionQueue:
+    """Build a queue around a duck-typed fake collector (the fakes only implement what the queue calls)."""
+    return CollectionQueue(cast("Collector", collector), db)
+
+
+async def _get_channel(db: Database, pk: int) -> Channel:
+    channel = await db.repos.channels.get_channel_by_pk(pk)
+    assert channel is not None
+    return channel
+
+
+async def _get_task(db: Database, task_id: int | None) -> CollectionTask:
+    assert task_id is not None
+    task = await db.get_collection_task(task_id)
+    assert task is not None
+    return task
+
 
 class _FakeCollector:
+    _pool: object  # assigned by individual tests
+
     def __init__(self):
         self.calls: list[int] = []
         self.full_calls: list[bool] = []
@@ -151,20 +176,23 @@ async def _seed_channel(db: Database, channel_id: int = -1001) -> None:
 
 async def _create_pending_task(db: Database, channel_id: int = -1001) -> int:
     """Insert a PENDING channel_collect task the same way CollectionService does in web mode."""
-    return await db.repos.tasks.create_collection_task_if_not_active(
+    task_id = await db.repos.tasks.create_collection_task_if_not_active(
         channel_id, "t", channel_username=None, payload=None
     )
+    assert task_id is not None
+    return task_id
 
 
 @pytest.mark.anyio
 async def test_db_pull_picks_up_pending_task_added_after_startup(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
 
         collector = _FakeCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         # Startup ingest sees nothing yet.
         assert await queue.requeue_startup_tasks() == 0
 
@@ -192,23 +220,25 @@ async def test_db_pull_picks_up_pending_task_added_after_startup(tmp_path):
 async def test_db_pull_does_not_ingest_when_no_clients(tmp_path, caplog):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
 
         collector = _NoClientsCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         task_id = await _create_pending_task(db)
 
         caplog.set_level(logging.WARNING, logger="src.collection_queue")
         assert await queue._ingest_pending_tasks() == 0
 
-        task = await db.get_collection_task(task_id)
+        task = await _get_task(db, task_id)
         assert task.status == "pending"
         assert collector.calls == []
         assert queue._known_task_ids == set()
         assert "Pending-task ingest throttled" in caplog.text
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -216,10 +246,11 @@ async def test_db_pull_does_not_ingest_when_no_clients(tmp_path, caplog):
 async def test_pending_task_without_payload_defaults_to_incremental(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         collector = _FakeCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         await _create_pending_task(db)
 
         assert await queue._ingest_pending_tasks() == 1
@@ -228,7 +259,8 @@ async def test_pending_task_without_payload_defaults_to_incremental(tmp_path):
         assert collector.calls == [-1001]
         assert collector.full_calls == [False]
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -236,6 +268,7 @@ async def test_pending_task_without_payload_defaults_to_incremental(tmp_path):
 async def test_resolve_backoff_delayed_requeue_preserves_payload_flags(tmp_path, monkeypatch):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await db.add_channel(
             Channel(channel_id=-1001, title="t", username="named_channel", is_active=True)
@@ -248,7 +281,7 @@ async def test_resolve_backoff_delayed_requeue_preserves_payload_flags(tmp_path,
         )
         collector = _FakeCollector()
         collector._pool = _ResolveBackoffPool(remaining_sec=60)
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         queue._ensure_worker = lambda: None
 
         scheduled: list[dict] = []
@@ -267,7 +300,8 @@ async def test_resolve_backoff_delayed_requeue_preserves_payload_flags(tmp_path,
         assert scheduled[0]["full"] is True
         assert scheduled[0]["run_after"] > datetime.now(timezone.utc)
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -275,30 +309,32 @@ async def test_resolve_backoff_delayed_requeue_preserves_payload_flags(tmp_path,
 async def test_username_resolve_flood_defer_keeps_task_pending(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         next_available_at = datetime.now(timezone.utc) + timedelta(minutes=2)
 
         collector = _UsernameResolveFloodCollector(next_available_at)
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         channel = (await db.get_channels(active_only=True))[0]
         task_id = await queue.enqueue(channel)
 
         deadline = asyncio.get_event_loop().time() + 2.0
         while asyncio.get_event_loop().time() < deadline:
-            task = await db.get_collection_task(task_id)
+            task = await _get_task(db, task_id)
             if task.status == "pending" and task.run_after is not None:
                 break
             await asyncio.sleep(0.05)
 
-        task = await db.get_collection_task(task_id)
+        task = await _get_task(db, task_id)
         assert task.status == "pending"
         assert task.error is None
         assert task.run_after is not None
         assert task.run_after > next_available_at
         assert "Flood Wait на resolve_username" in (task.note or "")
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -306,23 +342,24 @@ async def test_username_resolve_flood_defer_keeps_task_pending(tmp_path):
 async def test_username_resolve_rate_limit_keeps_task_pending(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
 
         collector = _UsernameResolveRateLimitedCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         channel = (await db.get_channels(active_only=True))[0]
         before = datetime.now(timezone.utc)
         task_id = await queue.enqueue(channel)
 
         deadline = asyncio.get_event_loop().time() + 2.0
         while asyncio.get_event_loop().time() < deadline:
-            task = await db.get_collection_task(task_id)
+            task = await _get_task(db, task_id)
             if task.status == "pending" and task.run_after is not None:
                 break
             await asyncio.sleep(0.05)
 
-        task = await db.get_collection_task(task_id)
+        task = await _get_task(db, task_id)
         assert task.status == "pending"
         assert task.error is None
         assert task.run_after is not None
@@ -338,7 +375,8 @@ async def test_username_resolve_rate_limit_keeps_task_pending(tmp_path):
         assert task_id in queue._known_task_ids
         assert len(queue._delayed_requeues) == 1
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -353,23 +391,24 @@ async def test_gate_rate_limit_keeps_task_pending(tmp_path):
     """
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
 
         collector = _GateRateLimitedCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         channel = (await db.get_channels(active_only=True))[0]
         before = datetime.now(timezone.utc)
         task_id = await queue.enqueue(channel)
 
         deadline = asyncio.get_event_loop().time() + 2.0
         while asyncio.get_event_loop().time() < deadline:
-            task = await db.get_collection_task(task_id)
+            task = await _get_task(db, task_id)
             if task.status == "pending" and task.run_after is not None:
                 break
             await asyncio.sleep(0.05)
 
-        task = await db.get_collection_task(task_id)
+        task = await _get_task(db, task_id)
         assert task.status == "pending"
         assert task.error is None
         assert task.run_after is not None
@@ -386,7 +425,8 @@ async def test_gate_rate_limit_keeps_task_pending(tmp_path):
         assert task_id in queue._known_task_ids
         assert len(queue._delayed_requeues) == 1
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -394,10 +434,11 @@ async def test_gate_rate_limit_keeps_task_pending(tmp_path):
 async def test_db_pull_does_not_double_ingest(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         collector = _FakeCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
 
         # Pre-enqueue via the regular API — the task is in `_known_task_ids`
         # and in the in-memory queue.
@@ -423,10 +464,11 @@ async def test_db_pull_does_not_double_ingest(tmp_path):
 async def test_db_pull_swallows_errors(tmp_path, monkeypatch):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         collector = _FakeCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
 
         calls = {"n": 0}
         original = queue._ingest_pending_tasks
@@ -462,9 +504,10 @@ async def test_db_pull_swallows_errors(tmp_path, monkeypatch):
 async def test_stop_db_pull_is_idempotent(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         collector = _FakeCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
 
         # Stop without start — no-op.
         await queue.stop_db_pull()
@@ -485,10 +528,11 @@ async def test_stop_db_pull_is_idempotent(tmp_path):
 async def test_delayed_requeue_queue_full_releases_known_task_id(tmp_path, monkeypatch):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         collector = _FakeCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         task_id = await _create_pending_task(db)
         channel = (await db.get_channels(active_only=True))[0]
 
@@ -511,7 +555,8 @@ async def test_delayed_requeue_queue_full_releases_known_task_id(tmp_path, monke
         queue._queue.task_done()
         assert await queue._ingest_pending_tasks() == 1
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -519,10 +564,11 @@ async def test_delayed_requeue_queue_full_releases_known_task_id(tmp_path, monke
 async def test_clear_pending_tasks_clears_known_task_ids(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         collector = _FakeCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         channel = (await db.get_channels(active_only=True))[0]
         task_id = await queue.enqueue(channel)
         assert task_id in queue._known_task_ids
@@ -532,7 +578,8 @@ async def test_clear_pending_tasks_clears_known_task_ids(tmp_path):
         assert deleted == 1
         assert queue._known_task_ids == set()
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -540,6 +587,7 @@ async def test_clear_pending_tasks_clears_known_task_ids(tmp_path):
 async def test_shutdown_waits_for_active_collection_and_leaves_queued_pending(tmp_path, caplog):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db, -1001)
         await _seed_channel(db, -1002)
@@ -547,7 +595,7 @@ async def test_shutdown_waits_for_active_collection_and_leaves_queued_pending(tm
         by_id = {channel.channel_id: channel for channel in channels}
 
         collector = _BlockingCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         first_id = await queue.enqueue(by_id[-1001])
         second_id = await queue.enqueue(by_id[-1002])
         await asyncio.wait_for(collector.started.wait(), timeout=1.0)
@@ -560,8 +608,8 @@ async def test_shutdown_waits_for_active_collection_and_leaves_queued_pending(tm
         collector.finish.set()
         await asyncio.wait_for(shutdown_task, timeout=2.0)
 
-        first = await db.get_collection_task(first_id)
-        second = await db.get_collection_task(second_id)
+        first = await _get_task(db, first_id)
+        second = await _get_task(db, second_id)
         assert first.status == "completed"
         assert first.messages_collected == 7
         assert second.status == "pending"
@@ -569,7 +617,8 @@ async def test_shutdown_waits_for_active_collection_and_leaves_queued_pending(tm
         assert "ждём завершения" in caplog.text and "pending" in caplog.text.lower()
         assert "Новые задачи останутся pending в БД" in caplog.text
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -577,25 +626,27 @@ async def test_shutdown_waits_for_active_collection_and_leaves_queued_pending(tm
 async def test_shutdown_timeout_requeues_active_collection_task(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db, -1001)
         channel = (await db.get_channels(active_only=True))[0]
 
         collector = _BlockingCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         task_id = await queue.enqueue(channel)
         await asyncio.wait_for(collector.started.wait(), timeout=1.0)
 
         await queue.shutdown(grace_timeout=0.01)
 
-        task = await db.get_collection_task(task_id)
+        task = await _get_task(db, task_id)
         assert task.status == "pending"
         assert task.started_at is None
         assert task.error is None
         assert "Остановка сервиса" in (task.note or "")
         assert collector.is_cancelled is True
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -603,15 +654,17 @@ async def test_shutdown_timeout_requeues_active_collection_task(tmp_path):
 async def test_is_paused_property(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
-        queue = CollectionQueue(_FakeCollector(), db)
+        queue = _make_queue(_FakeCollector(), db)
         assert queue.is_paused is False
         queue.pause()
         assert queue.is_paused is True
         queue.resume()
         assert queue.is_paused is False
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -619,22 +672,24 @@ async def test_is_paused_property(tmp_path):
 async def test_ingest_noop_while_paused(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         collector = _FakeCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         queue.pause()
 
         task_id = await _create_pending_task(db)
         # Paused: PENDING rows are not buffered into memory.
         assert await queue._ingest_pending_tasks() == 0
 
-        task = await db.get_collection_task(task_id)
+        task = await _get_task(db, task_id)
         assert task.status == "pending"
         assert collector.calls == []
         assert queue._known_task_ids == set()
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -642,11 +697,12 @@ async def test_ingest_noop_while_paused(tmp_path):
 async def test_worker_stays_alive_while_paused(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         channel = (await db.get_channels(active_only=True))[0]
         collector = _FakeCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         queue.pause()
 
         task_id = await queue.enqueue(channel)
@@ -655,10 +711,11 @@ async def test_worker_stays_alive_while_paused(tmp_path):
         # Supervisor is alive but holds the task without processing it while paused.
         assert queue._supervisor is not None and not queue._supervisor.done()
         assert collector.calls == []
-        task = await db.get_collection_task(task_id)
+        task = await _get_task(db, task_id)
         assert task.status == "pending"
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -666,13 +723,14 @@ async def test_worker_stays_alive_while_paused(tmp_path):
 async def test_pause_lets_running_task_finish_and_holds_next(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db, -1001)
         await _seed_channel(db, -1002)
         by_id = {c.channel_id: c for c in await db.get_channels(active_only=True)}
 
         collector = _BlockingCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         first_id = await queue.enqueue(by_id[-1001])
         second_id = await queue.enqueue(by_id[-1002])
         await asyncio.wait_for(collector.started.wait(), timeout=1.0)
@@ -682,16 +740,17 @@ async def test_pause_lets_running_task_finish_and_holds_next(tmp_path):
         collector.finish.set()  # let the running task finish
 
         # First completes; the second stays PENDING and is not picked up.
+        first = await _get_task(db, first_id)
         deadline = asyncio.get_event_loop().time() + 2.0
         while asyncio.get_event_loop().time() < deadline:
-            first = await db.get_collection_task(first_id)
+            first = await _get_task(db, first_id)
             if first.status == "completed":
                 break
             await asyncio.sleep(0.02)
         assert first.status == "completed"
         assert first.messages_collected == 7
         await asyncio.sleep(0.2)
-        second = await db.get_collection_task(second_id)
+        second = await _get_task(db, second_id)
         assert second.status == "pending"
         assert collector.calls == [-1001]
 
@@ -699,14 +758,15 @@ async def test_pause_lets_running_task_finish_and_holds_next(tmp_path):
         queue.resume()
         deadline = asyncio.get_event_loop().time() + 2.0
         while asyncio.get_event_loop().time() < deadline:
-            second = await db.get_collection_task(second_id)
+            second = await _get_task(db, second_id)
             if second.status == "completed":
                 break
             await asyncio.sleep(0.02)
         assert second.status == "completed"
         assert collector.calls == [-1001, -1002]
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -714,10 +774,11 @@ async def test_pause_lets_running_task_finish_and_holds_next(tmp_path):
 async def test_resume_reingests_pending_via_db_pull(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         collector = _FakeCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         queue.pause()
 
         task_id = await _create_pending_task(db)
@@ -726,7 +787,7 @@ async def test_resume_reingests_pending_via_db_pull(tmp_path):
             # Paused: db pull does not ingest, task stays pending.
             await asyncio.sleep(0.3)
             assert collector.calls == []
-            assert (await db.get_collection_task(task_id)).status == "pending"
+            assert (await _get_task(db, task_id)).status == "pending"
 
             # Resume: the periodic db pull re-ingests and the worker runs it.
             queue.resume()
@@ -739,7 +800,8 @@ async def test_resume_reingests_pending_via_db_pull(tmp_path):
         finally:
             await queue.stop_db_pull()
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -747,11 +809,12 @@ async def test_resume_reingests_pending_via_db_pull(tmp_path):
 async def test_shutdown_while_paused_completes_cleanly(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         channel = (await db.get_channels(active_only=True))[0]
         collector = _FakeCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
         queue.pause()
         task_id = await queue.enqueue(channel)
         await asyncio.sleep(0.1)
@@ -761,7 +824,7 @@ async def test_shutdown_while_paused_completes_cleanly(tmp_path):
 
         # The queued task was never processed; it stays pending in the DB.
         assert collector.calls == []
-        assert (await db.get_collection_task(task_id)).status == "pending"
+        assert (await _get_task(db, task_id)).status == "pending"
     finally:
         await db.close()
 
@@ -775,11 +838,12 @@ async def test_connection_error_queue_full_keeps_task_pending_for_pull_loop(tmp_
     losing the retry forever."""
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         channel = (await db.get_channels(active_only=True))[0]
         collector = _ConnectionErrorCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
 
         # The task is RUNNING (as it would be when collect raised).
         task_id = await _create_pending_task(db)
@@ -805,7 +869,7 @@ async def test_connection_error_queue_full_keeps_task_pending_for_pull_loop(tmp_
         # Mirror the worker's finally block for keep_known_task_id=False.
         queue._known_task_ids.discard(task_id)
 
-        task = await db.get_collection_task(task_id)
+        task = await _get_task(db, task_id)
         assert task.status == "pending"
         assert task.error is None
         assert task_id not in queue._known_task_ids
@@ -816,7 +880,8 @@ async def test_connection_error_queue_full_keeps_task_pending_for_pull_loop(tmp_
         assert await queue._ingest_pending_tasks() == 1
         assert task_id in queue._known_task_ids
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()
 
 
@@ -841,7 +906,7 @@ async def test_unknown_tl_type_is_skipped_with_warning_not_traceback(tmp_path, c
     try:
         await _seed_channel(db)
         channel = (await db.get_channels())[0]
-        queue = CollectionQueue(_FakeCollector(), db)
+        queue = _make_queue(_FakeCollector(), db)
         task_id = await _create_pending_task(db)
         await db.repos.tasks.update_collection_task(task_id, "running")
 
@@ -861,7 +926,7 @@ async def test_unknown_tl_type_is_skipped_with_warning_not_traceback(tmp_path, c
             "waiting for Telethon update" in r.getMessage() and "0x1c32b11c" in r.getMessage() for r in records
         )
         assert not [r for r in records if r.levelno >= logging.ERROR or r.exc_info]
-        task = await db.get_collection_task(task_id)
+        task = await _get_task(db, task_id)
         assert task.status == "failed"
         assert "waiting for Telethon update" in (task.error or "")
         assert "0x1c32b11c" in (task.error or "")
@@ -877,7 +942,7 @@ async def test_other_collection_errors_still_log_error_with_traceback(tmp_path, 
     try:
         await _seed_channel(db)
         channel = (await db.get_channels())[0]
-        queue = CollectionQueue(_FakeCollector(), db)
+        queue = _make_queue(_FakeCollector(), db)
         task_id = await _create_pending_task(db)
         await db.repos.tasks.update_collection_task(task_id, "running")
 
@@ -891,7 +956,7 @@ async def test_other_collection_errors_still_log_error_with_traceback(tmp_path, 
 
         errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
         assert len(errors) == 1 and errors[0].exc_info
-        task = await db.get_collection_task(task_id)
+        task = await _get_task(db, task_id)
         assert task.error == "boom"
     finally:
         await db.close()
@@ -902,25 +967,28 @@ async def test_channel_private_error_threshold_deactivates_channel(tmp_path):
     """3 consecutive ChannelPrivateError → is_active=0 + type='unavailable' (#1451)."""
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         channel = (await db.get_channels())[0]
-        queue = CollectionQueue(_FakeCollector(), db)
+        assert channel.id is not None
+        queue = _make_queue(_FakeCollector(), db)
         task_id = await _create_pending_task(db)
         await db.repos.tasks.update_collection_task(task_id, "running")
 
         await _raise_private_error(queue, task_id, channel)
         await _raise_private_error(queue, task_id, channel)
         assert queue._channel_private_error_counts[channel.id] == 2
-        assert (await db.repos.channels.get_channel_by_pk(channel.id)).is_active
+        assert (await _get_channel(db, channel.id)).is_active
 
         await _raise_private_error(queue, task_id, channel)
 
-        refreshed = await db.repos.channels.get_channel_by_pk(channel.id)
+        refreshed = await _get_channel(db, channel.id)
         assert not refreshed.is_active
         assert refreshed.channel_type == "unavailable"
-        task = await db.get_collection_task(task_id)
+        task = await _get_task(db, task_id)
         assert task.status == "failed"
+        assert task.error is not None
         assert "ChannelPrivateError" in task.error
         assert channel.id not in queue._channel_private_error_counts
     finally:
@@ -932,10 +1000,12 @@ async def test_collection_success_resets_private_error_streak(tmp_path):
     """A successful collect breaks the streak — no deactivation from stale counts."""
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         channel = (await db.get_channels())[0]
-        queue = CollectionQueue(_FakeCollector(), db)
+        assert channel.id is not None
+        queue = _make_queue(_FakeCollector(), db)
         task_id = await _create_pending_task(db)
         await db.repos.tasks.update_collection_task(task_id, "running")
 
@@ -950,7 +1020,7 @@ async def test_collection_success_resets_private_error_streak(tmp_path):
 
         await _raise_private_error(queue, task_id, channel)
         await _raise_private_error(queue, task_id, channel)
-        assert (await db.repos.channels.get_channel_by_pk(channel.id)).is_active
+        assert (await _get_channel(db, channel.id)).is_active
     finally:
         await db.close()
 
@@ -960,21 +1030,23 @@ async def test_human_active_decision_suppresses_auto_deactivation(tmp_path):
     """Operator kept the channel active (human origin) → auto cannot flip it."""
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         channel = (await db.get_channels())[0]
+        assert channel.id is not None
         await db.set_channel_active(channel.id, True, origin="human", actor="tester")
-        queue = CollectionQueue(_FakeCollector(), db)
+        queue = _make_queue(_FakeCollector(), db)
         task_id = await _create_pending_task(db)
         await db.repos.tasks.update_collection_task(task_id, "running")
 
         for _ in range(3):
             await _raise_private_error(queue, task_id, channel)
 
-        refreshed = await db.repos.channels.get_channel_by_pk(channel.id)
+        refreshed = await _get_channel(db, channel.id)
         assert refreshed.is_active
         assert refreshed.channel_type != "unavailable"
-        task = await db.get_collection_task(task_id)
+        task = await _get_task(db, task_id)
         assert task.status == "failed"
         assert channel.id not in queue._channel_private_error_counts
     finally:
@@ -986,11 +1058,13 @@ async def test_pre_dispatch_skips_tasks_of_inactive_channel(tmp_path):
     """A PENDING task of a deactivated channel is cancelled, not collected."""
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
+    queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
         channel = (await db.get_channels())[0]
+        assert channel.id is not None
         collector = _FakeCollector()
-        queue = CollectionQueue(collector, db)
+        queue = _make_queue(collector, db)
 
         task_id = await _create_pending_task(db)
         await db.set_channel_active(channel.id, False)
@@ -998,10 +1072,11 @@ async def test_pre_dispatch_skips_tasks_of_inactive_channel(tmp_path):
         assert await queue._ingest_pending_tasks() == 1
         await queue._run_worker()
 
-        task = await db.get_collection_task(task_id)
+        task = await _get_task(db, task_id)
         assert task.status == "cancelled"
         assert "деактивирован" in (task.note or "")
         assert collector.calls == []
     finally:
-        await queue.shutdown()
+        if queue is not None:
+            await queue.shutdown()
         await db.close()

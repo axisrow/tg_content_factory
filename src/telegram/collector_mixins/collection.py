@@ -8,7 +8,7 @@ from collections import Counter
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from inspect import isawaitable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import PeerChannel
@@ -61,8 +61,8 @@ if TYPE_CHECKING:
     _RuntimeCollectorType: TypeAlias = type[_RuntimeCollector]
 
     class Collector(Protocol):
-        def __getattribute__(self, name: str) -> Any: ...
-        def __setattr__(self, name: str, value: Any) -> None: ...
+        def __getattribute__(self, name: str, /) -> Any: ...
+        def __setattr__(self, name: str, value: Any, /) -> None: ...
 
 logger = logging.getLogger("src.telegram.collector")
 
@@ -88,7 +88,7 @@ class CollectionMixin:
         counter = getattr(self._pool, "available_collection_client_count", None)
         if callable(counter):
             try:
-                count = counter()
+                count = cast("Any", counter())
                 if asyncio.iscoroutine(count):
                     count = await count
                 return max(0, int(count))
@@ -453,6 +453,7 @@ class CollectionMixin:
             if await self._wait_for_transient_collection_flood(availability):
                 return _ACQUIRE_RETRY
             await self._raise_collection_unavailability(availability)
+            raise AssertionError("unreachable: _raise_collection_unavailability always raises")
 
         session, phone = result
         self._reset_collection_unavailability_log()
@@ -1324,13 +1325,13 @@ class CollectionMixin:
             has_any = getattr(notified_store, "has_any", None)
             if channel_ids and callable(has_any):
                 try:
-                    ledger_seeded = await has_any(list(channel_ids))
+                    ledger_seeded = await cast("Any", has_any(list(channel_ids)))
                 except Exception:
                     logger.warning("notification ledger has_any check failed", exc_info=True)
                     ledger_seeded = False
             if ledger_seeded and channel_ids and callable(get_recent):
                 try:
-                    backlog = await get_recent(list(channel_ids), NOTIFICATION_BACKLOG_LOOKBACK_HOURS)
+                    backlog = await cast("Any", get_recent(list(channel_ids), NOTIFICATION_BACKLOG_LOOKBACK_HOURS))
                 except Exception:
                     logger.warning("notification backlog rescan failed", exc_info=True)
                     backlog = []

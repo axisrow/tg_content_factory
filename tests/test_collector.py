@@ -1085,7 +1085,7 @@ async def test_get_media_type_document_video():
 
     attr = DocumentAttributeVideo(duration=10, w=100, h=100, round_message=False)
     doc = SimpleNamespace(attributes=[attr])
-    media = MessageMediaDocument(document=doc)
+    media = MessageMediaDocument(document=doc)  # pyright: ignore[reportArgumentType]  # duck-typed fake
 
     msg = SimpleNamespace(media=media)
     assert Collector._get_media_type(msg) == "video"
@@ -1101,7 +1101,7 @@ async def test_get_media_type_sticker():
 
     attr = DocumentAttributeSticker(alt="", stickerset=InputStickerSetEmpty())
     doc = SimpleNamespace(attributes=[attr])
-    media = MessageMediaDocument(document=doc)
+    media = MessageMediaDocument(document=doc)  # pyright: ignore[reportArgumentType]  # duck-typed fake
 
     msg = SimpleNamespace(media=media)
     assert Collector._get_media_type(msg) == "sticker"
@@ -1113,7 +1113,7 @@ async def test_get_media_type_voice():
 
     attr = DocumentAttributeAudio(duration=10, voice=True)
     doc = SimpleNamespace(attributes=[attr])
-    media = MessageMediaDocument(document=doc)
+    media = MessageMediaDocument(document=doc)  # pyright: ignore[reportArgumentType]  # duck-typed fake
 
     msg = SimpleNamespace(media=media)
     assert Collector._get_media_type(msg) == "voice"
@@ -1123,7 +1123,8 @@ async def test_get_media_type_voice():
 async def test_get_media_type_poll():
     from telethon.tl.types import MessageMediaPoll
 
-    msg = SimpleNamespace(media=MessageMediaPoll(poll=None, results=None))
+    poll = MessageMediaPoll(poll=None, results=None)  # pyright: ignore[reportArgumentType]  # empty poll is enough
+    msg = SimpleNamespace(media=poll)
     assert Collector._get_media_type(msg) == "poll"
 
 
@@ -1161,6 +1162,7 @@ async def test_extract_reactions_multiple():
 
     msg = SimpleNamespace(reactions=make_mock_reactions([("👍", 5), ("❤️", 3)]))
     result = Collector._extract_reactions(msg)
+    assert result is not None
     parsed = json.loads(result)
     assert len(parsed) == 2
     assert parsed[0] == {"emoji": "👍", "count": 5}
@@ -1171,8 +1173,9 @@ async def test_extract_reactions_multiple():
 async def test_extract_reactions_custom_emoji():
     import json
 
-    msg = SimpleNamespace(reactions=make_mock_reactions([(12345678, 2)]))
+    msg = SimpleNamespace(reactions=make_mock_reactions([(12345678, 2)]))  # pyright: ignore[reportArgumentType]
     result = Collector._extract_reactions(msg)
+    assert result is not None
     parsed = json.loads(result)
     assert parsed == [{"emoji": "custom:12345678", "count": 2}]
 
@@ -1385,6 +1388,7 @@ async def test_collect_channel_checks_notifications_on_persistence_error(db):
     assert updated.last_collected_id == 7
     # The notification check ran exactly once, covering the persisted batch A.
     check_mock.assert_awaited_once()
+    assert check_mock.await_args is not None
     checked_ids = {m.message_id for m in check_mock.await_args.args[0]}
     assert checked_ids == {6, 7}
 
@@ -1989,7 +1993,7 @@ async def test_backfill_does_not_send_notification_queries(db):
     ch = Channel(channel_id=-100128, title="Test", username="test128", last_collected_id=0)
     await db.add_channel(ch)
     repo = db.repos.search_queries
-    await repo.add(SearchQuery(query="urgent", notify_on_collect=True))
+    await repo.add(SearchQuery(query="urgent", notify_on_collect=True, interval_minutes=60))
 
     mock_msgs = [_make_mock_message(i, text=f"urgent msg {i}") for i in range(1, 3)]
 
@@ -2016,7 +2020,7 @@ async def test_incremental_collection_sends_notification_queries(db):
     ch = Channel(channel_id=-100129, title="Test", username="test129", last_collected_id=10)
     await db.add_channel(ch)
     repo = db.repos.search_queries
-    await repo.add(SearchQuery(query="urgent", notify_on_collect=True))
+    await repo.add(SearchQuery(query="urgent", notify_on_collect=True, interval_minutes=60))
 
     mock_msgs = [_make_mock_message(11, text="urgent update")]
 
@@ -2041,7 +2045,7 @@ async def test_incremental_collection_sends_notifications_before_idle_timeout_re
     ch = Channel(channel_id=-100141, title="Test", username="test141", last_collected_id=10)
     await db.add_channel(ch)
     repo = db.repos.search_queries
-    await repo.add(SearchQuery(query="urgent", notify_on_collect=True))
+    await repo.add(SearchQuery(query="urgent", notify_on_collect=True, interval_minutes=60))
 
     class OneThenHangStream:
         def __init__(self, msg):
@@ -2496,6 +2500,7 @@ async def test_enqueue_all_channels_uses_incremental_queue_tasks(db):
     await queue._run_worker()
 
     collector.collect_single_channel.assert_awaited_once()
+    assert collector.collect_single_channel.await_args is not None
     _, kwargs = collector.collect_single_channel.await_args
     assert kwargs["force"] is True
     assert kwargs["full"] is False
@@ -2526,6 +2531,7 @@ async def test_collection_queue_force_tasks_default_to_incremental(db):
     await queue._run_worker()
 
     collector.collect_single_channel.assert_awaited_once()
+    assert collector.collect_single_channel.await_args is not None
     _, kwargs = collector.collect_single_channel.await_args
     assert kwargs["force"] is True
     assert kwargs["full"] is False
@@ -2555,6 +2561,7 @@ async def test_collection_queue_explicit_full_tasks_keep_full_collection(db):
     await queue._run_worker()
 
     collector.collect_single_channel.assert_awaited_once()
+    assert collector.collect_single_channel.await_args is not None
     _, kwargs = collector.collect_single_channel.await_args
     assert kwargs["force"] is True
     assert kwargs["full"] is True
@@ -2687,6 +2694,7 @@ async def test_requeue_startup_tasks_preserves_incremental_flag(db):
     await queue._run_worker()
 
     collector.collect_single_channel.assert_awaited_once()
+    assert collector.collect_single_channel.await_args is not None
     _, kwargs = collector.collect_single_channel.await_args
     assert kwargs["force"] is True
     assert kwargs["full"] is False
