@@ -42,6 +42,7 @@ Task → group (details in [reference.md](reference.md)):
 |------|-------|
 | Read message history | `messages read <id> [--query TEXT --date-from D --date-to D --topic-id ID --limit N --format json]` |
 | Search collected history | `search "query" [--limit N --mode local|tg|ai]` |
+| Search-discovered channel candidates (premium search cache) | `channel candidates [--json]` |
 | Channels: list, add, collect, stats, import | `channel`, `filter` |
 | Chats: read, send, edit, forward, media, participants, admins — real actions, see Safety | `dialogs` |
 | Content factory (LLM pipelines, images) | `pipeline`, `photo-loader` |

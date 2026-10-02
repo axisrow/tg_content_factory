@@ -716,6 +716,92 @@ async def list_for_import_impl(config_path: str, *, as_json: bool) -> None:
         await db.close()
 
 
+async def candidates_impl(config_path: str, *, as_json: bool = False, limit: int = 50) -> None:
+    """``channel candidates`` — search-discovered channels awaiting activation.
+
+    Premium search (``search --mode tg``) caches discovered channels as
+    inactive rows and tags their cached messages with the query that found
+    them; this read-only listing surfaces those candidates so a human can
+    pick which ones to activate with ``channel toggle``. The INNER JOIN on
+    tagged messages is the origin marker — a plain inactive channel without
+    premium-search messages is not a search candidate.
+    """
+    _, db = await runtime.init_db(config_path)
+    try:
+        rows = await db.execute_fetchall(
+            """SELECT c.channel_id, c.title, c.username,
+                      COUNT(m.id) AS n_msgs,
+                      COUNT(DISTINCT m.premium_search_query) AS n_queries,
+                      MAX(m.date) AS last_seen
+               FROM channels c
+               JOIN messages m
+                 ON m.channel_id = c.channel_id
+                AND m.premium_search_query IS NOT NULL
+               WHERE c.is_active = 0 AND c.is_filtered = 0
+               GROUP BY c.channel_id
+               ORDER BY n_msgs DESC
+               LIMIT ?""",
+            (limit,),
+        )
+        if not rows:
+            if not as_json:
+                print("No search-discovered candidate channels.")
+            else:
+                print("[]")
+            return
+        # Exact query list per channel — GROUP_CONCAT can't carry a custom
+        # separator with DISTINCT, and a comma inside a typed search query
+        # must not split into two bogus entries.
+        channel_ids = [row["channel_id"] for row in rows]
+        placeholders = ",".join("?" * len(channel_ids))
+        qrows = await db.execute_fetchall(
+            f"""SELECT DISTINCT channel_id, premium_search_query
+                FROM messages
+                WHERE premium_search_query IS NOT NULL
+                  AND channel_id IN ({placeholders})""",
+            tuple(channel_ids),
+        )
+        queries_by_channel: dict[int, list[str]] = {}
+        for qrow in qrows:
+            queries_by_channel.setdefault(qrow["channel_id"], []).append(
+                qrow["premium_search_query"]
+            )
+        if as_json:
+            import json as _json
+
+            payload = [
+                {
+                    "channel_id": row["channel_id"],
+                    "title": row["title"],
+                    "username": row["username"],
+                    "messages": row["n_msgs"],
+                    "queries": queries_by_channel.get(row["channel_id"], []),
+                    "last_seen": row["last_seen"],
+                }
+                for row in rows
+            ]
+            print(_json.dumps(payload, ensure_ascii=False, default=str))
+            return
+        fmt = "{:<15} {:<35} {:<22} {:<6} {:<8} {:<21} {:<30}"
+        print(fmt.format("Channel ID", "Title", "Username", "Msgs", "Queries", "Last seen", "Query list"))
+        print("-" * 140)
+        for row in rows:
+            queries = ", ".join(queries_by_channel.get(row["channel_id"], []))[:30]
+            print(
+                fmt.format(
+                    str(row["channel_id"]),
+                    (row["title"] or "—")[:35],
+                    ("@" + row["username"]) if row["username"] else "—",
+                    row["n_msgs"],
+                    row["n_queries"],
+                    (row["last_seen"] or "—")[:19],
+                    queries,
+                )
+            )
+    finally:
+        await db.close()
+
+
 _HANDOFF_POLL_INTERVAL_SEC = 2.0
 _HANDOFF_WAIT_TIMEOUT_SEC = 900.0
 _TERMINAL_TASK_STATUSES = (
@@ -968,6 +1054,12 @@ def run(args: argparse.Namespace) -> None:
         coro = add_bulk_impl(config_path, phone=args.phone, dialog_ids=args.dialog_ids)
     elif action == "list-for-import":
         coro = list_for_import_impl(config_path, as_json=getattr(args, "json", False))
+    elif action == "candidates":
+        coro = candidates_impl(
+            config_path,
+            as_json=getattr(args, "json", False),
+            limit=getattr(args, "limit", 50),
+        )
     elif action == "tag":
         coro = _tag_impl(
             config_path,
@@ -993,7 +1085,7 @@ def run(args: argparse.Namespace) -> None:
 # --------------------------------------------------------------------------- #
 # channel → list / add / delete / toggle / collect / stats / refresh-types /
 #   refresh-meta / review-list / review-confirm / review-keep / import /
-#   add-bulk / list-for-import / tag (NESTED depth-2: list/add/delete/set/get)
+#   add-bulk / list-for-import / candidates / tag (NESTED depth-2: list/add/delete/set/get)
 # --------------------------------------------------------------------------- #
 
 channel_app = typer.Typer(no_args_is_help=True, help="Channel management")
@@ -1161,6 +1253,17 @@ def channel_list_for_import(
     """List dialogs with an already-added flag."""
     apply_startup(ctx)
     run_async(list_for_import_impl(ctx.obj.config, as_json=as_json))
+
+
+@channel_app.command("candidates")
+def channel_candidates(
+    ctx: typer.Context,
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON instead of a table"),
+    limit: int = typer.Option(50, "--limit", help="Max candidates to show"),
+) -> None:
+    """List search-discovered channels awaiting activation (see ``channel toggle``)."""
+    apply_startup(ctx)
+    run_async(candidates_impl(ctx.obj.config, as_json=as_json, limit=limit))
 
 
 # ---- nested: channel tag <action> ---------------------------------------- #
