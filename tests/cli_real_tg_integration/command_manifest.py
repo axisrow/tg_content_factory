@@ -21,6 +21,7 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
         ("analytics", "trending-emojis"),
         ("analytics", "trending-topics"),
         ("analytics", "velocity"),
+        ("channel", "candidates"),
         ("channel", "list"),
         ("channel", "stats"),
         ("channel", "tag", "get"),

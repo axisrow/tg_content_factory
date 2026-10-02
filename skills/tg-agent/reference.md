@@ -13,13 +13,17 @@ flags; anything not listed — check `--help`.
 
 ```
 channel list | add | delete | toggle | collect | stats | refresh-types | refresh-meta
-channel import | add-bulk | list-for-import | tag (list|add|delete|set|get)
+channel import | add-bulk | list-for-import | candidates | tag (list|add|delete|set|get)
 filter analyze | apply | reset | precheck | toggle | purge | purge-messages | hard-delete
 ```
 
 - `channel collect [--channel-id ID]` — incremental collection for one channel; without flags
   interactive selection. One-off; exit when done.
 - `channel stats` — per-channel collection status (`last_collected_id`, counts).
+- `channel candidates [--json] [--limit N]` — read-only list of channels discovered by
+  premium search (`search --mode tg`): inactive rows whose cached messages carry the
+  search-query tag. Pick ones worth collecting, then `channel toggle <identifier>`
+  (activates with human origin) + `channel collect --channel-id ID` for the first fetch.
 - `filter analyze|apply` — score channels for spam/quality; filtered channels are skipped
   unless `force=True`.
 
@@ -91,6 +95,7 @@ worker    # long-lived process: collection queue, scheduler, dispatchers — run
 analytics top | content-types | hourly | summary | daily | pipeline-stats
 analytics trending-topics | trending-channels | velocity | peak-hours | calendar
 analytics trending-emojis | channel
+analytics channel-rate <channel_id> | channel-rating
 ```
 
 ## accounts, notifications, settings, misc
