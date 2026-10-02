@@ -34,6 +34,7 @@ from src.telegram.collector import (
     UsernameResolveFloodWaitDeferredError,
     UsernameResolveRateLimitedError,
 )
+from src.utils.json import safe_json_dumps
 
 
 async def _persist_new_channel(db, pool, info, existing_ids, stats_channel_ids, build):
@@ -731,7 +732,6 @@ async def candidates_impl(config_path: str, *, as_json: bool = False, limit: int
         rows = await db.execute_fetchall(
             """SELECT c.channel_id, c.title, c.username,
                       COUNT(m.id) AS n_msgs,
-                      COUNT(DISTINCT m.premium_search_query) AS n_queries,
                       MAX(m.date) AS last_seen
                FROM channels c
                JOIN messages m
@@ -744,10 +744,7 @@ async def candidates_impl(config_path: str, *, as_json: bool = False, limit: int
             (limit,),
         )
         if not rows:
-            if not as_json:
-                print("No search-discovered candidate channels.")
-            else:
-                print("[]")
+            print("[]" if as_json else "No search-discovered candidate channels.")
             return
         # Exact query list per channel — GROUP_CONCAT can't carry a custom
         # separator with DISTINCT, and a comma inside a typed search query
@@ -767,8 +764,6 @@ async def candidates_impl(config_path: str, *, as_json: bool = False, limit: int
                 qrow["premium_search_query"]
             )
         if as_json:
-            import json as _json
-
             payload = [
                 {
                     "channel_id": row["channel_id"],
@@ -780,22 +775,22 @@ async def candidates_impl(config_path: str, *, as_json: bool = False, limit: int
                 }
                 for row in rows
             ]
-            print(_json.dumps(payload, ensure_ascii=False, default=str))
+            print(safe_json_dumps(payload))
             return
         fmt = "{:<15} {:<35} {:<22} {:<6} {:<8} {:<21} {:<30}"
         print(fmt.format("Channel ID", "Title", "Username", "Msgs", "Queries", "Last seen", "Query list"))
         print("-" * 140)
         for row in rows:
-            queries = ", ".join(queries_by_channel.get(row["channel_id"], []))[:30]
+            queries = queries_by_channel.get(row["channel_id"], [])
             print(
                 fmt.format(
                     str(row["channel_id"]),
                     (row["title"] or "—")[:35],
                     ("@" + row["username"]) if row["username"] else "—",
                     row["n_msgs"],
-                    row["n_queries"],
+                    len(queries),
                     (row["last_seen"] or "—")[:19],
-                    queries,
+                    ", ".join(queries)[:30],
                 )
             )
     finally:
