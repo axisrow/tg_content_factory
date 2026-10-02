@@ -309,3 +309,38 @@ def test_messages_read_live_resolve_failure_names_account_and_hints_phone(cli_db
 
     assert "Cannot resolve '@somedialog' via account +90000000009" in out
     assert "--phone" in out
+
+
+def test_messages_read_live_empty_phone_falls_back_to_default(cli_db, capsys):
+    """`--phone ''` (templating agents pass empty strings) must fall back to the
+    default account, not hard-error 'Account  not connected.' (#1480 review M1)."""
+    asyncio.run(cli_db.add_account(Account(phone="+90000000009", session_string="b", is_primary=True)))
+
+    from src.cli.commands.messages import messages_read_impl
+
+    pool = MagicMock()
+    pool.clients = {"+90000000009": object()}
+    fake_client = MagicMock()
+    fake_client.iter_messages = MagicMock(
+        return_value=_fake_iter([SimpleNamespace(id=7, date=NOW_ISO, sender=None,
+                                                 text="empty phone ok", media=None)])
+    )
+    pool.get_native_client_by_phone = AsyncMock(return_value=(fake_client, "+90000000009"))
+    pool.resolve_entity_with_warm = AsyncMock(return_value=SimpleNamespace(id=1))
+    pool.disconnect_all = AsyncMock()
+
+    async def fake_init_db(_):
+        return AppConfig(), cli_db
+
+    async def fake_init_pool(_, __):
+        return MagicMock(), pool
+
+    with patch("src.cli.runtime.init_db", side_effect=fake_init_db), \
+         patch("src.cli.runtime.init_pool", side_effect=fake_init_pool):
+        asyncio.run(messages_read_impl(
+            "config.yaml", identifier="@somedialog", limit=10, live=True, phone="",
+        ))
+
+    out = capsys.readouterr().out
+    assert "empty phone ok" in out
+    assert "not connected" not in out

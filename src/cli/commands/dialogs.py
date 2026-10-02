@@ -1356,7 +1356,7 @@ def dialogs_refresh(
 def dialogs_resolve(
     ctx: typer.Context,
     identifier: str = typer.Argument(..., help="Identifier to resolve"),
-    phone: str | None = typer.Option(None, "--phone", help="Preferred account phone"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     wait: bool = typer.Option(False, "--wait", help="When handed to the worker, wait and print the result"),
 ) -> None:
     """Resolve @username, t.me link, or numeric ID."""

@@ -137,7 +137,7 @@ async def messages_read_impl(
             if not pool.clients:
                 print("No connected accounts.")
                 return
-            if phone is None:
+            if not phone:
                 phone = await resolve_default_phone(db, connected=set(pool.clients))
             if phone is None:
                 print("No connected accounts.")
@@ -289,7 +289,9 @@ def messages_read(
     identifier: str = typer.Argument(..., help="Channel pk, channel_id, @username, or dialog ID"),
     limit: int = typer.Option(50, "--limit", help="Max messages (default: 50)"),
     live: bool = typer.Option(False, "--live", help="Read from Telegram instead of DB"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
+    phone: str | None = typer.Option(
+        None, "--phone", help="Account phone for --live (default: primary account)"
+    ),
     query: str = typer.Option("", "--query", help="Text filter (DB only)"),
     date_from: str | None = typer.Option(None, "--date-from", help="Start date YYYY-MM-DD (DB only)"),
     date_to: str | None = typer.Option(None, "--date-to", help="End date YYYY-MM-DD (DB only)"),
