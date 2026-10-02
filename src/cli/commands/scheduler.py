@@ -22,11 +22,29 @@ from src.cli.commands.common import (
     apply_startup,
     run_async,
 )
+from src.database import Database
 from src.database.bundles import ChannelBundle
 from src.scheduler.service import SchedulerManager
 from src.services.collection_service import CollectionService
 from src.services.task_enqueuer import TaskEnqueuer
+from src.services.telegram_command_service import TelegramCommandService
 from src.telegram.collector import Collector
+
+
+async def _enqueue_reconcile(db: Database, command: str) -> None:
+    """Tell the live worker to re-read scheduler settings (worker has no re-sync).
+
+    The CLI writes settings that the running APScheduler only reads at job
+    registration — without this command the live scheduler keeps the old state
+    until a worker restart. Mirrors the web routes, which enqueue
+    ``scheduler.reconcile`` after every mutation (audit #835/5 added the same
+    for queue-pause/resume).
+    """
+    await TelegramCommandService(db).enqueue(
+        "scheduler.reconcile",
+        payload={},
+        requested_by=f"cli:scheduler.{command}",
+    )
 
 
 async def start_impl(config_path: str) -> None:
@@ -118,7 +136,8 @@ async def stop_impl(config_path: str) -> None:
     _, db = await runtime.init_db(config_path)
     try:
         await db.set_setting("scheduler_autostart", "0")
-        print("Scheduler autostart disabled. Running scheduler will stop on next restart.")
+        await _enqueue_reconcile(db, "stop")
+        print("Scheduler autostart disabled. The running worker stops its scheduler on reconcile.")
     finally:
         await db.close()
 
@@ -135,6 +154,7 @@ async def job_toggle_impl(config_path: str, *, job_id: str) -> None:
         current = await db.repos.settings.get_setting(key)
         new_disabled = current != "1"
         await db.repos.settings.set_setting(key, "1" if new_disabled else "0")
+        await _enqueue_reconcile(db, "job-toggle")
         status = "disabled" if new_disabled else "enabled"
         print(f"Job '{job_id}' {status}.")
     finally:
@@ -172,6 +192,7 @@ async def set_interval_impl(config_path: str, *, job_id: str, minutes: int) -> N
         else:
             print(f"Unknown job_id '{job_id}'.")
             return
+        await _enqueue_reconcile(db, "set-interval")
         print(f"Interval for '{job_id}' set to {minutes} min.")
     finally:
         await db.close()
