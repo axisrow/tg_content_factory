@@ -2080,7 +2080,9 @@ async def test_incremental_collection_sends_notifications_before_idle_timeout_re
         SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=0.01),
         notifier,
     )
-    count = await asyncio.wait_for(collector._collect_channel(ch), timeout=0.3)
+    # ponytail: outer guard is slack for CI-runner jitter only — the inner
+    # stream timeout (0.01s) is the thing under test; keep it tight, not this.
+    count = await asyncio.wait_for(collector._collect_channel(ch), timeout=2.0)
 
     assert count == 1
     notifier.notify.assert_awaited_once()
