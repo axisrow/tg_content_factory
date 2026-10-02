@@ -353,6 +353,14 @@ class TestChannelCandidates:
         assert row["messages"] == 2
         assert row["queries"] == ["Claude 5"]
 
+    def test_json_query_with_comma_stays_one_entry(self, cli_env, capsys):
+        _seed_channel(cli_env, channel_id=710, title="CommaCh", is_active=False)
+        _seed_messages(cli_env, channel_id=710, n=1, query="Claude, Gemini")
+        _seed_messages(cli_env, channel_id=710, n=1, start_id=10, query="GPT")
+        run(_ns(channel_action="candidates", json=True))
+        payload = json.loads(capsys.readouterr().out.strip())
+        assert sorted(payload[0]["queries"]) == ["Claude, Gemini", "GPT"]
+
     def test_limit(self, cli_env, capsys):
         for cid in (801, 802, 803):
             _seed_channel(cli_env, channel_id=cid, title=f"Ch{cid}", is_active=False)

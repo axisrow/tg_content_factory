@@ -732,8 +732,7 @@ async def candidates_impl(config_path: str, *, as_json: bool = False, limit: int
             """SELECT c.channel_id, c.title, c.username,
                       COUNT(m.id) AS n_msgs,
                       COUNT(DISTINCT m.premium_search_query) AS n_queries,
-                      MAX(m.date) AS last_seen,
-                      GROUP_CONCAT(DISTINCT m.premium_search_query) AS queries
+                      MAX(m.date) AS last_seen
                FROM channels c
                JOIN messages m
                  ON m.channel_id = c.channel_id
@@ -744,6 +743,29 @@ async def candidates_impl(config_path: str, *, as_json: bool = False, limit: int
                LIMIT ?""",
             (limit,),
         )
+        if not rows:
+            if not as_json:
+                print("No search-discovered candidate channels.")
+            else:
+                print("[]")
+            return
+        # Exact query list per channel — GROUP_CONCAT can't carry a custom
+        # separator with DISTINCT, and a comma inside a typed search query
+        # must not split into two bogus entries.
+        channel_ids = [row["channel_id"] for row in rows]
+        placeholders = ",".join("?" * len(channel_ids))
+        qrows = await db.execute_fetchall(
+            f"""SELECT DISTINCT channel_id, premium_search_query
+                FROM messages
+                WHERE premium_search_query IS NOT NULL
+                  AND channel_id IN ({placeholders})""",
+            tuple(channel_ids),
+        )
+        queries_by_channel: dict[int, list[str]] = {}
+        for qrow in qrows:
+            queries_by_channel.setdefault(qrow["channel_id"], []).append(
+                qrow["premium_search_query"]
+            )
         if as_json:
             import json as _json
 
@@ -753,21 +775,18 @@ async def candidates_impl(config_path: str, *, as_json: bool = False, limit: int
                     "title": row["title"],
                     "username": row["username"],
                     "messages": row["n_msgs"],
-                    "queries": (row["queries"] or "").split(","),
+                    "queries": queries_by_channel.get(row["channel_id"], []),
                     "last_seen": row["last_seen"],
                 }
                 for row in rows
             ]
             print(_json.dumps(payload, ensure_ascii=False, default=str))
             return
-        if not rows:
-            print("No search-discovered candidate channels.")
-            return
         fmt = "{:<15} {:<35} {:<22} {:<6} {:<8} {:<21} {:<30}"
         print(fmt.format("Channel ID", "Title", "Username", "Msgs", "Queries", "Last seen", "Query list"))
         print("-" * 140)
         for row in rows:
-            queries = (row["queries"] or "")[:30]
+            queries = ", ".join(queries_by_channel.get(row["channel_id"], []))[:30]
             print(
                 fmt.format(
                     str(row["channel_id"]),
