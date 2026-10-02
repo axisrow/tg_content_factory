@@ -1,11 +1,15 @@
 """Tests for CLI messages read command."""
 from __future__ import annotations
 
+import asyncio
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.models import Message
+from src.config import AppConfig
+from src.models import Account, Message
 from tests.helpers import cli_add_channel as _add_channel
 from tests.helpers import cli_ns as _ns
 
@@ -238,3 +242,70 @@ def test_messages_read_by_pk(cli_env, capsys):
     out = capsys.readouterr().out
     data = json.loads(out)
     assert any(m["text"] == "found by pk" for m in data)
+
+
+# --------------------------------------------------------------------------- #
+# --live mode: default account is the DB primary (#1480)
+# --------------------------------------------------------------------------- #
+
+NOW_ISO = "2026-10-02T12:00:00+00:00"
+
+
+async def _fake_iter(items):
+    for item in items:
+        yield item
+
+
+def _run_live(cli_db, identifier, *, capsys, resolve_side_effect=None):
+    from src.cli.commands.messages import messages_read_impl
+
+    pool = MagicMock()
+    pool.clients = {"+10000000001": object(), "+90000000009": object()}
+    fake_client = MagicMock()
+    fake_client.iter_messages = MagicMock(
+        return_value=_fake_iter([SimpleNamespace(id=7, date=NOW_ISO, sender=None,
+                                                 text="live hello", media=None)])
+    )
+    pool.get_native_client_by_phone = AsyncMock(return_value=(fake_client, "+90000000009"))
+    if resolve_side_effect is not None:
+        pool.resolve_entity_with_warm = AsyncMock(side_effect=resolve_side_effect)
+    else:
+        pool.resolve_entity_with_warm = AsyncMock(return_value=SimpleNamespace(id=1))
+    pool.disconnect_all = AsyncMock()
+
+    async def fake_init_db(_):
+        return AppConfig(), cli_db
+
+    async def fake_init_pool(_, __):
+        return MagicMock(), pool
+
+    with patch("src.cli.runtime.init_db", side_effect=fake_init_db), \
+         patch("src.cli.runtime.init_pool", side_effect=fake_init_pool):
+        asyncio.run(messages_read_impl(
+            "config.yaml", identifier=identifier, limit=10, live=True, phone=None,
+        ))
+    return pool, capsys.readouterr().out
+
+
+def test_messages_read_live_defaults_to_db_primary(cli_db, capsys):
+    """Sorted-first must NOT win: without --phone the DB primary is queried (#1480)."""
+    asyncio.run(cli_db.add_account(Account(phone="+10000000001", session_string="a")))
+    asyncio.run(cli_db.add_account(Account(phone="+90000000009", session_string="b", is_primary=True)))
+
+    pool, out = _run_live(cli_db, "@somedialog", capsys=capsys)
+
+    assert "live hello" in out
+    assert pool.resolve_entity_with_warm.await_args.args[1] == "+90000000009"
+
+
+def test_messages_read_live_resolve_failure_names_account_and_hints_phone(cli_db, capsys):
+    """A resolve failure says which account was queried and hints --phone (#1480)."""
+    asyncio.run(cli_db.add_account(Account(phone="+90000000009", session_string="b", is_primary=True)))
+
+    pool, out = _run_live(
+        cli_db, "@somedialog", capsys=capsys,
+        resolve_side_effect=ValueError("Cannot find any entity"),
+    )
+
+    assert "Cannot resolve '@somedialog' via account +90000000009" in out
+    assert "--phone" in out

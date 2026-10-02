@@ -20,6 +20,7 @@ from src.cli.commands.common import (
 )
 from src.cli.worker_handoff import serve_is_running
 from src.models import DialogMessage, TelegramCommandStatus
+from src.services.account_service import resolve_default_phone
 from src.services.channel_service import ChannelService
 from src.services.telegram_actions import (
     BROADCAST_STAT_FIELDS,
@@ -39,20 +40,28 @@ from src.utils.datetime import parse_required_datetime
 from src.utils.text_safety import csv_safe_cell
 
 
-def _resolve_phone(pool, args) -> str | None:
+async def _resolve_phone(db, pool, args) -> str | None:
     """Pick the account phone for a dialogs action, printing why it can't run.
+
+    An explicit ``--phone`` wins (must be connected). Otherwise the DB primary
+    account is used when connected, falling back to the first connected phone
+    when the primary is not (#1480).
 
     Returns the resolved phone, or ``None`` (after printing an error) when there
     are no connected accounts or the requested account is not connected.
     """
-    accounts = sorted(pool.clients.keys())
-    if not accounts:
+    if not pool.clients:
         print("No connected accounts.")
         return None
-    phone = args.phone or accounts[0]
-    if phone not in pool.clients:
-        print(f"Account {phone} not connected.")
-        return None
+    explicit = getattr(args, "phone", None)
+    if explicit:
+        if explicit not in pool.clients:
+            print(f"Account {explicit} not connected.")
+            return None
+        return explicit
+    phone = await resolve_default_phone(db, connected=set(pool.clients))
+    if phone is None:
+        print("No connected accounts.")
     return phone
 
 
@@ -89,7 +98,7 @@ def _confirm_or_abort(args, *lines: str) -> bool:
 
 
 async def _dialogs_refresh(args, db, pool, *, channel_service_cls) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     svc = channel_service_cls(db, pool, None)  # type: ignore[arg-type]
@@ -105,7 +114,7 @@ async def _dialogs_refresh(args, db, pool, *, channel_service_cls) -> None:
 
 
 async def _dialogs_list(args, db, pool, *, channel_service_cls) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     svc = channel_service_cls(db, pool, None)  # type: ignore[arg-type]
@@ -128,8 +137,11 @@ async def _dialogs_list(args, db, pool, *, channel_service_cls) -> None:
 
 
 async def _dialogs_resolve(args, db, pool) -> None:
+    phone = await _resolve_phone(db, pool, args)
+    if phone is None:
+        return
     try:
-        entity = await pool.resolve_any_entity(args.identifier, phone=args.phone)
+        entity = await pool.resolve_any_entity(args.identifier, phone=phone)
     except RuntimeError as exc:
         if "no_client" in str(exc):
             print("No connected accounts.")
@@ -150,7 +162,7 @@ async def _dialogs_resolve(args, db, pool) -> None:
 
 
 async def _dialogs_leave(args, db, pool, *, channel_service_cls) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
 
@@ -201,7 +213,7 @@ async def _dialogs_leave(args, db, pool, *, channel_service_cls) -> None:
 
 
 async def _dialogs_delete(args, db, pool, *, channel_service_cls) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
 
@@ -250,7 +262,7 @@ async def _dialogs_delete(args, db, pool, *, channel_service_cls) -> None:
 
 
 async def _dialogs_join(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
 
@@ -296,7 +308,7 @@ async def _dialogs_topics(args, db, pool) -> None:
 
 
 async def _dialogs_send(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     recipient = args.recipient
@@ -324,7 +336,7 @@ async def _dialogs_send(args, db, pool) -> None:
 
 
 async def _dialogs_forward(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     ids = _parse_message_ids(args)
@@ -353,7 +365,7 @@ async def _dialogs_forward(args, db, pool) -> None:
 
 
 async def _dialogs_edit_message(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     preview = args.text[:200] + ("..." if len(args.text) > 200 else "")
@@ -378,7 +390,7 @@ async def _dialogs_edit_message(args, db, pool) -> None:
 
 
 async def _dialogs_delete_message(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     ids = _parse_message_ids(args)
@@ -403,7 +415,7 @@ async def _dialogs_delete_message(args, db, pool) -> None:
 
 
 async def _dialogs_react(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     # Surface only a long (non-transient) flood-wait explicitly; a
@@ -468,7 +480,7 @@ async def _dialogs_react(args, db, pool) -> None:
 
 
 async def _dialogs_pin_message(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     if not _confirm_or_abort(args, f"Pin message #{args.message_id} in {args.chat_id}"):
@@ -488,7 +500,7 @@ async def _dialogs_pin_message(args, db, pool) -> None:
 
 
 async def _dialogs_unpin_message(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     target = f"#{args.message_id}" if args.message_id else "all messages"
@@ -508,7 +520,7 @@ async def _dialogs_unpin_message(args, db, pool) -> None:
 
 
 async def _dialogs_download_media(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     try:
@@ -585,7 +597,7 @@ def _print_dm_messages(messages: list[DialogMessage], fmt: str) -> None:
 
 
 async def _dialogs_read(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     try:
@@ -608,7 +620,7 @@ async def _dialogs_archive_history(args, db, pool) -> None:
         print("A running worker owns this Telegram session — stop it first")
         print("(second MTProto connection on the same session = silent brick).")
         return
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     chat_ids: set[int] | None = None
@@ -634,7 +646,7 @@ async def _dialogs_archive_history(args, db, pool) -> None:
 
 
 async def _dialogs_participants(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     try:
@@ -668,7 +680,7 @@ async def _dialogs_participants(args, db, pool) -> None:
 
 
 async def _dialogs_edit_admin(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     if not _confirm_or_abort(args, f"Edit admin rights for {args.user_id} in {args.chat_id}"):
@@ -689,7 +701,7 @@ async def _dialogs_edit_admin(args, db, pool) -> None:
 
 
 async def _dialogs_edit_permissions(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     if not _confirm_or_abort(args, f"Edit permissions for {args.user_id} in {args.chat_id}"):
@@ -725,7 +737,7 @@ async def _dialogs_edit_permissions(args, db, pool) -> None:
 
 
 async def _dialogs_kick(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     if not _confirm_or_abort(args, f"Kick {args.user_id} from {args.chat_id}"):
@@ -744,7 +756,7 @@ async def _dialogs_kick(args, db, pool) -> None:
 
 
 async def _dialogs_broadcast_stats(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     try:
@@ -778,7 +790,7 @@ async def _dialogs_broadcast_stats(args, db, pool) -> None:
 
 
 async def _dialogs_archive(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     try:
@@ -795,7 +807,7 @@ async def _dialogs_archive(args, db, pool) -> None:
 
 
 async def _dialogs_unarchive(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     try:
@@ -812,7 +824,7 @@ async def _dialogs_unarchive(args, db, pool) -> None:
 
 
 async def _dialogs_mark_read(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     try:
@@ -841,7 +853,7 @@ async def _dialogs_cache_clear(args, db, pool) -> None:
 
 
 async def _dialogs_create_channel(args, db, pool) -> None:
-    phone = _resolve_phone(pool, args)
+    phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
     is_group = args.dialogs_action == "create-group"
@@ -1033,20 +1045,18 @@ _HANDOFF_NEEDS_CONFIRMATION = frozenset(
 async def _resolve_handoff_phone(args, db) -> str:
     """Pick the default phone for a hand-off payload, mirroring `_resolve_phone`.
 
-    The in-process path resolves an omitted ``--phone`` to the first connected
-    account via ``pool.clients``; the hand-off path has no pool (that's the
-    point — it must not open a second connection), so it falls back to the
-    first active account on record in the DB, sorted the same way. Queuing an
-    empty phone made the worker's ``TelegramActionService._client`` reject the
-    command outright with "client unavailable" for every hand-off run without
-    an explicit ``--phone`` (Codex, PR #1324 round 2).
+    The in-process path resolves an omitted ``--phone`` to the connected DB
+    primary account; the hand-off path has no pool (that's the point — it must
+    not open a second connection), so it uses the same DB rule without the
+    connected-set constraint (#1480). Queuing an empty phone made the worker's
+    ``TelegramActionService._client`` reject the command outright with "client
+    unavailable" for every hand-off run without an explicit ``--phone`` (Codex,
+    PR #1324 round 2).
     """
     explicit = getattr(args, "phone", None)
     if explicit:
         return explicit
-    accounts = await db.repos.accounts.get_accounts(active_only=True)
-    phones = sorted(account.phone for account in accounts)
-    return phones[0] if phones else ""
+    return await resolve_default_phone(db) or ""
 
 
 # Typer options that are declared `str | None` (free-text "true/false", since
@@ -1326,7 +1336,7 @@ def _run_dialogs(ctx: typer.Context, dialogs_action: str, **ns_kwargs) -> None:
 @dialogs_app.command("list")
 def dialogs_list(
     ctx: typer.Context,
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
 ) -> None:
     """List all dialogs for an account."""
     _run_dialogs(ctx, "list", phone=phone)
@@ -1335,7 +1345,7 @@ def dialogs_list(
 @dialogs_app.command("refresh")
 def dialogs_refresh(
     ctx: typer.Context,
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     wait: bool = typer.Option(False, "--wait", help="When handed to the worker, wait and print the result"),
 ) -> None:
     """Refresh dialog cache from Telegram."""
@@ -1357,7 +1367,7 @@ def dialogs_resolve(
 def dialogs_leave(
     ctx: typer.Context,
     dialog_ids: list[str] = typer.Argument(..., help="Dialog IDs to leave (space- or comma-separated)"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Leave dialogs by ID."""
@@ -1368,7 +1378,7 @@ def dialogs_leave(
 def dialogs_delete(
     ctx: typer.Context,
     dialog_ids: list[str] = typer.Argument(..., help="Dialog IDs to delete (space- or comma-separated)"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Permanently delete dialogs by ID (DeleteChannel/DeleteChat)."""
@@ -1379,7 +1389,7 @@ def dialogs_delete(
 def dialogs_join(
     ctx: typer.Context,
     target: str = typer.Argument(..., help="@username, t.me link, or invite link"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Join/subscribe to a channel or group."""
@@ -1416,7 +1426,7 @@ def dialogs_send(
     ctx: typer.Context,
     recipient: str = typer.Argument(..., help="Recipient: @username, phone number, or numeric ID"),
     text: str = typer.Argument(..., help="Message text to send"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Send a direct message to a user or chat."""
@@ -1429,7 +1439,7 @@ def dialogs_forward(
     from_chat: str = typer.Argument(..., help="Source chat ID or @username"),
     to_chat: str = typer.Argument(..., help="Destination chat ID or @username"),
     message_ids: list[str] = typer.Argument(..., help="Message IDs to forward (space or comma-separated)"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Forward messages between chats."""
@@ -1444,7 +1454,7 @@ def dialogs_edit_message(
     chat_id: str = typer.Argument(..., help="Chat ID or @username"),
     message_id: int = typer.Argument(..., help="Message ID to edit"),
     text: str = typer.Argument(..., help="New message text"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Edit a sent message."""
@@ -1456,7 +1466,7 @@ def dialogs_delete_message(
     ctx: typer.Context,
     chat_id: str = typer.Argument(..., help="Chat ID or @username"),
     message_ids: list[str] = typer.Argument(..., help="Message IDs to delete (space or comma-separated)"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Delete messages from a chat."""
@@ -1467,7 +1477,7 @@ def dialogs_delete_message(
 def dialogs_create_channel(
     ctx: typer.Context,
     title: str = typer.Option(..., "--title", help="Channel title"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     about: str = typer.Option("", "--about", help="Channel description"),
     username: str = typer.Option("", "--username", help="Public username (leave empty for private)"),
 ) -> None:
@@ -1479,7 +1489,7 @@ def dialogs_create_channel(
 def dialogs_create_group(
     ctx: typer.Context,
     title: str = typer.Option(..., "--title", help="Group title"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     about: str = typer.Option("", "--about", help="Group description"),
 ) -> None:
     """Create a new Telegram group."""
@@ -1491,7 +1501,7 @@ def dialogs_pin_message(
     ctx: typer.Context,
     chat_id: str = typer.Argument(..., help="Chat ID or @username"),
     message_id: int = typer.Argument(..., help="Message ID to pin"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     notify: bool = typer.Option(False, "--notify", help="Notify members about pinned message"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
@@ -1506,7 +1516,7 @@ def dialogs_react(
     message_id: int = typer.Argument(..., help="Message ID to react on"),
     emoji: str | None = typer.Argument(None, help="Reaction emoji to set; required unless --clear is used"),
     clear: bool = typer.Option(False, "--clear", help="Remove your reaction from the message"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Set or clear your reaction on a message."""
@@ -1518,7 +1528,7 @@ def dialogs_unpin_message(
     ctx: typer.Context,
     chat_id: str = typer.Argument(..., help="Chat ID or @username"),
     message_id: int | None = typer.Option(None, "--message-id", help="Message ID to unpin (omit to unpin all)"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Unpin a message in a chat."""
@@ -1530,7 +1540,7 @@ def dialogs_download_media(
     ctx: typer.Context,
     chat_id: str = typer.Argument(..., help="Chat ID or @username"),
     message_id: int = typer.Argument(..., help="Message ID containing media"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     output_dir: str = typer.Option(".", "--output-dir", help="Directory to save file (default: current dir)"),
 ) -> None:
     """Download media from a message."""
@@ -1541,7 +1551,7 @@ def dialogs_download_media(
 def dialogs_read(
     ctx: typer.Context,
     chat_id: str = typer.Argument(..., help="Chat ID or @username"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     limit: int = typer.Option(50, "--limit", help="Max messages to fetch (default: 50)"),
     offset_id: int = typer.Option(0, "--offset-id", help="Fetch messages older than this message ID"),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--format", help="Output format (default: text)"),
@@ -1555,7 +1565,7 @@ def dialogs_read(
 @dialogs_app.command("archive-history")
 def dialogs_archive_history(
     ctx: typer.Context,
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     chat_id: str | None = typer.Option(None, "--chat-id", help="Backfill a single dialog by user ID"),
 ) -> None:
     """Backfill full DM history (both directions) into the local archive.
@@ -1572,7 +1582,7 @@ def dialogs_archive_history(
 def dialogs_participants(
     ctx: typer.Context,
     chat_id: str = typer.Argument(..., help="Chat ID or @username"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     limit: int = typer.Option(200, "--limit", help="Max participants to fetch (default: 200)"),
     search: str = typer.Option("", "--search", help="Search query to filter participants"),
     wait: bool = typer.Option(False, "--wait", help="When handed to the worker, wait and print the result"),
@@ -1586,7 +1596,7 @@ def dialogs_edit_admin(
     ctx: typer.Context,
     chat_id: str = typer.Argument(..., help="Chat ID or @username"),
     user_id: str = typer.Argument(..., help="User ID or @username to change admin rights for"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     title: str | None = typer.Option(None, "--title", help="Custom admin title"),
     is_admin: bool = typer.Option(True, "--is-admin/--no-admin", help="Promote to admin (default) / demote"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
@@ -1603,7 +1613,7 @@ def dialogs_edit_permissions(
     ctx: typer.Context,
     chat_id: str = typer.Argument(..., help="Chat ID or @username"),
     user_id: str = typer.Argument(..., help="User ID or @username"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     until_date: str | None = typer.Option(
         None, "--until-date", help="Restriction end date (ISO format, e.g. 2025-12-31)"
     ),
@@ -1623,7 +1633,7 @@ def dialogs_kick(
     ctx: typer.Context,
     chat_id: str = typer.Argument(..., help="Chat ID or @username"),
     user_id: str = typer.Argument(..., help="User ID or @username to kick"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Kick a participant from a chat."""
@@ -1634,7 +1644,7 @@ def dialogs_kick(
 def dialogs_broadcast_stats(
     ctx: typer.Context,
     chat_id: str = typer.Argument(..., help="Channel ID or @username"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     wait: bool = typer.Option(False, "--wait", help="When handed to the worker, wait and print the result"),
 ) -> None:
     """Get broadcast statistics for a channel."""
@@ -1645,7 +1655,7 @@ def dialogs_broadcast_stats(
 def dialogs_archive(
     ctx: typer.Context,
     chat_id: str = typer.Argument(..., help="Chat ID or @username"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
 ) -> None:
     """Archive a dialog (move to archive folder)."""
     _run_dialogs(ctx, "archive", chat_id=chat_id, phone=phone)
@@ -1655,7 +1665,7 @@ def dialogs_archive(
 def dialogs_unarchive(
     ctx: typer.Context,
     chat_id: str = typer.Argument(..., help="Chat ID or @username"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
 ) -> None:
     """Unarchive a dialog (move to main folder)."""
     _run_dialogs(ctx, "unarchive", chat_id=chat_id, phone=phone)
@@ -1665,7 +1675,7 @@ def dialogs_unarchive(
 def dialogs_mark_read(
     ctx: typer.Context,
     chat_id: str = typer.Argument(..., help="Chat ID or @username"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     max_id: int | None = typer.Option(None, "--max-id", help="Mark messages up to this ID as read (default: all)"),
 ) -> None:
     """Mark messages as read in a chat."""

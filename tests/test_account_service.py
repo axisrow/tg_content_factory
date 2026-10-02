@@ -2,8 +2,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.models import Account
-from src.services.account_service import AccountService
+from src.models import Account, AccountSessionStatus, AccountSummary
+from src.services.account_service import (
+    AccountService,
+    pick_default_account_phone,
+    resolve_default_phone,
+)
 
 
 @pytest.fixture
@@ -148,3 +152,77 @@ async def test_account_service_init_with_db():
     # This just tests that it doesn't crash during init
     svc = AccountService(db)
     assert svc._accounts is not None
+
+
+# --------------------------------------------------------------------------- #
+# Default-account pick (#1480): primary first, deterministic.
+# --------------------------------------------------------------------------- #
+
+
+def _summary(phone, *, is_primary=False, is_active=True,
+             session_status: AccountSessionStatus = AccountSessionStatus.OK):
+    return AccountSummary(
+        phone=phone,
+        is_primary=is_primary,
+        is_active=is_active,
+        session_status=session_status,
+    )
+
+
+def test_pick_default_account_phone_primary_wins_over_sort_order():
+    """Sorted-first must NOT win: the DB primary does (#1480 regression)."""
+    accounts = [_summary("+20000000001"), _summary("+10000000002", is_primary=True)]
+    assert pick_default_account_phone(accounts) == "+10000000002"
+
+
+def test_pick_default_account_phone_falls_back_to_first_usable():
+    accounts = [_summary("+20000000001"), _summary("+10000000002")]
+    assert pick_default_account_phone(accounts) == "+20000000001"
+
+
+def test_pick_default_account_phone_skips_inactive_and_broken_sessions():
+    accounts = [
+        _summary("+10000000001", session_status=AccountSessionStatus.DECRYPT_FAILED),
+        _summary("+20000000002", is_active=False),
+        _summary("+30000000003"),
+    ]
+    assert pick_default_account_phone(accounts) == "+30000000003"
+
+
+def test_pick_default_account_phone_empty_returns_none():
+    assert pick_default_account_phone([]) is None
+    assert pick_default_account_phone([_summary("+1", is_active=False)]) is None
+
+
+@pytest.mark.anyio
+async def test_resolve_default_phone_uses_db_pick():
+    db = MagicMock()
+    db.get_account_summaries = AsyncMock(
+        return_value=[_summary("+10000000001"), _summary("+20000000002", is_primary=True)]
+    )
+    assert await resolve_default_phone(db) == "+20000000002"
+
+
+@pytest.mark.anyio
+async def test_resolve_default_phone_connected_falls_back_when_primary_down():
+    db = MagicMock()
+    db.get_account_summaries = AsyncMock(return_value=[_summary("+90000000009", is_primary=True)])
+    connected = {"+10000000001", "+20000000002"}
+    assert await resolve_default_phone(db, connected=connected) == "+10000000001"
+
+
+@pytest.mark.anyio
+async def test_resolve_default_phone_prefers_connected_primary():
+    db = MagicMock()
+    db.get_account_summaries = AsyncMock(return_value=[_summary("+90000000009", is_primary=True)])
+    connected = {"+10000000001", "+90000000009"}
+    assert await resolve_default_phone(db, connected=connected) == "+90000000009"
+
+
+@pytest.mark.anyio
+async def test_resolve_default_phone_nothing_usable_uses_connected():
+    """No DB accounts at all — any connected phone still beats failing."""
+    db = MagicMock()
+    db.get_account_summaries = AsyncMock(return_value=[])
+    assert await resolve_default_phone(db, connected={"+10000000001"}) == "+10000000001"
+    assert await resolve_default_phone(db, connected=set()) is None
