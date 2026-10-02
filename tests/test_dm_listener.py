@@ -107,10 +107,10 @@ async def test_dm_enqueued_group_events_ignored(tmp_path):
         await listener._reconcile()
         callback = client.added[0][0]
 
-        callback(_FakeEvent(is_private=False))
+        await callback(_FakeEvent(is_private=False))
         assert listener._queue.empty()
 
-        callback(_FakeEvent(chat_id=77, message_id=9, text="привет"))
+        await callback(_FakeEvent(chat_id=77, message_id=9, text="привет"))
 
         assert listener._queue.qsize() == 1
         dm = listener._queue.get_nowait()
@@ -163,7 +163,7 @@ async def test_consumer_delivers_event_to_callback(tmp_path):
         await listener.start()
         try:
             await _wait_until(lambda: bool(client.added))
-            client.added[0][0](_FakeEvent(chat_id=5, message_id=6, text="тест"))
+            await client.added[0][0](_FakeEvent(chat_id=5, message_id=6, text="тест"))
             await _wait_until(lambda: len(received) == 1)
             assert received[0].chat_id == 5
             assert received[0].text == "тест"
@@ -297,7 +297,7 @@ async def test_queue_does_not_lose_events_beyond_100(tmp_path):
         consumer = asyncio.create_task(listener._process_loop())
         try:
             for i in range(150):
-                callback(_FakeEvent(chat_id=1, message_id=i, text=f"m{i}"))
+                await callback(_FakeEvent(chat_id=1, message_id=i, text=f"m{i}"))
             await _wait_until(lambda: len(received) == 150)
             assert [dm.message_id for dm in received] == list(range(150))
         finally:
@@ -345,8 +345,8 @@ async def test_callback_failure_does_not_kill_consumer(tmp_path):
 
         consumer = asyncio.create_task(listener._process_loop())
         try:
-            callback(_FakeEvent(message_id=1))
-            callback(_FakeEvent(message_id=2))
+            await callback(_FakeEvent(message_id=1))
+            await callback(_FakeEvent(message_id=2))
             await _wait_until(lambda: len(received) == 1)
             assert received[0].message_id == 2
         finally:
@@ -366,3 +366,29 @@ async def test_incoming_event_dataclass_shape():
         received_at=datetime.now(timezone.utc),
     )
     assert dm.phone == "+1"
+
+
+async def test_telethon_dispatch_awaits_handler(tmp_path):
+    """telethon 1.45 dispatches handlers with an unconditional
+    ``await callback(event)`` (telethon/client/updates.py:605), so a sync
+    handler returning None explodes every dispatch with "object NoneType
+    can't be used in 'await' expression" (#1477). The registered callback
+    must be awaitable, and the DM must still be enqueued.
+    """
+    db = await _make_db(tmp_path)
+    try:
+        pool = _FakePool()
+        client = _FakeRawClient("c1")
+        pool.clients = {"+111": _session(client)}
+        listener = DmListener(pool, db)
+        await listener._reconcile()
+
+        callback, _event_cls = client.added[0]
+        assert asyncio.iscoroutinefunction(callback)
+        await callback(_FakeEvent())  # verbatim telethon dispatch line
+
+        dm = listener._queue.get_nowait()
+        assert dm.phone == "+111"
+        assert dm.chat_id == 42
+    finally:
+        await db.close()

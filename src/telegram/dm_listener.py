@@ -80,7 +80,7 @@ class _Attachment:
     """Handler currently attached to one account's raw client."""
 
     client: Any
-    callback: Callable[[Any], None]
+    callback: Callable[[Any], Awaitable[None]]
 
 
 class DmListener:
@@ -215,8 +215,11 @@ class DmListener:
 
     # --- event path ---
 
-    def _on_event(self, phone: str, event: Any) -> None:
-        """Telethon handler — sync and cheap: filter, enqueue, done."""
+    async def _on_event(self, phone: str, event: Any) -> None:
+        """Telethon handler — must be async: telethon 1.45 dispatches with an
+        unconditional ``await callback(event)`` (updates.py:605), so a sync
+        handler returning None explodes every dispatch (#1477). The body has
+        no awaits: filter, enqueue, done."""
         try:
             if not _is_private_dm(event):
                 return
