@@ -82,6 +82,73 @@ def test_cli_dialogs_list_no_accounts(cli_db, capsys):
     assert "No connected accounts" in out
 
 
+def _seed_account(db, phone, *, is_primary=False):
+    from src.models import Account
+
+    return db.add_account(Account(phone=phone, session_string="sess", is_primary=is_primary))
+
+
+def test_cli_dialogs_list_defaults_to_db_primary(cli_db, capsys):
+    """Without --phone the DB primary account wins, not the sorted-first one (#1480).
+
+    Sorted lexicographically '+10000000001' comes first, but '+90000000009' is
+    primary; the dialog cache is seeded only for the primary, so the old
+    sorted-first pick printed 'No dialogs found.'"""
+    import asyncio
+
+    pool = _mock_pool()
+    pool.clients = {"+10000000001": MagicMock(), "+90000000009": MagicMock()}
+
+    async def _seed():
+        await _seed_account(cli_db, "+10000000001")
+        await _seed_account(cli_db, "+90000000009", is_primary=True)
+        await cli_db.repos.dialog_cache.replace_dialogs(
+            "+90000000009",
+            [
+                {
+                    "channel_id": 100111,
+                    "title": "Primary Channel",
+                    "username": "primchan",
+                    "channel_type": "channel",
+                    "is_dm": False,
+                }
+            ],
+        )
+
+    asyncio.run(_seed())
+    _run(_ns(dialogs_action="list", phone=None), pool, cli_db)
+    out = capsys.readouterr().out
+    assert "Primary Channel" in out
+
+
+def test_cli_dialogs_list_falls_back_to_connected_when_primary_down(cli_db, capsys):
+    """Primary in DB but not connected -> first connected phone is used."""
+    import asyncio
+
+    pool = _mock_pool()
+    pool.clients = {"+10000000001": MagicMock()}
+
+    async def _seed():
+        await _seed_account(cli_db, "+90000000009", is_primary=True)
+        await cli_db.repos.dialog_cache.replace_dialogs(
+            "+10000000001",
+            [
+                {
+                    "channel_id": 100222,
+                    "title": "Fallback Channel",
+                    "username": "fbchan",
+                    "channel_type": "channel",
+                    "is_dm": False,
+                }
+            ],
+        )
+
+    asyncio.run(_seed())
+    _run(_ns(dialogs_action="list", phone=None), pool, cli_db)
+    out = capsys.readouterr().out
+    assert "Fallback Channel" in out
+
+
 def test_cli_dialogs_list_phone_not_connected(cli_db, capsys):
     """Test `dialogs list` with phone that is not connected."""
     pool = _mock_pool()

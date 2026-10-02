@@ -18,6 +18,7 @@ from src.cli.commands.common import (
     run_async,
 )
 from src.models import Message
+from src.services.account_service import resolve_default_phone
 from src.telegram.reactions import (
     fetch_message_reaction_users,
     format_message_reactions,
@@ -136,8 +137,11 @@ async def messages_read_impl(
             if not pool.clients:
                 print("No connected accounts.")
                 return
-            accounts = sorted(pool.clients.keys())
-            phone = phone or accounts[0]
+            if not phone:
+                phone = await resolve_default_phone(db, connected=set(pool.clients))
+            if phone is None:
+                print("No connected accounts.")
+                return
             if phone not in pool.clients:
                 print(f"Account {phone} not connected.")
                 return
@@ -155,9 +159,16 @@ async def messages_read_impl(
                 except ValueError:
                     entity_id = None
                 resolve_target = entity_id if entity_id is not None else identifier
-                entity = await pool.resolve_entity_with_warm(
-                    client, phone, resolve_target, operation="cli_messages_read_resolve"
-                )
+                try:
+                    entity = await pool.resolve_entity_with_warm(
+                        client, phone, resolve_target, operation="cli_messages_read_resolve"
+                    )
+                except Exception as exc:
+                    print(
+                        f"Cannot resolve '{identifier}' via account {phone}: {exc}. "
+                        "The dialog may live on another account — retry with --phone."
+                    )
+                    return
                 kwargs = {"limit": limit}
                 if offset_id:
                     kwargs["offset_id"] = offset_id
@@ -278,7 +289,9 @@ def messages_read(
     identifier: str = typer.Argument(..., help="Channel pk, channel_id, @username, or dialog ID"),
     limit: int = typer.Option(50, "--limit", help="Max messages (default: 50)"),
     live: bool = typer.Option(False, "--live", help="Read from Telegram instead of DB"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (for --live)"),
+    phone: str | None = typer.Option(
+        None, "--phone", help="Account phone for --live (default: primary account)"
+    ),
     query: str = typer.Option("", "--query", help="Text filter (DB only)"),
     date_from: str | None = typer.Option(None, "--date-from", help="Start date YYYY-MM-DD (DB only)"),
     date_to: str | None = typer.Option(None, "--date-to", help="End date YYYY-MM-DD (DB only)"),

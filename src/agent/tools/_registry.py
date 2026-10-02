@@ -18,6 +18,7 @@ from telethon_floodgate import (
 )
 
 from src.agent.runtime_context import AgentRuntimeContext
+from src.services.account_service import pick_default_account_phone
 from src.utils.datetime import try_parse_utc_datetime
 from src.utils.introspection import explicit_pool_method
 
@@ -660,6 +661,8 @@ async def resolve_phone(db: Database, raw_phone: object) -> tuple[str, dict | No
     """Normalize phone, default to primary account if empty.
 
     Returns ``(phone, None)`` on success or ``("", error_response)`` on failure.
+    Selection rule shared with the CLI via
+    :func:`src.services.account_service.pick_default_account_phone` (#1480).
     """
     phone = normalize_phone(raw_phone)
     if phone:
@@ -674,15 +677,10 @@ async def resolve_phone(db: Database, raw_phone: object) -> tuple[str, dict | No
         accounts = list(result)
     except Exception:
         return "", _text_response("Ошибка: не удалось получить список аккаунтов.")
-    usable_accounts = [
-        account
-        for account in accounts
-        if getattr(account, "is_active", True) and account_session_status(account) == "ok"
-    ]
-    if not usable_accounts:
+    default_phone = pick_default_account_phone(accounts)
+    if default_phone is None:
         return "", _text_response("Ошибка: нет подключённых аккаунтов.")
-    primary = next((a for a in usable_accounts if a.is_primary), usable_accounts[0])
-    return primary.phone, None
+    return default_phone, None
 
 
 async def require_phone_permission(db: Database, phone: str, tool_name: str) -> dict | None:

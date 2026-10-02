@@ -39,6 +39,8 @@ search-query list | get | add | edit | delete | toggle | run | stats
 
 - `messages read` accepts t.me links, @usernames or internal ids as `<identifier>`;
   `--live` reads directly from Telegram instead of the local DB.
+- Commands with an optional `--phone` default to the **primary account** (DB flag);
+  if the primary is not connected, the first connected account is used (#1480).
 - `search --mode` picks local DB (FTS5), direct Telegram API, or AI-powered search.
 
 ## dialogs — real actions in real chats

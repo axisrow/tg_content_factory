@@ -431,18 +431,21 @@ def test_archive_and_unarchive_handoff_do_not_require_confirmation(cli_db):
 
 
 def test_handoff_resolves_phone_when_not_given(cli_db):
-    """Omitting --phone must not queue an empty phone the worker will reject.
+    """Omitting --phone must not queue an empty phone the worker will reject,
+    and the default must be the DB primary account (#1480).
 
     Regression (Codex, PR #1324 round 2): the hand-off path built
     `payload["phone"]` from `getattr(args, "phone", "") or ""`, never
     resolving a default the way `_resolve_phone` does for the in-process
-    path (first connected account, sorted). `TelegramActionService._client`
-    rejects an empty, non-``allow_any`` phone outright, so every handed-off
-    action run without `--phone` broke only while `serve` was running.
+    path. `TelegramActionService._client` rejects an empty, non-``allow_any``
+    phone outright, so every handed-off action run without `--phone` broke
+    only while `serve` was running. Since #1480 the default is the DB
+    primary — `+70000000002` is both primary and sorted *after*
+    `+70000000001`, so the old sorted-first pick fails this test.
     """
     from src.models import Account
 
-    asyncio.run(cli_db.add_account(Account(phone="+70000000002", session_string="sess-b")))
+    asyncio.run(cli_db.add_account(Account(phone="+70000000002", session_string="sess-b", is_primary=True)))
     asyncio.run(cli_db.add_account(Account(phone="+70000000001", session_string="sess-a")))
 
     _run(
@@ -452,7 +455,7 @@ def test_handoff_resolves_phone_when_not_given(cli_db):
     )
 
     commands = _commands(cli_db)
-    assert commands[0].payload["phone"] == "+70000000001"
+    assert commands[0].payload["phone"] == "+70000000002"
 
 
 def test_confirmation_is_still_required_before_enqueue(cli_db):
