@@ -475,6 +475,48 @@ class TestAnalyzerSuspiciousUsername:
         result = await analyzer.analyze_channel(706)
         assert "suspicious_username" not in result.flags
 
+    # CamelCase + digit-tail farm shape (#1482): >=2 caps, >=2 lowercase,
+    # >=8 letters, >=3 trailing digits.
+
+    async def test_camelcase_digit_tail_flagged(self, db, raw_db):
+        await _insert_channel(raw_db, 707, username="NexusTrend847")
+        await _insert_messages(raw_db, 707, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(707)
+        assert "suspicious_username" in result.flags
+
+    async def test_camelcase_long_digit_tail_flagged(self, db, raw_db):
+        await _insert_channel(raw_db, 708, username="VegaStream392")
+        await _insert_messages(raw_db, 708, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(708)
+        assert "suspicious_username" in result.flags
+
+    async def test_name_year_tail_ok(self, db, raw_db):
+        # "JohnDoe1990" — only 7 letters before the year tail → not flagged.
+        await _insert_channel(raw_db, 709, username="JohnDoe1990")
+        await _insert_messages(raw_db, 709, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(709)
+        assert "suspicious_username" not in result.flags
+
+    async def test_lowercase_only_digit_tail_ok(self, db, raw_db):
+        # lowercase-only farms are deliberately out of scope: too many legit
+        # usernames share the shape ("haberkanal724").
+        await _insert_channel(raw_db, 710, username="haberkanal724")
+        await _insert_messages(raw_db, 710, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(710)
+        assert "suspicious_username" not in result.flags
+
+    async def test_single_cap_digit_tail_ok(self, db, raw_db):
+        # "Readingzone221" — one capital, three digits → not flagged.
+        await _insert_channel(raw_db, 711, username="Readingzone221")
+        await _insert_messages(raw_db, 711, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(711)
+        assert "suspicious_username" not in result.flags
+
 
 class TestAnalyzerStickyFlags:
     async def test_username_changed_preserved_after_apply(self, db, raw_db):
