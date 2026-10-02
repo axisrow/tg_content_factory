@@ -4,10 +4,19 @@ import re
 
 CYRILLIC_RE = re.compile(r"[а-яА-ЯёЁ]")
 
-# Случайно сгенерированные username: только заглавные латинские + цифры,
-# длина ≥ 10 и обязательно хотя бы одна цифра. Ловит шаблоны вроде
-# "S0IMD1EDUAW", "EXF74CHE3RZ1"; безопасно пропускает "BITCOIN24", "NASDAQNEWS".
-SUSPICIOUS_USERNAME_RE = re.compile(r"^(?=.*\d)[A-Z0-9]{10,}$")
+# Случайно сгенерированные username. Две формы спам-генератора:
+#  - сплошной КАПС+цифры, длина ≥10: "S0IMD1EDUAW", "EXF74CHE3RZ1";
+#  - CamelCase-слова + хвост ≥3 цифр, ≥2 заглавных и ≥2 строчных
+#    ("WordWord123456"): ферма 02.10.26 — 18/18 поймано, 0/1429 ложных
+#    на живой БД.
+# Безопасные случаи остаются за бортом: "BITCOIN24" (9 символов),
+# "NASDAQNEWS" (нет цифр), "PublicChannel42" (1 заглавная, 2 цифры),
+# "JohnDoe1990" (7 букв, годовой хвост). Lowercase-only фермы
+# ("haberkanal724"-стиль) сознательно не ловим — слишком много легитимных.
+SUSPICIOUS_USERNAME_RE = re.compile(
+    r"^(?=.*\d)[A-Z0-9]{10,}$"  # сплошной КАПС + цифры
+    r"|^(?=.*[A-Z].*[A-Z])(?=.*[a-z].*[a-z])[A-Za-z]{8,}\d{3,}$"  # CamelCase+хвост
+)
 
 LOW_UNIQUENESS_THRESHOLD = 30.0
 LOW_SUBSCRIBER_RATIO_THRESHOLD = 1.0  # broadcast-каналы
