@@ -59,10 +59,9 @@ async def _resolve_phone(db, pool, args) -> str | None:
             print(f"Account {explicit} not connected.")
             return None
         return explicit
-    phone = await resolve_default_phone(db, connected=set(pool.clients))
-    if phone is None:
-        print("No connected accounts.")
-    return phone
+    # pool.clients is non-empty here, and a non-empty `connected` set always
+    # yields a phone from resolve_default_phone — no None case to handle.
+    return await resolve_default_phone(db, connected=set(pool.clients))
 
 
 def _parse_message_ids(args) -> list[int] | None:
