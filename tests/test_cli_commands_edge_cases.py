@@ -586,6 +586,9 @@ class TestSchedulerStop:
 
         db = MagicMock()
         db.set_setting = AsyncMock()
+        # The impl also enqueues scheduler.reconcile for the live worker.
+        db.repos.telegram_commands.find_active_by_type = AsyncMock(return_value=None)
+        db.repos.telegram_commands.create_command = AsyncMock(return_value=1)
         db.close = AsyncMock()
 
         config = MagicMock()
@@ -610,6 +613,9 @@ class TestSchedulerJobToggle:
         db.repos = MagicMock()
         db.repos.settings.get_setting = AsyncMock(return_value="1")  # currently disabled
         db.repos.settings.set_setting = AsyncMock()
+        # The impl also enqueues scheduler.reconcile for the live worker.
+        db.repos.telegram_commands.find_active_by_type = AsyncMock(return_value=None)
+        db.repos.telegram_commands.create_command = AsyncMock(return_value=1)
         db.close = AsyncMock()
 
         config = MagicMock()
@@ -632,6 +638,9 @@ class TestSchedulerJobToggle:
         db.repos = MagicMock()
         db.repos.settings.get_setting = AsyncMock(return_value=None)  # not disabled
         db.repos.settings.set_setting = AsyncMock()
+        # The impl also enqueues scheduler.reconcile for the live worker.
+        db.repos.telegram_commands.find_active_by_type = AsyncMock(return_value=None)
+        db.repos.telegram_commands.create_command = AsyncMock(return_value=1)
         db.close = AsyncMock()
 
         config = MagicMock()
@@ -654,6 +663,9 @@ class TestSchedulerSetInterval:
         db = MagicMock()
         db.repos = MagicMock()
         db.repos.settings.set_setting = AsyncMock()
+        # The impl also enqueues scheduler.reconcile for the live worker.
+        db.repos.telegram_commands.find_active_by_type = AsyncMock(return_value=None)
+        db.repos.telegram_commands.create_command = AsyncMock(return_value=1)
         db.close = AsyncMock()
 
         config = MagicMock()
@@ -679,6 +691,9 @@ class TestSchedulerSetInterval:
         sq.model_copy = MagicMock(return_value="updated_sq")
         db.repos.search_queries.get_by_id = AsyncMock(return_value=sq)
         db.repos.search_queries.update = AsyncMock()
+        # The impl also enqueues scheduler.reconcile for the live worker.
+        db.repos.telegram_commands.find_active_by_type = AsyncMock(return_value=None)
+        db.repos.telegram_commands.create_command = AsyncMock(return_value=1)
         db.close = AsyncMock()
 
         config = MagicMock()
@@ -713,6 +728,9 @@ class TestSchedulerSetInterval:
         db = MagicMock()
         db.repos = MagicMock()
         db.repos.settings.set_setting = AsyncMock()
+        # The impl also enqueues scheduler.reconcile for the live worker.
+        db.repos.telegram_commands.find_active_by_type = AsyncMock(return_value=None)
+        db.repos.telegram_commands.create_command = AsyncMock(return_value=1)
         db.close = AsyncMock()
 
         config = MagicMock()
