@@ -1636,10 +1636,8 @@ async def test_collect_channel_dirty_client_remove_timeout_releases_lease(db, mo
 
     count = await asyncio.wait_for(
         collector._collect_channel(stored, force=True),
-        # The cleanup paths are bounded by the patched 10ms/50ms limits; keep
-        # a wider outer budget so full-suite xdist scheduling cannot turn this
-        # regression test into a flaky timeout.
-        timeout=1.0,
+        # The cleanup paths are bounded by the patched 10ms/50ms limits.
+        timeout=_HANG_GUARD_SEC,
     )
     await asyncio.sleep(0.06)
 
@@ -1680,13 +1678,13 @@ async def test_collect_channel_cancels_pending_stream_read_on_shutdown(db):
     collector = Collector(pool, db, config)
 
     task = asyncio.create_task(collector._collect_channel(stored, force=True))
-    await asyncio.wait_for(stream.started.wait(), timeout=0.2)
+    await asyncio.wait_for(stream.started.wait(), timeout=_HANG_GUARD_SEC)
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    await asyncio.wait_for(stream.cancelled.wait(), timeout=0.2)
+    await asyncio.wait_for(stream.cancelled.wait(), timeout=_HANG_GUARD_SEC)
     pool.release_client.assert_awaited_with("+7004")
 
 
@@ -2080,9 +2078,7 @@ async def test_incremental_collection_sends_notifications_before_idle_timeout_re
         SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=0.01),
         notifier,
     )
-    # ponytail: outer guard is slack for CI-runner jitter only — the inner
-    # stream timeout (0.01s) is the thing under test; keep it tight, not this.
-    count = await asyncio.wait_for(collector._collect_channel(ch), timeout=2.0)
+    count = await asyncio.wait_for(collector._collect_channel(ch), timeout=_HANG_GUARD_SEC)
 
     assert count == 1
     notifier.notify.assert_awaited_once()

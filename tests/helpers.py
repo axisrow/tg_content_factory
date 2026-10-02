@@ -87,9 +87,13 @@ def make_cli_db(**overrides) -> MagicMock:
     return db
 
 
-def cli_add_channel(db: Database, channel_id: int = 100, title: str = "TestCh") -> int:
+def cli_add_channel(
+    db: Database, channel_id: int = 100, title: str = "TestCh", is_active: bool = True
+) -> int:
     """Synchronously insert a channel row and return its PK."""
-    return asyncio.run(db.add_channel(Channel(channel_id=channel_id, title=title)))
+    return asyncio.run(
+        db.add_channel(Channel(channel_id=channel_id, title=title, is_active=is_active))
+    )
 
 
 class AsyncIterEmpty:
