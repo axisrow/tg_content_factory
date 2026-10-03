@@ -9,6 +9,22 @@ from src.search.engine import SearchEngine
 from src.services.embedding_service import EmbeddingService
 
 
+def _format_search_result_line(msg) -> str:
+    """One rendered search hit; prefer @username/title over the bare numeric id.
+
+    Premium global search returns messages whose channels are usually NOT in the
+    accounts' dialogs — a bare numeric id cannot be re-resolved by `channel add`,
+    while a username/title can.
+    """
+    if msg.channel_username:
+        channel_label = f"@{msg.channel_username} ({msg.channel_id})"
+    elif msg.channel_title:
+        channel_label = f"{msg.channel_title} ({msg.channel_id})"
+    else:
+        channel_label = f"Channel {msg.channel_id}"
+    return f"[{msg.date}] {channel_label}: {(msg.text or '')[:200]}"
+
+
 async def search_impl(
     config_path: str,
     *,
@@ -102,8 +118,7 @@ async def search_impl(
         total_display = f"{result.total}+" if result.has_more else str(result.total)
         print(f"Found {total_display} results for '{result.query}':\n")
         for msg in result.messages:
-            text_preview = (msg.text or "")[:200]
-            print(f"[{msg.date}] Channel {msg.channel_id}: {text_preview}")
+            print(_format_search_result_line(msg))
             print("---")
     finally:
         if pool:
