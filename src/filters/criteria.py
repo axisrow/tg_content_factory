@@ -25,6 +25,15 @@ CROSS_DUPE_THRESHOLD = 50.0
 NON_CYRILLIC_THRESHOLD = 10.0
 CHAT_NOISE_THRESHOLD = 70.0
 
+# «Автогенерённая лента» (auto_feed): канал публикует короткие посты по одному
+# шаблону со ссылкой наружу (слаг-фиды, автопостинг). Откалибровано на живой БД
+# 04.10.26: шаблонный слаг-фид = 88.8% коротких постов со ссылкой, writeup-канал =
+# 61.4%, авторские каналы ≤12% — порог 85% разделяет с запасом. «Короткий» —
+# <200 символов, литерал в _SQL_AUTO_FEED (repositories/filters.py), SQL-слой не
+# импортирует пакет filters. Минимум сообщений — ниже нет статистики.
+AUTO_FEED_MIN_MESSAGES = 30
+AUTO_FEED_THRESHOLD = 85.0
+
 PRECHECK_CROSS_DUPE_SAMPLE = 10  # сколько постов сэмплировать
 PRECHECK_CROSS_DUPE_RATIO = 0.8  # порог совпадений (80%)
 PRECHECK_CROSS_DUPE_MIN_SAMPLE = 5  # минимум текстовых сообщений для вывода
@@ -47,6 +56,7 @@ VALID_FLAGS = frozenset(
         "username_changed",
         "title_changed",
         "suspicious_username",
+        "auto_feed",
     }
 )
 

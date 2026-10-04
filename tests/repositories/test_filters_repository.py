@@ -567,3 +567,81 @@ async def test_fetch_cyrillic_map_udf_registered(filters_repo, channels_repo):
     # Second call should use already registered UDF
     result2 = await filters_repo.fetch_cyrillic_map()
     assert result1 == result2
+
+
+# fetch_auto_feed_map tests
+
+
+async def test_fetch_auto_feed_map_empty(filters_repo):
+    """Test auto-feed map with no messages."""
+    result = await filters_repo.fetch_auto_feed_map()
+    assert result == {}
+
+
+async def test_fetch_auto_feed_map_basic(filters_repo, channels_repo):
+    """Short (<200 chars) messages with an outbound link are counted."""
+    await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
+
+    await filters_repo._db.executemany(
+        _INSERT_MSG,
+        [
+            (1, 100, "Slug one | https://example.com/a"),
+            (1, 101, "t.me/somechannel update"),
+            (1, 102, "Длинный авторский разбор без ссылок, " + "подробности методологии. " * 20),
+            (1, 103, "just words, no link"),
+            (1, 104, "https://e.co/" + "x" * 187),  # ровно 200 симв. — не «короткий»
+        ],
+    )
+    await filters_repo._db.commit()
+
+    result = await filters_repo.fetch_auto_feed_map()
+    total, short_link = result[1]
+    assert total == 5
+    assert short_link == 2
+
+
+async def test_fetch_auto_feed_map_sampled_last_n(filters_repo, channels_repo):
+    """sample_size counts only the last N messages (by message_id DESC)."""
+    await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
+
+    await filters_repo._db.executemany(
+        _INSERT_MSG,
+        [
+            (1, 100, "slug 1 https://example.com/1"),
+            (1, 101, "slug 2 https://example.com/2"),
+            (1, 102, "slug 3 https://example.com/3"),
+            (1, 103, "slug 4 https://example.com/4"),
+            (1, 104, "slug 5 https://example.com/5"),
+            (1, 105, "Длинный разбор один, " + "без ссылок и шаблона. " * 12),
+            (1, 106, "Длинный разбор два, " + "совсем другой текст. " * 12),
+            (1, 107, "Длинный разбор три, " + "третий вариант темы. " * 12),
+        ],
+    )
+    await filters_repo._db.commit()
+
+    sampled = await filters_repo.fetch_auto_feed_map(sample_size=4)
+    total, short_link = sampled[1]
+    assert total == 4  # ids 107..104
+    assert short_link == 1  # только id=104
+
+    full = await filters_repo.fetch_auto_feed_map()
+    assert full[1] == (8, 5)
+
+
+async def test_fetch_auto_feed_map_by_channel(filters_repo, channels_repo):
+    """Test filtering by channel_id."""
+    await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
+    await channels_repo.add_channel(Channel(channel_id=2, title="Test 2"))
+
+    await filters_repo._db.executemany(
+        _INSERT_MSG,
+        [
+            (1, 100, "slug https://example.com/1"),
+            (2, 100, "author text without links"),
+        ],
+    )
+    await filters_repo._db.commit()
+
+    result = await filters_repo.fetch_auto_feed_map(channel_id=1)
+    assert 1 in result
+    assert 2 not in result

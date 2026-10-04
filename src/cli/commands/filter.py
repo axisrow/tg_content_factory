@@ -85,10 +85,10 @@ async def analyze_impl(config_path: str, *, quick: bool = False, sample_size: in
             print("No channels found.")
             return
 
-        fmt = "{:<6} {:<25} {:<10} {:<10} {:<10} {:<10} {:<10} {:<15}"
-        header = ("ChanID", "Title", "Uniq%", "SubRatio", "Cyr%", "Short%", "XDupe%", "Flags")
+        fmt = "{:<6} {:<25} {:<10} {:<10} {:<10} {:<10} {:<10} {:<10} {:<15}"
+        header = ("ChanID", "Title", "Uniq%", "SubRatio", "Cyr%", "Short%", "XDupe%", "Auto%", "Flags")
         print(fmt.format(*header))
-        print("-" * 100)
+        print("-" * 110)
         for r in report.results:
             flags_str = ", ".join(r.flags) if r.flags else "-"
             print(
@@ -100,6 +100,7 @@ async def analyze_impl(config_path: str, *, quick: bool = False, sample_size: in
                     f"{r.cyrillic_pct:.1f}" if r.cyrillic_pct is not None else "-",
                     f"{r.short_msg_pct:.1f}" if r.short_msg_pct is not None else "-",
                     f"{r.cross_dupe_pct:.1f}" if r.cross_dupe_pct is not None else "-",
+                    f"{r.auto_feed_pct:.1f}" if r.auto_feed_pct is not None else "-",
                     flags_str[:15],
                 )
             )
