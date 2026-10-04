@@ -369,8 +369,19 @@ async def test_deepagents_chat_runs_real_init_chat_model_and_create_deep_agent(
         _capture(request)
         return _build_response(request)
 
+    # Patch BOTH HTTP clients: httpx is the transport of openai 2.x, httpx2 of
+    # openai 3.x. openai>=3.19 moved to the httpx2 package, so a httpx-only
+    # patch silently lets fake-key requests escape to the live API (CI 401s).
+    # httpx2 is only installed when the openai 3.x line is; guard the import.
+    try:
+        import httpx2
+    except ImportError:  # openai 2.x — no httpx2 transport in the env
+        httpx2 = None
     monkeypatch.setattr(httpx.Client, "send", fake_sync_send)
     monkeypatch.setattr(httpx.AsyncClient, "send", fake_async_send)
+    if httpx2 is not None:
+        monkeypatch.setattr(httpx2.Client, "send", fake_sync_send)
+        monkeypatch.setattr(httpx2.AsyncClient, "send", fake_async_send)
 
     # Build the real DeepagentsBackend → real init_chat_model → real
     # create_deep_agent. The backend's _build_agent reads cfg, normalizes
