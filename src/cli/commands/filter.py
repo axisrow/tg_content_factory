@@ -148,19 +148,21 @@ async def suspects_impl(config_path: str) -> None:
             print("No suspects: no channel carries the author-content tag together with filter flags.")
             return
         print(f"Suspects (author-content tag + filter flags): {len(suspects)}")
-        fmt = "{:<6} {:<22} {:<30} {:<28} {:<9} {:<7}"
-        print(fmt.format("Pk", "Username", "Title", "Flags", "Filtered", "Active"))
+        fmt = "{:<6} {:<22} {:<30} {:<9} {:<7}"
+        print(fmt.format("Pk", "Username", "Title", "Filtered", "Active") + " Flags")
         print("-" * 110)
         for s in suspects:
+            # Flags are the decision evidence: never truncate (Codex P2 #1493) —
+            # a mid-flag slice would hide reasons from the human reviewing.
             print(
                 fmt.format(
                     s["pk"],
                     f"@{(s['username'] or '-')}"[:22],
                     (s["title"] or "-")[:30],
-                    (s["filter_flags"] or "-")[:28],
                     "yes" if s["is_filtered"] else "no",
                     "yes" if s["is_active"] else "no",
                 )
+                + f" {s['filter_flags'] or '-'}"
             )
     finally:
         await db.close()
