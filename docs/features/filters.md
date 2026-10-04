@@ -21,10 +21,17 @@
     python -m src.main filter apply         # применить фильтры
     python -m src.main filter reset         # сбросить все фильтры
     python -m src.main filter precheck      # pre-фильтр по кол-ву подписчиков
+    python -m src.main filter suspects      # whitelist↔blacklist противоречия (#1490)
     python -m src.main filter toggle --channel-id ID  # ручное переключение
     python -m src.main filter purge         # удалить сообщения отфильтрованных
     python -m src.main filter hard-delete   # удалить каналы из БД
     ```
+
+Whitelist-подход (#1490): тег доверия «авторский контент» (через `channel tag set`) —
+метка «написан человеком, не шаблоногенератор». `filter suspects` — read-only отчёт
+о каналах, у которых этот тег соседствует с фильтр-флагами: подозрение на ошибку
+автофильтра. Решение по каждому — за человеком (ручной unfilter/Toggle; человеческие
+решения sticky, автоприменение их не переигрывает). Язык канала критерием не является.
 
 === "Web"
     `GET /channels/filter/manage` · `POST /channels/filter/analyze`

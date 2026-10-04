@@ -40,6 +40,12 @@ CHAT_NOISE_THRESHOLD = 70.0
 AUTO_FEED_MIN_MESSAGES = 30
 AUTO_FEED_THRESHOLD = 85.0
 
+# Whitelist-метка доверия (#1490, решение владельца 04.10.26): тег живёт в штатной
+# тег-системе каналов (tags/channel_tags, CLI `channel tag`), а не в VALID_FLAGS.
+# Канал с этим тегом И фильтр-флагами — подозрение на ошибку фильтра; отчёт:
+# `filter suspects` (read-only, поведение сбора не меняет).
+AUTHOR_CONTENT_TAG = "авторский контент"
+
 PRECHECK_CROSS_DUPE_SAMPLE = 10  # сколько постов сэмплировать
 PRECHECK_CROSS_DUPE_RATIO = 0.8  # порог совпадений (80%)
 PRECHECK_CROSS_DUPE_MIN_SAMPLE = 5  # минимум текстовых сообщений для вывода

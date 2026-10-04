@@ -242,6 +242,18 @@ def test_filter_apply_precheck_delegate():
         mock_impl.assert_called_once_with("config.yaml")
 
 
+def test_filter_suspects_delegates():
+    """``filter suspects`` — read-only whitelist↔blacklist contradiction report (#1490)."""
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.filter_cmd.suspects_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["filter", "suspects"])
+    assert result.exit_code == 0, result.output
+    mock_impl.assert_called_once_with("config.yaml")
+
+
 def test_filter_toggle_passes_pk():
     mock_impl = MagicMock()
     with (
