@@ -29,6 +29,7 @@ FILTER_FLAG_EMOJI = {
     "username_changed": (Markup('<i class="bi bi-lightbulb"></i>'), "Сменил юзернейм"),
     "title_changed": (Markup('<i class="bi bi-pencil-square"></i>'), "Смена названия"),
     "suspicious_username": (Markup('<i class="bi bi-dice-5"></i>'), "Подозрительный юзернейм"),
+    "auto_feed": (Markup('<i class="bi bi-robot"></i>'), "Автогенерённая лента"),
 }
 
 # Human-readable labels for AccountSessionStatus values shown in the accounts

@@ -166,7 +166,7 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 - **CollectionQueue** (`src/collection_queue.py`): `asyncio.Queue` + single worker task, task status (`pending/running/completed/failed/cancelled`) tracked in DB
 - **DB migrations**: `_migrate()` in `src/database/migrations.py` uses `PRAGMA table_info` to detect missing columns and issues `ALTER TABLE ADD COLUMN` as needed
 - **Keyword matching**: plain text (case-insensitive substring) and regex (`re.IGNORECASE`)
-- **Channel filters**: `ChannelAnalyzer` checks `low_uniqueness`, `low_subscriber_ratio`, `cross_channel_spam`, `non_cyrillic`, `chat_noise`; filtered channels skipped during collection unless `force=True`
+- **Channel filters**: `ChannelAnalyzer` checks `low_uniqueness`, `low_subscriber_ratio`, `cross_channel_spam`, `non_cyrillic`, `chat_noise`, `auto_feed`; filtered channels skipped during collection unless `force=True`
 - **Channel creation date**: `channels.created_at` stores Telegram `entity.date` (channel creation timestamp); captured via `resolve_channel()` and `get_dialogs_for_phone()`; distinct from `added_at` (when added to the system)
 - **Collection service**: `enqueue_channel_by_pk(pk, force)` respects `is_filtered` flag; `enqueue_all_channels()` uses `full=False` for incremental collection
 - **Hour x Weekday Heatmap**: `db.repos.messages.get_hour_weekday_heatmap(channel_id, days)` → `[{hour, weekday, count}]`; weekday 0=Sunday per SQLite `%w`; service wrapper: `ChannelAnalyticsService.get_heatmap()`; CLI: `analytics channel`; Web: `/analytics/channels/api/heatmap`

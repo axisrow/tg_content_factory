@@ -5,6 +5,8 @@ import time
 
 from src.database import Database
 from src.filters.criteria import (
+    AUTO_FEED_MIN_MESSAGES,
+    AUTO_FEED_THRESHOLD,
     CHAT_NOISE_THRESHOLD,
     CROSS_DUPE_THRESHOLD,
     DEFAULT_QUICK_SAMPLE_SIZE,
@@ -67,7 +69,7 @@ class ChannelAnalyzer:
                 f", sample={sample_size}" if sample_size is not None else "",
             )
             t_map = time.monotonic()
-            uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map = (
+            uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map, auto_feed_map = (
                 await self._repo.fetch_maps_parallel(
                     channel_id, include_cross_dupe=not skip_cross_dupe, sample_size=sample_size
                 )
@@ -93,7 +95,10 @@ class ChannelAnalyzer:
             cyrillic_map = await _timed_fetch(
                 "cyrillic map", self._repo.fetch_cyrillic_map(channel_id, sample_size=sample_size)
             )
-        return uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map
+            auto_feed_map = await _timed_fetch(
+                "auto-feed map", self._repo.fetch_auto_feed_map(channel_id, sample_size=sample_size)
+            )
+        return uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map, auto_feed_map
 
     def _append_uniqueness_flag(self, flags: list[str], channel_id_value: int, uniqueness_map: dict) -> float | None:
         uniqueness_pct: float | None = None
@@ -188,6 +193,21 @@ class ChannelAnalyzer:
         if raw_username and SUSPICIOUS_USERNAME_RE.match(raw_username):
             flags.append("suspicious_username")
 
+    def _append_auto_feed_flag(self, flags: list[str], channel_id_value: int, auto_feed_map: dict) -> float | None:
+        auto_feed_pct: float | None = None
+        auto_feed = False
+        if channel_id_value in auto_feed_map:
+            total, short_link = auto_feed_map[channel_id_value]
+            if total > 0:
+                raw_auto_pct = short_link / total * 100
+                auto_feed_pct = round(raw_auto_pct, 1)
+                auto_feed = (
+                    total >= AUTO_FEED_MIN_MESSAGES and raw_auto_pct >= AUTO_FEED_THRESHOLD
+                )
+        if auto_feed:
+            flags.append("auto_feed")
+        return auto_feed_pct
+
     def _build_channel_result(
         self,
         channel,
@@ -197,6 +217,7 @@ class ChannelAnalyzer:
         short_map: dict,
         cross_dupe_map: dict,
         cyrillic_map: dict,
+        auto_feed_map: dict,
         min_subs: int,
     ) -> ChannelFilterResult:
         channel_id_value = channel["channel_id"]
@@ -209,6 +230,7 @@ class ChannelAnalyzer:
         cross_dupe_pct = self._append_cross_dupe_flag(flags, channel_id_value, cross_dupe_map)
         cyrillic_pct = self._append_cyrillic_flag(flags, channel_id_value, cyrillic_map)
         short_msg_pct = self._append_chat_noise_flag(flags, channel, channel_id_value, short_map)
+        auto_feed_pct = self._append_auto_feed_flag(flags, channel_id_value, auto_feed_map)
         self._append_suspicious_username_flag(flags, channel)
 
         return ChannelFilterResult(
@@ -222,6 +244,7 @@ class ChannelAnalyzer:
             cyrillic_pct=cyrillic_pct,
             short_msg_pct=short_msg_pct,
             cross_dupe_pct=cross_dupe_pct,
+            auto_feed_pct=auto_feed_pct,
             is_filtered=bool(flags),
         )
 
@@ -234,6 +257,7 @@ class ChannelAnalyzer:
         short_map: dict,
         cross_dupe_map: dict,
         cyrillic_map: dict,
+        auto_feed_map: dict,
         min_subs: int,
     ) -> list[ChannelFilterResult]:
         return [
@@ -244,6 +268,7 @@ class ChannelAnalyzer:
                 short_map=short_map,
                 cross_dupe_map=cross_dupe_map,
                 cyrillic_map=cyrillic_map,
+                auto_feed_map=auto_feed_map,
                 min_subs=min_subs,
             )
             for channel in channels
@@ -275,8 +300,10 @@ class ChannelAnalyzer:
         if not channels:
             return FilterReport()
 
-        uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map = await self._fetch_analysis_maps(
-            channel_id, skip_cross_dupe=skip_cross_dupe, sample_size=sample_size
+        uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map, auto_feed_map = (
+            await self._fetch_analysis_maps(
+                channel_id, skip_cross_dupe=skip_cross_dupe, sample_size=sample_size
+            )
         )
         min_subs = await self._load_min_subscribers_filter()
         results = self._build_channel_results(
@@ -286,6 +313,7 @@ class ChannelAnalyzer:
             short_map=short_map,
             cross_dupe_map=cross_dupe_map,
             cyrillic_map=cyrillic_map,
+            auto_feed_map=auto_feed_map,
             min_subs=min_subs,
         )
         return self._filter_report_from_results(results, t0)

@@ -335,6 +335,7 @@ class TestCLIFilterCoverage:
                     cyrillic_pct=90.0,
                     short_msg_pct=10.0,
                     cross_dupe_pct=5.0,
+                    auto_feed_pct=0.0,
                     flags=["low_uniqueness"],
                 )
             ],

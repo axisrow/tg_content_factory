@@ -104,6 +104,20 @@ _SQL_CYRILLIC = """
     WHERE text IS NOT NULL AND text != ''
 """
 
+# «Автогенерённая лента»: доля коротких (<200 симв.) постов со ссылкой наружу.
+# Порог флага — в criteria.py (AUTO_FEED_*), литерал 200 здесь сознательно
+# дублирован: SQL-слой не импортирует пакет filters (см. комментарий к UDF выше).
+_SQL_AUTO_FEED = """
+    SELECT
+        channel_id,
+        COUNT(*) AS total,
+        SUM(CASE WHEN length(text) < 200
+                AND (text LIKE '%http%' OR text LIKE '%t.me%')
+            THEN 1 ELSE 0 END) AS short_link
+    FROM messages
+    WHERE text IS NOT NULL AND text != ''
+"""
+
 # ── Sampled SQL templates (quick mode, #1138) ───────────────────────────────
 # Instead of scanning the whole messages table, sample the last N messages per
 # channel. The leading table is `channels` (~1.4k rows); for each one a
@@ -164,6 +178,24 @@ _SQL_CYRILLIC_SAMPLED = """
             WHERE m.channel_id = ch.channel_id
             ORDER BY m.message_id DESC LIMIT ?
          ) s WHERE s.text IS NOT NULL AND s.text != '') AS cyr
+    FROM channels ch
+"""
+
+_SQL_AUTO_FEED_SAMPLED = """
+    SELECT
+        ch.channel_id AS channel_id,
+        (SELECT COUNT(*) FROM (
+            SELECT text FROM messages m
+            WHERE m.channel_id = ch.channel_id
+            ORDER BY m.message_id DESC LIMIT ?
+         ) s WHERE s.text IS NOT NULL AND s.text != '') AS total,
+        (SELECT SUM(CASE WHEN length(text) < 200
+                    AND (text LIKE '%http%' OR text LIKE '%t.me%')
+                THEN 1 ELSE 0 END) FROM (
+            SELECT text FROM messages m
+            WHERE m.channel_id = ch.channel_id
+            ORDER BY m.message_id DESC LIMIT ?
+         ) s WHERE s.text IS NOT NULL AND s.text != '') AS short_link
     FROM channels ch
 """
 
@@ -339,6 +371,32 @@ class FilterRepository:
         rows = await cur.fetchall()
         return {row["channel_id"]: (row["total"], row["cyr"] or 0) for row in rows}
 
+    async def fetch_auto_feed_map(
+        self, channel_id: int | None = None, *, sample_size: int | None = None
+    ) -> dict[int, tuple[int, int]]:
+        """Карта `channel_id → (всего сообщений, из них коротких <200 симв. со ссылкой)`.
+
+        Высокая доля коротких постов-ссылок — признак автогенерённой ленты
+        (слаг-фиды, автопостинг); порог флага в criteria.py. С ``sample_size``
+        считается по последним N сообщениям канала (#1138).
+        """
+        if sample_size is not None:
+            sql = _SQL_AUTO_FEED_SAMPLED
+            params: tuple = (sample_size, sample_size)
+            if channel_id is not None:
+                sql += " WHERE ch.channel_id = ?"
+                params = (sample_size, sample_size, channel_id)
+        else:
+            sql = _SQL_AUTO_FEED
+            params = ()
+            if channel_id is not None:
+                sql += " AND channel_id = ?"
+                params = (channel_id,)
+            sql += " GROUP BY channel_id"
+        cur = await self._db.execute(sql, params)
+        rows = await cur.fetchall()
+        return {row["channel_id"]: (row["total"], row["short_link"] or 0) for row in rows}
+
     # ── Parallel fetch: separate read-only connections ─────────────────────
 
     def _can_parallel(self) -> bool:
@@ -385,14 +443,16 @@ class FilterRepository:
         dict[int, tuple[int, int]],  # short_map
         dict[int, tuple[int, int]],  # cross_dupe_map
         dict[int, tuple[int, int]],  # cyrillic_map
+        dict[int, tuple[int, int]],  # auto_feed_map
     ]:
         """Run the map queries in parallel on separate read-only connections.
 
         include_cross_dupe=False skips the cross-channel duplicate self-join —
         by far the heaviest query on large DBs (#774) — returning an empty map.
-        sample_size routes the three text-based maps (uniqueness/short/cyrillic)
-        to the last-N-per-channel sampled SQL (#1138); subscriber stays full
-        (it is count/stats-based, not text-based).
+        sample_size routes the four text-based maps
+        (uniqueness/short/cyrillic/auto_feed) to the last-N-per-channel sampled
+        SQL (#1138); subscriber stays full (it is count/stats-based, not
+        text-based).
         """
         sampled = sample_size is not None
         # Build parameterised SQL for each query. The text maps switch to the
@@ -427,6 +487,18 @@ class FilterRepository:
                 + " GROUP BY channel_id"
             )
             cy_params = (channel_id,) if channel_id is not None else ()
+        if sampled:
+            af_sql = _SQL_AUTO_FEED_SAMPLED + (" WHERE ch.channel_id = ?" if channel_id is not None else "")
+            af_params: tuple = (
+                (sample_size, sample_size, channel_id) if channel_id is not None else (sample_size, sample_size)
+            )
+        else:
+            af_sql = (
+                _SQL_AUTO_FEED
+                + (" AND channel_id = ?" if channel_id is not None else "")
+                + " GROUP BY channel_id"
+            )
+            af_params = (channel_id,) if channel_id is not None else ()
 
         s_sql = (
             _SQL_SUBSCRIBER_BASE
@@ -445,14 +517,15 @@ class FilterRepository:
         async def _no_rows() -> list[aiosqlite.Row]:
             return []
 
-        conns = [await self._open_readonly_conn() for _ in range(4 + int(include_cross_dupe))]
+        conns = [await self._open_readonly_conn() for _ in range(5 + int(include_cross_dupe))]
         try:
-            rows_u, rows_s, rows_sm, rows_cy, rows_cd = await asyncio.gather(
+            rows_u, rows_s, rows_sm, rows_cy, rows_af, rows_cd = await asyncio.gather(
                 self._run_on_conn(conns[0], u_sql, u_params),
                 self._run_on_conn(conns[1], s_sql, s_params),
                 self._run_on_conn(conns[2], sm_sql, sm_params),
                 self._run_on_conn(conns[3], cy_sql, cy_params),
-                self._run_on_conn(conns[4], cd_sql, cd_params) if include_cross_dupe else _no_rows(),
+                self._run_on_conn(conns[4], af_sql, af_params),
+                self._run_on_conn(conns[5], cd_sql, cd_params) if include_cross_dupe else _no_rows(),
             )
         finally:
             for conn in conns:
@@ -464,4 +537,5 @@ class FilterRepository:
             {r["channel_id"]: (r["total"], r["short"] or 0) for r in rows_sm},
             {r["channel_id"]: (r["uniq_total"], r["duped"] or 0) for r in rows_cd},
             {r["channel_id"]: (r["total"], r["cyr"] or 0) for r in rows_cy},
+            {r["channel_id"]: (r["total"], r["short_link"] or 0) for r in rows_af},
         )

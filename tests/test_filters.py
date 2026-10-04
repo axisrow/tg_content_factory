@@ -40,6 +40,16 @@ async def raw_db(db):
     return db.db
 
 
+_AUTO_FEED_TEMPLATE = "Exploit Slug #{i} | RCE in Product | PoC https://example.com/poc/{i}"
+
+
+def _author_texts(count: int) -> list[str]:
+    return [
+        f"Long-form analysis part {i}: " + ("подробный разбор методологии исследования " * 6) + f"выводы {i}"
+        for i in range(count)
+    ]
+
+
 class TestContainsCyrillic:
     def test_cyrillic(self):
         assert contains_cyrillic("Привет") is True
@@ -63,7 +73,8 @@ class TestValidFlags:
         assert "username_changed" in VALID_FLAGS
         assert "title_changed" in VALID_FLAGS
         assert "suspicious_username" in VALID_FLAGS
-        assert len(VALID_FLAGS) == 10
+        assert "auto_feed" in VALID_FLAGS
+        assert len(VALID_FLAGS) == 11
 
 
 class TestAnalyzerLowUniqueness:
@@ -151,6 +162,44 @@ class TestAnalyzerCrossChannelDupes:
         assert "cross_channel_spam" in result.flags
 
 
+class TestAnalyzerAutoFeed:
+    """«Автогенерённая лента»: короткие посты (<200 симв.) со ссылкой наружу."""
+
+    async def test_templated_link_feed_flagged(self, db, raw_db):
+        await _insert_channel(raw_db, 400)
+        await _insert_messages(raw_db, 400, [_AUTO_FEED_TEMPLATE.format(i=i) for i in range(40)])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(400)
+        assert result.auto_feed_pct == 100.0
+        assert "auto_feed" in result.flags
+
+    async def test_author_content_not_flagged(self, db, raw_db):
+        await _insert_channel(raw_db, 401)
+        await _insert_messages(raw_db, 401, _author_texts(40))
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(401)
+        assert result.auto_feed_pct == 0.0
+        assert "auto_feed" not in result.flags
+
+    async def test_mixed_below_threshold_not_flagged(self, db, raw_db):
+        await _insert_channel(raw_db, 402)
+        texts = [_AUTO_FEED_TEMPLATE.format(i=i) for i in range(20)]
+        texts += _author_texts(20)
+        await _insert_messages(raw_db, 402, texts)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(402)
+        assert result.auto_feed_pct == 50.0
+        assert "auto_feed" not in result.flags
+
+    async def test_too_few_messages_not_flagged(self, db, raw_db):
+        await _insert_channel(raw_db, 403)
+        await _insert_messages(raw_db, 403, [_AUTO_FEED_TEMPLATE.format(i=i) for i in range(10)])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(403)
+        assert result.auto_feed_pct == 100.0
+        assert "auto_feed" not in result.flags
+
+
 class TestAnalyzeAllQuickMode:
     """quick=True skips the cross-dupe map — the heaviest query on live DBs (#774)."""
 
@@ -187,10 +236,10 @@ class TestAnalyzeAllQuickMode:
             repo = file_db.filter_repo
             assert repo._can_parallel()
 
-            *_, full_cross_map, _ = await repo.fetch_maps_parallel(None)
+            _, _, _, full_cross_map, _, _ = await repo.fetch_maps_parallel(None)
             assert full_cross_map
 
-            *_, quick_cross_map, _ = await repo.fetch_maps_parallel(None, include_cross_dupe=False)
+            _, _, _, quick_cross_map, _, _ = await repo.fetch_maps_parallel(None, include_cross_dupe=False)
             assert quick_cross_map == {}
 
             quick = await ChannelAnalyzer(file_db).analyze_all(quick=True)
@@ -198,6 +247,17 @@ class TestAnalyzeAllQuickMode:
             assert all("cross_channel_spam" not in r.flags for r in quick.results)
         finally:
             await file_db.close()
+
+    async def test_analyze_all_quick_computes_auto_feed(self, db, raw_db):
+        """auto_feed, в отличие от cross-dupe, считается и в quick (sampled-путь)."""
+        await _insert_channel(raw_db, 502)
+        await _insert_messages(raw_db, 502, [_AUTO_FEED_TEMPLATE.format(i=i) for i in range(40)])
+        analyzer = ChannelAnalyzer(db)
+
+        quick = await analyzer.analyze_all(quick=True, sample_size=50)
+        result = next(r for r in quick.results if r.channel_id == 502)
+        assert result.auto_feed_pct == 100.0
+        assert "auto_feed" in result.flags
 
 
 class TestAnalyzeAllQuickSampling:

@@ -21,7 +21,7 @@ from src.database.repositories._transactions import begin_immediate
 from src.database.repositories.accounts import AccountsRepository
 from src.database.repositories.channel_ratings import ChannelRatingsRepository
 from src.database.repositories.channel_stats import ChannelStatsRepository
-from src.database.repositories.channels import ChannelsRepository
+from src.database.repositories.channels import ChannelBulkUpdateResult, ChannelsRepository
 from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.database.repositories.content_pipelines import ContentPipelinesRepository
 from src.database.repositories.decisions import DecisionsRepository
@@ -581,7 +581,7 @@ class Database:
         actor: str | None = None,
         reason: str | None = None,
         commit: bool = True,
-    ) -> tuple[int, int]:
+    ) -> ChannelBulkUpdateResult:
         self._require()
         assert self._channels is not None, (
             "Database.set_channels_filtered_bulk requires initialized ChannelsRepository"

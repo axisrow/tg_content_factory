@@ -14,6 +14,7 @@ class ChannelFilterResult(BaseModel):
     cyrillic_pct: float | None = None
     short_msg_pct: float | None = None
     cross_dupe_pct: float | None = None
+    auto_feed_pct: float | None = None
     is_filtered: bool = False
 
 
