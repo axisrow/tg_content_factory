@@ -770,3 +770,36 @@ async def test_clear_preferred_phone_if_matches_noop_when_different(channels_rep
 
     # B's valid owner must survive — the stale clear matched no row.
     assert await channels_repo.get_preferred_phone(1) == "+7002"
+
+
+# ── Whitelist suspects: «авторский контент» tag vs filter flags (#1490) ──────
+
+
+async def test_fetch_suspect_channels_lists_tagged_with_flags(channels_repo):
+    """Suspect = канал с whitelist-тегом И любыми filter-флагами (противоречие)."""
+    pk_tagged = await channels_repo.add_channel(
+        make_channel(1001, title="Authorial", username="authorial")
+    )
+    await channels_repo.set_channel_tags(pk_tagged, ["авторский контент"])
+    await channels_repo.set_channel_filter_flags(pk_tagged, "cross_channel_spam")
+
+    # Тег есть, флагов нет — не подозреваемый.
+    pk_clean = await channels_repo.add_channel(make_channel(1002, username="clean"))
+    await channels_repo.set_channel_tags(pk_clean, ["авторский контент"])
+
+    # Флаги есть, тега нет — не подозреваемый.
+    pk_other = await channels_repo.add_channel(make_channel(1003, username="other"))
+    await channels_repo.set_channel_tags(pk_other, ["что-то другое"])
+    await channels_repo.set_channel_filter_flags(pk_other, "chat_noise")
+
+    suspects = await channels_repo.fetch_suspect_channels("авторский контент")
+    assert [s["pk"] for s in suspects] == [pk_tagged]
+    assert suspects[0]["username"] == "authorial"
+    assert suspects[0]["filter_flags"] == "cross_channel_spam"
+    assert suspects[0]["is_filtered"] == 1
+
+
+async def test_fetch_suspect_channels_empty_when_no_overlap(channels_repo):
+    pk = await channels_repo.add_channel(make_channel(2001, username="solo"))
+    await channels_repo.set_channel_tags(pk, ["авторский контент"])
+    assert await channels_repo.fetch_suspect_channels("авторский контент") == []

@@ -14,7 +14,7 @@ flags; anything not listed — check `--help`.
 ```
 channel list | add | delete | toggle | collect | stats | refresh-types | refresh-meta
 channel import | add-bulk | list-for-import | candidates | tag (list|add|delete|set|get)
-filter analyze | apply | reset | precheck | toggle | purge | purge-messages | hard-delete
+filter analyze | apply | reset | precheck | suspects | toggle | purge | purge-messages | hard-delete
 ```
 
 - `channel collect [--channel-id ID]` — incremental collection for one channel; without flags
@@ -26,6 +26,9 @@ filter analyze | apply | reset | precheck | toggle | purge | purge-messages | ha
   (activates with human origin) + `channel collect --channel-id ID` for the first fetch.
 - `filter analyze|apply` — score channels for spam/quality; filtered channels are skipped
   unless `force=True`.
+- `filter suspects` — read-only contradiction report (#1490): channels carrying the
+  «авторский контент» trust tag together with filter flags — candidates for a wrong
+  automatic filter decision. Changes nothing; review and decide manually.
 
 ## reading & search
 

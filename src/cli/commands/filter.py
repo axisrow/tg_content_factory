@@ -21,7 +21,7 @@ from src.cli.commands.common import (
 )
 from src.database.bundles import ChannelBundle
 from src.filters.analyzer import ChannelAnalyzer
-from src.filters.criteria import DEFAULT_QUICK_SAMPLE_SIZE
+from src.filters.criteria import AUTHOR_CONTENT_TAG, DEFAULT_QUICK_SAMPLE_SIZE
 from src.services.channel_service import ChannelService
 from src.services.filter_deletion_service import FilterDeletionService
 
@@ -131,6 +131,39 @@ async def precheck_impl(config_path: str) -> None:
             f"Pre-filter applied: {count} channels marked as filtered"
             " (low_subscriber_ratio)."
         )
+    finally:
+        await db.close()
+
+
+async def suspects_impl(config_path: str) -> None:
+    """Whitelist↔blacklist contradiction report: «авторский контент» + flags (#1490).
+
+    Read-only: errors of the filter surface here for a human decision; behavior
+    (is_filtered / collection) is not changed by this command.
+    """
+    _, db = await runtime.init_db(config_path)
+    try:
+        suspects = await db.repos.channels.fetch_suspect_channels(AUTHOR_CONTENT_TAG)
+        if not suspects:
+            print("No suspects: no channel carries the author-content tag together with filter flags.")
+            return
+        print(f"Suspects (author-content tag + filter flags): {len(suspects)}")
+        fmt = "{:<6} {:<22} {:<30} {:<9} {:<7}"
+        print(fmt.format("Pk", "Username", "Title", "Filtered", "Active") + " Flags")
+        print("-" * 110)
+        for s in suspects:
+            # Flags are the decision evidence: never truncate (Codex P2 #1493) —
+            # a mid-flag slice would hide reasons from the human reviewing.
+            print(
+                fmt.format(
+                    s["pk"],
+                    f"@{(s['username'] or '-')}"[:22],
+                    (s["title"] or "-")[:30],
+                    "yes" if s["is_filtered"] else "no",
+                    "yes" if s["is_active"] else "no",
+                )
+                + f" {s['filter_flags'] or '-'}"
+            )
     finally:
         await db.close()
 
@@ -307,7 +340,7 @@ def run(args: argparse.Namespace) -> None:
     """
     action = getattr(args, "filter_action", None)
     if not action:
-        print("Usage: filter {analyze|apply|reset|purge|hard-delete}")
+        print("Usage: filter {analyze|apply|reset|purge|hard-delete|suspects}")
         return
     if action == "analyze":
         asyncio.run(
@@ -321,6 +354,8 @@ def run(args: argparse.Namespace) -> None:
         asyncio.run(apply_impl(args.config))
     elif action == "precheck":
         asyncio.run(precheck_impl(args.config))
+    elif action == "suspects":
+        asyncio.run(suspects_impl(args.config))
     elif action == "toggle":
         asyncio.run(toggle_impl(args.config, pk=args.pk))
     elif action == "reset":
@@ -395,6 +430,13 @@ def filter_precheck(ctx: typer.Context) -> None:
     """Apply pre-filter by subscriber ratio (no Telegram needed)."""
     apply_startup(ctx)
     run_async(precheck_impl(ctx.obj.config))
+
+
+@filter_app.command("suspects")
+def filter_suspects(ctx: typer.Context) -> None:
+    """Channels tagged «авторский контент» that also carry filter flags (#1490)."""
+    apply_startup(ctx)
+    run_async(suspects_impl(ctx.obj.config))
 
 
 @filter_app.command("backfill-private")

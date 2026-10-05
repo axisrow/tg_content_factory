@@ -213,6 +213,9 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("filter", "purge"): "local message deletion",
     ("filter", "purge-messages"): "local message deletion",
     ("filter", "reset"): "local filter mutation",
+    ("filter", "suspects"): (
+        "local read-only whitelist/blacklist contradiction report; covered by repo and CLI unit tests"
+    ),
     ("filter", "toggle"): "local filter mutation",
     ("image", "generate"): "provider spend/write operation",
     ("image", "models"): "provider/network enumeration",

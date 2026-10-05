@@ -1011,6 +1011,26 @@ class ChannelsRepository:
         )
         return [row["name"] for row in await cur.fetchall()]
 
+    async def fetch_suspect_channels(self, tag_name: str) -> list[dict]:
+        """Каналы с тегом ``tag_name``, у которых есть любые filter-флаги (#1490).
+
+        Whitelist-подход: тег доверия «авторский контент» противоречит blacklist-флагам
+        — такое пересечение это подозрение на ошибку фильтра, отчёт только читает.
+        Read-model без моделей: dict со ключами pk/channel_id/username/title/
+        is_filtered/is_active/filter_flags (паттерн read-model dict, как в heatmap).
+        """
+        cur = await self._db.execute(
+            """SELECT c.id AS pk, c.channel_id, c.username, c.title,
+                      c.is_filtered, c.is_active, c.filter_flags
+               FROM channels c
+               JOIN channel_tags ct ON ct.channel_pk = c.id
+               JOIN tags t ON t.id = ct.tag_id
+               WHERE t.name = ? AND c.filter_flags != ''
+               ORDER BY c.id""",
+            (tag_name,),
+        )
+        return [dict(row) for row in await cur.fetchall()]
+
     async def set_channel_tags(self, channel_pk: int, tag_names: list[str]) -> None:
         """Полностью заменить набор тегов канала на ``tag_names`` (недостающие теги создаются), одной транзакцией."""
         assert self._database is not None, (
