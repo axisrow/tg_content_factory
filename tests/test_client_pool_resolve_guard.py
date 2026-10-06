@@ -444,3 +444,36 @@ class TestPersistence:
         # Nothing restored, legacy key left intact for the next start.
         assert pool.get_resolve_username_backoff_remaining_sec() == 0
         set_setting.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_sustained_resolve_volume_capped_per_hour():
+    """#1498: burst-лимитер (20/60с) не ограничивает накопленный объём.
+
+    Холодная догонка 06.10.26 (623 канала) легально стреляла 20 resolve/мин
+    на аккаунт ~20 минут — Telegram эскалировал в FloodWait 49613s на
+    +66...2247 при полностью «зелёном» гарде. Объёмный бюджет обязан
+    останавливать серию.
+    """
+    pool = ClientPool.__new__(ClientPool)
+    pool.report_flood = AsyncMock()
+    t = {"now": 0.0}
+
+    def fake_now() -> float:
+        return t["now"]
+
+    pool._resolve_rate_limiter = ResolveRateLimiter(
+        max_calls=20, window_sec=60.0, jitter_sec=0.0, time_func=fake_now
+    )
+    pool._resolve_volume_limiter = ResolveRateLimiter(
+        max_calls=60, window_sec=3600.0, jitter_sec=0.0, time_func=fake_now
+    )
+
+    allowed = 0
+    for _ in range(180):  # 3 часа по 20 «легальных» вызовов в минуту
+        for _ in range(20):
+            if pool.reserve_resolve_username_call("+7001") == 0.0:
+                allowed += 1
+        t["now"] += 60.0
+
+    assert allowed <= 180, f"volume budget ignored: allowed {allowed} calls in 3h"
