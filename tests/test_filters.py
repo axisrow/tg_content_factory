@@ -406,6 +406,8 @@ class TestAnalyzerNonCyrillic:
         result = await analyzer.analyze_channel(401)
         assert result.cyrillic_pct == 0.0
         assert "non_cyrillic" in result.flags
+        # non_cyrillic — флаг-метка (решение владельца 06.10.26): не блокирует сбор.
+        assert result.is_filtered is False
 
     async def test_mixed_content_channel(self, db, raw_db):
         await _insert_channel(raw_db, 402)
@@ -937,3 +939,72 @@ class TestChannelAnalyzer:
         ch900 = next(r for r in report.results if r.channel_id == 900)
         assert ch900.cross_dupe_pct == 66.7
         assert "cross_channel_spam" in ch900.flags
+
+
+class TestApplyFiltersKeepTag:
+    async def _tag_channel(self, raw_db, channel_id: int, tag: str) -> None:
+        await raw_db.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (tag,))
+        await raw_db.execute(
+            "INSERT INTO channel_tags (channel_pk, tag_id) "
+            "SELECT c.id, t.id FROM channels c, tags t "
+            "WHERE c.channel_id = ? AND t.name = ?",
+            (channel_id, tag),
+        )
+        await raw_db.commit()
+
+    async def test_keep_tag_escrow_blocks_autofilter(self, db, raw_db):
+        from src.filters.criteria import KEEP_TAG
+
+        # 900: keep-канал со спам-username — флаг ставится меткой, сбор не блокирует.
+        await _insert_channel(raw_db, 900, username="S0IMD1EDUAW")
+        await _insert_messages(raw_db, 900, ["hello world", "another text"])
+        await raw_db.execute(
+            "UPDATE channels SET is_filtered = 1, filter_flags = 'low_subscriber_ratio' "
+            "WHERE channel_id = 900"
+        )
+        await self._tag_channel(raw_db, 900, KEEP_TAG)
+        # 901: тот же спам-username без тега — обычный авто-фильтр.
+        await _insert_channel(raw_db, 901, username="EXF74CHE3RZ1")
+        await _insert_messages(raw_db, 901, ["hello world", "another text"])
+
+        analyzer = ChannelAnalyzer(db)
+        report = await analyzer.analyze_all()
+        await analyzer.apply_filters(report)
+
+        cur = await raw_db.execute(
+            "SELECT channel_id, is_filtered, filter_flags FROM channels "
+            "WHERE channel_id IN (900, 901)"
+        )
+        rows = {r[0]: (r[1], r[2]) for r in await cur.fetchall()}
+
+        filtered, flags_901 = rows[901]
+        assert filtered == 1
+        assert "suspicious_username" in flags_901
+
+        unfiltered, flags_900 = rows[900]
+        assert unfiltered == 0
+        # старые метки не потеряны + свежая метка доложена
+        assert "low_subscriber_ratio" in flags_900
+        assert "suspicious_username" in flags_900
+
+    async def test_keep_tag_channel_without_flags_gets_no_flags(self, db, raw_db):
+        from src.filters.criteria import KEEP_TAG
+
+        # Чистый keep-канал: эскроу не должен вешать флаги из воздуха.
+        await _insert_channel(raw_db, 910)
+        await _insert_messages(raw_db, 910, ["clean unique post", "one more clean post"])
+        await self._tag_channel(raw_db, 910, KEEP_TAG)
+
+        analyzer = ChannelAnalyzer(db)
+        report = await analyzer.analyze_all()
+        await analyzer.apply_filters(report)
+
+        cur = await raw_db.execute(
+            "SELECT is_filtered, filter_flags FROM channels WHERE channel_id = 910"
+        )
+        is_filtered, filter_flags = await cur.fetchone()
+        assert is_filtered == 0
+        # Эскроу не вешает блокирующих флагов: только метки (тут — non_cyrillic).
+        from src.filters.criteria import LABEL_ONLY_FLAGS
+
+        assert set((filter_flags or "").split(",")) - {""} <= LABEL_ONLY_FLAGS
