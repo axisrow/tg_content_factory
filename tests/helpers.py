@@ -29,7 +29,11 @@ from src.search.engine import SearchEngine
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
-from src.telegram.resolve_guard import ResolveGuardMixin
+from src.telegram.resolve_guard import (
+    DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
+    DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
+    ResolveGuardMixin,
+)
 from src.web.app import create_app
 
 
@@ -459,7 +463,12 @@ class FakeClientPool(ResolveGuardMixin, MagicMock):
 
     def __init__(self, **kwargs):
         super().__init__()
-        self._resolve_rate_limiter = ResolveRateLimiter()
+        # Тот же бюджет, что в проде (client_pool), — харнесс гоняет
+        # sustained-дефер сквозь реальную логику гарда (ревью #1498 #5).
+        self._resolve_rate_limiter = ResolveRateLimiter(
+            sustained_max_calls=DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
+            sustained_window_sec=DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
+        )
         self._resolve_username_backoff_until_utc = {}
         self._resolve_ramp_up_until_utc = {}
         self._resolve_ramp_up_last_call_utc = {}

@@ -100,7 +100,12 @@ class ResolveGuardMixin:
     def _get_resolve_rate_limiter(self) -> ResolveRateLimiter:
         limiter = getattr(self, "_resolve_rate_limiter", None)
         if not isinstance(limiter, ResolveRateLimiter):
-            limiter = ResolveRateLimiter()
+            # Fallback с тем же объёмным бюджетом, что и прод-конструктор
+            # client_pool (ревью #1498 #5): путь без бюджета — регрессия.
+            limiter = ResolveRateLimiter(
+                sustained_max_calls=DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
+                sustained_window_sec=DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
+            )
             self._resolve_rate_limiter = limiter
         return limiter
 
@@ -325,7 +330,10 @@ class ResolveGuardMixin:
                 if elapsed < min_interval:
                     return min_interval - elapsed
             last_map[phone] = now
-            return 0.0
+            # Пейсинг ramp-up сам по себе пропускал 12 вызовов/мин (~720/час) —
+            # в 12 раз выше объёмного бюджета #1498, причём сразу после
+            # эскалации Telegram (ревью #1498, HIGH). Проваливаемся в лимитер:
+            # burst + sustained применяются поверх 5с-интервала.
         return self._get_resolve_rate_limiter().try_acquire(phone)
 
     @staticmethod
