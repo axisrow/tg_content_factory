@@ -456,7 +456,7 @@ async def test_sustained_resolve_volume_capped_per_hour():
     на аккаунт ~20 минут — Telegram эскалировал в FloodWait 49613s на
     +66...2247 при полностью «зелёном» гарде. Объёмный бюджет обязан
     останавливать серию; механика — sustained-ярус ResolveRateLimiter
-    (telethon-floodgate 0.1.2), конфиг — DEFAULT_RESOLVE_VOLUME_*.
+    (telethon-floodgate 0.1.1), конфиг — DEFAULT_RESOLVE_VOLUME_*.
     """
     pool = ClientPool.__new__(ClientPool)
     pool.report_flood = AsyncMock()

@@ -210,7 +210,7 @@ class ClientPool(
         self._premium_flood_wait_until: dict[str, datetime] = {}
         # Sustained-volume tier (#1498, инцидент 06.10.26): burst 20/60с
         # пропускал неограниченный поток легальных resolve-ов до FloodWait
-        # 49613s. Механика — в telethon-floodgate (sustained-ярус 0.1.2),
+        # 49613s. Механика — в telethon-floodgate (sustained-ярус 0.1.1),
         # здесь только конфиг проекта.
         self._resolve_rate_limiter = ResolveRateLimiter(
             sustained_max_calls=DEFAULT_RESOLVE_VOLUME_MAX_CALLS,

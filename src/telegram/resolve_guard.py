@@ -33,7 +33,7 @@ RESOLVE_BACKOFF_LEGACY_SETTING = "resolve_username_backoff_until_utc"
 # (20/60с) пропускал неограниченный sustained-объём — холодная догонка 623
 # канала легально стреляла 20 resolve/мин ~20 минут, Telegram эскалировал в
 # FloodWait 49613s. Механика — sustained-ярус ResolveRateLimiter в
-# telethon-floodgate 0.1.2 (параметры конструктора в client_pool); здесь
+# telethon-floodgate 0.1.1 (параметры конструктора в client_pool); здесь
 # только конфигурация проекта. Холодная догонка 600+ каналов растягивается
 # на часы через штатную дефер-логику очереди, а не выжигает аккаунт.
 DEFAULT_RESOLVE_VOLUME_MAX_CALLS = 60
