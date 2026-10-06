@@ -60,7 +60,6 @@ from telethon.tl.types import ChannelForbidden  # noqa: F401
 from telethon_floodgate import (
     FloodCircuitBreaker,
     RateLimitSpec,
-    ResolveRateLimiter,
     TelegramRateLimitGate,
 )
 
@@ -86,11 +85,7 @@ from src.telegram.pool_dialogs import (
 )
 from src.telegram.pool_flood import FloodRotationMixin
 from src.telegram.pool_lifecycle import ClientLifecycleMixin
-from src.telegram.resolve_guard import (
-    DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
-    DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
-    ResolveGuardMixin,
-)
+from src.telegram.resolve_guard import ResolveGuardMixin, build_resolve_rate_limiter
 from src.telegram.session_materializer import SessionMaterializer
 
 logger = logging.getLogger(__name__)
@@ -210,12 +205,9 @@ class ClientPool(
         self._premium_flood_wait_until: dict[str, datetime] = {}
         # Sustained-volume tier (#1498, инцидент 06.10.26): burst 20/60с
         # пропускал неограниченный поток легальных resolve-ов до FloodWait
-        # 49613s. Механика — в telethon-floodgate (sustained-ярус 0.1.1),
-        # здесь только конфиг проекта.
-        self._resolve_rate_limiter = ResolveRateLimiter(
-            sustained_max_calls=DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
-            sustained_window_sec=DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
-        )
+        # 49613s. Механика — в telethon-floodgate, сборка через фабрику
+        # resolve_guard (одна точка конфига на все места создания).
+        self._resolve_rate_limiter = build_resolve_rate_limiter()
         # Central proactive gate.  ``history`` is calibrated from the
         # production log sample (#1418); the remaining categories are the
         # package's conservative operating defaults pending production

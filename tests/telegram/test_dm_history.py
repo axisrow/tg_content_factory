@@ -26,6 +26,10 @@ class _FakePoolClient:
 
     connect()/disconnect() would tear down (or hijack) the pool's own live
     connection, so both are wired to fail the test if ever called.
+    Contract for tg-messenger 0.1.1 + floodgate 0.1.2: ``get_input_entity``
+    (warm-entity path in history()), iterator exposes callable ``.client``
+    (floodgate's gate_message_iterator requirement), raw ``__call__`` must
+    never fire in these tests.
     """
 
     connect = _fail
@@ -34,12 +38,32 @@ class _FakePoolClient:
     def __init__(self, messages):
         self._messages = messages
 
+    async def get_input_entity(self, pid):
+        return SimpleNamespace(user_id=None, channel_id=None)
+
+    def __call__(self, request):
+        raise AssertionError("raw RPC via __call__ is not expected in these tests")
+
     def iter_messages(self, peer, limit=50, offset_id=0):
         async def _gen():
             for m in self._messages:
                 yield m
 
-        return _gen()
+        return _FakeGatedIterator(_gen(), self)
+
+
+class _FakeGatedIterator:
+    """Telethon-RequestIter stand-in: floodgate 0.1.2 requires ``.client`` callable."""
+
+    def __init__(self, agen, client):
+        self._agen = agen
+        self.client = client
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        return await self._agen.__anext__()
 
 
 @pytest.mark.anyio

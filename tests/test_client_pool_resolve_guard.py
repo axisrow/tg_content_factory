@@ -17,6 +17,7 @@ from src.telegram.resolve_guard import (
     RESOLVE_BACKOFF_LEGACY_SETTING,
     ResolveGuardMixin,
 )
+from tests.helpers import make_resolve_limiter
 
 
 @pytest.mark.anyio
@@ -464,7 +465,7 @@ async def test_sustained_resolve_volume_capped_per_hour():
     def fake_now() -> float:
         return t["now"]
 
-    pool._resolve_rate_limiter = ResolveRateLimiter(
+    pool._resolve_rate_limiter = make_resolve_limiter(
         max_calls=20,
         window_sec=60.0,
         jitter_sec=0.0,
@@ -494,7 +495,7 @@ async def test_ramp_up_does_not_bypass_volume_budget():
     def fake_now() -> float:
         return t["now"]
 
-    pool._resolve_rate_limiter = ResolveRateLimiter(
+    pool._resolve_rate_limiter = make_resolve_limiter(
         max_calls=20,
         window_sec=60.0,
         jitter_sec=0.0,
@@ -520,7 +521,7 @@ async def test_ramp_up_does_not_bypass_volume_budget():
     )
 
 
-def test_client_pool_wires_sustained_tier_from_config():
+def test_client_pool_wires_sustained_tier():
     """Ревью #1498 (MEDIUM): мутант «удали sustained-kwargs из client_pool»
     переживал сюит — прод-обвязка не была покрыта."""
     db = MagicMock()
@@ -531,5 +532,18 @@ def test_client_pool_wires_sustained_tier_from_config():
 
     pool = ClientPool(auth, db)
 
-    assert pool._resolve_rate_limiter._sustained_max_calls == DEFAULT_RESOLVE_VOLUME_MAX_CALLS
-    assert pool._resolve_rate_limiter._sustained_window_sec == DEFAULT_RESOLVE_VOLUME_WINDOW_SEC
+    # getattr-строки, а не приватные атрибуты: не клеим сюит к внутренностям
+    # пакета (ревью #1498 #9) и не зависим от резолва его типов IDE.
+    limiter = pool._resolve_rate_limiter
+    assert getattr(limiter, "_sustained_max_calls", None) == DEFAULT_RESOLVE_VOLUME_MAX_CALLS
+    assert getattr(limiter, "_sustained_window_sec", None) == DEFAULT_RESOLVE_VOLUME_WINDOW_SEC
+
+
+def test_fallback_limiter_carries_volume_budget():
+    """Ревью #1498 #7: ленивый fallback миксина (пул без готового лимитера)
+    обязан строить sustained-бюджет фабрикой — иначе путь без бюджета
+    возвращается мутацией «верни bare ResolveRateLimiter()»."""
+    pool = ClientPool.__new__(ClientPool)
+    limiter = pool._get_resolve_rate_limiter()
+    assert getattr(limiter, "_sustained_max_calls", None) == DEFAULT_RESOLVE_VOLUME_MAX_CALLS
+    assert getattr(limiter, "_sustained_window_sec", None) == DEFAULT_RESOLVE_VOLUME_WINDOW_SEC

@@ -17,6 +17,21 @@ from tests.helpers import build_web_app, cli_ns, make_auth_client
 # ---------------------------------------------------------------------------
 
 _PHONE = "+79001234567"
+
+
+class _FakeGatedIterator:
+    """Telethon-RequestIter stand-in: floodgate 0.1.2 требует callable .client."""
+
+    def __init__(self, agen, client):
+        self._agen = agen
+        self.client = client
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        return await self._agen.__anext__()
+
 _SVC_DIALOGS = "src.services.channel_service.ChannelService.get_my_dialogs"
 
 _FAKE_DIALOGS = [
@@ -524,10 +539,16 @@ class TestCliRead:
         pool._auth = TelegramAuth(12345, "fakehash")
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.get_peer_id = AsyncMock(return_value=-100777)
+        # tg-messenger 0.1.1: warm-entity resolve перед iter_messages.
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
 
-        async def _iter_messages(peer, limit=50, offset_id=0):
-            for m in messages:
-                yield m
+        def _iter_messages(peer, limit=50, offset_id=0):
+            async def _gen():
+                for m in messages:
+                    yield m
+
+            # floodgate 0.1.2: итератор обязан нести callable .client.
+            return _FakeGatedIterator(_gen(), client)
 
         client.iter_messages = MagicMock(side_effect=_iter_messages)
         return pool, client

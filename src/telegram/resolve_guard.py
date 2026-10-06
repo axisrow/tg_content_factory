@@ -33,11 +33,24 @@ RESOLVE_BACKOFF_LEGACY_SETTING = "resolve_username_backoff_until_utc"
 # (20/60с) пропускал неограниченный sustained-объём — холодная догонка 623
 # канала легально стреляла 20 resolve/мин ~20 минут, Telegram эскалировал в
 # FloodWait 49613s. Механика — sustained-ярус ResolveRateLimiter в
-# telethon-floodgate 0.1.1 (параметры конструктора в client_pool); здесь
+# telethon-floodgate (параметры конструктора в client_pool); здесь
 # только конфигурация проекта. Холодная догонка 600+ каналов растягивается
 # на часы через штатную дефер-логику очереди, а не выжигает аккаунт.
 DEFAULT_RESOLVE_VOLUME_MAX_CALLS = 60
 DEFAULT_RESOLVE_VOLUME_WINDOW_SEC = 3600.0
+
+
+def build_resolve_rate_limiter() -> ResolveRateLimiter:
+    """Единая точка сборки лимитера с sustained-бюджетом.
+
+    Все места, где создаётся лимитер резолвов (client_pool, lazy-fallback
+    миксина, тестовый харнесс), обязаны идти через фабрику — ревью #1498 #8:
+    расхождение копий молча возвращало бы путь без бюджета.
+    """
+    return ResolveRateLimiter(
+        sustained_max_calls=DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
+        sustained_window_sec=DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
+    )
 
 
 def parse_resolve_backoff_setting(
@@ -100,12 +113,9 @@ class ResolveGuardMixin:
     def _get_resolve_rate_limiter(self) -> ResolveRateLimiter:
         limiter = getattr(self, "_resolve_rate_limiter", None)
         if not isinstance(limiter, ResolveRateLimiter):
-            # Fallback с тем же объёмным бюджетом, что и прод-конструктор
+            # Фабрика несёт тот же sustained-бюджет, что и прод-конструктор
             # client_pool (ревью #1498 #5): путь без бюджета — регрессия.
-            limiter = ResolveRateLimiter(
-                sustained_max_calls=DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
-                sustained_window_sec=DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
-            )
+            limiter = build_resolve_rate_limiter()
             self._resolve_rate_limiter = limiter
         return limiter
 

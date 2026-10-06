@@ -26,7 +26,7 @@ classifiers = [
 ]
 dependencies = [
     "telethon>=1.43.2",
-    "telethon-floodgate>=0.1.1,<0.2",
+    "telethon-floodgate>=0.1.2,<0.2",
     "telethon-cli>=0.1.1",
     # Telethon's SOCKS/HTTP proxy path (TG_PROXY) needs python-socks with the
     # asyncio extra; without it Telethon silently ignores `proxy=` (warns only).
