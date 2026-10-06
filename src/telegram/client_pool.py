@@ -86,7 +86,11 @@ from src.telegram.pool_dialogs import (
 )
 from src.telegram.pool_flood import FloodRotationMixin
 from src.telegram.pool_lifecycle import ClientLifecycleMixin
-from src.telegram.resolve_guard import ResolveGuardMixin
+from src.telegram.resolve_guard import (
+    DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
+    DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
+    ResolveGuardMixin,
+)
 from src.telegram.session_materializer import SessionMaterializer
 
 logger = logging.getLogger(__name__)
@@ -204,7 +208,14 @@ class ClientPool(
         self._dialogs_db_cache_ttl_sec = 3600.0  # 1 hour; stale DB cache triggers fresh Telegram fetch
         self._dialog_refresh_tasks: dict[tuple[str, str], asyncio.Task[list[dict]]] = {}
         self._premium_flood_wait_until: dict[str, datetime] = {}
-        self._resolve_rate_limiter = ResolveRateLimiter()
+        # Sustained-volume tier (#1498, инцидент 06.10.26): burst 20/60с
+        # пропускал неограниченный поток легальных resolve-ов до FloodWait
+        # 49613s. Механика — в telethon-floodgate (sustained-ярус 0.1.2),
+        # здесь только конфиг проекта.
+        self._resolve_rate_limiter = ResolveRateLimiter(
+            sustained_max_calls=DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
+            sustained_window_sec=DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
+        )
         # Central proactive gate.  ``history`` is calibrated from the
         # production log sample (#1418); the remaining categories are the
         # package's conservative operating defaults pending production

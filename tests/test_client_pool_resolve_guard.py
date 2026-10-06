@@ -11,6 +11,8 @@ from telethon_floodgate import HandledFloodWaitError, ResolveRateLimiter, Userna
 
 from src.telegram.client_pool import ClientPool
 from src.telegram.resolve_guard import (
+    DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
+    DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
     RESOLVE_BACKOFF_BY_PHONE_SETTING,
     RESOLVE_BACKOFF_LEGACY_SETTING,
     ResolveGuardMixin,
@@ -453,7 +455,8 @@ async def test_sustained_resolve_volume_capped_per_hour():
     Холодная догонка 06.10.26 (623 канала) легально стреляла 20 resolve/мин
     на аккаунт ~20 минут — Telegram эскалировал в FloodWait 49613s на
     +66...2247 при полностью «зелёном» гарде. Объёмный бюджет обязан
-    останавливать серию.
+    останавливать серию; механика — sustained-ярус ResolveRateLimiter
+    (telethon-floodgate 0.1.2), конфиг — DEFAULT_RESOLVE_VOLUME_*.
     """
     pool = ClientPool.__new__(ClientPool)
     pool.report_flood = AsyncMock()
@@ -463,10 +466,12 @@ async def test_sustained_resolve_volume_capped_per_hour():
         return t["now"]
 
     pool._resolve_rate_limiter = ResolveRateLimiter(
-        max_calls=20, window_sec=60.0, jitter_sec=0.0, time_func=fake_now
-    )
-    pool._resolve_volume_limiter = ResolveRateLimiter(
-        max_calls=60, window_sec=3600.0, jitter_sec=0.0, time_func=fake_now
+        max_calls=20,
+        window_sec=60.0,
+        jitter_sec=0.0,
+        time_func=fake_now,
+        sustained_max_calls=DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
+        sustained_window_sec=DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
     )
 
     allowed = 0

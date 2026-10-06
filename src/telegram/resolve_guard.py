@@ -29,11 +29,13 @@ logger = logging.getLogger(__name__)
 RESOLVE_BACKOFF_BY_PHONE_SETTING = "resolve_username_backoff_by_phone"
 RESOLVE_BACKOFF_LEGACY_SETTING = "resolve_username_backoff_until_utc"
 
-# Объёмный бюджет (#1498, инцидент 06.10.26): burst-лимитер (20/60с) пропускал
-# неограниченный sustained-объём — холодная догонка 623 канала легально стреляла
-# 20 resolve/мин ~20 минут, Telegram эскалировал в FloodWait 49613s. Скользящее
-# окно 60 вызовов/час/аккаунт сверху: холодная догонка 600+ каналов
-# растягивается на часы через штатную дефер-логику очереди, а не выжигает аккаунт.
+# Объёмный бюджет sustained-яруса (#1498, инцидент 06.10.26): burst-лимитер
+# (20/60с) пропускал неограниченный sustained-объём — холодная догонка 623
+# канала легально стреляла 20 resolve/мин ~20 минут, Telegram эскалировал в
+# FloodWait 49613s. Механика — sustained-ярус ResolveRateLimiter в
+# telethon-floodgate 0.1.2 (параметры конструктора в client_pool); здесь
+# только конфигурация проекта. Холодная догонка 600+ каналов растягивается
+# на часы через штатную дефер-логику очереди, а не выжигает аккаунт.
 DEFAULT_RESOLVE_VOLUME_MAX_CALLS = 60
 DEFAULT_RESOLVE_VOLUME_WINDOW_SEC = 3600.0
 
@@ -100,17 +102,6 @@ class ResolveGuardMixin:
         if not isinstance(limiter, ResolveRateLimiter):
             limiter = ResolveRateLimiter()
             self._resolve_rate_limiter = limiter
-        return limiter
-
-    def _get_resolve_volume_limiter(self) -> ResolveRateLimiter:
-        """Часовой объёмный бюджет (#1498) — lazy, как burst-лимитер выше."""
-        limiter = getattr(self, "_resolve_volume_limiter", None)
-        if not isinstance(limiter, ResolveRateLimiter):
-            limiter = ResolveRateLimiter(
-                max_calls=DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
-                window_sec=DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
-            )
-            self._resolve_volume_limiter = limiter
         return limiter
 
     def _resolve_guard_dict(self, attr: str) -> dict[str, datetime]:
@@ -335,12 +326,6 @@ class ResolveGuardMixin:
                     return min_interval - elapsed
             last_map[phone] = now
             return 0.0
-        # Объёмный бюджет ПЕРЕД burst-лимитером: отказ volume не тратит burst-слот.
-        # Обратный случай (volume взял слот, burst отказал) — консервативен:
-        # дефер выжигает часовой слот без запроса, реальный объём только ниже.
-        volume_retry = self._get_resolve_volume_limiter().try_acquire(phone)
-        if volume_retry > 0:
-            return volume_retry
         return self._get_resolve_rate_limiter().try_acquire(phone)
 
     @staticmethod
