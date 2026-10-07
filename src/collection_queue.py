@@ -91,7 +91,7 @@ class CollectionQueue:
     SHUTDOWN_REQUEUE_NOTE = "Остановка сервиса во время сбора; задача будет продолжена после запуска."
     NO_CLIENTS_REQUEUE_NOTE = "Отложено: нет подключённых активных аккаунтов для сбора."
     _CANCEL_SWEEP_INTERVAL_SEC = 1.0
-    _CANCEL_SWEEP_READ_TIMEOUT_SEC = 5.0
+    _CANCEL_SWEEP_READ_TIMEOUT_SEC = 1.0
 
     def __init__(
         self,
@@ -291,34 +291,76 @@ class CollectionQueue:
         task.add_done_callback(self._delayed_requeues.discard)
 
     async def _run_supervisor(self) -> None:
-        self._stop_workers = False
-        while not self._shutdown_requested and not self._stop_workers:
-            await self._maybe_arm_cancel_events_from_db()
-            if not self._resume_gate.is_set():
-                try:
-                    await asyncio.wait_for(self._resume_gate.wait(), timeout=1.0)
-                except asyncio.TimeoutError:
-                    continue
-                if self._shutdown_requested:
+        while not self._shutdown_requested:
+            # Сброс на каждом проходе внешнего цикла: выход хвоста по новой
+            # работе возобновляет штатный надзор (на main это делала рекреация
+            # умершего супервизора — хвост сделал супервизор бессмертным).
+            self._stop_workers = False
+            while not self._shutdown_requested and not self._stop_workers:
+                await self._maybe_arm_cancel_events_from_db()
+                if not self._resume_gate.is_set():
+                    try:
+                        await asyncio.wait_for(self._resume_gate.wait(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        continue
+                    if self._shutdown_requested:
+                        break
+
+                self._workers = [w for w in self._workers if not w.done()]
+                target = await self._available_target_worker_count()
+                while len(self._workers) < target:
+                    w = asyncio.create_task(self._run_single_worker())
+                    self._workers.append(w)
+
+                if not self._workers:
                     break
-
-            self._workers = [w for w in self._workers if not w.done()]
-            target = await self._available_target_worker_count()
-            while len(self._workers) < target:
-                w = asyncio.create_task(self._run_single_worker())
-                self._workers.append(w)
-
-            if not self._workers:
-                break
-            done, _ = await asyncio.wait(
-                self._workers,
-                timeout=1.0,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if done:
-                for w in done:
-                    if w in self._workers:
-                        self._workers.remove(w)
+                done, _ = await asyncio.wait(
+                    self._workers,
+                    timeout=1.0,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if done:
+                    for w in done:
+                        if w in self._workers:
+                            self._workers.remove(w)
+                        try:
+                            exc = w.exception()
+                        except asyncio.CancelledError:
+                            continue
+                        if exc is not None:
+                            logger.exception(
+                                "Collection queue worker crashed",
+                                exc_info=(type(exc), exc, exc.__traceback__),
+                            )
+                if not self._queue.empty() and len(self._workers) < target:
+                    continue
+                if (
+                    self._queue.empty()
+                    and not self._active_task_ids
+                    and not any(not worker.done() for worker in self._workers)
+                ):
+                    break
+            # _stop_workers (нет клиентов) заканчивает штатный надзор, пока
+            # чужие сборы ещё живы с удерживаемым клиентом — гасить своп отмены
+            # в этом окне нельзя: инцидент 07.10.26 не должен повторяться в нём
+            # (включая воркер, который ещё не дошёл до регистрации задачи).
+            # Условие выхода из хвоста: shutdown, пришла новая работа (штатный
+            # цикл выше продолжит надзор и сбросит _stop_workers — иначе
+            # enqueue больше не оживляет диспетчер, регрессия к main) или всё
+            # пусто (супервизор завершается; следующий enqueue пересоздаст).
+            while (
+                not self._shutdown_requested
+                and self._queue.empty()
+                and (
+                    self._active_task_ids
+                    or any(not worker.done() for worker in self._workers)
+                )
+            ):
+                await self._maybe_arm_cancel_events_from_db()
+                # В хвостовом окне штатный цикл не реапит воркеров — собрать
+                # креш, чтобы диагностика не превращалась в GC-предупреждение.
+                for w in [w for w in self._workers if w.done()]:
+                    self._workers.remove(w)
                     try:
                         exc = w.exception()
                     except asyncio.CancelledError:
@@ -328,20 +370,9 @@ class CollectionQueue:
                             "Collection queue worker crashed",
                             exc_info=(type(exc), exc, exc.__traceback__),
                         )
-            if not self._queue.empty() and len(self._workers) < target:
-                continue
-            if (
-                self._queue.empty()
-                and not self._active_task_ids
-                and not any(not worker.done() for worker in self._workers)
-            ):
+                await asyncio.sleep(self._CANCEL_SWEEP_INTERVAL_SEC)
+            if self._shutdown_requested or self._queue.empty():
                 break
-        # _stop_workers (нет клиентов) заканчивает надзор, пока чужие сборы ещё
-        # живы с удерживаемым клиентом — гасить своп отмены в этом окне нельзя:
-        # инцидент 07.10.26 не должен повторяться внутри него.
-        while self._active_task_ids and not self._shutdown_requested:
-            await self._maybe_arm_cancel_events_from_db()
-            await asyncio.sleep(self._CANCEL_SWEEP_INTERVAL_SEC)
 
     async def _maybe_arm_cancel_events_from_db(self) -> None:
         """Взвести cancel_events задач, отменённых другим процессом (инцидент
@@ -362,7 +393,6 @@ class CollectionQueue:
         now = time.monotonic()
         if now - self._last_cancel_sweep < self._CANCEL_SWEEP_INTERVAL_SEC:
             return
-        self._last_cancel_sweep = now
         # Снимок ДО await: задача, зарегистрированная в _active_task_ids, пока
         # выполняется SELECT, в выборку не попала — «нет в результате» для неё
         # означало бы ложную отмену только что начавшегося сбора.
@@ -373,6 +403,9 @@ class CollectionQueue:
         }
         if not queried:
             return
+        # Бюджет тика списываем только за реальный опрос: пустой своп не должен
+        # отодвигать следующий содержательный на полный интервал.
+        self._last_cancel_sweep = now
         try:
             status_pairs = await asyncio.wait_for(
                 self._channels.tasks.fetch_task_status_pairs(list(queried)),
