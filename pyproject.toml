@@ -277,3 +277,18 @@ ignore_property_decorators = true
 ignore_overloaded_functions = true
 exclude = ["tests", "scripts", "build", "dist", "site"]
 verbose = 1
+
+# Mutation testing (mutmut 3.8). Root-caused 07.10.26: mutmut is incompatible
+# with this repo's FLAT layout (import package literally named `src`) — it
+# unconditionally strips a `src.` prefix from module names (format_utils
+# get_mutant_name) and asserts against `src.`-prefixed trampoline hits
+# (stats.record_trampoline_hit), so every stats run dies on our
+# `src.*` modules. The sandbox-side failures (missing root conftest.py,
+# missing scripts/) are fixed here: [tool.mutmut] ships what tests read
+# outside src/tests. `mutmut run` now fails at the honest upstream blocker
+# instead of a confusing sandbox FileNotFoundError. Full mutation runs need
+# an upstream fix or a package rename — neither is cheap; the per-fix
+# mutation proof stays the documented red→green run (see /fix reports).
+[tool.mutmut]
+source_paths = ["src"]
+also_copy = ["conftest.py", "scripts"]
