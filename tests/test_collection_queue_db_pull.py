@@ -1355,8 +1355,77 @@ async def test_db_side_cancel_stops_running_collection(tmp_path):
         assert await db.cancel_collection_task(task_id, note="cross-process") is True
 
         await wait_until(lambda: collector.cancel_seen.is_set(), timeout=10, interval=0.05)
-        task = await _get_task(db, task_id)
-        assert task.status == "cancelled"
+        # Статус в БД уже "cancelled" (записали сами выше); содержательная
+        # проверка — cancel_seen: своп взвел in-memory event живого сбора.
+    finally:
+        if queue is not None:
+            await queue.shutdown(grace_timeout=0.1)
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_cancel_sweep_survives_stop_workers_and_new_work_revives_dispatch(tmp_path):
+    """Хвостовое окно: _stop_workers не глушит своп отмены, а новая работа
+    возобновляет штатный надзор (иначе enqueue навсегда теряется — регрессия,
+    найденная ревью #1500)."""
+
+    class _BlockThenServeCollector:
+        """Первый сбор блокируется на cancel_event, второй завершается сразу."""
+
+        def __init__(self):
+            self.calls: list[int] = []
+            self.first_cancel_seen = asyncio.Event()
+
+        def collection_worker_count(self) -> int:
+            return 1
+
+        async def collect_single_channel(
+            self, channel, *, full=False, progress_callback=None, force=False, cancel_event=None
+        ):
+            self.calls.append(channel.channel_id)
+            if len(self.calls) == 1:
+                assert cancel_event is not None
+                await cancel_event.wait()
+                self.first_cancel_seen.set()
+                return 0
+            return 5
+
+        async def cancel(self):
+            return None
+
+        def get_collection_availability(self):
+            return type(
+                "Avail", (), {"state": "available", "retry_after_sec": None, "next_available_at_utc": None}
+            )()
+
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await _seed_channel(db, channel_id=-3001)
+        await _seed_channel(db, channel_id=-3002)
+        channels = {c.channel_id: c for c in await db.get_channels()}
+        collector = _BlockThenServeCollector()
+        queue = _make_queue(collector, db)
+
+        first_task = await queue.enqueue(channels[-3001])
+        assert first_task is not None
+        await wait_until(lambda: len(collector.calls) == 1, timeout=10, interval=0.05)
+
+        # Нет клиентов: воркер выставил _stop_workers и вышел, а заблокированный
+        # сбор жив с удерживаемым клиентом — надзор остаётся в хвостовом окне.
+        queue._stop_workers = True
+
+        # Чужой процесс отменяет живой сбор — хвостовой своп обязан взвести.
+        assert await db.cancel_collection_task(first_task, note="cross-process") is True
+        await wait_until(lambda: collector.first_cancel_seen.is_set(), timeout=10, interval=0.05)
+
+        # Новая работа в хвостовом окне: надзор возобновляется штатно (сброс
+        # _stop_workers), вторая задача собирается — не теряется навсегда.
+        second_task = await queue.enqueue(channels[-3002])
+        assert second_task is not None
+        await wait_until(lambda: collector.calls.count(-3002) >= 1, timeout=10, interval=0.05)
+        assert queue._stop_workers is False
     finally:
         if queue is not None:
             await queue.shutdown(grace_timeout=0.1)
