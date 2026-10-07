@@ -64,7 +64,11 @@ pytest tests/test_web.py::test_health_endpoint -v
 # Benchmark serial vs safe mixed-mode suite execution
 python -m src.main test benchmark
 
-# Mutation testing (run only after the editable install above)
+# Mutation testing (run only after the editable install above).
+# CAVEAT: full runs are blocked upstream — mutmut 3.8 asserts against our flat
+# `src` import package (see [tool.mutmut] in pyproject.toml); the sandbox layer
+# (conftest/scripts/.github/docs copies) is configured there. Per-fix mutation
+# proof is the documented red→green run, not `mutmut run`.
 mutmut run
 ```
 
