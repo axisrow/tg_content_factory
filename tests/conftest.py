@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
@@ -88,6 +89,26 @@ def cli_env(cli_db):
         yield cli_db
 
 
+# Databases handed to cli_init_patch in the CURRENT test. Closed by the
+# autouse finalizer below — after the test ends, when nothing can legally use
+# them anymore. Left open, their aiosqlite connections are GC-finalized mid
+# suite and filterwarnings=error attributes the unraisable warning to a random
+# later test (the mutmut-sandbox flake that surfaced as test_adk_backend).
+_PATCHED_DBS: list[Database] = []
+
+
+@pytest.fixture(autouse=True)
+def _close_patched_databases():
+    yield
+    while _PATCHED_DBS:
+        db = _PATCHED_DBS.pop()
+        try:
+            if db._connection.db is not None:
+                asyncio.run(db.close())
+        except Exception as exc:  # noqa: BLE001 — teardown must not fail the suite
+            logging.getLogger(__name__).warning("test-db close failed: %s", exc)
+
+
 @pytest.fixture
 def cli_init_patch():
     """Patch one or more CLI init_db targets to return the provided database."""
@@ -101,6 +122,8 @@ def cli_init_patch():
     ):
         runtime_config = config or AppConfig()
         fresh_databases: list[Database] = []
+        if isinstance(db, Database):
+            _PATCHED_DBS.append(db)
 
         async def fake_init_db(_config_path: str):
             if isinstance(db, Database) and fresh_database:
