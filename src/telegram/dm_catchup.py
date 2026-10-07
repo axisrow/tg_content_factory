@@ -40,6 +40,7 @@ from pydantic import ValidationError
 from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitGate
 
 from src.models import DM_CATCHUP_SETTING_KEY, DmCatchupSettings, DmMessage, IncomingDm
+from src.telegram.collector_types import unknown_tl_type_note
 from src.telegram.dm_history import read_dialog_history_since
 
 logger = logging.getLogger(__name__)
@@ -158,22 +159,29 @@ class DmCatchupService:
             ]
             stats["dialogs"] = len(dialogs)
             now = datetime.now(timezone.utc)
+            attempted = 0
             for index, dialog in enumerate(dialogs):
+                chat_id = int(dialog["channel_id"])
+                attempted += 1
                 try:
                     outcome = await self._catch_up_dialog(
-                        phone, client, int(dialog["channel_id"]), settings, now, stats
+                        phone, client, chat_id, settings, now, stats
                     )
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
+                except Exception as exc:
                     # Один непарсящийся диалог (TypeNotFoundError на новых
                     # TL-типах — инцидент 07.10.26 «Searchee Bot») не убивает
                     # проход аккаунта: остальные диалоги догоняются дальше.
-                    logger.exception(
-                        "dm_catchup: %s chat %s упал; пропускаю диалог",
-                        phone,
-                        dialog["channel_id"],
-                    )
+                    # Известный TL-тип — warning с constructor-нотой (политика
+                    # unknown_tl_type_note, как в коллекторе); прочее — ERROR.
+                    note = unknown_tl_type_note(exc)
+                    if note is not None:
+                        logger.warning(
+                            "dm_catchup: %s chat %s: %s; диалог пропущен", phone, chat_id, note
+                        )
+                    else:
+                        logger.exception(
+                            "dm_catchup: %s chat %s упал; пропускаю диалог", phone, chat_id
+                        )
                     stats["errors"] += 1
                     continue
                 if outcome == "ok_full":
@@ -183,6 +191,15 @@ class DmCatchupService:
                     # отказались бы так же; догонит следующий триггер.
                     stats["deferred"] += 1 + (len(dialogs) - index - 1)
                     break
+            if attempted and stats["errors"] == attempted:
+                # Каждый attempted диалог упал: системный сбой (пул/БД/схема),
+                # а не рассыпанная флакость отдельных диалогов — fail-fast
+                # сигнал уровня аккаунта, не тихий errors=N.
+                logger.error(
+                    "dm_catchup: %s: все %d диалогов упали — системный сбой",
+                    phone,
+                    attempted,
+                )
         continue_pass = stats.pop("_continue", False)
         self._last_runs[phone] = {**stats, "finished_at": datetime.now(timezone.utc).isoformat()}
         return {**stats, "_continue": continue_pass}
@@ -207,6 +224,10 @@ class DmCatchupService:
         if not await self._acquire_history_slot(phone):
             return "deferred"
         auth = getattr(self._pool, "_auth", None)
+        if auth is None:
+            # Системная поломка пула, а не свойство диалога: громко — ловится
+            # проходом как ошибка диалога, и all-failed рапортует на аккаунт.
+            raise RuntimeError(f"dm_catchup: у пула нет _auth ({phone})")
         try:
             # Резолв с warm-then-retry прогревает кэш и валидирует peer, но в
             # чтение истории передаётся ЧИСЛОВОЙ id: адаптер делает int(peer)

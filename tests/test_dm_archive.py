@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 
+from telethon.errors import TypeNotFoundError
 from telethon_floodgate import (
     FloodWaitInfo,
     HandledFloodWaitError,
@@ -208,6 +209,34 @@ async def test_backfill_flood_skips_dialog_continues(tmp_path, monkeypatch):
         await db.close()
 
 
+async def test_backfill_tl_type_error_skips_dialog_continues(tmp_path, monkeypatch):
+    """TypeNotFoundError (TL-схема новее telethon — инцидент 07.10.26) на одном
+    диалоге — пропуск диалога и счётчик ошибок, не падение всего бэкфилла
+    (зеркало flood-теста: тот же класс, узкие except его не ловили).
+    """
+    db = await _make_db(tmp_path)
+    try:
+        client = _FakeRawClient()
+        downstream = _stub_history_since({43: [_FakeMessage(20)]})
+
+        async def _broken_first(cl, *, api_id, api_hash, peer, min_id=0, limit=500):
+            if peer == 42:
+                raise TypeNotFoundError(31774388, b"\x88Cw1+@\t")
+            return await downstream(
+                cl, api_id=api_id, api_hash=api_hash, peer=peer, min_id=min_id, limit=limit
+            )
+
+        monkeypatch.setattr(dm_archive, "read_dialog_history_since", _broken_first)
+        pool = _FakePool(client, _FakeSnapshot([_dialog(42), _dialog(43)]))
+
+        stats = await backfill_account(pool, db, "+111", progress=False)
+
+        assert stats["errors"] == 1
+        assert stats["archived"] == 1  # диалог 43 дожил
+    finally:
+        await db.close()
+
+
 class _AlwaysRefuseGate(TelegramRateLimitGate):
     """Гейт, всегда отказывающий: сервис гардится isinstance-ом (как в backends)."""
 
@@ -280,6 +309,27 @@ async def test_backfill_snapshot_failure_stops_before_reading(tmp_path, monkeypa
             assert stats == {"dialogs": 0, "archived": 0, "errors": 0, "incomplete": True}
             assert client.history_calls == []
             assert await db.repos.dm_messages.count("+111") == 0
+    finally:
+        await db.close()
+
+
+async def test_backfill_snapshot_tl_type_error_stops_before_reading(tmp_path, monkeypatch):
+    """TL-конструктор вне схемы telethon при листинге диалогов — честный стоп
+    с incomplete (как flood-путь), а не сырой traceback мимо CLI-подсказки:
+    с пустым кэшем механизм деградации пула ре-райзит, не глотает.
+    """
+    db = await _make_db(tmp_path)
+    try:
+        client = _FakeRawClient()
+        monkeypatch.setattr(
+            dm_archive, "read_dialog_history_since", _stub_history_since({42: [_FakeMessage(10)]})
+        )
+        pool = _FakePool(client, snapshot_error=TypeNotFoundError(31774388, b"\x88Cw1+@\t"))
+
+        stats = await backfill_account(pool, db, "+111", progress=False)
+
+        assert stats == {"dialogs": 0, "archived": 0, "errors": 0, "incomplete": True}
+        assert client.history_calls == []
     finally:
         await db.close()
 
