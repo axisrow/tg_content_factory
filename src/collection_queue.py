@@ -90,6 +90,7 @@ class CollectionQueue:
     FORCE_CANCEL_TIMEOUT_SEC = 10.0
     SHUTDOWN_REQUEUE_NOTE = "Остановка сервиса во время сбора; задача будет продолжена после запуска."
     NO_CLIENTS_REQUEUE_NOTE = "Отложено: нет подключённых активных аккаунтов для сбора."
+    _CANCEL_SWEEP_INTERVAL_SEC = 1.0
 
     def __init__(
         self,
@@ -112,6 +113,7 @@ class CollectionQueue:
         # restart. Kept strictly separate from _channel_private_error_counts.
         self._retry_pass: dict[int, int] = {}
         self._channel_private_error_counts: dict[int, int] = {}
+        self._last_cancel_sweep = 0.0
         self._delayed_requeues: set[asyncio.Task] = set()
         self._known_task_ids: set[int] = set()
         self._pull_task: asyncio.Task | None = None
@@ -290,6 +292,7 @@ class CollectionQueue:
     async def _run_supervisor(self) -> None:
         self._stop_workers = False
         while not self._shutdown_requested and not self._stop_workers:
+            await self._maybe_arm_cancel_events_from_db()
             if not self._resume_gate.is_set():
                 try:
                     await asyncio.wait_for(self._resume_gate.wait(), timeout=1.0)
@@ -324,7 +327,6 @@ class CollectionQueue:
                             "Collection queue worker crashed",
                             exc_info=(type(exc), exc, exc.__traceback__),
                         )
-            await self._arm_cancel_events_from_db()
             if not self._queue.empty() and len(self._workers) < target:
                 continue
             if (
@@ -334,23 +336,37 @@ class CollectionQueue:
             ):
                 break
 
-    async def _arm_cancel_events_from_db(self) -> None:
-        """Arm in-memory cancel_events for tasks cancelled in the DB by another process.
+    async def _maybe_arm_cancel_events_from_db(self) -> None:
+        """Взвести cancel_events задач, отменённых другим процессом (инцидент
+        07.10.26: CLI/БД переворачивают строку в CANCELLED, а in-memory
+        cancel_event живёт только здесь — сбор качал историю до конца).
 
-        The CLI/web/another worker can only flip the ``collection_tasks`` row to
-        CANCELLED — the cancel_event lives here (incident 07.10.26: a DB-cancelled
-        backfill kept pulling channel history until it drained). Polling once per
-        supervisor tick (~1s, ≤ worker-count point lookups) lets a running collect
-        stop at its next 10-message checkpoint.
+        Не чаще раза в секунду (monotonic-гейт), на каждой итерации супервизора
+        включая тики паузы — отмена из БД обязана останавливать активный сбор
+        и на паузе (pause() = «активные задачи дожидаются», и их отменяют как
+        раз в этот момент). При простое чтений нет: супервизор завершается.
+        Один пакетный ids+status SELECT — без материализации строки и
+        enum-каста; удалённая строка трактуется как отмена (зомби-сбор без
+        записи в БД хуже остановки). Сбой чтения логируется и повторяется на
+        следующем тике: опрос не должен убивать супервизор.
         """
-        for task_id, cancel_event in list(self._active_task_ids.items()):
-            if cancel_event.is_set():
-                continue
-            try:
-                task = await self._channels.get_collection_task(task_id)
-            except (DatabaseBusyError, sqlite3.OperationalError):
-                continue  # busy read must not fail the collection (#1249 semantics)
-            if task is not None and task.status == CollectionTaskStatus.CANCELLED:
+        now = time.monotonic()
+        if now - self._last_cancel_sweep < self._CANCEL_SWEEP_INTERVAL_SEC:
+            return
+        self._last_cancel_sweep = now
+        active = self._active_task_ids
+        if not active:
+            return
+        try:
+            status_pairs = await self._channels.tasks.fetch_task_status_pairs(list(active))
+        except Exception:
+            logger.exception("Cancel sweep DB read failed; retrying next tick")
+            return
+        status_by_id = dict(status_pairs)
+        for task_id, cancel_event in list(active.items()):
+            if task_id not in status_by_id or (
+                status_by_id[task_id] == CollectionTaskStatus.CANCELLED.value
+            ):
                 cancel_event.set()
 
     async def _run_single_worker(self) -> None:

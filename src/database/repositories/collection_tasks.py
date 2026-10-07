@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Sequence
 
 import aiosqlite
 
@@ -512,6 +512,22 @@ class CollectionTasksRepository:
         if row is None:
             return None
         return self._to_task(row)
+
+    async def fetch_task_status_pairs(self, task_ids: Sequence[int]) -> list[tuple[int, str]]:
+        """Пары (id, статус) для перечисленных id — опрос кросс-процессной отмены.
+
+        Без материализации строки (payload/result_payload JSON и даты не нужны)
+        и без каста статуса в enum: неизвестное значение проходит как есть,
+        а удалённая строка просто отсутствует в результате.
+        """
+        if not task_ids:
+            return []
+        placeholders = ",".join("?" for _ in task_ids)
+        cur = await self._db.execute(
+            f"SELECT id, status FROM collection_tasks WHERE id IN ({placeholders})",
+            list(task_ids),
+        )
+        return [(row["id"], row["status"] or "") for row in await cur.fetchall()]
 
     async def get_collection_tasks(self, limit: int = 20) -> list[CollectionTask]:
         """Последние ``limit`` задач любого типа, новые первыми.
