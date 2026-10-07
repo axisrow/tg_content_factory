@@ -29,6 +29,29 @@ logger = logging.getLogger(__name__)
 RESOLVE_BACKOFF_BY_PHONE_SETTING = "resolve_username_backoff_by_phone"
 RESOLVE_BACKOFF_LEGACY_SETTING = "resolve_username_backoff_until_utc"
 
+# Объёмный бюджет sustained-яруса (#1498, инцидент 06.10.26): burst-лимитер
+# (20/60с) пропускал неограниченный sustained-объём — холодная догонка 623
+# канала легально стреляла 20 resolve/мин ~20 минут, Telegram эскалировал в
+# FloodWait 49613s. Механика — sustained-ярус ResolveRateLimiter в
+# telethon-floodgate (параметры конструктора в client_pool); здесь
+# только конфигурация проекта. Холодная догонка 600+ каналов растягивается
+# на часы через штатную дефер-логику очереди, а не выжигает аккаунт.
+DEFAULT_RESOLVE_VOLUME_MAX_CALLS = 60
+DEFAULT_RESOLVE_VOLUME_WINDOW_SEC = 3600.0
+
+
+def build_resolve_rate_limiter() -> ResolveRateLimiter:
+    """Единая точка сборки лимитера с sustained-бюджетом.
+
+    Все места, где создаётся лимитер резолвов (client_pool, lazy-fallback
+    миксина, тестовый харнесс), обязаны идти через фабрику — ревью #1498 #8:
+    расхождение копий молча возвращало бы путь без бюджета.
+    """
+    return ResolveRateLimiter(
+        sustained_max_calls=DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
+        sustained_window_sec=DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
+    )
+
 
 def parse_resolve_backoff_setting(
     raw: str | None, *, now: datetime | None = None
@@ -90,7 +113,9 @@ class ResolveGuardMixin:
     def _get_resolve_rate_limiter(self) -> ResolveRateLimiter:
         limiter = getattr(self, "_resolve_rate_limiter", None)
         if not isinstance(limiter, ResolveRateLimiter):
-            limiter = ResolveRateLimiter()
+            # Фабрика несёт тот же sustained-бюджет, что и прод-конструктор
+            # client_pool (ревью #1498 #5): путь без бюджета — регрессия.
+            limiter = build_resolve_rate_limiter()
             self._resolve_rate_limiter = limiter
         return limiter
 
@@ -315,7 +340,10 @@ class ResolveGuardMixin:
                 if elapsed < min_interval:
                     return min_interval - elapsed
             last_map[phone] = now
-            return 0.0
+            # Пейсинг ramp-up сам по себе пропускал 12 вызовов/мин (~720/час) —
+            # в 12 раз выше объёмного бюджета #1498, причём сразу после
+            # эскалации Telegram (ревью #1498, HIGH). Проваливаемся в лимитер:
+            # burst + sustained применяются поверх 5с-интервала.
         return self._get_resolve_rate_limiter().try_acquire(phone)
 
     @staticmethod

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telethon.errors import FloodWaitError
@@ -11,10 +11,13 @@ from telethon_floodgate import HandledFloodWaitError, ResolveRateLimiter, Userna
 
 from src.telegram.client_pool import ClientPool
 from src.telegram.resolve_guard import (
+    DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
+    DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
     RESOLVE_BACKOFF_BY_PHONE_SETTING,
     RESOLVE_BACKOFF_LEGACY_SETTING,
     ResolveGuardMixin,
 )
+from tests.helpers import make_resolve_limiter
 
 
 @pytest.mark.anyio
@@ -444,3 +447,103 @@ class TestPersistence:
         # Nothing restored, legacy key left intact for the next start.
         assert pool.get_resolve_username_backoff_remaining_sec() == 0
         set_setting.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_sustained_resolve_volume_capped_per_hour():
+    """#1498: burst-лимитер (20/60с) не ограничивает накопленный объём.
+
+    Холодная догонка 06.10.26 (623 канала) легально стреляла 20 resolve/мин
+    на аккаунт ~20 минут — Telegram эскалировал в FloodWait 49613s на
+    +66...2247 при полностью «зелёном» гарде. Объёмный бюджет обязан
+    останавливать серию; механика — sustained-ярус ResolveRateLimiter
+    (telethon-floodgate 0.1.1), конфиг — DEFAULT_RESOLVE_VOLUME_*.
+    """
+    pool = ClientPool.__new__(ClientPool)
+    t = {"now": 0.0}
+
+    def fake_now() -> float:
+        return t["now"]
+
+    pool._resolve_rate_limiter = make_resolve_limiter(
+        max_calls=20,
+        window_sec=60.0,
+        jitter_sec=0.0,
+        time_func=fake_now,
+        sustained_max_calls=DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
+        sustained_window_sec=DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
+    )
+
+    allowed = 0
+    for _ in range(180):  # 3 часа по 20 «легальных» вызовов в минуту
+        for _ in range(20):
+            if pool.reserve_resolve_username_call("+7001") == 0.0:
+                allowed += 1
+        t["now"] += 60.0
+
+    assert allowed <= 180, f"volume budget ignored: allowed {allowed} calls in 3h"
+
+
+@pytest.mark.anyio
+async def test_ramp_up_does_not_bypass_volume_budget():
+    """Ревью #1498 (HIGH): ramp-up-ветка возвращала 0.0 ДО лимитера — после
+    каждого FloodWait аккаунт легально стрелял 12/мин (~720/час), в 12 раз
+    выше бюджета 60/час, и именно в окне сразу после эскалации Telegram."""
+    pool = ClientPool.__new__(ClientPool)
+    t = {"now": 0.0}
+
+    def fake_now() -> float:
+        return t["now"]
+
+    pool._resolve_rate_limiter = make_resolve_limiter(
+        max_calls=20,
+        window_sec=60.0,
+        jitter_sec=0.0,
+        time_func=fake_now,
+        sustained_max_calls=DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
+        sustained_window_sec=DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
+    )
+    # Ramp-up активен час (реальный clock — через timedelta от datetime.now).
+    pool._resolve_ramp_up_until_utc = {
+        "+7001": datetime.now(timezone.utc) + timedelta(seconds=3600)
+    }
+    # Пейсинг ramp-up выключен — проверяем именно бюджетные окна.
+    pool._resolve_ramp_up_min_interval_sec = 0.0
+
+    allowed = 0
+    for _ in range(65):
+        if pool.reserve_resolve_username_call("+7001") == 0.0:
+            allowed += 1
+        t["now"] += 5.0
+
+    assert allowed <= DEFAULT_RESOLVE_VOLUME_MAX_CALLS, (
+        f"ramp-up bypasses volume budget: allowed {allowed} calls"
+    )
+
+
+def test_client_pool_wires_sustained_tier():
+    """Ревью #1498 (MEDIUM): мутант «удали sustained-kwargs из client_pool»
+    переживал сюит — прод-обвязка не была покрыта."""
+    db = MagicMock()
+    db.get_live_usable_accounts = AsyncMock(return_value=[])
+    db.get_accounts = AsyncMock(return_value=[])
+    db.update_account_premium = AsyncMock()
+    auth = MagicMock(api_id=12345, api_hash="hash")
+
+    pool = ClientPool(auth, db)
+
+    # getattr-строки, а не приватные атрибуты: не клеим сюит к внутренностям
+    # пакета (ревью #1498 #9) и не зависим от резолва его типов IDE.
+    limiter = pool._resolve_rate_limiter
+    assert getattr(limiter, "_sustained_max_calls", None) == DEFAULT_RESOLVE_VOLUME_MAX_CALLS
+    assert getattr(limiter, "_sustained_window_sec", None) == DEFAULT_RESOLVE_VOLUME_WINDOW_SEC
+
+
+def test_fallback_limiter_carries_volume_budget():
+    """Ревью #1498 #7: ленивый fallback миксина (пул без готового лимитера)
+    обязан строить sustained-бюджет фабрикой — иначе путь без бюджета
+    возвращается мутацией «верни bare ResolveRateLimiter()»."""
+    pool = ClientPool.__new__(ClientPool)
+    limiter = pool._get_resolve_rate_limiter()
+    assert getattr(limiter, "_sustained_max_calls", None) == DEFAULT_RESOLVE_VOLUME_MAX_CALLS
+    assert getattr(limiter, "_sustained_window_sec", None) == DEFAULT_RESOLVE_VOLUME_WINDOW_SEC

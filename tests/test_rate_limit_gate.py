@@ -397,11 +397,11 @@ async def test_all_send_paths_pass_their_destination_as_peer() -> None:
     peer = SimpleNamespace(user_id=7)
 
     assert await session.send_message(peer, "m") == "ok"
-    clock.now += 1.0  # slide the 1/s user bucket between methods
+    clock.now += 1.1  # slide the calibrated 1/1.1s user bucket between methods
     assert await session.publish_files(peer, ["f"]) == "ok"
-    clock.now += 1.0
+    clock.now += 1.1
     assert await session.forward_messages(peer, [1], SimpleNamespace(user_id=8)) == "ok"
-    clock.now += 1.0
+    clock.now += 1.1
     assert await session.edit_message(peer, 1, "t") == "ok"
     assert client.sent == ["send_message", "send_file", "forward_messages", "edit_message"]
     # All four share the SAME per-peer bucket: an immediate fifth call is refused.
