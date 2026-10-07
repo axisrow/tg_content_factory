@@ -278,21 +278,20 @@ ignore_overloaded_functions = true
 exclude = ["tests", "scripts", "build", "dist", "site"]
 verbose = 1
 
-# Mutation testing (mutmut 3.8). Root-caused 07.10.26: mutmut is incompatible
-# with this repo's FLAT layout (import package literally named `src`) — it
-# unconditionally strips a `src.` prefix from module names (format_utils
-# get_mutant_name) and asserts against `src.`-prefixed trampoline hits
-# (stats.record_trampoline_hit), so every stats run dies on our
-# `src.*` modules. The sandbox-side failures are fixed here: [tool.mutmut]
-# ships everything tests read outside src/tests, both at collection time
-# (root conftest.py, scripts/) and at run time (.github/workflows/ci.yml,
-# docs/reference/*). data/ is deliberately NOT copied — it holds the live
-# DB; sandbox tests run on tmp/in-memory databases. mutmut never prunes a
-# stale sandbox (deleted src files keep their old copies) — `rm -rf mutants`
-# before a rerun. `mutmut run` still fails at the documented upstream
-# assert; full mutation runs need an upstream fix or a package rename —
-# neither is cheap; the per-fix mutation proof stays the documented
-# red→green run (see /fix reports).
+# Mutation testing (mutmut 3.8). Root-caused 07.10.26: stock mutmut is
+# incompatible with this repo's FLAT layout (import package literally named
+# `src`) — it strips a `src.` prefix from module names (breaking the trampoline
+# routing and stats keys) and asserts against `src.`-prefixed trampoline hits.
+# Fixed upstream-locally by the strip_src_prefix knob
+# (boxed/mutmut PR, branch fix/strip-src-prefix-knob; installed editable from
+# /Users/axisrow/Projects/mutmut until it lands on PyPI). The sandbox ships
+# everything tests read outside src/tests, both at collection time (root
+# conftest.py, scripts/) and at run time (.github/workflows/ci.yml,
+# docs/reference/*, adk/). data/ is deliberately NOT copied — it holds the
+# live DB; sandbox tests run on tmp/in-memory databases. mutmut never prunes
+# a stale sandbox (deleted src files keep their old copies) — `rm -rf mutants`
+# before a rerun.
 [tool.mutmut]
 source_paths = ["src"]
 also_copy = ["conftest.py", "scripts", ".github", "docs", "adk"]
+strip_src_prefix = false

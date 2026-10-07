@@ -65,10 +65,11 @@ pytest tests/test_web.py::test_health_endpoint -v
 python -m src.main test benchmark
 
 # Mutation testing (run only after the editable install above).
-# CAVEAT: full runs are blocked upstream — mutmut 3.8 asserts against our flat
-# `src` import package (see [tool.mutmut] in pyproject.toml); the sandbox layer
-# (conftest/scripts/.github/docs copies) is configured there. Per-fix mutation
-# proof is the documented red→green run, not `mutmut run`.
+# NOTE: requires the strip_src_prefix knob (flat `src` import package) —
+# installed editable from /Users/axisrow/Projects/mutmut (branch
+# fix/strip-src-prefix-knob, PR to boxed/mutmut); stock PyPI mutmut 3.8
+# asserts out. Sandbox config: [tool.mutmut] in pyproject.toml.
+# `rm -rf mutants` before a rerun (mutmut never prunes the sandbox).
 mutmut run
 ```
 
