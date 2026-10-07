@@ -91,6 +91,7 @@ class CollectionQueue:
     SHUTDOWN_REQUEUE_NOTE = "Остановка сервиса во время сбора; задача будет продолжена после запуска."
     NO_CLIENTS_REQUEUE_NOTE = "Отложено: нет подключённых активных аккаунтов для сбора."
     _CANCEL_SWEEP_INTERVAL_SEC = 1.0
+    _CANCEL_SWEEP_READ_TIMEOUT_SEC = 5.0
 
     def __init__(
         self,
@@ -335,6 +336,12 @@ class CollectionQueue:
                 and not any(not worker.done() for worker in self._workers)
             ):
                 break
+        # _stop_workers (нет клиентов) заканчивает надзор, пока чужие сборы ещё
+        # живы с удерживаемым клиентом — гасить своп отмены в этом окне нельзя:
+        # инцидент 07.10.26 не должен повторяться внутри него.
+        while self._active_task_ids and not self._shutdown_requested:
+            await self._maybe_arm_cancel_events_from_db()
+            await asyncio.sleep(self._CANCEL_SWEEP_INTERVAL_SEC)
 
     async def _maybe_arm_cancel_events_from_db(self) -> None:
         """Взвести cancel_events задач, отменённых другим процессом (инцидент
@@ -347,23 +354,35 @@ class CollectionQueue:
         раз в этот момент). При простое чтений нет: супервизор завершается.
         Один пакетный ids+status SELECT — без материализации строки и
         enum-каста; удалённая строка трактуется как отмена (зомби-сбор без
-        записи в БД хуже остановки). Сбой чтения логируется и повторяется на
-        следующем тике: опрос не должен убивать супервизор.
+        записи в БД хуже остановки). Чтение с таймаутом (не блокируем
+        супервизор на исчерпанном read-pool), сбой — предупреждением без
+        трейсбека и повтор на следующем тике: опрос не должен убивать
+        супервизор и топить лог.
         """
         now = time.monotonic()
         if now - self._last_cancel_sweep < self._CANCEL_SWEEP_INTERVAL_SEC:
             return
         self._last_cancel_sweep = now
-        active = self._active_task_ids
-        if not active:
+        # Снимок ДО await: задача, зарегистрированная в _active_task_ids, пока
+        # выполняется SELECT, в выборку не попала — «нет в результате» для неё
+        # означало бы ложную отмену только что начавшегося сбора.
+        queried = {
+            task_id: cancel_event
+            for task_id, cancel_event in self._active_task_ids.items()
+            if not cancel_event.is_set()
+        }
+        if not queried:
             return
         try:
-            status_pairs = await self._channels.tasks.fetch_task_status_pairs(list(active))
-        except Exception:
-            logger.exception("Cancel sweep DB read failed; retrying next tick")
+            status_pairs = await asyncio.wait_for(
+                self._channels.tasks.fetch_task_status_pairs(list(queried)),
+                timeout=self._CANCEL_SWEEP_READ_TIMEOUT_SEC,
+            )
+        except Exception as exc:
+            logger.warning("Cancel sweep DB read failed: %s", exc)
             return
         status_by_id = dict(status_pairs)
-        for task_id, cancel_event in list(active.items()):
+        for task_id, cancel_event in queried.items():
             if task_id not in status_by_id or (
                 status_by_id[task_id] == CollectionTaskStatus.CANCELLED.value
             ):
