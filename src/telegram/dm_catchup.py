@@ -159,9 +159,23 @@ class DmCatchupService:
             stats["dialogs"] = len(dialogs)
             now = datetime.now(timezone.utc)
             for index, dialog in enumerate(dialogs):
-                outcome = await self._catch_up_dialog(
-                    phone, client, int(dialog["channel_id"]), settings, now, stats
-                )
+                try:
+                    outcome = await self._catch_up_dialog(
+                        phone, client, int(dialog["channel_id"]), settings, now, stats
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # Один непарсящийся диалог (TypeNotFoundError на новых
+                    # TL-типах — инцидент 07.10.26 «Searchee Bot») не убивает
+                    # проход аккаунта: остальные диалоги догоняются дальше.
+                    logger.exception(
+                        "dm_catchup: %s chat %s упал; пропускаю диалог",
+                        phone,
+                        dialog["channel_id"],
+                    )
+                    stats["errors"] += 1
+                    continue
                 if outcome == "ok_full":
                     stats["_continue"] = True
                 elif outcome == "deferred":
