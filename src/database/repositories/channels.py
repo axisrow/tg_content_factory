@@ -1031,6 +1031,23 @@ class ChannelsRepository:
         )
         return [dict(row) for row in await cur.fetchall()]
 
+    async def fetch_channels_with_tag(self, tag_name: str) -> list[dict]:
+        """Каналы с тегом ``tag_name``: read-model dict pk/channel_id/filter_flags.
+
+        Потребитель — тег-эскроу фильтра (KEEP_TAG в analyzer.apply_filters):
+        перед reset нужны pk и старые флаги, после — channel_id для склейки меток.
+        """
+        cur = await self._db.execute(
+            """SELECT c.id AS pk, c.channel_id, c.filter_flags
+               FROM channels c
+               JOIN channel_tags ct ON ct.channel_pk = c.id
+               JOIN tags t ON t.id = ct.tag_id
+               WHERE t.name = ?
+               ORDER BY c.id""",
+            (tag_name,),
+        )
+        return [dict(row) for row in await cur.fetchall()]
+
     async def set_channel_tags(self, channel_pk: int, tag_names: list[str]) -> None:
         """Полностью заменить набор тегов канала на ``tag_names`` (недостающие теги создаются), одной транзакцией."""
         assert self._database is not None, (

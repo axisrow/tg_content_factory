@@ -40,6 +40,17 @@ CHAT_NOISE_THRESHOLD = 70.0
 AUTO_FEED_MIN_MESSAGES = 30
 AUTO_FEED_THRESHOLD = 85.0
 
+# Флаги-метки (решение владельца 06.10.26): флаг ОСТАЁТСЯ в filter_flags как сигнал
+# для LLM-кураторства, но не ставит is_filtered — нерусскоязычные ИИ-каналы
+# (TestingCatalog, AI_News_CN и т.п.) собираются, язык виден куратору.
+LABEL_ONLY_FLAGS = frozenset({"non_cyrillic"})
+
+# Тег-эскроу: канал с тегом KEEP_TAG исключается из авто-фильтрации целиком —
+# apply_filters сбрасывает всем is_filtered, но keep-каналу возвращает is_filtered=0
+# и объединённые (старые ∪ свежие) флаги как метки. Нужен, когда блокирует не языковой
+# флаг (напр. low_subscriber_ratio у TestingCatalog), а канал решено собирать.
+KEEP_TAG = "keep"
+
 # Whitelist-метка доверия (#1490, решение владельца 04.10.26): тег живёт в штатной
 # тег-системе каналов (tags/channel_tags, CLI `channel tag`), а не в VALID_FLAGS.
 # Канал с этим тегом И фильтр-флагами — подозрение на ошибку фильтра; отчёт:

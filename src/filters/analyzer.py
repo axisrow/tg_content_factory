@@ -10,6 +10,8 @@ from src.filters.criteria import (
     CHAT_NOISE_THRESHOLD,
     CROSS_DUPE_THRESHOLD,
     DEFAULT_QUICK_SAMPLE_SIZE,
+    KEEP_TAG,
+    LABEL_ONLY_FLAGS,
     LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD,
     LOW_SUBSCRIBER_RATIO_THRESHOLD,
     LOW_UNIQUENESS_THRESHOLD,
@@ -233,6 +235,7 @@ class ChannelAnalyzer:
         auto_feed_pct = self._append_auto_feed_flag(flags, channel_id_value, auto_feed_map)
         self._append_suspicious_username_flag(flags, channel)
 
+        # Флаги-метки (LABEL_ONLY_FLAGS) не блокируют сбор — см. criteria.py.
         return ChannelFilterResult(
             channel_id=channel_id_value,
             title=channel["title"],
@@ -245,7 +248,7 @@ class ChannelAnalyzer:
             short_msg_pct=short_msg_pct,
             cross_dupe_pct=cross_dupe_pct,
             auto_feed_pct=auto_feed_pct,
-            is_filtered=bool(flags),
+            is_filtered=any(f not in LABEL_ONLY_FLAGS for f in flags),
         )
 
     def _build_channel_results(
@@ -378,6 +381,17 @@ class ChannelAnalyzer:
                 bucket = deduped.setdefault(row["channel_id"], set())
                 bucket.update(preserved)
 
+        # Тег-эскроу (KEEP_TAG): keep-каналы выпадают из авто-фильтрации — после
+        # reset им возвращается is_filtered=0, а флаги (прежние ∪ свежие) остаются
+        # метками для кураторства. Без этого apply_filters при каждом прогоне
+        # отбрасывал бы ручное решение собирать канал.
+        fresh_flags: dict[int, set[str]] = {}
+        for result in report.results:
+            fresh_flags.setdefault(result.channel_id, set()).update(result.flags)
+        keep_rows = await self._database.repos.channels.fetch_channels_with_tag(KEEP_TAG)
+        for row in keep_rows:
+            deduped.pop(row["channel_id"], None)
+
         updates = [(cid, ",".join(sorted(flags))) for cid, flags in deduped.items()]
 
         # Run the reset + bulk-apply inside Database.transaction() so they are
@@ -391,6 +405,13 @@ class ChannelAnalyzer:
             if updates:
                 count, _suppressed = await self._database.set_channels_filtered_bulk(
                     updates, commit=False
+                )
+            for row in keep_rows:
+                old = {f.strip() for f in (row["filter_flags"] or "").split(",") if f.strip()}
+                merged = ",".join(sorted(old | fresh_flags.get(row["channel_id"], set()))) or None
+                await conn.execute(
+                    "UPDATE channels SET is_filtered = 0, filter_flags = ? WHERE id = ?",
+                    (merged, row["pk"]),
                 )
         return count
 
