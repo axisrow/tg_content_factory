@@ -90,6 +90,8 @@ class CollectionQueue:
     FORCE_CANCEL_TIMEOUT_SEC = 10.0
     SHUTDOWN_REQUEUE_NOTE = "Остановка сервиса во время сбора; задача будет продолжена после запуска."
     NO_CLIENTS_REQUEUE_NOTE = "Отложено: нет подключённых активных аккаунтов для сбора."
+    _CANCEL_SWEEP_INTERVAL_SEC = 1.0
+    _CANCEL_SWEEP_READ_TIMEOUT_SEC = 5.0
 
     def __init__(
         self,
@@ -112,6 +114,7 @@ class CollectionQueue:
         # restart. Kept strictly separate from _channel_private_error_counts.
         self._retry_pass: dict[int, int] = {}
         self._channel_private_error_counts: dict[int, int] = {}
+        self._last_cancel_sweep = 0.0
         self._delayed_requeues: set[asyncio.Task] = set()
         self._known_task_ids: set[int] = set()
         self._pull_task: asyncio.Task | None = None
@@ -290,6 +293,7 @@ class CollectionQueue:
     async def _run_supervisor(self) -> None:
         self._stop_workers = False
         while not self._shutdown_requested and not self._stop_workers:
+            await self._maybe_arm_cancel_events_from_db()
             if not self._resume_gate.is_set():
                 try:
                     await asyncio.wait_for(self._resume_gate.wait(), timeout=1.0)
@@ -332,6 +336,57 @@ class CollectionQueue:
                 and not any(not worker.done() for worker in self._workers)
             ):
                 break
+        # _stop_workers (нет клиентов) заканчивает надзор, пока чужие сборы ещё
+        # живы с удерживаемым клиентом — гасить своп отмены в этом окне нельзя:
+        # инцидент 07.10.26 не должен повторяться внутри него.
+        while self._active_task_ids and not self._shutdown_requested:
+            await self._maybe_arm_cancel_events_from_db()
+            await asyncio.sleep(self._CANCEL_SWEEP_INTERVAL_SEC)
+
+    async def _maybe_arm_cancel_events_from_db(self) -> None:
+        """Взвести cancel_events задач, отменённых другим процессом (инцидент
+        07.10.26: CLI/БД переворачивают строку в CANCELLED, а in-memory
+        cancel_event живёт только здесь — сбор качал историю до конца).
+
+        Не чаще раза в секунду (monotonic-гейт), на каждой итерации супервизора
+        включая тики паузы — отмена из БД обязана останавливать активный сбор
+        и на паузе (pause() = «активные задачи дожидаются», и их отменяют как
+        раз в этот момент). При простое чтений нет: супервизор завершается.
+        Один пакетный ids+status SELECT — без материализации строки и
+        enum-каста; удалённая строка трактуется как отмена (зомби-сбор без
+        записи в БД хуже остановки). Чтение с таймаутом (не блокируем
+        супервизор на исчерпанном read-pool), сбой — предупреждением без
+        трейсбека и повтор на следующем тике: опрос не должен убивать
+        супервизор и топить лог.
+        """
+        now = time.monotonic()
+        if now - self._last_cancel_sweep < self._CANCEL_SWEEP_INTERVAL_SEC:
+            return
+        self._last_cancel_sweep = now
+        # Снимок ДО await: задача, зарегистрированная в _active_task_ids, пока
+        # выполняется SELECT, в выборку не попала — «нет в результате» для неё
+        # означало бы ложную отмену только что начавшегося сбора.
+        queried = {
+            task_id: cancel_event
+            for task_id, cancel_event in self._active_task_ids.items()
+            if not cancel_event.is_set()
+        }
+        if not queried:
+            return
+        try:
+            status_pairs = await asyncio.wait_for(
+                self._channels.tasks.fetch_task_status_pairs(list(queried)),
+                timeout=self._CANCEL_SWEEP_READ_TIMEOUT_SEC,
+            )
+        except Exception as exc:
+            logger.warning("Cancel sweep DB read failed: %s", exc)
+            return
+        status_by_id = dict(status_pairs)
+        for task_id, cancel_event in queried.items():
+            if task_id not in status_by_id or (
+                status_by_id[task_id] == CollectionTaskStatus.CANCELLED.value
+            ):
+                cancel_event.set()
 
     async def _run_single_worker(self) -> None:
         while True:

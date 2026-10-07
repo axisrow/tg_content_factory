@@ -138,6 +138,24 @@ class _BlockingCollector:
         self.finish.set()
 
 
+class _DbCancelAwareCollector(_FakeCollector):
+    """Collect blocks until its per-task cancel_event fires — a long backfill
+    that can only be stopped through the event."""
+
+    def __init__(self):
+        super().__init__()
+        self.cancel_seen = asyncio.Event()
+
+    async def collect_single_channel(
+        self, channel, *, full=False, progress_callback=None, force=False, cancel_event=None
+    ):
+        self.calls.append(channel.channel_id)
+        assert cancel_event is not None
+        await cancel_event.wait()
+        self.cancel_seen.set()
+        return 0
+
+
 class _ResolveBackoffPool:
     def __init__(self, remaining_sec: int):
         self.remaining_sec = remaining_sec
@@ -1307,4 +1325,39 @@ async def test_pre_dispatch_skips_tasks_of_inactive_channel(tmp_path):
     finally:
         if queue is not None:
             await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_db_side_cancel_stops_running_collection(tmp_path):
+    """Cross-process cancel: a CANCELLED row in the DB must stop the running collect.
+
+    Incident 07.10.26: the task row was flipped to cancelled by another process
+    (CLI/DB), but the in-memory cancel_event lives inside the worker — so the
+    collect kept pulling channel history until it drained. The supervisor now
+    polls active tasks and arms their events.
+    """
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await _seed_channel(db)
+        channel = (await db.get_channels())[0]
+        collector = _DbCancelAwareCollector()
+        queue = _make_queue(collector, db)
+
+        task_id = await queue.enqueue(channel)
+        assert task_id is not None
+        await wait_until(lambda: bool(collector.calls), timeout=10, interval=0.05)
+
+        # What the CLI / another process does: cancel the DB row only — no
+        # in-process queue.cancel_task(), so no in-memory event is armed yet.
+        assert await db.cancel_collection_task(task_id, note="cross-process") is True
+
+        await wait_until(lambda: collector.cancel_seen.is_set(), timeout=10, interval=0.05)
+        task = await _get_task(db, task_id)
+        assert task.status == "cancelled"
+    finally:
+        if queue is not None:
+            await queue.shutdown(grace_timeout=0.1)
         await db.close()
