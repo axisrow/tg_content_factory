@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.mutmut_skip]
 
 
 def _repo_root() -> Path:

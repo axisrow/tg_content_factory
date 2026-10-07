@@ -8,6 +8,8 @@ import pytest
 
 from src.services.quality_scoring_service import QualityScore, QualityScoringService
 
+pytestmark = pytest.mark.mutmut_skip
+
 
 @pytest.fixture
 def mock_db():

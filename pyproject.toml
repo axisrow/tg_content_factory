@@ -232,6 +232,7 @@ markers = [
     "codex_cli_live: opt-in live Codex CLI smoke (image + agent backend via real MCP); gate: RUN_CODEX_CLI_LIVE=1",
     "e2e: end-to-end browser test using Playwright",
     "slow: test is intrinsically slow (real timers/sleeps that can't be scaled away); excluded from the fast feedback loop with `-m 'not slow'`",
+    "mutmut_skip: excluded from mutation runs (repo-contract AST/surface scans, out-of-process spawns, network-flaky); filtered by [tool.mutmut] pytest_add_cli_args `-m 'not mutmut_skip'`",
 ]
 
 # Static security analysis config for `bandit -c pyproject.toml -r src` (#1053).
@@ -293,5 +294,29 @@ verbose = 1
 # before a rerun.
 [tool.mutmut]
 source_paths = ["src"]
-also_copy = ["conftest.py", "scripts", ".github", "docs", "adk"]
+also_copy = [
+    "conftest.py",
+    "scripts",
+    ".github",
+    "docs",
+    "adk",
+    "mkdocs.yml",
+    "config.yaml",
+    "docker-compose.yml",
+]
 strip_src_prefix = false
+# The fork-isolated serial stats run accumulates 5800 tests of garbage in one
+# process: leaky leftovers from earlier tests (unclosed sqlite connections,
+# destroyed-pending asyncio tasks) get finalized by the GC mid-run, and
+# pytest's unraisable plugin attributes each to whichever test happens to run
+# (observed at 1713 and 3673 green tests respectively). Disabling the plugin
+# for mutation runs stops the whole class; the normal suite still enforces
+# strictness in CI.
+pytest_add_cli_args = [
+    "-p", "no:unraisableexception",
+    # The serial stats run accumulates 5800 tests of garbage in one process:
+    # leaky leftovers from earlier tests get GC-finalized mid-run and pytest's
+    # unraisable plugin attributes each to whichever test happens to run (seen
+    # at 1713 and 3673 green tests). The normal suite keeps the strictness.
+    "-m", "not mutmut_skip",
+]
