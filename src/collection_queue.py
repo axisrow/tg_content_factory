@@ -324,6 +324,7 @@ class CollectionQueue:
                             "Collection queue worker crashed",
                             exc_info=(type(exc), exc, exc.__traceback__),
                         )
+            await self._arm_cancel_events_from_db()
             if not self._queue.empty() and len(self._workers) < target:
                 continue
             if (
@@ -332,6 +333,25 @@ class CollectionQueue:
                 and not any(not worker.done() for worker in self._workers)
             ):
                 break
+
+    async def _arm_cancel_events_from_db(self) -> None:
+        """Arm in-memory cancel_events for tasks cancelled in the DB by another process.
+
+        The CLI/web/another worker can only flip the ``collection_tasks`` row to
+        CANCELLED — the cancel_event lives here (incident 07.10.26: a DB-cancelled
+        backfill kept pulling channel history until it drained). Polling once per
+        supervisor tick (~1s, ≤ worker-count point lookups) lets a running collect
+        stop at its next 10-message checkpoint.
+        """
+        for task_id, cancel_event in list(self._active_task_ids.items()):
+            if cancel_event.is_set():
+                continue
+            try:
+                task = await self._channels.get_collection_task(task_id)
+            except (DatabaseBusyError, sqlite3.OperationalError):
+                continue  # busy read must not fail the collection (#1249 semantics)
+            if task is not None and task.status == CollectionTaskStatus.CANCELLED:
+                cancel_event.set()
 
     async def _run_single_worker(self) -> None:
         while True:
