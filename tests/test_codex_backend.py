@@ -117,12 +117,28 @@ def _install_fake_codex(
     return captured
 
 
+# Databases created by _make_backend, closed by the autouse fixture below —
+# otherwise GC finalizes them mid-suite and filterwarnings=error attributes
+# the unraisable warning to a random later test.
+_created_dbs: list = []
+
+
 def _make_backend():
     from src.agent.codex_backend import CodexSdkBackend
     from src.config import AppConfig
     from src.database import Database
 
-    return CodexSdkBackend(Database(":memory:"), AppConfig())
+    db = Database(":memory:")
+    _created_dbs.append(db)
+    return CodexSdkBackend(db, AppConfig())
+
+
+@pytest.fixture(autouse=True)
+async def _close_created_databases():
+    yield
+    for db in _created_dbs:
+        await db.close()
+    _created_dbs.clear()
 
 
 async def _drain(queue: asyncio.Queue) -> list[dict]:
@@ -366,7 +382,7 @@ async def test_chat_stream_non_failed_status_still_completes(monkeypatch):
     assert done["full_text"] == "ok"
 
 
-def test_notification_methods_match_sdk_registry():
+async def test_notification_methods_match_sdk_registry():
     """Our consumed method strings are real keys in the SDK's notification registry.
 
     This is the guard that would have caught the original streaming bug: the

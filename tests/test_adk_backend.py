@@ -131,13 +131,10 @@ def _install_fake_adk(monkeypatch, *, events, hang=False, close_hangs=False):
     return captured
 
 
-# Databases created by _make_backend. Tests never close them inline — the
-# autouse fixture below does. Without this, the raw sqlite3.Connection is
-# finalized by the GC at an arbitrary later test, and filterwarnings=error
-# turns that PytestUnraisableExceptionWarning into a failure attributed to
-# whichever test happens to be running (observed in mutmut's sandbox where
-# GC timing differs from the normal suite run).
-_created_dbs: list = []
+# GC-finalized raw sqlite3.Connections trigger PytestUnraisableExceptionWarning,
+# which filterwarnings=error attributes to a random later test; the autouse
+# fixture closes them deterministically.
+_created_dbs = []
 
 
 def _make_backend(client_pool=None):
