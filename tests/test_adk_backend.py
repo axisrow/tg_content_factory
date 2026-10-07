@@ -131,12 +131,31 @@ def _install_fake_adk(monkeypatch, *, events, hang=False, close_hangs=False):
     return captured
 
 
+# Databases created by _make_backend. Tests never close them inline — the
+# autouse fixture below does. Without this, the raw sqlite3.Connection is
+# finalized by the GC at an arbitrary later test, and filterwarnings=error
+# turns that PytestUnraisableExceptionWarning into a failure attributed to
+# whichever test happens to be running (observed in mutmut's sandbox where
+# GC timing differs from the normal suite run).
+_created_dbs: list = []
+
+
 def _make_backend(client_pool=None):
     from src.agent.adk_backend import AdkSdkBackend
     from src.config import AppConfig
     from src.database import Database
 
-    return AdkSdkBackend(Database(":memory:"), AppConfig(), client_pool=client_pool)
+    db = Database(":memory:")
+    _created_dbs.append(db)
+    return AdkSdkBackend(db, AppConfig(), client_pool=client_pool)
+
+
+@pytest.fixture(autouse=True)
+async def _close_created_databases():
+    yield
+    for db in _created_dbs:
+        await db.close()
+    _created_dbs.clear()
 
 
 def _text_part(text, *, thought=False):
@@ -700,7 +719,7 @@ async def test_chat_stream_prepends_history(monkeypatch):
     assert message_text.endswith("<user>\nnow\n</user>")
 
 
-def test_available_requires_sdk_and_api_key(monkeypatch):
+async def test_available_requires_sdk_and_api_key(monkeypatch):
     import src.agent.adk_backend as ab
 
     backend = _make_backend()
@@ -730,7 +749,7 @@ def test_available_requires_sdk_and_api_key(monkeypatch):
 # dependency); the google.adk half is importorskip'd until the [adk] extra is.
 
 
-def test_genai_part_contract_matches_backend_assumptions():
+async def test_genai_part_contract_matches_backend_assumptions():
     """Every google.genai field the backend reads off a Part/Content/usage exists.
 
     Guards against the backend hand-rolling getattr() paths that drift from the
@@ -758,7 +777,7 @@ def test_genai_part_contract_matches_backend_assumptions():
         assert field in usage_fields, f"google.genai usage lost field: {field}"
 
 
-def test_adk_event_contract_matches_backend_assumptions():
+async def test_adk_event_contract_matches_backend_assumptions():
     """Real ADK Event/Runner/McpToolset expose what the backend depends on.
 
     Skipped until the optional ``[adk]`` extra is installed (mirrors the codex
