@@ -5,8 +5,16 @@ invariants the #1097 owner-plan locked in, so a future edit can't silently
 undo them:
 
 - the monolithic ``lint-and-test`` job is split into parallel jobs
-  (``lint`` | ``static-checks`` | ``tests``) that fan out for speed (#1097 §5) —
+  (``lint`` | ``static-checks`` | test jobs) that fan out for speed (#1097 §5) —
   this parallel split is the real CI speedup;
+- the test gate itself is three parallel jobs (``tests-smoke`` |
+  ``tests-shards`` | ``tests-serial``) whose wall is the slowest shard, plus a
+  push-only ``coverage-combine`` downstream job (#1052). The shards split the
+  suite FILE-atomically via ``scripts/shard_tests.py`` so the
+  ``--dist=loadfile`` invariant (tests in one file stay on one worker)
+  survives; the shard legs take NO positional ``tests`` arg — the file list is
+  the selection, a positional arg would make every shard run the full-suite
+  union;
 - the ``pip-audit`` dependency scan stays *advisory* (``continue-on-error``)
   like the other security/dup guards (#1097 §4);
 - the ``doc-coverage`` step is **removed** from CI — interrogate stays a local
@@ -17,8 +25,8 @@ undo them:
 Note: pytest-testmon selective runs were evaluated for #1090 and dropped — on
 this large suite testmon must run single-process without coverage (it only
 deselects single-process and crashes under xdist+coverage), which is often
-slower than the full ``-n auto`` sweep, not faster. The parallel-job split is
-the CI win that landed.
+slower than the full ``-n auto`` sweep, not faster. More runners, not fewer
+tests, is the CI win that landed.
 
 These are pure-text/YAML assertions: no DB, no network — a ``unit`` level test.
 """
@@ -31,6 +39,9 @@ import pytest
 import yaml
 
 CI_YML = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
+
+TEST_JOBS = ("tests-smoke", "tests-shards", "tests-serial")
+COVERAGE_PRODUCERS = ("tests-smoke", "tests-shards", "tests-serial")
 
 
 @pytest.fixture(scope="module")
@@ -49,6 +60,10 @@ def _job_steps_text(job: dict) -> str:
     return "\n".join(parts)
 
 
+def _steps_by_name(job: dict) -> dict[str, dict]:
+    return {s.get("name"): s for s in job.get("steps", [])}
+
+
 def test_ci_yaml_is_valid(ci_config: dict) -> None:
     """ci.yml must parse and declare jobs."""
     assert isinstance(ci_config, dict)
@@ -58,25 +73,40 @@ def test_ci_yaml_is_valid(ci_config: dict) -> None:
 def test_jobs_split_into_parallel_lint_static_tests(ci_config: dict) -> None:
     """#1097 §5: the monolithic lint-and-test job is split into parallel jobs.
 
-    There must be a dedicated ``lint`` job, a ``static-checks`` job and a
-    ``tests`` job, and the old combined ``lint-and-test`` job must be gone so it
-    can't drift back to a serial bottleneck.
+    There must be a dedicated ``lint`` job, a ``static-checks`` job and the
+    three-way test gate (smoke | shards | serial) with its push-only
+    ``coverage-combine`` downstream; the old combined ``lint-and-test`` job AND
+    the former monolithic ``tests`` job must be gone so neither can drift back
+    to a serial bottleneck.
     """
     jobs = ci_config["jobs"]
     assert "lint" in jobs, "expected a dedicated parallel `lint` job"
     assert "static-checks" in jobs, "expected a `static-checks` job"
-    assert "tests" in jobs, "expected a `tests` job"
+    for name in (*TEST_JOBS, "coverage-combine"):
+        assert name in jobs, f"expected the `{name}` job"
     assert "lint-and-test" not in jobs, "old monolithic `lint-and-test` job must be removed"
+    assert "tests" not in jobs, "old monolithic `tests` job must be removed (now smoke | shards | serial)"
 
 
 def test_parallel_jobs_have_no_needs_chains(ci_config: dict) -> None:
-    """The lint/static-checks/tests jobs must run in parallel (no `needs:`).
+    """The lint/static-checks/test jobs must run in parallel (no `needs:`).
 
     A `needs:` dependency would serialize them and erase the #1097 §5 speedup.
     """
     jobs = ci_config["jobs"]
-    for name in ("lint", "static-checks", "tests"):
+    for name in ("lint", "static-checks", *TEST_JOBS):
         assert "needs" not in jobs[name], f"job `{name}` must not declare `needs:` (would serialize the split)"
+
+
+def test_coverage_combine_needs_all_producers(ci_config: dict) -> None:
+    """coverage-combine is the one legitimate `needs:` consumer.
+
+    It must depend on every coverage producer (so its `coverage combine` can't
+    hit the old "no data to combine" exit-1 gotcha) and only on them.
+    """
+    needs = ci_config["jobs"]["coverage-combine"].get("needs")
+    assert needs is not None, "coverage-combine must declare `needs:`"
+    assert set(needs) == set(COVERAGE_PRODUCERS), f"coverage-combine needs must be exactly {COVERAGE_PRODUCERS}"
 
 
 def test_lint_job_runs_ruff(ci_config: dict) -> None:
@@ -85,80 +115,134 @@ def test_lint_job_runs_ruff(ci_config: dict) -> None:
     assert "ruff check" in text, "lint job must run `ruff check`"
 
 
-def test_tests_job_runs_full_suite(ci_config: dict) -> None:
-    """The tests job must run the full smoke + parallel + serial suite.
+def test_smoke_job_runs_preflight(ci_config: dict) -> None:
+    """The smoke job runs the offline preflight on both event legs (#1456).
 
-    Guards against accidentally dropping a leg of the suite. Each lane has two
-    legs (#1456): the PR leg runs bare (coverage instrumentation costs ~a third
-    of the wall time), the main (push) leg measures `src` for the fail_under
-    gate. The parallel-safe legs use `-n auto`; the serial legs use the
-    aiosqlite_serial marker with per-file parallelism.
+    The push leg MUST measure coverage: the smoke lines have to stay in the
+    combined dataset or the fail_under ratchet (#1052) would drift.
     """
-    steps = ci_config["jobs"]["tests"]["steps"]
-    by_name = {s.get("name"): s for s in steps}
+    steps = _steps_by_name(ci_config["jobs"]["tests-smoke"])
+    pr_run = steps["Pytest (smoke preflight)"]["run"]
+    main_run = steps["Pytest (smoke preflight, with coverage)"]["run"]
+    for run in (pr_run, main_run):
+        assert "-m smoke" in run, "smoke job must run the smoke preflight marker"
+    assert "--cov" not in pr_run, "PR smoke leg must not measure coverage"
+    assert "--cov=src" in main_run and "--cov-report=" in main_run, "push smoke leg must measure src"
+    assert "github.event_name == 'pull_request'" in (steps["Pytest (smoke preflight)"].get("if") or "")
+    assert "github.event_name == 'push'" in (steps["Pytest (smoke preflight, with coverage)"].get("if") or "")
 
-    expected_names = (
-        "Pytest (smoke preflight)",
-        "Pytest (parallel-safe)",
-        "Pytest (parallel-safe, with coverage)",
-        "Pytest (aiosqlite serial, per-file parallel)",
-        "Pytest (aiosqlite serial, per-file parallel, with coverage)",
-        "Coverage report (combined)",
-        "Upload coverage artifact",
+
+def test_shard_jobs_run_half_the_parallel_suite(ci_config: dict) -> None:
+    """The shards split the parallel-safe suite file-atomically, ×2, both legs.
+
+    Guards the shard mechanics: the same `-m` filter as the serial exclusion,
+    `-n auto` fan-out, the shard script in the command, the matrix set — and,
+    critically, NO positional ``tests`` arg: the file list from
+    scripts/shard_tests.py is the whole selection, a positional arg would make
+    each shard run the full-suite union (a silent 2× duplicate run).
+    """
+    job = ci_config["jobs"]["tests-shards"]
+    matrix = job["strategy"]["matrix"]["shard-id"]
+    assert matrix == [0, 1], "sharding must be a 2-way matrix"
+    assert job["strategy"]["fail-fast"] is False, "one red shard must not kill the other"
+    assert "matrix.shard-id" in (job.get("env", {}).get("COVERAGE_FILE") or ""), (
+        "each shard must name its own coverage dataset via COVERAGE_FILE"
     )
-    missing = [n for n in expected_names if n not in by_name]
-    assert not missing, f"tests job is missing steps: {missing}"
 
-    smoke_run = by_name["Pytest (smoke preflight)"]["run"]
-    assert "-m smoke" in smoke_run, "tests job must run the smoke preflight"
+    steps = _steps_by_name(job)
+    pr_run = steps["Pytest (parallel-safe)"]["run"]
+    main_run = steps["Pytest (parallel-safe, with coverage)"]["run"]
+    for run in (pr_run, main_run):
+        assert "-m" in run and "not aiosqlite_serial" in run, "shards must exclude the serial lane"
+        assert "-n auto" in run, "shards must fan out across the runner cores"
+        assert "scripts/shard_tests.py" in run, "shard selection must come from scripts/shard_tests.py"
+        assert "--num-shards 2" in run and "--shard-id" in run, "shard id must come from the matrix"
+        assert not run.startswith("pytest tests"), (
+            "shard legs must NOT pass a positional `tests` arg — the file list is the selection"
+        )
+        assert run.startswith("pytest -q"), "shard legs must start with the pytest invocation itself"
+    assert "--cov" not in pr_run, "PR shard leg must not measure coverage"
+    assert "--cov=src" in main_run and "--cov-report=" in main_run, "push shard leg must measure src"
+    assert "github.event_name == 'pull_request'" in (steps["Pytest (parallel-safe)"].get("if") or "")
+    assert "github.event_name == 'push'" in (steps["Pytest (parallel-safe, with coverage)"].get("if") or "")
 
-    pr_parallel = by_name["Pytest (parallel-safe)"]["run"]
-    main_parallel = by_name["Pytest (parallel-safe, with coverage)"]["run"]
-    pr_serial = by_name["Pytest (aiosqlite serial, per-file parallel)"]["run"]
-    main_serial = by_name["Pytest (aiosqlite serial, per-file parallel, with coverage)"]["run"]
 
-    assert 'not aiosqlite_serial' in pr_parallel and "-n auto" in pr_parallel
-    assert 'not aiosqlite_serial' in main_parallel and "-n auto" in main_parallel
-    for serial_run in (pr_serial, main_serial):
-        assert "-m aiosqlite_serial" in serial_run
-        assert "-n auto" in serial_run and "--dist=loadfile" in serial_run, (
+def test_serial_job_keeps_per_file_parallel_lane(ci_config: dict) -> None:
+    """The serial lane keeps `-m aiosqlite_serial -n auto --dist=loadfile`.
+
+    Independent files run on separate workers while each file stays on one
+    worker. The push leg starts a FRESH dataset — `--cov-append` is gone now
+    that the lane is its own job and its coverage travels to coverage-combine
+    as a separate artifact (#1052).
+    """
+    steps = _steps_by_name(ci_config["jobs"]["tests-serial"])
+    pr_run = steps["Pytest (aiosqlite serial, per-file parallel)"]["run"]
+    main_run = steps["Pytest (aiosqlite serial, per-file parallel, with coverage)"]["run"]
+    for run in (pr_run, main_run):
+        assert "-m aiosqlite_serial" in run
+        assert "-n auto" in run and "--dist=loadfile" in run, (
             "aiosqlite_serial files must run in parallel while each file stays on one worker"
         )
-
-    # Coverage rides on main only (#1456): PR legs carry no --cov flag, main
-    # legs measure src, and the serial main leg appends to the parallel dataset.
-    assert "--cov" not in pr_parallel and "--cov" not in pr_serial, "PR legs must not measure coverage"
-    assert "--cov=src" in main_parallel and "--cov-report=" in main_parallel
-    assert "--cov=src" in main_serial and "--cov-append" in main_serial
-
-    # The coverage-producing legs and the steps that consume their data are
-    # main-only; the bare legs are PR-only.
-    push_only = (
-        "Pytest (parallel-safe, with coverage)",
-        "Pytest (aiosqlite serial, per-file parallel, with coverage)",
-        "Coverage report (combined)",
-        "Upload coverage artifact",
+    assert "--cov" not in pr_run, "PR serial leg must not measure coverage"
+    assert "--cov=src" in main_run and "--cov-report=" in main_run, "push serial leg must measure src"
+    assert "--cov-append" not in main_run, "serial lane is its own job — a fresh dataset, no append"
+    serial_pr_if = steps["Pytest (aiosqlite serial, per-file parallel)"].get("if") or ""
+    assert "github.event_name == 'pull_request'" in serial_pr_if
+    assert "github.event_name == 'push'" in (
+        steps["Pytest (aiosqlite serial, per-file parallel, with coverage)"].get("if") or ""
     )
-    for name in push_only:
-        assert "github.event_name == 'push'" in (by_name[name].get("if") or ""), (
-            f"`{name}` must be conditioned on push (coverage is main-only, #1456)"
-        )
-    for name in ("Pytest (parallel-safe)", "Pytest (aiosqlite serial, per-file parallel)"):
-        assert "github.event_name == 'pull_request'" in (by_name[name].get("if") or ""), (
-            f"`{name}` must be the PR leg of its lane"
-        )
 
 
-def test_tests_job_does_not_use_testmon(ci_config: dict) -> None:
-    """testmon was dropped for #1090 — no pytest step may pass a --testmon flag.
+def test_coverage_producers_upload_gated_data_artifacts(ci_config: dict) -> None:
+    """Every coverage producer uploads its dataset, push-gated, fail-loud.
+
+    `if-no-files-found: error` is what guarantees coverage-combine's
+    `coverage combine` always has data files — the old silent-exit-1 gotcha.
+    """
+    for name in COVERAGE_PRODUCERS:
+        steps = _steps_by_name(ci_config["jobs"][name])
+        upload = steps.get("Upload coverage data")
+        assert upload is not None, f"{name} must upload its coverage data"
+        assert "github.event_name == 'push'" in (upload.get("if") or ""), f"{name} upload must be push-only"
+        with_ = upload.get("with", {})
+        assert str(with_.get("name", "")).startswith("coverage-data-"), (
+            f"{name} dataset artifact must be coverage-data-*"
+        )
+        assert with_.get("if-no-files-found") == "error", f"{name} upload must fail loud when no data file exists"
+
+
+def test_coverage_combine_merges_and_reports(ci_config: dict) -> None:
+    """coverage-combine downloads all datasets, combines, reports, publishes xml."""
+    job = ci_config["jobs"]["coverage-combine"]
+    assert "github.event_name == 'push'" in (job.get("if") or ""), "coverage-combine must be main-only (#1456)"
+
+    steps = _steps_by_name(job)
+    download = steps.get("Download coverage data")
+    assert download is not None and download.get("uses", "").startswith("actions/download-artifact@")
+    assert download.get("with", {}).get("pattern") == "coverage-data-*"
+    assert download.get("with", {}).get("merge-multiple") is True
+
+    report = steps.get("Coverage report (combined)")
+    assert report is not None, "coverage-combine must run the combined report"
+    for cmd in ("coverage combine", "coverage report", "coverage xml"):
+        assert cmd in report["run"], f"combined report must run `{cmd}`"
+
+    upload = steps.get("Upload coverage artifact")
+    assert upload is not None and upload.get("with", {}).get("name") == "coverage-xml"
+
+
+def test_test_jobs_do_not_use_testmon(ci_config: dict) -> None:
+    """testmon was dropped for #1090 — no test-job step may pass a --testmon flag.
 
     testmon-collection is incompatible with xdist + coverage (it INTERNALERRORs)
     and only deselects single-process. Guard against it being re-added to the
     full `-n auto --cov` suite, which would crash the gate.
     """
-    for step in ci_config["jobs"]["tests"]["steps"]:
-        run = step.get("run") or ""
-        assert "--testmon" not in run, f"tests job must not use testmon (xdist+cov INTERNALERROR); got: {run!r}"
+    jobs = ci_config["jobs"]
+    for name in TEST_JOBS:
+        for step in jobs[name].get("steps", []):
+            run = step.get("run") or ""
+            assert "--testmon" not in run, f"{name} must not use testmon (xdist+cov INTERNALERROR); got: {run!r}"
 
 
 def test_pip_audit_is_advisory(ci_config: dict) -> None:
