@@ -88,6 +88,27 @@ def cli_env(cli_db):
         yield cli_db
 
 
+# Databases handed to cli_init_patch in the CURRENT test. Closed by the
+# autouse finalizer below — after the test ends, when nothing can legally use
+# them anymore. Left open, their aiosqlite connections are GC-finalized mid
+# suite and filterwarnings=error attributes the unraisable warning to a random
+# later test. CLI commands close their own db via finallys today, so the net
+# is dormant — it exists for callers that skip theirs. A failed close is left
+# in the registry (the next teardown retries) and surfaces as a teardown
+# error, so a leak is visible instead of swallowed.
+_PATCHED_DBS: list[Database] = []
+
+
+@pytest.fixture(autouse=True)
+def _close_patched_databases():
+    yield
+    while _PATCHED_DBS:
+        db = _PATCHED_DBS[0]
+        if db._connection.db is not None:
+            asyncio.run(db.close())
+        _PATCHED_DBS.pop(0)
+
+
 @pytest.fixture
 def cli_init_patch():
     """Patch one or more CLI init_db targets to return the provided database."""
@@ -101,6 +122,8 @@ def cli_init_patch():
     ):
         runtime_config = config or AppConfig()
         fresh_databases: list[Database] = []
+        if isinstance(db, Database):
+            _PATCHED_DBS.append(db)
 
         async def fake_init_db(_config_path: str):
             if isinstance(db, Database) and fresh_database:

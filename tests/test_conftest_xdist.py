@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
+
+from src.database import Database
 
 
 def _load_root_conftest():
@@ -260,3 +266,31 @@ def test_collection_is_skipped_under_fail_fast() -> None:
         "tests/routes/test_c.py",
         "tests/test_b.py",
     ]
+
+
+# --- cli_init_patch leak net ------------------------------------------------
+# The autouse _close_patched_databases finalizer closes any Database handed to
+# cli_init_patch that is still open when the test ends (left open, its
+# aiosqlite connection is GC-finalized mid-suite and filterwarnings=error
+# blames a random later test). CLI commands close their own db via finallys,
+# so the net is dormant across the existing suite — this test is its exerciser.
+# The close happens at function-scope teardown, after the test body: the
+# module-scoped witness fixture (torn down after all function fixtures)
+# observes the post-net state.
+
+_witness: list[Database] = []
+
+
+@pytest.fixture(scope="module")
+def net_witness() -> Iterator[list[Database]]:
+    yield _witness
+    assert _witness, "leaked-db test did not register its database"
+    assert _witness[0]._connection.db is None
+
+
+def test_cli_init_patch_net_closes_leaked_database(cli_init_patch, net_witness, tmp_path) -> None:
+    database = Database(str(tmp_path / "leaked.db"), session_encryption_secret="test-session-encryption-key")
+    asyncio.run(database.initialize())
+    net_witness.append(database)
+    with cli_init_patch(database, "src.cli.runtime.init_db"):
+        pass  # deliberately never closed — the net must close it at teardown
