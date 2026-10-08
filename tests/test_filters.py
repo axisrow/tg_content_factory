@@ -546,11 +546,23 @@ class TestAnalyzerSuspiciousUsername:
         assert "suspicious_username" not in result.flags
 
     async def test_short_alnum_ok(self, db, raw_db):
-        # "BITCOIN24" — 9 chars, under length threshold of 10 → not flagged.
+        # "BITCOIN24" — 9 chars (short-farm shape), but its only digits sit in
+        # the tail (positions 7-8, outside the first-6 window) → not flagged.
         await _insert_channel(raw_db, 705, username="BITCOIN24")
         await _insert_messages(raw_db, 705, ["any"])
         analyzer = ChannelAnalyzer(db)
         result = await analyzer.analyze_channel(705)
+        assert "suspicious_username" not in result.flags
+
+    async def test_short_farm_digit_window_boundary_ok(self, db, raw_db):
+        # Boundary of the short-farm digit window: a digit exactly at index 6
+        # (7th position) is outside the first-6 window → not flagged. Pins
+        # {0,5} in SUSPICIOUS_USERNAME_RE — under a {0,6} mutation this name
+        # would be flagged.
+        await _insert_channel(raw_db, 715, username="QWERTY6UI")
+        await _insert_messages(raw_db, 715, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(715)
         assert "suspicious_username" not in result.flags
 
     async def test_null_username_ok(self, db, raw_db):
