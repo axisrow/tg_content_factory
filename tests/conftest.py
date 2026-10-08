@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
@@ -93,7 +92,10 @@ def cli_env(cli_db):
 # autouse finalizer below — after the test ends, when nothing can legally use
 # them anymore. Left open, their aiosqlite connections are GC-finalized mid
 # suite and filterwarnings=error attributes the unraisable warning to a random
-# later test (the mutmut-sandbox flake that surfaced as test_adk_backend).
+# later test. CLI commands close their own db via finallys today, so the net
+# is dormant — it exists for callers that skip theirs. A failed close is left
+# in the registry (the next teardown retries) and surfaces as a teardown
+# error, so a leak is visible instead of swallowed.
 _PATCHED_DBS: list[Database] = []
 
 
@@ -101,12 +103,10 @@ _PATCHED_DBS: list[Database] = []
 def _close_patched_databases():
     yield
     while _PATCHED_DBS:
-        db = _PATCHED_DBS.pop()
-        try:
-            if db._connection.db is not None:
-                asyncio.run(db.close())
-        except Exception as exc:  # noqa: BLE001 — teardown must not fail the suite
-            logging.getLogger(__name__).warning("test-db close failed: %s", exc)
+        db = _PATCHED_DBS[0]
+        if db._connection.db is not None:
+            asyncio.run(db.close())
+        _PATCHED_DBS.pop(0)
 
 
 @pytest.fixture
