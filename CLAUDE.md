@@ -64,7 +64,11 @@ pytest tests/test_web.py::test_health_endpoint -v
 # Benchmark serial vs safe mixed-mode suite execution
 python -m src.main test benchmark
 
-# Mutation testing (run only after the editable install above)
+# Mutation testing (run only after the editable install above).
+# NOTE: stock PyPI mutmut asserts out on the flat `src` layout — the
+# strip_src_prefix fork is required (branch fix/strip-src-prefix-knob,
+# PR to boxed/mutmut). Setup + sandbox details: [tool.mutmut] in
+# pyproject.toml. `rm -rf mutants` before a rerun (mutmut never prunes).
 mutmut run
 ```
 

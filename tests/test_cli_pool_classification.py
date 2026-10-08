@@ -83,6 +83,7 @@ def _pool_call_sites() -> set[tuple[str, str]]:
     return found
 
 
+@pytest.mark.mutmut_skip
 def test_every_pool_call_site_is_classified():
     """A new ``init_pool`` call must be classified before it can ship.
 

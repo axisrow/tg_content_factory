@@ -15,6 +15,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 SRC_DIR = Path(__file__).resolve().parent.parent / "src"
 FACADE = SRC_DIR / "database" / "facade.py"
 BUNDLES = SRC_DIR / "database" / "bundles.py"
@@ -38,6 +40,7 @@ _REQUIRE_RE = re.compile(r"self\._require\(\)")
 _BUNDLE_METHOD_RE = re.compile(r"^    (?:async )?def (?!from_database\b|__)\w+", re.MULTILINE)
 
 
+@pytest.mark.mutmut_skip
 def test_facade_passthrough_surface_does_not_grow():
     count = len(_REQUIRE_RE.findall(FACADE.read_text()))
     assert count <= FACADE_PASSTHROUGH_BASELINE, (
@@ -48,6 +51,7 @@ def test_facade_passthrough_surface_does_not_grow():
     )
 
 
+@pytest.mark.mutmut_skip
 def test_bundle_method_surface_does_not_grow():
     count = len(_BUNDLE_METHOD_RE.findall(BUNDLES.read_text()))
     assert count <= BUNDLE_METHOD_BASELINE, (

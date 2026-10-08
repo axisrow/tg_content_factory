@@ -8,6 +8,11 @@ import pytest
 
 from src.services.quality_scoring_service import QualityScore, QualityScoringService
 
+# mutmut_skip is applied PER TEST below: only the tests that drive score_content
+# through the real default provider (env-key LLM calls, slow/flaky offline) are
+# excluded — the pure-logic tests stay in mutation runs because they hold the
+# only killers for threshold-boundary mutants.
+
 
 @pytest.fixture
 def mock_db():
@@ -131,6 +136,7 @@ def test_passes_threshold_low_value():
 
 
 @pytest.mark.anyio
+@pytest.mark.mutmut_skip
 async def test_score_content_uses_default_provider(mock_db):
     """Score content uses default provider which returns DRAFT prefix."""
     service = QualityScoringService(mock_db)
@@ -142,6 +148,7 @@ async def test_score_content_uses_default_provider(mock_db):
 
 
 @pytest.mark.anyio
+@pytest.mark.mutmut_skip
 async def test_score_content_with_model_param(mock_db):
     """Score content passes model parameter."""
     service = QualityScoringService(mock_db)
@@ -154,6 +161,7 @@ async def test_score_content_with_model_param(mock_db):
 
 
 @pytest.mark.anyio
+@pytest.mark.mutmut_skip
 async def test_score_and_check_with_default_provider(mock_db):
     """Score and check with default provider."""
     service = QualityScoringService(mock_db)
@@ -164,6 +172,7 @@ async def test_score_and_check_with_default_provider(mock_db):
 
 
 @pytest.mark.anyio
+@pytest.mark.mutmut_skip
 async def test_score_and_check_custom_threshold_lower(mock_db):
     """Custom threshold lower than score passes."""
     service = QualityScoringService(mock_db)
@@ -173,6 +182,7 @@ async def test_score_and_check_custom_threshold_lower(mock_db):
 
 
 @pytest.mark.anyio
+@pytest.mark.mutmut_skip
 async def test_score_and_check_custom_threshold_higher(mock_db):
     """Custom threshold higher than score fails."""
     service = QualityScoringService(mock_db)
@@ -185,6 +195,7 @@ async def test_score_and_check_custom_threshold_higher(mock_db):
 
 
 @pytest.mark.anyio
+@pytest.mark.mutmut_skip
 async def test_score_content_empty_string(mock_db):
     """Handles empty content string."""
     service = QualityScoringService(mock_db)
@@ -193,6 +204,7 @@ async def test_score_content_empty_string(mock_db):
 
 
 @pytest.mark.anyio
+@pytest.mark.mutmut_skip
 async def test_score_content_long_string(mock_db):
     """Handles long content string."""
     service = QualityScoringService(mock_db)
@@ -202,6 +214,7 @@ async def test_score_content_long_string(mock_db):
 
 
 @pytest.mark.anyio
+@pytest.mark.mutmut_skip
 async def test_score_and_check_with_model(mock_db):
     """Score and check with model parameter."""
     service = QualityScoringService(mock_db)
@@ -303,6 +316,7 @@ async def test_score_content_builds_provider_service_with_config(mock_db):
 
 
 @pytest.mark.anyio
+@pytest.mark.mutmut_skip
 async def test_score_content_fallback_without_config_uses_default(mock_db):
     """Without config or provider_service the default-stub path is unchanged (overall 0.5)."""
     service = QualityScoringService(mock_db)

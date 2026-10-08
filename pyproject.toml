@@ -232,6 +232,7 @@ markers = [
     "codex_cli_live: opt-in live Codex CLI smoke (image + agent backend via real MCP); gate: RUN_CODEX_CLI_LIVE=1",
     "e2e: end-to-end browser test using Playwright",
     "slow: test is intrinsically slow (real timers/sleeps that can't be scaled away); excluded from the fast feedback loop with `-m 'not slow'`",
+    "mutmut_skip: excluded from mutation runs (repo-contract AST/surface scans, out-of-process spawns, network-flaky); filtered by [tool.mutmut] pytest_add_cli_args `-m 'not mutmut_skip'`",
 ]
 
 # Static security analysis config for `bandit -c pyproject.toml -r src` (#1053).
@@ -275,5 +276,47 @@ ignore_private = true
 ignore_semiprivate = true
 ignore_property_decorators = true
 ignore_overloaded_functions = true
-exclude = ["tests", "scripts", "build", "dist", "site"]
+exclude = ["tests", "scripts", "build", "dist", "site", "mutants"]
 verbose = 1
+
+# Mutation testing (mutmut 3.8). Root-caused 07.10.26: stock mutmut is
+# incompatible with this repo's FLAT layout (import package literally named
+# `src`) — it strips a `src.` prefix from module names (breaking the trampoline
+# routing and stats keys) and asserts against `src.`-prefixed trampoline hits.
+# Fixed upstream-locally by the strip_src_prefix knob
+# (boxed/mutmut PR, branch fix/strip-src-prefix-knob; installed editable from
+# the local checkout of the fork until it lands on PyPI). The sandbox ships
+# everything tests read outside src/tests, both at collection time (root
+# conftest.py, scripts/) and at run time (.github/workflows/ci.yml,
+# docs/reference/*, adk/). data/ is deliberately NOT copied — it holds the
+# live DB; sandbox tests run on tmp/in-memory databases. mutmut never prunes
+# a stale sandbox (deleted src files keep their old copies) — `rm -rf mutants`
+# before a rerun.
+[tool.mutmut]
+source_paths = ["src"]
+also_copy = [
+    "conftest.py",
+    "scripts",
+    ".github/workflows",
+    "docs/reference",
+    "adk",
+    "mkdocs.yml",
+    "config.yaml",
+    "docker-compose.yml",
+]
+strip_src_prefix = false
+# The fork-isolated serial stats run accumulates 5800 tests of garbage in one
+# process: leaky leftovers from earlier tests (unclosed sqlite connections,
+# destroyed-pending asyncio tasks) get finalized mid-run, and pytest's
+# unraisable AND threadexception plugins attribute each to whichever test
+# happens to run (observed at 1713 and 3673 green tests respectively) — both
+# plugins are disabled for mutation runs; the normal suite still enforces
+# strictness in CI. Known cost: a mutant whose only observable effect is a
+# broken cleanup path (unclosed connection, uncancelled task) now survives
+# silently — the score overstates resource-lifecycle code; such survivors
+# need a manual look.
+pytest_add_cli_args = [
+    "-p", "no:unraisableexception",
+    "-p", "no:threadexception",
+    "-m", "not mutmut_skip",
+]

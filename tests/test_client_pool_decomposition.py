@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
+
 from src.telegram.client_pool import ClientPool
 from src.telegram.resolve_guard import ResolveGuardMixin
 from tests.helpers import FakeCliTelethonClient
@@ -114,6 +116,7 @@ def test_public_contract_is_fully_present_and_callable():
         assert callable(attr), f"ClientPool.{name} is no longer callable"
 
 
+@pytest.mark.mutmut_skip
 def test_public_contract_matches_actual_public_surface():
     """The frozen contract and the live public surface stay in sync.
 
