@@ -143,7 +143,7 @@ def test_shard_jobs_run_half_the_parallel_suite(ci_config: dict) -> None:
     """
     job = ci_config["jobs"]["tests-shards"]
     matrix = job["strategy"]["matrix"]["shard-id"]
-    assert matrix == [0, 1], "sharding must be a 2-way matrix"
+    assert matrix == [0, 1, 2], "sharding must be a 3-way matrix"
     assert job["strategy"]["fail-fast"] is False, "one red shard must not kill the other"
     assert "matrix.shard-id" in (job.get("env", {}).get("COVERAGE_FILE") or ""), (
         "each shard must name its own coverage dataset via COVERAGE_FILE"
@@ -156,7 +156,7 @@ def test_shard_jobs_run_half_the_parallel_suite(ci_config: dict) -> None:
         assert "-m" in run and "not aiosqlite_serial" in run, "shards must exclude the serial lane"
         assert "-n auto" in run, "shards must fan out across the runner cores"
         assert "scripts/shard_tests.py" in run, "shard selection must come from scripts/shard_tests.py"
-        assert "--num-shards 2" in run and "--shard-id" in run, "shard id must come from the matrix"
+        assert "--num-shards 3" in run and "--shard-id" in run, "shard id must come from the matrix"
         assert not run.startswith("pytest tests"), (
             "shard legs must NOT pass a positional `tests` arg — the file list is the selection"
         )

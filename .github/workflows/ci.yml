@@ -7,7 +7,7 @@ name: CI
 # Both run the same full test suite; the CI speedup is the parallel job split
 # (lint | static-checks | tests-smoke | tests-shards | tests-serial), not test
 # selection (#1097 §5), and — on top of that split — sharding the parallel-safe
-# suite across a 2-runner matrix so the wall is the slowest shard, not the
+# suite across a 3-runner matrix so the wall is the slowest shard, not the
 # whole suite.
 # Dropped the old `fix/**` / `codex/**` push triggers: they double-ran CI (once
 # for the branch push, once for the PR) and burned runners on intermediate,
@@ -223,11 +223,11 @@ jobs:
           path: .coverage.smoke
           if-no-files-found: error
 
-  # The parallel-safe suite, sharded ×2 across a runner matrix — the wall is
+  # The parallel-safe suite, sharded ×3 across a runner matrix — the wall is
   # the slowest shard instead of the whole suite. Sharding is FILE-atomic so
   # the `--dist=loadfile` invariant survives (tests in one file stay on one
-  # worker): scripts/shard_tests.py re-collects the same tree in both matrix
-  # jobs and greedily balances whole files by test count, deterministically.
+  # worker): scripts/shard_tests.py re-collects the same tree in every matrix
+  # job and greedily balances whole files by test count, deterministically.
   # Deliberately NO positional `tests` arg: the file list IS the selection —
   # adding one would make every shard run the full-suite union instead of its
   # half.
@@ -237,7 +237,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard-id: [0, 1]
+        shard-id: [0, 1, 2]
     env:
       # Names this job's coverage dataset so the three producers can upload
       # distinct files that coverage-combine merges; harmless on the PR leg
@@ -266,11 +266,11 @@ jobs:
       # test_ci_workflow_structure.py can grep each leg.
       - name: Pytest (parallel-safe)
         if: ${{ !cancelled() && github.event_name == 'pull_request' }}
-        run: pytest -q -m "not aiosqlite_serial" -n auto --durations=25 $(python scripts/shard_tests.py --num-shards 2 --shard-id ${{ matrix.shard-id }})
+        run: pytest -q -m "not aiosqlite_serial" -n auto --durations=25 $(python scripts/shard_tests.py --num-shards 3 --shard-id ${{ matrix.shard-id }})
 
       - name: Pytest (parallel-safe, with coverage)
         if: ${{ !cancelled() && github.event_name == 'push' }}
-        run: pytest -q -m "not aiosqlite_serial" -n auto --durations=25 --cov=src --cov-report= $(python scripts/shard_tests.py --num-shards 2 --shard-id ${{ matrix.shard-id }})
+        run: pytest -q -m "not aiosqlite_serial" -n auto --durations=25 --cov=src --cov-report= $(python scripts/shard_tests.py --num-shards 3 --shard-id ${{ matrix.shard-id }})
 
       # pytest-cov merges the xdist worker datafiles into the single
       # COVERAGE_FILE at the end of the run ([tool.coverage.run] parallel =
