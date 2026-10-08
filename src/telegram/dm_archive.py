@@ -37,6 +37,7 @@ from telethon_floodgate import (
 )
 
 from src.models import DmMessage
+from src.telegram.collector_types import unknown_tl_type_note
 from src.telegram.dm_history import read_dialog_history_since
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,18 @@ async def backfill_account(
         )
         stats["incomplete"] = True
         return stats
+    except Exception as exc:
+        # Сбой листинга без живого кэша (деградации пула нет — ре-райз):
+        # например TL-конструктор вне схемы telethon (инцидент 07.10.26).
+        # Честный incomplete-стоп вместо сырого traceback мимо CLI-подсказки.
+        note = unknown_tl_type_note(exc)
+        logger.warning(
+            "dm_archive: снимок диалогов %s не прошёл: %s; повтори команду позже",
+            phone,
+            note or exc,
+        )
+        stats["incomplete"] = True
+        return stats
     if getattr(snapshot, "partial", False):
         # Неполный список (бюджет/флуд/#1379-деградация со старым кэшем):
         # чтение по нему промолчало бы о ненакрытых чатах — честнее стоп.
@@ -154,6 +167,19 @@ async def backfill_account(
                 break
             except (ValueError, TypeError) as exc:
                 logger.warning("dm_archive: %s chat %s не резолвится: %s", phone, chat_id, exc)
+                stats["errors"] += 1
+                break
+            except Exception as exc:
+                # Тот же класс, что у догона (инцидент 07.10.26): один
+                # непарсящийся диалог не убивает бэкфилл остальных. Известный
+                # TL-тип — warning с constructor-нотой (политика коллектора).
+                note = unknown_tl_type_note(exc)
+                if note is not None:
+                    logger.warning(
+                        "dm_archive: %s chat %s: %s; диалог пропущен", phone, chat_id, note
+                    )
+                else:
+                    logger.exception("dm_archive: %s chat %s упал; диалог пропущен", phone, chat_id)
                 stats["errors"] += 1
                 break
             for msg in messages:

@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 
+from telethon.errors import TypeNotFoundError
 from telethon_floodgate import (
     FloodWaitInfo,
     HandledFloodWaitError,
@@ -678,3 +680,96 @@ async def test_resolve_priority_chain():
     assert settings.resolve("+111", 1) == ("full", 100)  # аккаунт побеждает глобаль
     assert settings.resolve("+111", 42) == ("journal_only", 7)  # диалог побеждает аккаунт
     assert settings.resolve("+111", 43) == ("full", 9)  # None-режим диалога наследует аккаунт
+
+
+# --- устойчивость прохода ---
+
+
+async def test_broken_dialog_does_not_kill_the_pass(tmp_path, monkeypatch):
+    """TypeNotFoundError на одном диалоге не убивает проход аккаунта.
+
+    Инцидент 07.10.26: непарсящийся диалог («Searchee Bot», TL-конструктор вне
+    схемы telethon 1.45) ронял ВЕСЬ проход по +66...2247 — остальные диалоги
+    не догонялись до следующего триггера, где падение повторялось.
+    """
+    db = await _make_db(tmp_path)
+    try:
+        client = _FakeRawClient()
+
+        async def _broken_second(client, *, api_id, api_hash, peer, min_id=0, limit=200):
+            if int(peer) == 43:
+                raise TypeNotFoundError(31774388, b"\x88Cw1+@\t")
+            return [m for m in {42: [_FakeMessage(10)]}.get(int(peer), []) if m.id > min_id]
+
+        monkeypatch.setattr(dm_catchup, "read_dialog_history_since", _broken_second)
+        await db.set_setting(
+            DM_CATCHUP_SETTING_KEY, DmCatchupSettings(mode="full").model_dump_json()
+        )
+        service = DmCatchupService(_FakePool(client), db)
+
+        # Красный симптом: здесь раньше вылетал TypeNotFoundError.
+        stats = await service.run_for_phone("+111")
+
+        assert stats["errors"] == 1
+        assert stats["dialogs"] == 2  # dm+bot; channel (44) не участвует
+        journal = await _journal_processed(db)
+        assert 10 in journal  # диалог 42 догонался несмотря на падение 43
+    finally:
+        await db.close()
+
+
+async def test_broken_dialog_tl_type_logs_warning_not_error(tmp_path, monkeypatch, caplog):
+    """Непарсящийся TL-тип — warning с constructor-нотой (политика
+    unknown_tl_type_note, как в коллекторе), а не ERROR-traceback: диалог
+    детерминирован, ERROR-спам на каждый виток хоронит настоящие сбои.
+    """
+    db = await _make_db(tmp_path)
+    try:
+        client = _FakeRawClient()
+
+        async def _broken_second(client, *, api_id, api_hash, peer, min_id=0, limit=200):
+            if int(peer) == 43:
+                raise TypeNotFoundError(31774388, b"\x88Cw1+@\t")
+            return [m for m in {42: [_FakeMessage(10)]}.get(int(peer), []) if m.id > min_id]
+
+        monkeypatch.setattr(dm_catchup, "read_dialog_history_since", _broken_second)
+        await db.set_setting(
+            DM_CATCHUP_SETTING_KEY, DmCatchupSettings(mode="full").model_dump_json()
+        )
+        service = DmCatchupService(_FakePool(client), db)
+
+        with caplog.at_level(logging.WARNING, logger="src.telegram.dm_catchup"):
+            stats = await service.run_for_phone("+111")
+
+        assert stats["errors"] == 1
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+        assert any("constructor 0x" in r.getMessage() for r in caplog.records)
+    finally:
+        await db.close()
+
+
+async def test_all_dialogs_failing_flags_systemic_breakage(tmp_path, monkeypatch, caplog):
+    """Системный сбой (упал каждый диалог) не растворяется в тихом errors=N:
+    проход завершается, но рапортует ERROR на уровне аккаунта — иначе
+    сломанный пул/БД выглядел бы как рассыпанная флакость (ревью #1504).
+    """
+    db = await _make_db(tmp_path)
+    try:
+        client = _FakeRawClient()
+
+        async def _dead_transport(client, *, api_id, api_hash, peer, min_id=0, limit=200):
+            raise AttributeError("пул без кредов — системный сбой, а не отдельный диалог")
+
+        monkeypatch.setattr(dm_catchup, "read_dialog_history_since", _dead_transport)
+        await db.set_setting(
+            DM_CATCHUP_SETTING_KEY, DmCatchupSettings(mode="full").model_dump_json()
+        )
+        service = DmCatchupService(_FakePool(client), db)
+
+        with caplog.at_level(logging.WARNING, logger="src.telegram.dm_catchup"):
+            stats = await service.run_for_phone("+111")
+
+        assert stats["errors"] == 2  # оба диалога упали, но проход завершён
+        assert any("системный" in r.getMessage() for r in caplog.records)
+    finally:
+        await db.close()
