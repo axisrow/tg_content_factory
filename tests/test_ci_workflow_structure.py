@@ -128,6 +128,7 @@ def test_smoke_job_runs_preflight(ci_config: dict) -> None:
         assert "-m smoke" in run, "smoke job must run the smoke preflight marker"
     assert "--cov" not in pr_run, "PR smoke leg must not measure coverage"
     assert "--cov=src" in main_run and "--cov-report=" in main_run, "push smoke leg must measure src"
+    assert "--cov-fail-under=0" in main_run, "producer must not enforce the fail_under ratchet on a partial dataset"
     assert "github.event_name == 'pull_request'" in (steps["Pytest (smoke preflight)"].get("if") or "")
     assert "github.event_name == 'push'" in (steps["Pytest (smoke preflight, with coverage)"].get("if") or "")
 
@@ -163,6 +164,7 @@ def test_shard_jobs_run_half_the_parallel_suite(ci_config: dict) -> None:
         assert run.startswith("pytest -q"), "shard legs must start with the pytest invocation itself"
     assert "--cov" not in pr_run, "PR shard leg must not measure coverage"
     assert "--cov=src" in main_run and "--cov-report=" in main_run, "push shard leg must measure src"
+    assert "--cov-fail-under=0" in main_run, "shard holds a slice of src — the 87 ratchet must not fire per shard"
     assert "github.event_name == 'pull_request'" in (steps["Pytest (parallel-safe)"].get("if") or "")
     assert "github.event_name == 'push'" in (steps["Pytest (parallel-safe, with coverage)"].get("if") or "")
 
@@ -185,6 +187,7 @@ def test_serial_job_keeps_per_file_parallel_lane(ci_config: dict) -> None:
         )
     assert "--cov" not in pr_run, "PR serial leg must not measure coverage"
     assert "--cov=src" in main_run and "--cov-report=" in main_run, "push serial leg must measure src"
+    assert "--cov-fail-under=0" in main_run, "producer must not enforce the fail_under ratchet on a partial dataset"
     assert "--cov-append" not in main_run, "serial lane is its own job — a fresh dataset, no append"
     serial_pr_if = steps["Pytest (aiosqlite serial, per-file parallel)"].get("if") or ""
     assert "github.event_name == 'pull_request'" in serial_pr_if
@@ -226,6 +229,9 @@ def test_coverage_combine_merges_and_reports(ci_config: dict) -> None:
     assert report is not None, "coverage-combine must run the combined report"
     for cmd in ("coverage combine", "coverage report", "coverage xml"):
         assert cmd in report["run"], f"combined report must run `{cmd}`"
+    assert "--cov-fail-under" not in report["run"], (
+        "the combine step must read fail_under from pyproject (the ratchet lives here, not in the producers)"
+    )
 
     upload = steps.get("Upload coverage artifact")
     assert upload is not None and upload.get("with", {}).get("name") == "coverage-xml"
