@@ -276,7 +276,7 @@ ignore_private = true
 ignore_semiprivate = true
 ignore_property_decorators = true
 ignore_overloaded_functions = true
-exclude = ["tests", "scripts", "build", "dist", "site"]
+exclude = ["tests", "scripts", "build", "dist", "site", "mutants"]
 verbose = 1
 
 # Mutation testing (mutmut 3.8). Root-caused 07.10.26: stock mutmut is
@@ -285,7 +285,7 @@ verbose = 1
 # routing and stats keys) and asserts against `src.`-prefixed trampoline hits.
 # Fixed upstream-locally by the strip_src_prefix knob
 # (boxed/mutmut PR, branch fix/strip-src-prefix-knob; installed editable from
-# /Users/axisrow/Projects/mutmut until it lands on PyPI). The sandbox ships
+# the local checkout of the fork until it lands on PyPI). The sandbox ships
 # everything tests read outside src/tests, both at collection time (root
 # conftest.py, scripts/) and at run time (.github/workflows/ci.yml,
 # docs/reference/*, adk/). data/ is deliberately NOT copied — it holds the
@@ -297,8 +297,8 @@ source_paths = ["src"]
 also_copy = [
     "conftest.py",
     "scripts",
-    ".github",
-    "docs",
+    ".github/workflows",
+    "docs/reference",
     "adk",
     "mkdocs.yml",
     "config.yaml",
@@ -307,16 +307,16 @@ also_copy = [
 strip_src_prefix = false
 # The fork-isolated serial stats run accumulates 5800 tests of garbage in one
 # process: leaky leftovers from earlier tests (unclosed sqlite connections,
-# destroyed-pending asyncio tasks) get finalized by the GC mid-run, and
-# pytest's unraisable plugin attributes each to whichever test happens to run
-# (observed at 1713 and 3673 green tests respectively). Disabling the plugin
-# for mutation runs stops the whole class; the normal suite still enforces
-# strictness in CI.
+# destroyed-pending asyncio tasks) get finalized mid-run, and pytest's
+# unraisable AND threadexception plugins attribute each to whichever test
+# happens to run (observed at 1713 and 3673 green tests respectively) — both
+# plugins are disabled for mutation runs; the normal suite still enforces
+# strictness in CI. Known cost: a mutant whose only observable effect is a
+# broken cleanup path (unclosed connection, uncancelled task) now survives
+# silently — the score overstates resource-lifecycle code; such survivors
+# need a manual look.
 pytest_add_cli_args = [
     "-p", "no:unraisableexception",
-    # The serial stats run accumulates 5800 tests of garbage in one process:
-    # leaky leftovers from earlier tests get GC-finalized mid-run and pytest's
-    # unraisable plugin attributes each to whichever test happens to run (seen
-    # at 1713 and 3673 green tests). The normal suite keeps the strictness.
+    "-p", "no:threadexception",
     "-m", "not mutmut_skip",
 ]
