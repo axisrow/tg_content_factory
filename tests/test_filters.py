@@ -500,6 +500,29 @@ class TestAnalyzerSuspiciousUsername:
         result = await analyzer.analyze_channel(701)
         assert "suspicious_username" in result.flags
 
+    @pytest.mark.parametrize(
+        "username",
+        [
+            "UB1JH44UM",
+            "RRE1MQD0A",
+            "EO4ULAEW",
+            "HIFP7WAU",
+            "EZ7BNQ8ZL",
+            "K66CING9V",
+            "C81WJ13F",
+            "F0ZJJD3Y",
+            "OYO8R9JT",
+        ],
+    )
+    async def test_short_farm_username_flagged(self, db, raw_db, username):
+        # Ферма 09.10.26 (#1510): 8-9 символов ALL-CAPS с цифрой ВНУТРИ имени —
+        # под старый порог Формы 1 {10,} не попадали (10/10 -> clean).
+        await _insert_channel(raw_db, 750, username=username)
+        await _insert_messages(raw_db, 750, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(750)
+        assert "suspicious_username" in result.flags
+
     async def test_normal_lowercase_username_ok(self, db, raw_db):
         await _insert_channel(raw_db, 702, username="durov")
         await _insert_messages(raw_db, 702, ["any"])
