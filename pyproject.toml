@@ -305,13 +305,15 @@ also_copy = [
     "docker-compose.yml",
 ]
 strip_src_prefix = false
-# The fork-isolated serial stats run accumulates 5800 tests of garbage in one
-# process: leaky leftovers from earlier tests (unclosed sqlite connections,
-# destroyed-pending asyncio tasks) get finalized mid-run, and pytest's
-# unraisable AND threadexception plugins attribute each to whichever test
-# happens to run (observed at 1713 and 3673 green tests respectively) — both
-# plugins are disabled for mutation runs; the normal suite still enforces
-# strictness in CI. Known cost: a mutant whose only observable effect is a
+# The fork-isolated serial stats phase pushes the whole suite (~10.7k tests,
+# collect-verified 08.10.26) serially through one process; full sandbox runs
+# have not completed yet, so the observations are from partial runs: leaky
+# leftovers from earlier tests (unclosed sqlite connections, destroyed-pending
+# asyncio tasks) get finalized mid-run, and pytest's unraisable AND
+# threadexception plugins attribute each to whichever test happens to run
+# (seen at 1713 and 3673 green tests respectively) — both plugins are
+# disabled for mutation runs; the normal suite still enforces strictness in
+# CI. Known cost: a mutant whose only observable effect is a
 # broken cleanup path (unclosed connection, uncancelled task) now survives
 # silently — the score overstates resource-lifecycle code; such survivors
 # need a manual look.
