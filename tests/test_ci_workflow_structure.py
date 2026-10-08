@@ -212,6 +212,9 @@ def test_coverage_producers_upload_gated_data_artifacts(ci_config: dict) -> None
             f"{name} dataset artifact must be coverage-data-*"
         )
         assert with_.get("if-no-files-found") == "error", f"{name} upload must fail loud when no data file exists"
+        assert with_.get("include-hidden-files") is True, (
+            f"{name} dataset is a dotfile — upload-artifact v4+ excludes hidden files by default"
+        )
 
 
 def test_coverage_combine_merges_and_reports(ci_config: dict) -> None:
