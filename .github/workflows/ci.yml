@@ -218,6 +218,9 @@ jobs:
         if: ${{ !cancelled() && github.event_name == 'push' }}
         run: pytest tests -q -m smoke --cov=src --cov-report= --cov-fail-under=0
 
+      # include-hidden-files: the datasets are dotfiles (.coverage.*) and
+      # upload-artifact v4+ silently excludes hidden files by default — the
+      # first post-merge push run failed exactly there.
       - name: Upload coverage data
         if: ${{ !cancelled() && github.event_name == 'push' }}
         uses: actions/upload-artifact@v7
@@ -225,6 +228,7 @@ jobs:
           name: coverage-data-smoke
           path: .coverage.smoke
           if-no-files-found: error
+          include-hidden-files: true
 
   # The parallel-safe suite, sharded ×3 across a runner matrix — the wall is
   # the slowest shard instead of the whole suite. Sharding is FILE-atomic so
@@ -287,6 +291,7 @@ jobs:
           name: coverage-data-shard${{ matrix.shard-id }}
           path: .coverage.shard${{ matrix.shard-id }}
           if-no-files-found: error
+          include-hidden-files: true
 
   # aiosqlite_serial lane as its own job — hidden under the shards' wall, and
   # per-file parallelism (`--dist=loadfile`) preserved: independent files run
@@ -329,6 +334,7 @@ jobs:
           name: coverage-data-serial
           path: .coverage.serial
           if-no-files-found: error
+          include-hidden-files: true
 
   # Main (push) only: merge the per-job coverage datasets into the fail_under
   # report (#1052) and the xml diff artifact. `needs` plus `if-no-files-found:
