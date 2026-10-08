@@ -9,6 +9,11 @@ name: CI
 # selection (#1097 §5), and — on top of that split — sharding the parallel-safe
 # suite across a 3-runner matrix so the wall is the slowest shard, not the
 # whole suite.
+# Code coverage measurement was REMOVED by owner decision (2026-10-08): no
+# --cov anywhere, no fail_under ratchet (#1052 retired), no PR/push leg split
+# (#1456 retired) — every event runs the same bare commands, and the three
+# test jobs carry a five-minute BUDGET: a test job past five minutes reds CI
+# instead of quietly growing the wall.
 # Dropped the old `fix/**` / `codex/**` push triggers: they double-ran CI (once
 # for the branch push, once for the PR) and burned runners on intermediate,
 # draft, PR-less pushes. A push to a feature branch with no open PR no longer
@@ -63,7 +68,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     # Just `pip install` + ruff; minutes at most. 10 leaves headroom for a cold
-    # pip cache.
+    # pip cache. Hang guard, not a budget.
     timeout-minutes: 10
 
     steps:
@@ -90,6 +95,8 @@ jobs:
     runs-on: ubuntu-latest
     # Import contracts + complexity gate + security scans + strict docs build.
     # Typically a couple of minutes; 10 leaves headroom over a cold pip install.
+    # Hang guard, not a budget (the advisory network scans can legitimately
+    # stretch on a cold day).
     timeout-minutes: 10
 
     steps:
@@ -173,178 +180,14 @@ jobs:
               sys.exit(1)
           PY
 
-  # The full test gate — runs on every PR and on main (#1051). Since the
-  # sharding round it is three parallel jobs (smoke | shards | serial) whose
-  # wall is the slowest shard, plus a push-only coverage-combine job (#1052).
-  # NOTE (#1090): selective runs (pytest-testmon) were evaluated and dropped —
-  # testmon only deselects in a single process (no-op under `-n auto`) and
-  # testmon-collection + xdist + coverage INTERNALERRORs. The speedup is more
-  # runners, not fewer tests; the full suite stays the gate.
+  # Smoke preflight — offline checks over real critical paths (package import,
+  # CLI parser, DB schema, web /health). Its own job so a fundamentally broken
+  # build reds in ~1.5 min while the shards are still grinding. Live smoke
+  # (real_provider_smoke / codex_*) stays opt-in and is skipped here — no gate
+  # env vars are set.
+  # timeout-minutes is a BUDGET (owner decision, 2026-10-08): the job reds when
+  # it exceeds five minutes, not only on a hang.
   tests-smoke:
-    runs-on: ubuntu-latest
-    # Offline preflight over real critical paths (package import, CLI parser,
-    # DB schema, web /health). Its own job so a fundamentally broken build reds
-    # in ~1.5 min while the shards are still grinding. Live smoke
-    # (real_provider_smoke / codex_*) stays opt-in and is skipped here — no
-    # gate env vars are set.
-    timeout-minutes: 10
-    env:
-      COVERAGE_FILE: .coverage.smoke
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
-
-      # Two legs like every test lane (#1456): the smoke lines must stay in the
-      # push coverage dataset, else they drop out of the combined report and
-      # the fail_under ratchet drifts (#1052). --cov-fail-under=0: a producer
-      # holds only a slice of the suite, so the per-run fail_under from
-      # pyproject would fail it; the ratchet is enforced where the FULL dataset
-      # exists — coverage-combine below.
-      - name: Pytest (smoke preflight)
-        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
-        run: pytest tests -q -m smoke
-
-      - name: Pytest (smoke preflight, with coverage)
-        if: ${{ !cancelled() && github.event_name == 'push' }}
-        run: pytest tests -q -m smoke --cov=src --cov-report= --cov-fail-under=0
-
-      # include-hidden-files: the datasets are dotfiles (.coverage.*) and
-      # upload-artifact v4+ silently excludes hidden files by default — the
-      # first post-merge push run failed exactly there.
-      - name: Upload coverage data
-        if: ${{ !cancelled() && github.event_name == 'push' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-data-smoke
-          path: .coverage.smoke
-          if-no-files-found: error
-          include-hidden-files: true
-
-  # The parallel-safe suite, sharded ×3 across a runner matrix — the wall is
-  # the slowest shard instead of the whole suite. Sharding is FILE-atomic so
-  # the `--dist=loadfile` invariant survives (tests in one file stay on one
-  # worker): scripts/shard_tests.py re-collects the same tree in every matrix
-  # job and greedily balances whole files by test count, deterministically.
-  # Deliberately NO positional `tests` arg: the file list IS the selection —
-  # adding one would make every shard run the full-suite union instead of its
-  # half.
-  tests-shards:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        shard-id: [0, 1, 2]
-    env:
-      # Names this job's coverage dataset so the three producers can upload
-      # distinct files that coverage-combine merges; harmless on the PR leg
-      # (no --cov flag there).
-      COVERAGE_FILE: .coverage.shard${{ matrix.shard-id }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
-
-      # On CI conftest.py uses every runner core (the load throttle is
-      # dev-only), so `-n auto` fans out across all vCPUs. --durations surfaces
-      # the slowest tests each run for ongoing tuning (#944). Coverage rides on
-      # main only (#1456): instrumentation costs roughly a third of the suite's
-      # wall time, and a PR only needs the pass/fail gate. --cov-fail-under=0:
-      # a shard holds only a slice of src, so the pyproject fail_under (87)
-      # must not be evaluated here — coverage-combine owns the ratchet. The
-      # commands are deliberately duplicated rather than shell-built so
-      # test_ci_workflow_structure.py can grep each leg.
-      - name: Pytest (parallel-safe)
-        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
-        run: pytest -q -m "not aiosqlite_serial" -n auto --durations=25 $(python scripts/shard_tests.py --num-shards 3 --shard-id ${{ matrix.shard-id }})
-
-      - name: Pytest (parallel-safe, with coverage)
-        if: ${{ !cancelled() && github.event_name == 'push' }}
-        run: pytest -q -m "not aiosqlite_serial" -n auto --durations=25 --cov=src --cov-report= --cov-fail-under=0 $(python scripts/shard_tests.py --num-shards 3 --shard-id ${{ matrix.shard-id }})
-
-      # pytest-cov merges the xdist worker datafiles into the single
-      # COVERAGE_FILE at the end of the run ([tool.coverage.run] parallel =
-      # true); reporting is deferred to coverage-combine.
-      - name: Upload coverage data
-        if: ${{ !cancelled() && github.event_name == 'push' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-data-shard${{ matrix.shard-id }}
-          path: .coverage.shard${{ matrix.shard-id }}
-          if-no-files-found: error
-          include-hidden-files: true
-
-  # aiosqlite_serial lane as its own job — hidden under the shards' wall, and
-  # per-file parallelism (`--dist=loadfile`) preserved: independent files run
-  # on separate workers while each file stays whole (the old single-process
-  # command left all 986 tests serialized). The push leg starts a FRESH
-  # dataset: --cov-append is gone because its coverage now reaches
-  # coverage-combine as a separate artifact instead of appending into the same
-  # job's file (#1052).
-  tests-serial:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      COVERAGE_FILE: .coverage.serial
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
-
-      - name: Pytest (aiosqlite serial, per-file parallel)
-        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
-        run: pytest tests -q -m aiosqlite_serial -n auto --dist=loadfile
-
-      - name: Pytest (aiosqlite serial, per-file parallel, with coverage)
-        if: ${{ !cancelled() && github.event_name == 'push' }}
-        run: pytest tests -q -m aiosqlite_serial -n auto --dist=loadfile --cov=src --cov-report= --cov-fail-under=0
-
-      - name: Upload coverage data
-        if: ${{ !cancelled() && github.event_name == 'push' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-data-serial
-          path: .coverage.serial
-          if-no-files-found: error
-          include-hidden-files: true
-
-  # Main (push) only: merge the per-job coverage datasets into the fail_under
-  # report (#1052) and the xml diff artifact. `needs` plus `if-no-files-found:
-  # error` on the producers guarantee the data files exist, so `coverage
-  # combine` cannot hit the old "no data to combine" exit-1 gotcha. Deliberately
-  # NOT gated on !cancelled(): if a producer fails, this skips with it — a
-  # coverage report for a red run is worthless.
-  coverage-combine:
-    if: ${{ github.event_name == 'push' }}
-    needs: [tests-smoke, tests-shards, tests-serial]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -361,22 +204,71 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      - name: Download coverage data
-        uses: actions/download-artifact@v8
-        with:
-          pattern: coverage-data-*
-          merge-multiple: true
-          path: .
+      - name: Pytest (smoke preflight)
+        run: pytest tests -q -m smoke
 
-      - name: Coverage report (combined)
-        run: |
-          coverage combine
-          coverage report
-          coverage xml -o coverage.xml
+  # The parallel-safe suite, sharded ×3 across a runner matrix — the wall is
+  # the slowest shard instead of the whole suite. Sharding is FILE-atomic so
+  # the `--dist=loadfile` invariant survives (tests in one file stay on one
+  # worker): scripts/shard_tests.py re-collects the same tree in every matrix
+  # job and greedily balances whole files by test count, deterministically.
+  # Deliberately NO positional `tests` arg: the file list IS the selection —
+  # adding one would make every shard run the full-suite union instead of its
+  # third.
+  # NOTE (#1090): selective runs (pytest-testmon) remain dropped — see the
+  # module guard in tests/test_ci_workflow_structure.py; the speedup is more
+  # runners, not fewer tests; the full suite stays the gate.
+  #
+  # timeout-minutes is a BUDGET (owner decision, 2026-10-08): a shard that
+  # exceeds five minutes reds CI instead of quietly growing the wall.
+  tests-shards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        shard-id: [0, 1, 2]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
 
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v7
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
-          name: coverage-xml
-          path: coverage.xml
-          if-no-files-found: error
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      # On CI conftest.py uses every runner core (the load throttle is
+      # dev-only), so `-n auto` fans out across all vCPUs. --durations surfaces
+      # the slowest tests each run for ongoing tuning (#944).
+      - name: Pytest (parallel-safe)
+        run: pytest -q -m "not aiosqlite_serial" -n auto --durations=25 $(python scripts/shard_tests.py --num-shards 3 --shard-id ${{ matrix.shard-id }})
+
+  # aiosqlite_serial lane as its own job — hidden under the shards' wall, and
+  # per-file parallelism (`--dist=loadfile`) preserved: independent files run
+  # on separate workers while each file stays whole.
+  # timeout-minutes is a BUDGET (owner decision, 2026-10-08), like the other
+  # test jobs.
+  tests-serial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Pytest (aiosqlite serial, per-file parallel)
+        run: pytest tests -q -m aiosqlite_serial -n auto --dist=loadfile
