@@ -500,6 +500,29 @@ class TestAnalyzerSuspiciousUsername:
         result = await analyzer.analyze_channel(701)
         assert "suspicious_username" in result.flags
 
+    @pytest.mark.parametrize(
+        "username",
+        [
+            "UB1JH44UM",
+            "RRE1MQD0A",
+            "EO4ULAEW",
+            "HIFP7WAU",
+            "EZ7BNQ8ZL",
+            "K66CING9V",
+            "C81WJ13F",
+            "F0ZJJD3Y",
+            "OYO8R9JT",
+        ],
+    )
+    async def test_short_farm_username_flagged(self, db, raw_db, username):
+        # Ферма 09.10.26 (#1510): 8-9 символов ALL-CAPS с цифрой ВНУТРИ имени —
+        # под старый порог Формы 1 {10,} не попадали (10/10 -> clean).
+        await _insert_channel(raw_db, 750, username=username)
+        await _insert_messages(raw_db, 750, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(750)
+        assert "suspicious_username" in result.flags
+
     async def test_normal_lowercase_username_ok(self, db, raw_db):
         await _insert_channel(raw_db, 702, username="durov")
         await _insert_messages(raw_db, 702, ["any"])
@@ -523,11 +546,23 @@ class TestAnalyzerSuspiciousUsername:
         assert "suspicious_username" not in result.flags
 
     async def test_short_alnum_ok(self, db, raw_db):
-        # "BITCOIN24" — 9 chars, under length threshold of 10 → not flagged.
+        # "BITCOIN24" — 9 chars (short-farm shape), but its only digits sit in
+        # the tail (positions 7-8, outside the first-6 window) → not flagged.
         await _insert_channel(raw_db, 705, username="BITCOIN24")
         await _insert_messages(raw_db, 705, ["any"])
         analyzer = ChannelAnalyzer(db)
         result = await analyzer.analyze_channel(705)
+        assert "suspicious_username" not in result.flags
+
+    async def test_short_farm_digit_window_boundary_ok(self, db, raw_db):
+        # Boundary of the short-farm digit window: a digit exactly at index 6
+        # (7th position) is outside the first-6 window → not flagged. Pins
+        # {0,5} in SUSPICIOUS_USERNAME_RE — under a {0,6} mutation this name
+        # would be flagged.
+        await _insert_channel(raw_db, 715, username="QWERTY6UI")
+        await _insert_messages(raw_db, 715, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(715)
         assert "suspicious_username" not in result.flags
 
     async def test_null_username_ok(self, db, raw_db):
