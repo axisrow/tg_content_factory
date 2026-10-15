@@ -63,7 +63,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "analyze_filters",
         "Analyze all channels and compute filter scores (low_uniqueness, low_subscriber_ratio, "
-        "cross_channel_spam, non_cyrillic, chat_noise, auto_feed, low_engagement). "
+        "cross_channel_spam, non_cyrillic, chat_noise, auto_feed, low_engagement, forwarder). "
         "Shows which channels should be filtered. "
         "Set quick=true for a fast sampled run (last N messages/channel, no cross-dupe) on large DBs.",
         {

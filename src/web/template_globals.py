@@ -31,6 +31,7 @@ FILTER_FLAG_EMOJI = {
     "suspicious_username": (Markup('<i class="bi bi-dice-5"></i>'), "Подозрительный юзернейм"),
     "auto_feed": (Markup('<i class="bi bi-robot"></i>'), "Автогенерённая лента"),
     "low_engagement": (Markup('<i class="bi bi-activity"></i>'), "Мёртвое вовлечение"),
+    "forwarder": (Markup('<i class="bi bi-send"></i>'), "Пересылочный канал"),
 }
 
 # Human-readable labels for AccountSessionStatus values shown in the accounts

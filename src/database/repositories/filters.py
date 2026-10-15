@@ -50,6 +50,7 @@ _SQL_UNIQUENESS = """
         COUNT(DISTINCT substr(text, 1,100)) AS uniq
     FROM messages
     WHERE text IS NOT NULL AND text != ''
+        AND forward_from_channel_id IS NULL
 """
 
 _SQL_SUBSCRIBER_BASE = """
@@ -152,11 +153,13 @@ _SQL_UNIQUENESS_SAMPLED = """
         (SELECT COUNT(*) FROM (
             SELECT text FROM messages m
             WHERE m.channel_id = ch.channel_id
+                AND m.forward_from_channel_id IS NULL
             ORDER BY m.message_id DESC LIMIT ?
          ) s WHERE s.text IS NOT NULL AND s.text != '') AS total,
         (SELECT COUNT(DISTINCT substr(text, 1, 100)) FROM (
             SELECT text FROM messages m
             WHERE m.channel_id = ch.channel_id
+                AND m.forward_from_channel_id IS NULL
             ORDER BY m.message_id DESC LIMIT ?
          ) s WHERE s.text IS NOT NULL AND s.text != '') AS uniq
     FROM channels ch
@@ -231,6 +234,26 @@ _SQL_ENGAGEMENT_SAMPLED = """
             WHERE m.channel_id = ch.channel_id
             ORDER BY m.message_id DESC LIMIT ?
          ) s WHERE s.views IS NOT NULL) AS views_sum
+    FROM channels ch
+"""
+
+# «Пересылочный канал»: (всего сообщений, из них форвардов) в окне последних N.
+# Окно применяется всегда; порог и guard — в criteria.py (FORWARD_SHARE_*).
+# Форварды без текста считаются (медиа-пересылка — тоже пересылка).
+_SQL_FORWARD_SHARE_SAMPLED = """
+    SELECT
+        ch.channel_id AS channel_id,
+        (SELECT COUNT(*) FROM (
+            SELECT forward_from_channel_id FROM messages m
+            WHERE m.channel_id = ch.channel_id
+            ORDER BY m.message_id DESC LIMIT ?
+         ) s) AS total,
+        (SELECT SUM(CASE WHEN forward_from_channel_id IS NOT NULL
+                    THEN 1 ELSE 0 END) FROM (
+            SELECT forward_from_channel_id FROM messages m
+            WHERE m.channel_id = ch.channel_id
+            ORDER BY m.message_id DESC LIMIT ?
+         ) s) AS fwd
     FROM channels ch
 """
 
@@ -347,7 +370,11 @@ class FilterRepository:
     async def count_matching_prefixes_in_other_channels(
         self, channel_id: int, prefixes: list[str]
     ) -> int:
-        """Сколько из переданных prefixes уже есть в сообщениях других каналов."""
+        """Сколько из переданных prefixes уже есть в сообщениях других каналов.
+
+        Форварды (forward_from_channel_id) не считаются: атрибуция — не кочевание
+        текста (решение владельца 16.10.26).
+        """
         if not prefixes:
             return 0
         placeholders = ",".join("?" * len(prefixes))
@@ -356,6 +383,7 @@ class FilterRepository:
             FROM messages
             WHERE channel_id != ?
               AND text IS NOT NULL
+              AND forward_from_channel_id IS NULL
               AND substr(text, 1, 100) IN ({placeholders})
         """
         cur = await self._db.execute(sql, (channel_id, *prefixes))
@@ -455,6 +483,24 @@ class FilterRepository:
         rows = await cur.fetchall()
         return {row["channel_id"]: (row["viewed"], row["views_sum"] or 0) for row in rows}
 
+    async def fetch_forward_share_map(
+        self, channel_id: int | None = None, *, window: int = 100
+    ) -> dict[int, tuple[int, int]]:
+        """Карта `channel_id → (всего сообщений, из них форвардов)` в окне последних N.
+
+        Метка `forwarder` (label-only): доля форвардов >= порога — пересылочный
+        канал. Окно применяется всегда; литерал 100 — дубль
+        FORWARD_SHARE_WINDOW: SQL-слой не импортирует пакет filters.
+        """
+        sql = _SQL_FORWARD_SHARE_SAMPLED
+        params: tuple = (window, window)
+        if channel_id is not None:
+            sql += " WHERE ch.channel_id = ?"
+            params = (window, window, channel_id)
+        cur = await self._db.execute(sql, params)
+        rows = await cur.fetchall()
+        return {row["channel_id"]: (row["total"], row["fwd"] or 0) for row in rows}
+
     # ── Parallel fetch: separate read-only connections ─────────────────────
 
     def _can_parallel(self) -> bool:
@@ -503,6 +549,7 @@ class FilterRepository:
         dict[int, tuple[int, int]],  # cyrillic_map
         dict[int, tuple[int, int]],  # auto_feed_map
         dict[int, tuple[int, int]],  # engagement_map
+        dict[int, tuple[int, int]],  # forward_map
     ]:
         """Run the map queries in parallel on separate read-only connections.
 
@@ -566,6 +613,12 @@ class FilterRepository:
             (100, 100, channel_id) if channel_id is not None else (100, 100)
         )
 
+        # forward share: окно всегда; литерал 100 — дубль FORWARD_SHARE_WINDOW.
+        f_sql = _SQL_FORWARD_SHARE_SAMPLED + (" WHERE ch.channel_id = ?" if channel_id is not None else "")
+        f_params: tuple = (
+            (100, 100, channel_id) if channel_id is not None else (100, 100)
+        )
+
         s_sql = (
             _SQL_SUBSCRIBER_BASE
             + (" AND channel_id = ?" if channel_id is not None else "")
@@ -583,16 +636,17 @@ class FilterRepository:
         async def _no_rows() -> list[aiosqlite.Row]:
             return []
 
-        conns = [await self._open_readonly_conn() for _ in range(6 + int(include_cross_dupe))]
+        conns = [await self._open_readonly_conn() for _ in range(7 + int(include_cross_dupe))]
         try:
-            rows_u, rows_s, rows_sm, rows_cy, rows_af, rows_e, rows_cd = await asyncio.gather(
+            rows_u, rows_s, rows_sm, rows_cy, rows_af, rows_e, rows_f, rows_cd = await asyncio.gather(
                 self._run_on_conn(conns[0], u_sql, u_params),
                 self._run_on_conn(conns[1], s_sql, s_params),
                 self._run_on_conn(conns[2], sm_sql, sm_params),
                 self._run_on_conn(conns[3], cy_sql, cy_params),
                 self._run_on_conn(conns[4], af_sql, af_params),
                 self._run_on_conn(conns[5], e_sql, e_params),
-                self._run_on_conn(conns[6], cd_sql, cd_params) if include_cross_dupe else _no_rows(),
+                self._run_on_conn(conns[6], f_sql, f_params),
+                self._run_on_conn(conns[7], cd_sql, cd_params) if include_cross_dupe else _no_rows(),
             )
         finally:
             for conn in conns:
@@ -606,4 +660,5 @@ class FilterRepository:
             {r["channel_id"]: (r["total"], r["cyr"] or 0) for r in rows_cy},
             {r["channel_id"]: (r["total"], r["short_link"] or 0) for r in rows_af},
             {r["channel_id"]: (r["viewed"], r["views_sum"] or 0) for r in rows_e},
+            {r["channel_id"]: (r["total"], r["fwd"] or 0) for r in rows_f},
         )

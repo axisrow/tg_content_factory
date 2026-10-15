@@ -37,7 +37,7 @@ from src.filters.criteria import (
 from src.models import Channel, Message
 from src.settings_utils import parse_int_setting
 from src.telegram.backends import adapt_transport_session
-from src.telegram.collector_message_parse import get_media_type_for
+from src.telegram.collector_message_parse import extract_forward_from_channel_id, get_media_type_for
 from src.telegram.collector_resolve import (
     RESOLVE_USERNAME_OPERATION,
     ResolveOutcome,
@@ -1031,7 +1031,8 @@ class CollectionMixin:
                 "SELECT COUNT(*) as total,"
                 " COUNT(DISTINCT substr(text,1,100)) as uniq"
                 " FROM messages WHERE channel_id = ?"
-                " AND text IS NOT NULL AND length(text) > 10",
+                " AND text IS NOT NULL AND length(text) > 10"
+                " AND forward_from_channel_id IS NULL",
                 (channel_id,),
             )
             row = await cur.fetchone()
@@ -1256,7 +1257,11 @@ class CollectionMixin:
         *,
         cancel_event: asyncio.Event | None = None,
     ) -> list[str]:
-        """Sample up to `limit` messages for cross-channel precheck."""
+        """Sample up to `limit` messages for cross-channel precheck.
+
+        Форварды не сэмплируются: атрибуция — не кочевание текста (решение
+        владельца 16.10.26).
+        """
         prefixes: list[str] = []
         async for msg in session.stream_messages(
             entity,
@@ -1265,7 +1270,7 @@ class CollectionMixin:
         ):
             if self._is_collection_cancelled(cancel_event):
                 break
-            if msg.text and len(msg.text) > 10:
+            if msg.text and len(msg.text) > 10 and extract_forward_from_channel_id(msg) is None:
                 prefixes.append(msg.text[:100])
         return prefixes
 

@@ -403,6 +403,30 @@ async def test_count_matching_prefixes_multiple(filters_repo, channels_repo):
     assert result == 2
 
 
+async def test_count_matching_prefixes_ignores_forwards(filters_repo, channels_repo):
+    """Форвард-копия в чужом канале не считается совпадением (атрибуция); копипаст — да."""
+    await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
+    await channels_repo.add_channel(Channel(channel_id=2, title="Other"))
+
+    prefix = "Same prefix message"
+    await filters_repo._db.executemany(
+        "INSERT INTO messages (channel_id, message_id, text, forward_from_channel_id, date)"
+        " VALUES (?, ?, ?, ?, datetime('now'))",
+        [
+            (1, 100, prefix, None),
+            (2, 100, prefix, 999),  # чужая копия — оформленный форвард
+            (1, 101, "Plain prefix copy here", None),
+            (2, 101, "Plain prefix copy here", None),  # чужая копия — копипаст
+        ],
+    )
+    await filters_repo._db.commit()
+
+    result = await filters_repo.count_matching_prefixes_in_other_channels(
+        1, [prefix, "Plain prefix copy here"]
+    )
+    assert result == 1
+
+
 # fetch_cross_dupe_map tests
 
 

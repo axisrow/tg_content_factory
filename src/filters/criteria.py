@@ -59,10 +59,18 @@ LOW_ENGAGEMENT_THRESHOLD = 10.0
 LOW_ENGAGEMENT_WINDOW = 100
 LOW_ENGAGEMENT_MIN_VIEWED_MESSAGES = 30
 
+# «Пересылочный канал» (forwarder): доля форвардов в окне последних постов.
+# Label-only (решение владельца 16.10.26): форвард — атрибуция, не спам; метка
+# для кураторства, сбор не блокирует. Окно и guard — как у low_engagement.
+FORWARD_SHARE_THRESHOLD = 50.0
+FORWARD_SHARE_WINDOW = 100
+FORWARD_SHARE_MIN_MESSAGES = 30
+
 # Флаги-метки (решение владельца 06.10.26): флаг ОСТАЁТСЯ в filter_flags как сигнал
 # для LLM-кураторства, но не ставит is_filtered — нерусскоязычные ИИ-каналы
 # (TestingCatalog, AI_News_CN и т.п.) собираются, язык виден куратору.
-LABEL_ONLY_FLAGS = frozenset({"non_cyrillic"})
+# forwarder — там же (16.10.26): пересылочный канал — не спам.
+LABEL_ONLY_FLAGS = frozenset({"non_cyrillic", "forwarder"})
 
 # Тег-эскроу: канал с тегом KEEP_TAG исключается из авто-фильтрации целиком —
 # apply_filters сбрасывает всем is_filtered, но keep-каналу возвращает is_filtered=0
@@ -100,6 +108,7 @@ VALID_FLAGS = frozenset(
         "suspicious_username",
         "auto_feed",
         "low_engagement",
+        "forwarder",
     }
 )
 

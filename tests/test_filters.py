@@ -48,6 +48,29 @@ async def _insert_messages_with_views(db, channel_id, views):
     await db.commit()
 
 
+async def _insert_forward_mix(db, channel_id, forwards, plains, *, base=1000, textless_forwards=False):
+    """forwards постов-форвардов (fwd=999) + plains обычных; id не пересекаются."""
+    for i in range(forwards):
+        if textless_forwards:
+            await db.execute(
+                "INSERT INTO messages (channel_id, message_id, forward_from_channel_id, date) "
+                "VALUES (?, ?, 999, '2025-01-01')",
+                (channel_id, base + i),
+            )
+        else:
+            await db.execute(
+                "INSERT INTO messages (channel_id, message_id, text, forward_from_channel_id, date) "
+                "VALUES (?, ?, ?, 999, '2025-01-01')",
+                (channel_id, base + i, f"пересланный чужой пост номер {i}, длинный текст целиком"),
+            )
+    for i in range(plains):
+        await db.execute(
+            "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, '2025-01-01')",
+            (channel_id, base + 500 + i, f"уникальный авторский пост номер {i}, длинный и цельный"),
+        )
+    await db.commit()
+
+
 @pytest.fixture
 async def raw_db(db):
     """Return the raw aiosqlite connection from the Database fixture."""
@@ -89,7 +112,8 @@ class TestValidFlags:
         assert "suspicious_username" in VALID_FLAGS
         assert "auto_feed" in VALID_FLAGS
         assert "low_engagement" in VALID_FLAGS
-        assert len(VALID_FLAGS) == 12
+        assert "forwarder" in VALID_FLAGS
+        assert len(VALID_FLAGS) == 13
 
 
 class TestAnalyzerLowUniqueness:
@@ -124,6 +148,24 @@ class TestAnalyzerLowUniqueness:
         await _insert_messages(raw_db, 103, texts)
         analyzer = ChannelAnalyzer(db)
         result = await analyzer.analyze_channel(103)
+        assert "low_uniqueness" not in result.flags
+
+    async def test_forwards_not_counted_in_uniqueness(self, db, raw_db):
+        # «20 уникальных постов + 80 форвардов одного текста»: форварды —
+        # атрибуция, в метрику оригинальности не входят (решение владельца
+        # 16.10.26). Старый код считал их: 21/100 = 21% < 30% → флаг.
+        await _insert_channel(raw_db, 104)
+        await _insert_messages(raw_db, 104, [f"уникальный авторский пост {i}" for i in range(20)])
+        for i in range(80):
+            await raw_db.execute(
+                "INSERT INTO messages (channel_id, message_id, text, forward_from_channel_id, date) "
+                "VALUES (104, ?, ?, 999, '2025-01-01')",
+                (100 + i, "пересланный чужой пост, один и тот же текст"),
+            )
+        await raw_db.commit()
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(104)
+        assert result.uniqueness_pct == 100.0
         assert "low_uniqueness" not in result.flags
 
 
@@ -313,10 +355,10 @@ class TestAnalyzeAllQuickMode:
             repo = file_db.filter_repo
             assert repo._can_parallel()
 
-            _, _, _, full_cross_map, _, _, _ = await repo.fetch_maps_parallel(None)
+            _, _, _, full_cross_map, _, _, _, _ = await repo.fetch_maps_parallel(None)
             assert full_cross_map
 
-            _, _, _, quick_cross_map, _, _, _ = await repo.fetch_maps_parallel(None, include_cross_dupe=False)
+            _, _, _, quick_cross_map, _, _, _, _ = await repo.fetch_maps_parallel(None, include_cross_dupe=False)
             assert quick_cross_map == {}
 
             quick = await ChannelAnalyzer(file_db).analyze_all(quick=True)
@@ -1407,3 +1449,66 @@ class TestAnalyzerLowEngagement:
         result = await analyzer.analyze_channel(4210)
         assert result.views_ratio_pct == 7.4
         assert "low_engagement" in result.flags
+
+
+class TestAnalyzerForwardShare:
+    """Метка `forwarder`: ≥50% форвардов в окне последних 100 постов.
+
+    Label-only (решение владельца 16.10.26): пересылочный канал — не спам,
+    метка для кураторства, сбор не блокирует.
+    """
+
+    async def test_majority_forwards_labeled(self, db, raw_db):
+        await _insert_channel(raw_db, 4300)
+        await _insert_forward_mix(raw_db, 4300, forwards=40, plains=10)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(4300)
+        assert result.forward_pct == 80.0
+        assert "forwarder" in result.flags
+        # Label-only: метка не блокирует сбор.
+        assert result.is_filtered is False
+
+    async def test_minority_forwards_not_labeled(self, db, raw_db):
+        await _insert_channel(raw_db, 4301)
+        await _insert_forward_mix(raw_db, 4301, forwards=10, plains=40)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(4301)
+        assert result.forward_pct == 20.0
+        assert "forwarder" not in result.flags
+
+    async def test_boundary_forward_share_labeled(self, db, raw_db):
+        # Ровно 50.0% — порог нестрогий (>=): «наполовину пересылочный» метится.
+        await _insert_channel(raw_db, 4305)
+        await _insert_forward_mix(raw_db, 4305, forwards=20, plains=20)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(4305)
+        assert result.forward_pct == 50.0
+        assert "forwarder" in result.flags
+
+    async def test_few_messages_skip(self, db, raw_db):
+        # Меньше FORWARD_SHARE_MIN_MESSAGES — статистики нет.
+        await _insert_channel(raw_db, 4302)
+        await _insert_forward_mix(raw_db, 4302, forwards=10, plains=5)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(4302)
+        assert result.forward_pct is None
+        assert "forwarder" not in result.flags
+
+    async def test_textless_forwards_counted(self, db, raw_db):
+        # Форвард-медиа без текста тоже форвард.
+        await _insert_channel(raw_db, 4303)
+        await _insert_forward_mix(raw_db, 4303, forwards=40, plains=10, textless_forwards=True)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(4303)
+        assert result.forward_pct == 80.0
+        assert "forwarder" in result.flags
+
+    async def test_quick_mode_computes_forward_share(self, db, raw_db):
+        # Окно метки — всегда последние 100 постов, независимо от quick
+        # sample_size.
+        await _insert_channel(raw_db, 4304)
+        await _insert_forward_mix(raw_db, 4304, forwards=40, plains=10)
+        analyzer = ChannelAnalyzer(db)
+        quick = await analyzer.analyze_all(quick=True, sample_size=50)
+        result = next(r for r in quick.results if r.channel_id == 4304)
+        assert "forwarder" in result.flags
