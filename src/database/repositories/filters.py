@@ -474,11 +474,7 @@ class FilterRepository:
         просмотрами старых постов. Литерал 100 — дубль LOW_ENGAGEMENT_WINDOW:
         SQL-слой не импортирует пакет filters (см. комментарий к UDF выше).
         """
-        sql = _SQL_ENGAGEMENT_SAMPLED
-        params: tuple = (window, window)
-        if channel_id is not None:
-            sql += " WHERE ch.channel_id = ?"
-            params = (window, window, channel_id)
+        sql, params = self._windowed_sql(_SQL_ENGAGEMENT_SAMPLED, channel_id=channel_id, window=window)
         cur = await self._db.execute(sql, params)
         rows = await cur.fetchall()
         return {row["channel_id"]: (row["viewed"], row["views_sum"] or 0) for row in rows}
@@ -492,11 +488,7 @@ class FilterRepository:
         канал. Окно применяется всегда; литерал 100 — дубль
         FORWARD_SHARE_WINDOW: SQL-слой не импортирует пакет filters.
         """
-        sql = _SQL_FORWARD_SHARE_SAMPLED
-        params: tuple = (window, window)
-        if channel_id is not None:
-            sql += " WHERE ch.channel_id = ?"
-            params = (window, window, channel_id)
+        sql, params = self._windowed_sql(_SQL_FORWARD_SHARE_SAMPLED, channel_id=channel_id, window=window)
         cur = await self._db.execute(sql, params)
         rows = await cur.fetchall()
         return {row["channel_id"]: (row["total"], row["fwd"] or 0) for row in rows}
@@ -535,6 +527,39 @@ class FilterRepository:
         # aiosqlite stubs declare fetchall() as Iterable[Row]; at runtime it is a list.
         return cast("list[aiosqlite.Row]", await cur.fetchall())
 
+    @staticmethod
+    def _text_map_sql(
+        template_full: str,
+        template_sampled: str,
+        *,
+        channel_id: int | None,
+        sample_size: int | None,
+        full_where_join: str,
+    ) -> tuple[str, tuple]:
+        """(sql, params) для text-карты: sampled-окно последних N или полный скан.
+
+        Sampled-шаблон channels-driven и берёт размер окна дважды; полный
+        группируется по channel_id (full_where_join — " AND " или " WHERE ",
+        смотря есть ли WHERE в шаблоне).
+        """
+        if sample_size is not None:
+            sql = template_sampled + (" WHERE ch.channel_id = ?" if channel_id is not None else "")
+            params: tuple = (
+                (sample_size, sample_size, channel_id) if channel_id is not None else (sample_size, sample_size)
+            )
+            return sql, params
+        sql = template_full + (
+            (full_where_join + "channel_id = ?" if channel_id is not None else "") + " GROUP BY channel_id"
+        )
+        return sql, ((channel_id,) if channel_id is not None else ())
+
+    @staticmethod
+    def _windowed_sql(template: str, *, channel_id: int | None, window: int) -> tuple[str, tuple]:
+        """(sql, params) для всегда-оконной channels-driven карты."""
+        sql = template + (" WHERE ch.channel_id = ?" if channel_id is not None else "")
+        params = (window, window, channel_id) if channel_id is not None else (window, window)
+        return sql, params
+
     async def fetch_maps_parallel(
         self,
         channel_id: int | None = None,
@@ -560,64 +585,28 @@ class FilterRepository:
         SQL (#1138); subscriber stays full (it is count/stats-based, not
         text-based).
         """
-        sampled = sample_size is not None
         # Build parameterised SQL for each query. The text maps switch to the
         # channels-driven sampled templates when sample_size is given.
-        if sampled:
-            u_sql = _SQL_UNIQUENESS_SAMPLED + (" WHERE ch.channel_id = ?" if channel_id is not None else "")
-            u_params: tuple = (
-                (sample_size, sample_size, channel_id) if channel_id is not None else (sample_size, sample_size)
-            )
-            sm_sql = _SQL_SHORT_MESSAGE_SAMPLED + (" WHERE ch.channel_id = ?" if channel_id is not None else "")
-            sm_params: tuple = (
-                (sample_size, sample_size, channel_id) if channel_id is not None else (sample_size, sample_size)
-            )
-            cy_sql = _SQL_CYRILLIC_SAMPLED + (" WHERE ch.channel_id = ?" if channel_id is not None else "")
-            cy_params: tuple = (
-                (sample_size, sample_size, channel_id) if channel_id is not None else (sample_size, sample_size)
-            )
-        else:
-            u_sql = (
-                _SQL_UNIQUENESS + (" AND channel_id = ?" if channel_id is not None else "") + " GROUP BY channel_id"
-            )
-            u_params = (channel_id,) if channel_id is not None else ()
-            sm_sql = (
-                _SQL_SHORT_MESSAGE
-                + (" WHERE channel_id = ?" if channel_id is not None else "")
-                + " GROUP BY channel_id"
-            )
-            sm_params = (channel_id,) if channel_id is not None else ()
-            cy_sql = (
-                _SQL_CYRILLIC
-                + (" AND channel_id = ?" if channel_id is not None else "")
-                + " GROUP BY channel_id"
-            )
-            cy_params = (channel_id,) if channel_id is not None else ()
-        if sampled:
-            af_sql = _SQL_AUTO_FEED_SAMPLED + (" WHERE ch.channel_id = ?" if channel_id is not None else "")
-            af_params: tuple = (
-                (sample_size, sample_size, channel_id) if channel_id is not None else (sample_size, sample_size)
-            )
-        else:
-            af_sql = (
-                _SQL_AUTO_FEED
-                + (" AND channel_id = ?" if channel_id is not None else "")
-                + " GROUP BY channel_id"
-            )
-            af_params = (channel_id,) if channel_id is not None else ()
-
-        # engagement: окно всегда (метрика «мёртвое сейчас»); литерал 100 —
-        # дубль LOW_ENGAGEMENT_WINDOW, SQL-слой не импортирует пакет filters.
-        e_sql = _SQL_ENGAGEMENT_SAMPLED + (" WHERE ch.channel_id = ?" if channel_id is not None else "")
-        e_params: tuple = (
-            (100, 100, channel_id) if channel_id is not None else (100, 100)
+        u_sql, u_params = self._text_map_sql(
+            _SQL_UNIQUENESS, _SQL_UNIQUENESS_SAMPLED,
+            channel_id=channel_id, sample_size=sample_size, full_where_join=" AND ",
         )
-
-        # forward share: окно всегда; литерал 100 — дубль FORWARD_SHARE_WINDOW.
-        f_sql = _SQL_FORWARD_SHARE_SAMPLED + (" WHERE ch.channel_id = ?" if channel_id is not None else "")
-        f_params: tuple = (
-            (100, 100, channel_id) if channel_id is not None else (100, 100)
+        sm_sql, sm_params = self._text_map_sql(
+            _SQL_SHORT_MESSAGE, _SQL_SHORT_MESSAGE_SAMPLED,
+            channel_id=channel_id, sample_size=sample_size, full_where_join=" WHERE ",
         )
+        cy_sql, cy_params = self._text_map_sql(
+            _SQL_CYRILLIC, _SQL_CYRILLIC_SAMPLED,
+            channel_id=channel_id, sample_size=sample_size, full_where_join=" AND ",
+        )
+        af_sql, af_params = self._text_map_sql(
+            _SQL_AUTO_FEED, _SQL_AUTO_FEED_SAMPLED,
+            channel_id=channel_id, sample_size=sample_size, full_where_join=" AND ",
+        )
+        # engagement/forward: окно всегда (метрики «сейчас», не «за жизнь»);
+        # литерал 100 — дубль *_WINDOW, SQL-слой не импортирует пакет filters.
+        e_sql, e_params = self._windowed_sql(_SQL_ENGAGEMENT_SAMPLED, channel_id=channel_id, window=100)
+        f_sql, f_params = self._windowed_sql(_SQL_FORWARD_SHARE_SAMPLED, channel_id=channel_id, window=100)
 
         s_sql = (
             _SQL_SUBSCRIBER_BASE
