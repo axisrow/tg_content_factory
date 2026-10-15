@@ -15,6 +15,7 @@ class ChannelFilterResult(BaseModel):
     short_msg_pct: float | None = None
     cross_dupe_pct: float | None = None
     auto_feed_pct: float | None = None
+    views_ratio_pct: float | None = None
     is_filtered: bool = False
 
 

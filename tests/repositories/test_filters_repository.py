@@ -18,6 +18,10 @@ _INSERT_MSG_ENTITIES = (
 _INSERT_MSG_NO_TEXT = (
     "INSERT INTO messages (channel_id, message_id, date)" " VALUES (?, ?, datetime('now'))"
 )
+_INSERT_MSG_VIEWS = (
+    "INSERT INTO messages (channel_id, message_id, text, views, date)"
+    " VALUES (?, ?, ?, ?, datetime('now'))"
+)
 _INSERT_STATS = (
     "INSERT INTO channel_stats (channel_id, subscriber_count, collected_at)"
     " VALUES (?, ?, datetime('now'))"
@@ -688,3 +692,74 @@ async def test_fetch_auto_feed_map_masked_link_entities(filters_repo, channels_r
     # ветку OR entities_json LIKE или колонку из проекции подзапроса.
     sampled = await filters_repo.fetch_auto_feed_map(sample_size=3)
     assert sampled[1] == (3, 1)
+
+
+# fetch_engagement_map tests
+
+
+async def test_fetch_engagement_map_empty(filters_repo):
+    """Test engagement map with no messages."""
+    result = await filters_repo.fetch_engagement_map()
+    assert result == {}
+
+
+async def test_fetch_engagement_map_basic(filters_repo, channels_repo):
+    """Views aggregate over the window; NULL views excluded from count and sum."""
+    await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
+
+    await filters_repo._db.executemany(
+        _INSERT_MSG_VIEWS,
+        [
+            (1, 100, "post one", 100),
+            (1, 101, "post two", None),
+            (1, 102, "post three", 50),
+            (1, 103, "post four", 70),
+        ],
+    )
+    await filters_repo._db.commit()
+
+    result = await filters_repo.fetch_engagement_map()
+    viewed, views_sum = result[1]
+    assert viewed == 3
+    assert views_sum == 220
+
+
+async def test_fetch_engagement_map_window_last_n(filters_repo, channels_repo):
+    """window=N aggregates only the last N messages by message_id DESC."""
+    await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
+
+    await filters_repo._db.executemany(
+        _INSERT_MSG_VIEWS,
+        [
+            (1, 100, "old post one", 10000),
+            (1, 101, "old post two", 10000),
+            (1, 102, "old post three", 10000),
+            (1, 103, "recent post", 1),
+        ],
+    )
+    await filters_repo._db.commit()
+
+    last_one = await filters_repo.fetch_engagement_map(window=1)
+    assert last_one[1] == (1, 1)  # только id=103
+
+    full = await filters_repo.fetch_engagement_map()
+    assert full[1] == (4, 30001)
+
+
+async def test_fetch_engagement_map_by_channel(filters_repo, channels_repo):
+    """Test filtering by channel_id."""
+    await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
+    await channels_repo.add_channel(Channel(channel_id=2, title="Test 2"))
+
+    await filters_repo._db.executemany(
+        _INSERT_MSG_VIEWS,
+        [
+            (1, 100, "post one", 50),
+            (2, 100, "post two", 999),
+        ],
+    )
+    await filters_repo._db.commit()
+
+    result = await filters_repo.fetch_engagement_map(channel_id=1)
+    assert 1 in result
+    assert 2 not in result

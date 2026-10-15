@@ -48,7 +48,8 @@ filter analyze | apply | reset | precheck | suspects | toggle | purge | purge-me
   premium search (`search --mode tg`): inactive rows whose cached messages carry the
   search-query tag. Pick ones worth collecting, then `channel toggle <identifier>`
   (activates with human origin) + `channel collect --channel-id ID` for the first fetch.
-- `filter analyze|apply` — score channels for spam/quality; filtered channels are skipped
+- `filter analyze|apply` — score channels for spam/quality (flags incl. `low_engagement` —
+  dead engagement: avg views <10% of subscribers over the last 100 posts); filtered channels are skipped
   unless `force=True`.
 - `filter suspects` — read-only contradiction report (#1490): channels carrying the
   «авторский контент» trust tag together with filter flags — candidates for a wrong

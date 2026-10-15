@@ -34,6 +34,18 @@ async def _insert_stats(db, channel_id, subscriber_count):
     await db.commit()
 
 
+async def _insert_messages_with_views(db, channel_id, views):
+    """Уникальные длинные посты без ссылок с заданными views (None допустим)."""
+    for i, views_count in enumerate(views, 1):
+        text = f"уникальный авторский пост номер {i} " + "подробный разбор без ссылок " * 5
+        await db.execute(
+            "INSERT INTO messages (channel_id, message_id, text, views, date) "
+            "VALUES (?, ?, ?, ?, '2025-01-01')",
+            (channel_id, i, text, views_count),
+        )
+    await db.commit()
+
+
 @pytest.fixture
 async def raw_db(db):
     """Return the raw aiosqlite connection from the Database fixture."""
@@ -74,7 +86,8 @@ class TestValidFlags:
         assert "title_changed" in VALID_FLAGS
         assert "suspicious_username" in VALID_FLAGS
         assert "auto_feed" in VALID_FLAGS
-        assert len(VALID_FLAGS) == 11
+        assert "low_engagement" in VALID_FLAGS
+        assert len(VALID_FLAGS) == 12
 
 
 class TestAnalyzerLowUniqueness:
@@ -236,10 +249,10 @@ class TestAnalyzeAllQuickMode:
             repo = file_db.filter_repo
             assert repo._can_parallel()
 
-            _, _, _, full_cross_map, _, _ = await repo.fetch_maps_parallel(None)
+            _, _, _, full_cross_map, _, _, _ = await repo.fetch_maps_parallel(None)
             assert full_cross_map
 
-            _, _, _, quick_cross_map, _, _ = await repo.fetch_maps_parallel(None, include_cross_dupe=False)
+            _, _, _, quick_cross_map, _, _, _ = await repo.fetch_maps_parallel(None, include_cross_dupe=False)
             assert quick_cross_map == {}
 
             quick = await ChannelAnalyzer(file_db).analyze_all(quick=True)
@@ -1196,3 +1209,118 @@ class TestPrecheckKeepTag:
         assert rows[932] == (0, "")
         assert rows[933][0] == 1
         assert "low_subscriber_manual" in rows[933][1]
+
+
+class TestAnalyzerLowEngagement:
+    """«Мёртвое вовлечение»: views/подписчик < 10% в окне последних 100 постов.
+
+    Калибровка 15.10.26 на живой БД: ферма ai_for_dev — 7.8% (flag), зомби с
+    живым ratio — 0.1% (flag), живые каналы — 23–76% (чист). Порог и окно — в
+    criteria.py (LOW_ENGAGEMENT_*). Решение владельца: конъюнкции с
+    subs/посты НЕТ — одиночная views-метрика ловит и ферму, и зомби-когорту.
+    """
+
+    async def test_farm_profile_flagged(self, db, raw_db):
+        # 941 подписчик, 40 постов по 70 просмотров: 70/941 = 7.4% < 10%.
+        # subs/посты = 23.5 — «живой»: флаг ставит только views-метрика.
+        await _insert_channel(raw_db, 4200)
+        await _insert_messages_with_views(raw_db, 4200, [70] * 40)
+        await _insert_stats(raw_db, 4200, 941)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(4200)
+        assert result.views_ratio_pct == 7.4
+        assert "low_engagement" in result.flags
+        assert result.is_filtered is True
+
+    async def test_engaged_channel_not_flagged(self, db, raw_db):
+        await _insert_channel(raw_db, 4201)
+        await _insert_messages_with_views(raw_db, 4201, [500] * 40)
+        await _insert_stats(raw_db, 4201, 1000)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(4201)
+        assert result.views_ratio_pct == 50.0
+        assert "low_engagement" not in result.flags
+
+    async def test_high_ratio_dead_views_still_flagged(self, db, raw_db):
+        # Зомби-канал: живой subs/посты (5000/40 = 125), мёртвые просмотры.
+        # Пин решения владельца: без конъюнкции — флаг по одной views-метрике.
+        await _insert_channel(raw_db, 4202)
+        await _insert_messages_with_views(raw_db, 4202, [10] * 40)
+        await _insert_stats(raw_db, 4202, 5000)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(4202)
+        assert result.views_ratio_pct == 0.2
+        assert "low_engagement" in result.flags
+
+    async def test_boundary_views_ratio_not_flagged(self, db, raw_db):
+        # Ровно 10.0% — порог строгий (<).
+        await _insert_channel(raw_db, 4203)
+        await _insert_messages_with_views(raw_db, 4203, [10] * 40)
+        await _insert_stats(raw_db, 4203, 100)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(4203)
+        assert result.views_ratio_pct == 10.0
+        assert "low_engagement" not in result.flags
+
+    async def test_no_views_skip(self, db, raw_db):
+        # Ни у одного поста в окне нет views — статистики нет, метки нет.
+        await _insert_channel(raw_db, 4204)
+        await _insert_messages_with_views(raw_db, 4204, [None] * 40)
+        await _insert_stats(raw_db, 4204, 100)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(4204)
+        assert result.views_ratio_pct is None
+        assert "low_engagement" not in result.flags
+
+    async def test_few_viewed_messages_skip(self, db, raw_db):
+        # Просмотренных < LOW_ENGAGEMENT_MIN_VIEWED_MESSAGES — данных мало.
+        await _insert_channel(raw_db, 4205)
+        await _insert_messages_with_views(raw_db, 4205, [1] * 10)
+        await _insert_stats(raw_db, 4205, 100)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(4205)
+        assert result.views_ratio_pct is None
+        assert "low_engagement" not in result.flags
+
+    async def test_no_stats_skip(self, db, raw_db):
+        await _insert_channel(raw_db, 4206)
+        await _insert_messages_with_views(raw_db, 4206, [1] * 40)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(4206)
+        assert result.views_ratio_pct is None
+        assert "low_engagement" not in result.flags
+
+    async def test_chat_excluded(self, db, raw_db):
+        # Чаты (group/supergroup/...) не проверяются — только broadcast.
+        await _insert_channel(raw_db, 4207, channel_type="supergroup")
+        await _insert_messages_with_views(raw_db, 4207, [1] * 40)
+        await _insert_stats(raw_db, 4207, 100)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(4207)
+        assert result.views_ratio_pct is None
+        assert "low_engagement" not in result.flags
+
+    async def test_apply_sets_flag_and_filters(self, db, raw_db):
+        await _insert_channel(raw_db, 4208)
+        await _insert_messages_with_views(raw_db, 4208, [70] * 40)
+        await _insert_stats(raw_db, 4208, 941)
+        analyzer = ChannelAnalyzer(db)
+        report = await analyzer.analyze_all()
+        await analyzer.apply_filters(report)
+        cur = await raw_db.execute(
+            "SELECT is_filtered, filter_flags FROM channels WHERE channel_id = 4208"
+        )
+        row = await cur.fetchone()
+        assert row["is_filtered"] == 1
+        assert "low_engagement" in row["filter_flags"]
+
+    async def test_quick_mode_computes_engagement(self, db, raw_db):
+        # Окно engagement-метрики — всегда последние 100 постов, независимо от
+        # quick sample_size (метрика «мёртвое сейчас», не «среднее за жизнь»).
+        await _insert_channel(raw_db, 4209)
+        await _insert_messages_with_views(raw_db, 4209, [70] * 40)
+        await _insert_stats(raw_db, 4209, 941)
+        analyzer = ChannelAnalyzer(db)
+        quick = await analyzer.analyze_all(quick=True, sample_size=50)
+        result = next(r for r in quick.results if r.channel_id == 4209)
+        assert "low_engagement" in result.flags

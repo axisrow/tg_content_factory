@@ -12,6 +12,8 @@ from src.filters.criteria import (
     DEFAULT_QUICK_SAMPLE_SIZE,
     KEEP_TAG,
     LABEL_ONLY_FLAGS,
+    LOW_ENGAGEMENT_MIN_VIEWED_MESSAGES,
+    LOW_ENGAGEMENT_THRESHOLD,
     LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD,
     LOW_SUBSCRIBER_RATIO_THRESHOLD,
     LOW_UNIQUENESS_THRESHOLD,
@@ -71,7 +73,7 @@ class ChannelAnalyzer:
                 f", sample={sample_size}" if sample_size is not None else "",
             )
             t_map = time.monotonic()
-            uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map, auto_feed_map = (
+            uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map, auto_feed_map, engagement_map = (
                 await self._repo.fetch_maps_parallel(
                     channel_id, include_cross_dupe=not skip_cross_dupe, sample_size=sample_size
                 )
@@ -100,7 +102,18 @@ class ChannelAnalyzer:
             auto_feed_map = await _timed_fetch(
                 "auto-feed map", self._repo.fetch_auto_feed_map(channel_id, sample_size=sample_size)
             )
-        return uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map, auto_feed_map
+            engagement_map = await _timed_fetch(
+                "engagement map", self._repo.fetch_engagement_map(channel_id)
+            )
+        return (
+            uniqueness_map,
+            subscriber_map,
+            short_map,
+            cross_dupe_map,
+            cyrillic_map,
+            auto_feed_map,
+            engagement_map,
+        )
 
     def _append_uniqueness_flag(self, flags: list[str], channel_id_value: int, uniqueness_map: dict) -> float | None:
         uniqueness_pct: float | None = None
@@ -210,6 +223,29 @@ class ChannelAnalyzer:
             flags.append("auto_feed")
         return auto_feed_pct
 
+    def _append_engagement_flag(
+        self,
+        flags: list[str],
+        channel,
+        subscriber_count: int | None,
+        engagement_map: dict,
+    ) -> float | None:
+        views_ratio_pct: float | None = None
+        dead_engagement = False
+        if (
+            subscriber_count
+            and channel["channel_type"] in BROADCAST_CHANNEL_TYPES
+            and channel["channel_id"] in engagement_map
+        ):
+            viewed, views_sum = engagement_map[channel["channel_id"]]
+            if viewed >= LOW_ENGAGEMENT_MIN_VIEWED_MESSAGES and views_sum > 0:
+                raw_pct = (views_sum / viewed) / subscriber_count * 100
+                views_ratio_pct = round(raw_pct, 1)
+                dead_engagement = raw_pct < LOW_ENGAGEMENT_THRESHOLD
+        if dead_engagement:
+            flags.append("low_engagement")
+        return views_ratio_pct
+
     def _build_channel_result(
         self,
         channel,
@@ -220,6 +256,7 @@ class ChannelAnalyzer:
         cross_dupe_map: dict,
         cyrillic_map: dict,
         auto_feed_map: dict,
+        engagement_map: dict,
         min_subs: int,
     ) -> ChannelFilterResult:
         channel_id_value = channel["channel_id"]
@@ -233,6 +270,7 @@ class ChannelAnalyzer:
         cyrillic_pct = self._append_cyrillic_flag(flags, channel_id_value, cyrillic_map)
         short_msg_pct = self._append_chat_noise_flag(flags, channel, channel_id_value, short_map)
         auto_feed_pct = self._append_auto_feed_flag(flags, channel_id_value, auto_feed_map)
+        views_ratio_pct = self._append_engagement_flag(flags, channel, subscriber_count, engagement_map)
         self._append_suspicious_username_flag(flags, channel)
 
         # Флаги-метки (LABEL_ONLY_FLAGS) не блокируют сбор — см. criteria.py.
@@ -248,6 +286,7 @@ class ChannelAnalyzer:
             short_msg_pct=short_msg_pct,
             cross_dupe_pct=cross_dupe_pct,
             auto_feed_pct=auto_feed_pct,
+            views_ratio_pct=views_ratio_pct,
             is_filtered=any(f not in LABEL_ONLY_FLAGS for f in flags),
         )
 
@@ -261,6 +300,7 @@ class ChannelAnalyzer:
         cross_dupe_map: dict,
         cyrillic_map: dict,
         auto_feed_map: dict,
+        engagement_map: dict,
         min_subs: int,
     ) -> list[ChannelFilterResult]:
         return [
@@ -272,6 +312,7 @@ class ChannelAnalyzer:
                 cross_dupe_map=cross_dupe_map,
                 cyrillic_map=cyrillic_map,
                 auto_feed_map=auto_feed_map,
+                engagement_map=engagement_map,
                 min_subs=min_subs,
             )
             for channel in channels
@@ -303,7 +344,7 @@ class ChannelAnalyzer:
         if not channels:
             return FilterReport()
 
-        uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map, auto_feed_map = (
+        uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map, auto_feed_map, engagement_map = (
             await self._fetch_analysis_maps(
                 channel_id, skip_cross_dupe=skip_cross_dupe, sample_size=sample_size
             )
@@ -317,6 +358,7 @@ class ChannelAnalyzer:
             cross_dupe_map=cross_dupe_map,
             cyrillic_map=cyrillic_map,
             auto_feed_map=auto_feed_map,
+            engagement_map=engagement_map,
             min_subs=min_subs,
         )
         return self._filter_report_from_results(results, t0)

@@ -204,6 +204,26 @@ _SQL_AUTO_FEED_SAMPLED = """
     FROM channels ch
 """
 
+# «Мёртвое вовлечение»: (просмотрено, сумма views) в окне последних N постов.
+# Окно применяется ВСЕГДА (и в full, и в quick) — метрика «мёртвое сейчас», не
+# «среднее за жизнь» (см. LOW_ENGAGEMENT_* в criteria.py). NULL-views исключаются
+# из обоих агрегатов; порог и guard'ы — в анализаторе.
+_SQL_ENGAGEMENT_SAMPLED = """
+    SELECT
+        ch.channel_id AS channel_id,
+        (SELECT COUNT(views) FROM (
+            SELECT views FROM messages m
+            WHERE m.channel_id = ch.channel_id
+            ORDER BY m.message_id DESC LIMIT ?
+         ) s WHERE s.views IS NOT NULL) AS viewed,
+        (SELECT SUM(views) FROM (
+            SELECT views FROM messages m
+            WHERE m.channel_id = ch.channel_id
+            ORDER BY m.message_id DESC LIMIT ?
+         ) s WHERE s.views IS NOT NULL) AS views_sum
+    FROM channels ch
+"""
+
 if TYPE_CHECKING:
     from src.database.facade import Database
 
@@ -402,6 +422,27 @@ class FilterRepository:
         rows = await cur.fetchall()
         return {row["channel_id"]: (row["total"], row["short_link"] or 0) for row in rows}
 
+    async def fetch_engagement_map(
+        self, channel_id: int | None = None, *, window: int = 100
+    ) -> dict[int, tuple[int, int]]:
+        """Карта `channel_id → (просмотрено постов, сумма views)` в окне последних N.
+
+        Доля просмотров от подписчиков ниже порога — «мёртвое вовлечение»
+        (нейрослоп-фермы с автопостингом, зомби-каналы); порог и guard'ы в
+        criteria.py (LOW_ENGAGEMENT_*). Окно применяется всегда: метрика
+        «мёртвое сейчас», полная история завышает среднее накопленными
+        просмотрами старых постов. Литерал 100 — дубль LOW_ENGAGEMENT_WINDOW:
+        SQL-слой не импортирует пакет filters (см. комментарий к UDF выше).
+        """
+        sql = _SQL_ENGAGEMENT_SAMPLED
+        params: tuple = (window, window)
+        if channel_id is not None:
+            sql += " WHERE ch.channel_id = ?"
+            params = (window, window, channel_id)
+        cur = await self._db.execute(sql, params)
+        rows = await cur.fetchall()
+        return {row["channel_id"]: (row["viewed"], row["views_sum"] or 0) for row in rows}
+
     # ── Parallel fetch: separate read-only connections ─────────────────────
 
     def _can_parallel(self) -> bool:
@@ -449,6 +490,7 @@ class FilterRepository:
         dict[int, tuple[int, int]],  # cross_dupe_map
         dict[int, tuple[int, int]],  # cyrillic_map
         dict[int, tuple[int, int]],  # auto_feed_map
+        dict[int, tuple[int, int]],  # engagement_map
     ]:
         """Run the map queries in parallel on separate read-only connections.
 
@@ -505,6 +547,13 @@ class FilterRepository:
             )
             af_params = (channel_id,) if channel_id is not None else ()
 
+        # engagement: окно всегда (метрика «мёртвое сейчас»); литерал 100 —
+        # дубль LOW_ENGAGEMENT_WINDOW, SQL-слой не импортирует пакет filters.
+        e_sql = _SQL_ENGAGEMENT_SAMPLED + (" WHERE ch.channel_id = ?" if channel_id is not None else "")
+        e_params: tuple = (
+            (100, 100, channel_id) if channel_id is not None else (100, 100)
+        )
+
         s_sql = (
             _SQL_SUBSCRIBER_BASE
             + (" AND channel_id = ?" if channel_id is not None else "")
@@ -522,15 +571,16 @@ class FilterRepository:
         async def _no_rows() -> list[aiosqlite.Row]:
             return []
 
-        conns = [await self._open_readonly_conn() for _ in range(5 + int(include_cross_dupe))]
+        conns = [await self._open_readonly_conn() for _ in range(6 + int(include_cross_dupe))]
         try:
-            rows_u, rows_s, rows_sm, rows_cy, rows_af, rows_cd = await asyncio.gather(
+            rows_u, rows_s, rows_sm, rows_cy, rows_af, rows_e, rows_cd = await asyncio.gather(
                 self._run_on_conn(conns[0], u_sql, u_params),
                 self._run_on_conn(conns[1], s_sql, s_params),
                 self._run_on_conn(conns[2], sm_sql, sm_params),
                 self._run_on_conn(conns[3], cy_sql, cy_params),
                 self._run_on_conn(conns[4], af_sql, af_params),
-                self._run_on_conn(conns[5], cd_sql, cd_params) if include_cross_dupe else _no_rows(),
+                self._run_on_conn(conns[5], e_sql, e_params),
+                self._run_on_conn(conns[6], cd_sql, cd_params) if include_cross_dupe else _no_rows(),
             )
         finally:
             for conn in conns:
@@ -543,4 +593,5 @@ class FilterRepository:
             {r["channel_id"]: (r["uniq_total"], r["duped"] or 0) for r in rows_cd},
             {r["channel_id"]: (r["total"], r["cyr"] or 0) for r in rows_cy},
             {r["channel_id"]: (r["total"], r["short_link"] or 0) for r in rows_af},
+            {r["channel_id"]: (r["viewed"], r["views_sum"] or 0) for r in rows_e},
         )
