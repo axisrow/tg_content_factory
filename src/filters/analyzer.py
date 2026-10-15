@@ -25,9 +25,9 @@ from src.settings_utils import parse_int_setting
 
 logger = logging.getLogger(__name__)
 
-# Channel-type groupings shared across the analyzer's broadcast/chat branches so a
-# new Telegram type is added in one place (e.g. gigagroup, #971).
-BROADCAST_CHANNEL_TYPES = ("channel", "monoforum")
+# Chat-type grouping shared across the analyzer's gates so a new Telegram type
+# is added in one place (e.g. gigagroup, #971). Everything else — incl. NULL
+# channel_type from legacy imports — is judged as broadcast / by the data.
 CHAT_CHANNEL_TYPES = ("group", "supergroup", "gigagroup", "forum")
 
 
@@ -141,7 +141,9 @@ class ChannelAnalyzer:
         if subscriber_count is not None and message_count > 0:
             raw_ratio = subscriber_count / message_count
             subscriber_ratio = round(raw_ratio, 2)
-            is_broadcast = channel["channel_type"] in BROADCAST_CHANNEL_TYPES
+            # Unknown type (NULL, legacy import) judged as broadcast: chats in
+            # the DB are typed, and for a chat the metric is meaningless anyway.
+            is_broadcast = channel["channel_type"] not in CHAT_CHANNEL_TYPES
             threshold = (
                 LOW_SUBSCRIBER_RATIO_THRESHOLD
                 if is_broadcast
@@ -234,7 +236,9 @@ class ChannelAnalyzer:
         dead_engagement = False
         if (
             subscriber_count
-            and channel["channel_type"] in BROADCAST_CHANNEL_TYPES
+            # Unknown type (NULL, legacy import) judged by the data, not the
+            # type; a real chat has no post views, so the guard below skips it.
+            and channel["channel_type"] not in CHAT_CHANNEL_TYPES
             and channel["channel_id"] in engagement_map
         ):
             viewed, views_sum = engagement_map[channel["channel_id"]]
@@ -497,7 +501,9 @@ class ChannelAnalyzer:
             subscriber_count = stats.subscriber_count if stats else None
             if not subscriber_count or not channel.message_count:
                 continue
-            is_broadcast = channel.channel_type in BROADCAST_CHANNEL_TYPES
+            # Unknown type (NULL, legacy import) judged as broadcast — same
+            # rule as _append_subscriber_flags.
+            is_broadcast = channel.channel_type not in CHAT_CHANNEL_TYPES
             threshold = (
                 LOW_SUBSCRIBER_RATIO_THRESHOLD
                 if is_broadcast

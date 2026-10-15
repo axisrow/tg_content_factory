@@ -7,7 +7,9 @@ from src.filters.criteria import VALID_FLAGS, contains_cyrillic
 from src.filters.models import ChannelFilterResult, FilterReport
 
 
-async def _insert_channel(db, channel_id, title="Test", channel_type="channel", username=None):
+async def _insert_channel(
+    db, channel_id, title="Test", channel_type: str | None = "channel", username=None
+):
     await db.execute(
         "INSERT INTO channels (channel_id, title, username, channel_type, is_active) "
         "VALUES (?, ?, ?, ?, 1)",
@@ -151,6 +153,17 @@ class TestAnalyzerSubscriberRatio:
         result = await analyzer.analyze_channel(202)
         assert result.subscriber_ratio is None
         assert "low_subscriber_ratio" not in result.flags
+
+    async def test_null_type_broadcast_threshold(self, db, raw_db):
+        # NULL-тип судится по broadcast-порогу (0.1 < 1.0 → флаг), а не по
+        # chat-порогу 0.02. Реальный кейс: ферма ai_for_dev, ratio 0.30 —
+        # со старым whitelist-гейтом она молча проходила.
+        await _insert_channel(raw_db, 203, channel_type=None)
+        await _insert_messages(raw_db, 203, [f"msg{i}" for i in range(100)])
+        await _insert_stats(raw_db, 203, 10)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(203)
+        assert "low_subscriber_ratio" in result.flags
 
 
 class TestAnalyzerCrossChannelDupes:
@@ -1323,4 +1336,16 @@ class TestAnalyzerLowEngagement:
         analyzer = ChannelAnalyzer(db)
         quick = await analyzer.analyze_all(quick=True, sample_size=50)
         result = next(r for r in quick.results if r.channel_id == 4209)
+        assert "low_engagement" in result.flags
+
+    async def test_null_channel_type_still_checked(self, db, raw_db):
+        # NULL channel_type (legacy-импорт, 354 канала на живой БД 15.10.26):
+        # судим по данным, а не по типу — гейт «не чат», а не «в broadcast».
+        # Реальный кейс: ферма ai_for_dev имеет channel_type IS NULL.
+        await _insert_channel(raw_db, 4210, channel_type=None)
+        await _insert_messages_with_views(raw_db, 4210, [70] * 40)
+        await _insert_stats(raw_db, 4210, 941)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(4210)
+        assert result.views_ratio_pct == 7.4
         assert "low_engagement" in result.flags
