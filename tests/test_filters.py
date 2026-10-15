@@ -176,7 +176,34 @@ class TestAnalyzerCrossChannelDupes:
         result = await analyzer.analyze_channel(300)
         assert "cross_channel_spam" not in result.flags
 
-    async def test_high_dupes(self, db, raw_db):
+    async def test_copy_later_flagged_source_clean(self, db, raw_db):
+        # Асимметричная семантика (фидбек владельца 15.10.26): дупликат — это
+        # текст, опубликованный каналом ПОЗЖЕ, чем он появился в другом канале.
+        # 302 — источник, 306 — скопировал без атрибуции: флаг у копии, у
+        # источника чисто.
+        await _insert_channel(raw_db, 302, title="Source")
+        await _insert_channel(raw_db, 306, title="Copier")
+        shared = "this is a duplicated message across channels"
+        await raw_db.execute(
+            "INSERT INTO messages (channel_id, message_id, text, date) VALUES (302, 1, ?, '2025-01-01')",
+            (shared,),
+        )
+        await raw_db.execute(
+            "INSERT INTO messages (channel_id, message_id, text, date) VALUES (306, 1, ?, '2025-01-05')",
+            (shared,),
+        )
+        await raw_db.commit()
+        analyzer = ChannelAnalyzer(db)
+        source = await analyzer.analyze_channel(302)
+        assert source.cross_dupe_pct == 0.0
+        assert "cross_channel_spam" not in source.flags
+        copier = await analyzer.analyze_channel(306)
+        assert copier.cross_dupe_pct == 100.0
+        assert "cross_channel_spam" in copier.flags
+
+    async def test_same_moment_not_flagged(self, db, raw_db):
+        # Равные даты (одновременная публикация) никому не считаются дупликатом:
+        # дупликат — строго «позже чужого».
         await _insert_channel(raw_db, 302)
         await _insert_channel(raw_db, 303, title="Mirror")
         shared = ["this is a duplicated message across channels"]
@@ -184,8 +211,26 @@ class TestAnalyzerCrossChannelDupes:
         await _insert_messages(raw_db, 303, shared)
         analyzer = ChannelAnalyzer(db)
         result = await analyzer.analyze_channel(302)
-        assert result.cross_dupe_pct == 100.0
-        assert "cross_channel_spam" in result.flags
+        assert result.cross_dupe_pct == 0.0
+        assert "cross_channel_spam" not in result.flags
+
+    async def test_forward_repost_not_flagged(self, db, raw_db):
+        # Репост с атрибуцией (forward_from_channel_id) не считается дупликатом:
+        # честная пересылка — не кросс-канальный спам.
+        await _insert_channel(raw_db, 307, title="Reposter")
+        await _insert_channel(raw_db, 308, title="Origin")
+        await raw_db.execute(
+            "INSERT INTO messages (channel_id, message_id, text, date) "
+            "VALUES (308, 1, 'оригинальный пост чужого канала целиком', '2025-01-01')"
+        )
+        await raw_db.execute(
+            "INSERT INTO messages (channel_id, message_id, text, forward_from_channel_id, date) "
+            "VALUES (307, 1, 'оригинальный пост чужого канала целиком', 999, '2025-01-03')"
+        )
+        await raw_db.commit()
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(307)
+        assert "cross_channel_spam" not in result.flags
 
 
 class TestAnalyzerAutoFeed:
@@ -234,7 +279,13 @@ class TestAnalyzeAllQuickMode:
         await _insert_channel(raw_db, 501, title="Mirror")
         shared = ["this is a duplicated message across channels"]
         await _insert_messages(raw_db, 500, shared)
-        await _insert_messages(raw_db, 501, shared)
+        # 501 скопировал позже: при равных датах дупликата нет (см. ту же
+        # семантику в TestAnalyzerCrossChannelDupes).
+        await raw_db.execute(
+            "INSERT INTO messages (channel_id, message_id, text, date) VALUES (501, 1, ?, '2025-01-05')",
+            shared,
+        )
+        await raw_db.commit()
         analyzer = ChannelAnalyzer(db)
 
         full = await analyzer.analyze_all()
@@ -985,21 +1036,28 @@ class TestChannelAnalyzer:
                 "unique channel 900 payload long enough",
             ],
         )
-        await _insert_messages(
-            raw_db,
-            901,
+        # 901 скопировал оба текста позже — флаг у копии, источник чист.
+        for i, text in enumerate(
             [
                 "shared duplicated content alpha beta gamma",
                 "shared duplicated content delta epsilon zeta",
             ],
-        )
+            1,
+        ):
+            await raw_db.execute(
+                "INSERT INTO messages (channel_id, message_id, text, date) VALUES (901, ?, ?, '2025-01-05')",
+                (i, text),
+            )
+        await raw_db.commit()
         await _insert_messages(raw_db, 902, ["independent long content for channel 902 only"])
 
         analyzer = ChannelAnalyzer(db)
         report = await analyzer.analyze_all()
+        ch901 = next(r for r in report.results if r.channel_id == 901)
+        assert ch901.cross_dupe_pct == 100.0
+        assert "cross_channel_spam" in ch901.flags
         ch900 = next(r for r in report.results if r.channel_id == 900)
-        assert ch900.cross_dupe_pct == 66.7
-        assert "cross_channel_spam" in ch900.flags
+        assert "cross_channel_spam" not in ch900.flags
 
 
 class TestApplyFiltersKeepTag:

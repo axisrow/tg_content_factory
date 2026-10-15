@@ -75,24 +75,34 @@ _SQL_SHORT_MESSAGE = """
     FROM messages
 """
 
+# Кросс-канальные дубли, асимметрично (фидбек владельца 15.10.26, @prog_ai):
+# дупликат — это префикс, опубликованный каналом СТРОГО ПОЗЖЕ, чем он появился
+# где-либо ещё (копипастер флагается, первоисточник — нет; равные даты никому
+# не считаются). Репосты с атрибуцией (forward_from_channel_id) исключены
+# целиком: честная пересылка — не спам. Порог флага — CROSS_DUPE_THRESHOLD в
+# criteria.py (анализатор).
 _SQL_CROSS_DUPE = """
     WITH channel_prefixes AS (
-        SELECT channel_id, substr(text, 1, 100) AS prefix
+        SELECT
+            channel_id,
+            substr(text, 1, 100) AS prefix,
+            MIN(date) AS first_date
         FROM messages
         WHERE text IS NOT NULL AND length(text) > 10
-        GROUP BY channel_id, prefix
+            AND forward_from_channel_id IS NULL
+        GROUP BY channel_id, substr(text, 1, 100)
     ),
-    prefix_channel_counts AS (
-        SELECT prefix, COUNT(*) AS channel_count
+    first_seen AS (
+        SELECT prefix, MIN(first_date) AS global_first
         FROM channel_prefixes
         GROUP BY prefix
     )
     SELECT
         cp.channel_id,
         COUNT(*) AS uniq_total,
-        SUM(CASE WHEN pcc.channel_count > 1 THEN 1 ELSE 0 END) AS duped
+        SUM(CASE WHEN cp.first_date > fs.global_first THEN 1 ELSE 0 END) AS duped
     FROM channel_prefixes cp
-    JOIN prefix_channel_counts pcc ON pcc.prefix = cp.prefix
+    JOIN first_seen fs ON fs.prefix = cp.prefix
 """
 
 _SQL_CYRILLIC = """
@@ -355,10 +365,12 @@ class FilterRepository:
     async def fetch_cross_dupe_map(
         self, channel_id: int | None = None
     ) -> dict[int, tuple[int, int]]:
-        """Карта `channel_id → (уникальных префиксов, из них встречаются в других каналах)`.
+        """Карта `channel_id → (уникальных префиксов, из них опубликованы позже чужих)`.
 
-        Доля кросс-канальных дублей выявляет агрегаторы/сетки, перепечатывающие
-        чужой контент. Это самый тяжёлый запрос (self-join по префиксам).
+        Асимметричная метрика: дупликат — текст, появившийся в канале позже,
+        чем в любом другом (копипастер/агрегатор); первоисточник и равные даты
+        не считаются. Репосты с forward_from_channel_id исключены. Это самый
+        тяжёлый запрос (self-join по префиксам).
         """
         sql = _SQL_CROSS_DUPE
         params: tuple = ()

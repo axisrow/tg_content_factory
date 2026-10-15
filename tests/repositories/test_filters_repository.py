@@ -432,18 +432,17 @@ async def test_fetch_cross_dupe_map_no_dupes(filters_repo, channels_repo):
 
 
 async def test_fetch_cross_dupe_map_with_dupes(filters_repo, channels_repo):
-    """Test with cross-channel duplicates."""
+    """Асимметричная семантика: дупликат — публикация ПОЗЖЕ чужой."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
     await channels_repo.add_channel(Channel(channel_id=2, title="Test 2"))
 
-    # Same message in both channels (longer than 10 chars)
     shared_text = "This is a shared message between channels"
     await filters_repo._db.executemany(
-        _INSERT_MSG,
+        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, ?)",
         [
-            (1, 100, shared_text),
-            (2, 100, shared_text),
-            (1, 101, "Unique to channel 1"),
+            (1, 100, shared_text, "2026-01-01"),
+            (1, 101, "Unique to channel 1", "2026-01-01"),
+            (2, 100, shared_text, "2026-02-01"),  # копия — позже источника
         ],
     )
     await filters_repo._db.commit()
@@ -451,7 +450,9 @@ async def test_fetch_cross_dupe_map_with_dupes(filters_repo, channels_repo):
     result = await filters_repo.fetch_cross_dupe_map()
     total, duped = result[1]
     assert total == 2  # 2 unique prefixes in channel 1
-    assert duped == 1  # 1 is duplicated in another channel
+    assert duped == 0  # канал 1 — источник: не считается дупликатом
+    total2, duped2 = result[2]
+    assert (total2, duped2) == (1, 1)  # канал 2 скопировал позже — дупликат
 
 
 async def test_fetch_cross_dupe_map_excludes_short(filters_repo, channels_repo):
