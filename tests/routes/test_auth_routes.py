@@ -624,3 +624,190 @@ async def test_save_credentials_missing_api_hash(client_unconfigured):
         follow_redirects=False,
     )
     assert resp.status_code == 303
+
+
+# --- QR login (#1551) -------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_qr_page_renders_start_step(client):
+    """GET /auth/qr shows the QR start card with a link to the phone path."""
+    resp = await client.get("/auth/qr")
+    assert resp.status_code == 200
+    assert "QR-код" in resp.text
+    assert "/auth/qr/start" in resp.text
+
+
+@pytest.mark.anyio
+async def test_qr_start_enqueues_command(client):
+    """POST /auth/qr/start enqueues auth.qr_start and redirects to the QR page."""
+    db = client._transport.app.state.db
+    resp = await client.post("/auth/qr/start", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "/auth/qr?command_id=" in resp.headers["location"]
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "auth.qr_start"
+
+
+@pytest.mark.anyio
+async def test_qr_start_unconfigured_shows_credentials_error(client_unconfigured):
+    """POST /auth/qr/start without API credentials renders an inline error."""
+    resp = await client_unconfigured.post("/auth/qr/start")
+    assert resp.status_code == 200
+    assert "API credentials" in resp.text
+    db = client_unconfigured._transport.app.state.db
+    commands = await db.repos.telegram_commands.list_commands(limit=10)
+    assert all(c.command_type != "auth.qr_start" for c in commands)
+
+
+def _qr_start_command() -> TelegramCommand:
+    return TelegramCommand(
+        command_type="auth.qr_start",
+        payload={},
+        status=TelegramCommandStatus.SUCCEEDED,
+        result_payload={
+            "qr_id": "q1",
+            "url": "tg://login?token=AAA",
+            "expires_at": "2026-10-16T00:00:30+00:00",
+        },
+    )
+
+
+@pytest.mark.anyio
+async def test_qr_page_shows_svg_and_poll_form(client):
+    """Succeeded auth.qr_start renders an SVG QR and the auto-poll form (DOM check)."""
+    db = client._transport.app.state.db
+    command_id = await db.repos.telegram_commands.create_command(_qr_start_command())
+    resp = await client.get(f"/auth/qr?command_id={command_id}")
+    assert resp.status_code == 200
+    assert "<svg" in resp.text  # inline QR, not ascii art
+    assert 'id="qr-poll-form"' in resp.text
+    assert 'value="q1"' in resp.text
+
+
+@pytest.mark.anyio
+async def test_qr_poll_enqueues_status_command(client):
+    """POST /auth/qr/poll enqueues auth.qr_status carrying the qr_id."""
+    db = client._transport.app.state.db
+    resp = await client.post("/auth/qr/poll", data={"qr_id": "q1"}, follow_redirects=False)
+    assert resp.status_code == 303
+    assert "/auth/qr?command_id=" in resp.headers["location"]
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "auth.qr_status"
+    assert commands[0].payload == {"qr_id": "q1"}
+
+
+@pytest.mark.anyio
+async def test_qr_page_poll_success_redirects_to_settings(client):
+    """Succeeded auth.qr_status (state=success) → settings, account connected."""
+    db = client._transport.app.state.db
+    command_id = await db.repos.telegram_commands.create_command(
+        TelegramCommand(
+            command_type="auth.qr_status",
+            payload={"qr_id": "q1"},
+            status=TelegramCommandStatus.SUCCEEDED,
+            result_payload={"qr_id": "q1", "state": "success", "phone": "+79991234567"},
+        )
+    )
+    resp = await client.get(f"/auth/qr?command_id={command_id}", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/settings?msg=account_connected"
+
+
+@pytest.mark.anyio
+async def test_qr_page_poll_password_needed_shows_form(client):
+    """Succeeded auth.qr_status (state=password_needed) renders the 2FA form."""
+    db = client._transport.app.state.db
+    command_id = await db.repos.telegram_commands.create_command(
+        TelegramCommand(
+            command_type="auth.qr_status",
+            payload={"qr_id": "q1"},
+            status=TelegramCommandStatus.SUCCEEDED,
+            result_payload={"qr_id": "q1", "state": "password_needed"},
+        )
+    )
+    resp = await client.get(f"/auth/qr?command_id={command_id}")
+    assert resp.status_code == 200
+    assert "/auth/qr/password" in resp.text
+    assert 'name="password"' in resp.text
+
+
+@pytest.mark.anyio
+async def test_qr_page_poll_failed_shows_error(client):
+    """Succeeded auth.qr_status (state=failed) surfaces the QR error."""
+    db = client._transport.app.state.db
+    command_id = await db.repos.telegram_commands.create_command(
+        TelegramCommand(
+            command_type="auth.qr_status",
+            payload={"qr_id": "q1"},
+            status=TelegramCommandStatus.SUCCEEDED,
+            result_payload={"qr_id": "q1", "state": "failed", "error": "qr_expired_max_refreshes"},
+        )
+    )
+    resp = await client.get(f"/auth/qr?command_id={command_id}")
+    assert resp.status_code == 200
+    assert "qr_expired_max_refreshes" in resp.text
+
+
+@pytest.mark.anyio
+async def test_qr_page_failed_command_shows_error(client):
+    """A FAILED auth.qr_start command renders the error step with a restart button."""
+    db = client._transport.app.state.db
+    command_id = await db.repos.telegram_commands.create_command(
+        TelegramCommand(command_type="auth.qr_start", payload={})
+    )
+    await db.repos.telegram_commands.update_command(
+        command_id,
+        status=TelegramCommandStatus.FAILED,
+        error="telegram_auth_timeout: connect timed out after 30s",
+    )
+    resp = await client.get(f"/auth/qr?command_id={command_id}")
+    assert resp.status_code == 200
+    assert "connect timed out" in resp.text
+
+
+@pytest.mark.anyio
+async def test_qr_password_route_enqueues_command(client):
+    """POST /auth/qr/password enqueues auth.qr_password with the submitted secret."""
+    db = client._transport.app.state.db
+    resp = await client.post(
+        "/auth/qr/password",
+        data={"qr_id": "q1", "password": "pw123"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "auth.qr_password"
+    assert commands[0].payload["qr_id"] == "q1"
+    assert commands[0].payload["password_2fa"] == "pw123"  # worker scrubs it on execution
+
+
+@pytest.mark.anyio
+async def test_qr_happy_path_start_to_svg(client, monkeypatch):
+    """Full web path: start → worker executes → page shows the QR to scan."""
+    app = client._transport.app
+    db = app.state.db
+    pool = app.state.pool
+    auth = app.state.auth
+    auth.qr_start = AsyncMock(
+        return_value={
+            "qr_id": "q9",
+            "url": "tg://login?token=HAPPY",
+            "expires_at": "2026-10-16T00:00:30+00:00",
+        }
+    )
+
+    resp = await client.post("/auth/qr/start", follow_redirects=False)
+    assert resp.status_code == 303
+    command_id = int(resp.headers["location"].split("command_id=", 1)[1])
+
+    await _run_dispatcher_once(db, pool, auth, monkeypatch)
+
+    command = await db.repos.telegram_commands.get_command(command_id)
+    assert command.status == TelegramCommandStatus.SUCCEEDED
+    assert command.result_payload["qr_id"] == "q9"
+
+    page = await client.get(f"/auth/qr?command_id={command_id}")
+    assert page.status_code == 200
+    assert "<svg" in page.text
+    assert 'value="q9"' in page.text

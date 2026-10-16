@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Вход по QR-коду — TG Agent{% endblock %}
+{% block content %}
+<h1>Вход по QR-коду</h1>
+
+{% if error %}
+<div class="alert alert-danger" role="alert">{{ error }}</div>
+{% endif %}
+
+{% if step == 'pending' %}
+<div class="card mb-4">
+    <div class="card-body">
+        <p class="mb-2">Команда отправлена в worker и сейчас обрабатывается.</p>
+        <p class="text-muted small mb-2">
+            {% if pending_status == 'running' %}
+            Выполняется {{ pending_elapsed_seconds or 0 }} сек.
+            {% else %}
+            Ожидает worker {{ pending_elapsed_seconds or 0 }} сек.
+            {% endif %}
+        </p>
+        {% if pending_slow %}
+        <div class="alert alert-warning mb-2" role="alert">
+            запрос к Telegram занял слишком много времени, worker завершит его ошибкой.
+        </div>
+        {% endif %}
+        <p class="text-muted small mb-0">Страница обновится автоматически, когда команда завершится.</p>
+    </div>
+</div>
+<script>
+(function() {
+    setTimeout(function() {
+        window.location.reload();
+    }, 1500);
+})();
+</script>
+
+{% elif step == 'qr' %}
+<div class="card mb-4">
+    <div class="card-body text-center">
+        <p class="mb-3">Отсканируйте код в Telegram: <strong>Настройки → Устройства → Связать устройство</strong></p>
+        <div class="d-inline-block p-3 bg-white rounded" id="qr-container" data-qr-id="{{ qr_id }}">
+            {{ qr_svg|safe }}
+        </div>
+        <p class="text-muted small mt-3 mb-0">Код живёт ~30 секунд и обновляется автоматически, пока вы не отсканируете.</p>
+    </div>
+</div>
+<form method="post" action="/auth/qr/poll" id="qr-poll-form">
+    <input type="hidden" name="qr_id" value="{{ qr_id }}">
+</form>
+<script>
+(function() {
+    var form = document.getElementById('qr-poll-form');
+    if (!form) return;
+    setTimeout(function() {
+        form.submit();
+    }, {{ poll_interval }} * 1000);
+})();
+</script>
+
+{% elif step == 'password' %}
+<div class="card mb-4">
+    <div class="card-body">
+        <p>Сканирование принято. Требуется пароль двухфакторной аутентификации.</p>
+        <form method="post" action="/auth/qr/password" data-busy>
+            <input type="hidden" name="qr_id" value="{{ qr_id }}">
+            <div class="mb-3">
+                <label for="password" class="form-label">Пароль 2FA</label>
+                <input type="password" class="form-control" id="password" name="password" required autofocus>
+            </div>
+            <button type="submit" class="btn btn-primary">Подтвердить</button>
+        </form>
+    </div>
+</div>
+
+{% elif step == 'error' %}
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="post" action="/auth/qr/start" data-busy>
+            <button type="submit" class="btn btn-primary">Начать заново</button>
+        </form>
+        <a href="/auth/login" class="btn btn-outline-secondary mt-2 d-block text-center">Вход по телефону</a>
+    </div>
+</div>
+
+{% else %}
+{% if api_configured %}
+<div class="card mb-4">
+    <div class="card-body">
+        <p>Отсканируйте QR-код приложением Telegram (<strong>Настройки → Устройства → Связать устройство</strong>) — SMS-код не понадобится.</p>
+        <form method="post" action="/auth/qr/start" data-busy>
+            <button type="submit" class="btn btn-primary">Показать QR-код</button>
+        </form>
+        <a href="/auth/login" class="btn btn-outline-secondary mt-3 d-block text-center">Вход по номеру телефона</a>
+    </div>
+</div>
+{% else %}
+<div class="card mb-4">
+    <div class="card-body">
+        <p>API credentials не настроены. Введите <code>api_id</code> и <code>api_hash</code> на странице <a href="/settings">Настройки</a>.</p>
+    </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

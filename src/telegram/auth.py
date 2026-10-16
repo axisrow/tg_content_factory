@@ -4,10 +4,13 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable
-from typing import TypeVar
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, TypeVar
+from uuid import uuid4
 
 from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError
+from telethon.errors import PasswordHashInvalidError, SessionPasswordNeededError
 from telethon.sessions import StringSession
 from telethon.tl.functions.auth import ResendCodeRequest
 from telethon.tl.types.auth import (
@@ -33,6 +36,10 @@ logger = logging.getLogger(__name__)
 
 AUTH_CONNECT_TIMEOUT_SECONDS = 30
 AUTH_RPC_TIMEOUT_SECONDS = 60
+
+# How many times an unscanned QR token is regenerated (recreate) before the
+# flow gives up (#1551). Mirrors the interactive reference loop.
+QR_MAX_REFRESHES = 10
 
 _T = TypeVar("_T")
 
@@ -79,6 +86,42 @@ def _format_timeout(seconds: float) -> str:
     if float(seconds).is_integer():
         return f"{int(seconds)}s"
     return f"{seconds:g}s"
+
+
+@dataclass
+class _QrSession:
+    """Stateful QR-login flow (#1551). One active flow per TelegramAuth.
+
+    ``task`` holds the background wait/recreate loop so the command queue is
+    never blocked by a pending scan; ``session_string`` is a secret and only
+    ever leaves this class through :meth:`TelegramAuth.consume_qr_session`.
+    """
+
+    qr_id: str
+    client: TelegramClient
+    qrlogin: Any
+    state: str  # pending | password_needed | success | consumed | failed
+    url: str
+    expires_at: datetime | None
+    task: asyncio.Task | None = None
+    phone: str | None = None
+    session_string: str | None = None
+    error: str | None = None
+    refreshes: int = 0
+
+    def snapshot(self, *, include_session_string: bool = False) -> dict:
+        snap = {
+            "qr_id": self.qr_id,
+            "state": self.state,
+            "url": self.url,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "phone": self.phone,
+            "error": self.error,
+            "refreshes": self.refreshes,
+        }
+        if include_session_string:
+            snap["session_string"] = self.session_string
+        return snap
 
 
 async def _with_auth_timeout(
@@ -141,6 +184,7 @@ class TelegramAuth:
         # None = direct connection.
         self._proxy = proxy
         self._pending: dict[str, tuple[TelegramClient, str]] = {}
+        self._qr: _QrSession | None = None
 
     @property
     def api_id(self) -> int:
@@ -451,3 +495,174 @@ class TelegramAuth:
             except Exception:
                 pass
         self._pending.clear()
+        await self._teardown_qr()
+
+    # --- QR login (#1551) -------------------------------------------------
+    # Mechanics ported from telegram-mcp's session_string_generator (--qr):
+    # client.qr_login() → poll wait() → recreate() on token expiry → 2FA via
+    # sign_in(password) → StringSession.save(). Rewritten for the command
+    # queue: the wait loop lives in a background task so auth.qr_start /
+    # auth.qr_status stay fast and the dispatcher loop is never blocked.
+
+    async def qr_start(self) -> dict:
+        """Start a QR login flow. Returns {qr_id, url, expires_at} for rendering."""
+        await self._teardown_qr()
+        client = TelegramClient(StringSession(), self._api_id, self._api_hash, proxy=self._proxy)
+        try:
+            await _with_auth_timeout(client.connect(), "connect", AUTH_CONNECT_TIMEOUT_SECONDS)
+            qrlogin = await _with_auth_timeout(client.qr_login(), "qr_login", AUTH_RPC_TIMEOUT_SECONDS)
+        except Exception:
+            try:
+                await client.disconnect()
+            except Exception:
+                logger.warning("Failed to disconnect QR auth client after start failure")
+            raise
+        session = _QrSession(
+            qr_id=uuid4().hex[:12],
+            client=client,
+            qrlogin=qrlogin,
+            state="pending",
+            url=qrlogin.url,
+            expires_at=qrlogin.expires,
+        )
+        session.task = asyncio.create_task(
+            self._qr_wait_loop(session), name=f"qr_login_wait_{session.qr_id}"
+        )
+        self._qr = session
+        logger.info("auth.qr_start started qr_id=%s", session.qr_id)
+        return {"qr_id": session.qr_id, "url": session.url, "expires_at": session.snapshot()["expires_at"]}
+
+    def qr_status(self, qr_id: str) -> dict | None:
+        """Snapshot of the QR flow. None when ``qr_id`` is not the active flow."""
+        session = self._qr
+        if session is None or session.qr_id != qr_id:
+            return None
+        return session.snapshot()
+
+    async def consume_qr_session(self, qr_id: str) -> dict | None:
+        """Atomically flip a successful flow to ``consumed`` and return its secrets.
+
+        The one-shot handoff between the QR wait loop and account
+        materialization: a second caller (duplicate poll) gets None instead of
+        creating a duplicate account. Disconnects the login client — the
+        session is captured in the returned ``session_string``.
+        """
+        session = self._qr
+        if session is None or session.qr_id != qr_id or session.state != "success":
+            return None
+        session.state = "consumed"
+        snapshot = session.snapshot(include_session_string=True)
+        try:
+            await session.client.disconnect()
+        except Exception:
+            logger.warning("Failed to disconnect consumed QR auth client")
+        return snapshot
+
+    async def qr_password(self, qr_id: str, password: str) -> dict:
+        """Submit the 2FA password for a ``password_needed`` QR flow.
+
+        Returns {"state": "success"} on completion, or
+        {"state": "password_needed", "error": "invalid_password"} so the caller
+        can retry. Other errors raise.
+        """
+        session = self._qr
+        if session is None or session.qr_id != qr_id:
+            raise ValueError("qr_session_not_found")
+        if session.state != "password_needed":
+            raise ValueError(f"qr_state_not_password_needed:{session.state}")
+        if not password:
+            session.error = "password_required"
+            return {"state": "password_needed", "error": "password_required"}
+        try:
+            await _with_auth_timeout(
+                session.client.sign_in(password=password), "sign_in", AUTH_RPC_TIMEOUT_SECONDS
+            )
+        except PasswordHashInvalidError:
+            session.error = "invalid_password"
+            return {"state": "password_needed", "error": "invalid_password"}
+        session.state = "success"
+        session.error = None
+        try:
+            session.session_string = session.client.session.save()
+            me = await session.client.get_me()
+            session.phone = getattr(me, "phone", None) or None
+        except Exception:
+            logger.exception("auth.qr_password failed to capture session string")
+            session.state = "failed"
+            session.error = "qr_session_save_failed"
+            await self._disconnect_qr_client(session)
+            raise
+        await self._disconnect_qr_client(session)
+        return {"state": "success"}
+
+    async def _disconnect_qr_client(self, session: _QrSession) -> None:
+        try:
+            await session.client.disconnect()
+        except Exception:
+            logger.warning("Failed to disconnect QR auth client")
+
+    async def _teardown_qr(self) -> None:
+        """Cancel the background wait loop and drop the active flow, if any."""
+        session = self._qr
+        self._qr = None
+        if session is None:
+            return
+        if session.task is not None and not session.task.done():
+            session.task.cancel()
+            try:
+                await session.task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.warning("QR wait loop raised during teardown", exc_info=True)
+        await self._disconnect_qr_client(session)
+
+    async def _qr_wait_loop(self, session: _QrSession) -> None:
+        """Background wait/recreate loop for one QR token.
+
+        wait() must be running while the QR is on screen — Telethon completes
+        the login through its UpdateLoginToken handler. Token expiry (~30s)
+        refreshes the URL in place; the web side picks the fresh URL up via
+        auth.qr_status polling.
+        """
+        try:
+            while True:
+                try:
+                    user = await session.qrlogin.wait()
+                except TimeoutError:  # asyncio.TimeoutError is an alias on py311+
+                    if session.refreshes >= QR_MAX_REFRESHES:
+                        session.state = "failed"
+                        session.error = "qr_expired_max_refreshes"
+                        break
+                    session.refreshes += 1
+                    await session.qrlogin.recreate()
+                    session.url = session.qrlogin.url
+                    session.expires_at = session.qrlogin.expires
+                    continue
+                except SessionPasswordNeededError:
+                    session.state = "password_needed"
+                    break
+                session.state = "success"
+                try:
+                    session.session_string = session.client.session.save()
+                    session.phone = getattr(user, "phone", None) or None
+                except Exception:
+                    logger.exception("auth.qr_login failed to save authorized session")
+                    session.state = "failed"
+                    session.error = "qr_session_save_failed"
+                    raise
+                break
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            session.state = "failed"
+            session.error = str(exc)
+        finally:
+            if session.state == "failed":
+                await self._disconnect_qr_client(session)
+            logger.info(
+                "auth.qr_login loop finished qr_id=%s state=%s refreshes=%d",
+                session.qr_id,
+                session.state,
+                session.refreshes,
+            )

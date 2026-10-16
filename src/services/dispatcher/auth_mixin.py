@@ -64,3 +64,63 @@ class AuthCommandsMixin(_Base):
         await self._db.add_account(account)
         connect_result = await self._handle_accounts_connect({"phone": phone})
         return {"result": {"phone": phone, **connect_result}, "payload_update": {**payload}}
+
+    async def _handle_auth_qr_start(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._auth is None or not self._auth.is_configured:
+            raise RuntimeError("auth_not_configured")
+        result = await self._auth.qr_start()
+        return {"result": result}
+
+    async def _handle_auth_qr_status(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._auth is None or not self._auth.is_configured:
+            raise RuntimeError("auth_not_configured")
+        qr_id = str(payload["qr_id"]).strip()
+        snapshot = self._auth.qr_status(qr_id)
+        if snapshot is None:
+            raise RuntimeError("qr_session_not_found")
+        if snapshot["state"] != "success":
+            return {"result": snapshot}
+        consumed = await self._auth.consume_qr_session(qr_id)
+        if consumed is None:
+            # A concurrent poll consumed it first — report the terminal state.
+            return {"result": {**snapshot, "state": "consumed"}}
+        return {"result": await self._materialize_qr_account(consumed)}
+
+    async def _handle_auth_qr_password(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._auth is None or not self._auth.is_configured:
+            raise RuntimeError("auth_not_configured")
+        qr_id = str(payload["qr_id"]).strip()
+        # No strip: passwords may legitimately contain leading/trailing spaces.
+        password_2fa = str(payload.get("password_2fa", ""))
+        payload["password_2fa"] = ""
+        result = await self._auth.qr_password(qr_id, password_2fa)
+        if result.get("state") != "success":
+            return {"result": result}
+        consumed = await self._auth.consume_qr_session(qr_id)
+        if consumed is None:
+            return {"result": {**result, "state": "consumed"}}
+        return {"result": await self._materialize_qr_account(consumed)}
+
+    async def _materialize_qr_account(self, consumed: dict[str, Any]) -> dict[str, Any]:
+        """One-shot Account creation for a successful QR flow.
+
+        Same path as the tail of ``_handle_auth_verify_code``: require the
+        encryption key, insert the Account (first one becomes primary), connect
+        it through the pool. ``consumed`` carries the session_string — it never
+        reaches the command's persisted result_payload.
+        """
+        phone = str(consumed.get("phone") or "").strip()
+        session_string = str(consumed.get("session_string") or "")
+        if not phone or not session_string:
+            raise RuntimeError("qr_materialization_incomplete")
+        self._db.repos.accounts.require_session_encryption_key()
+        existing = await self._db.get_account_summaries(active_only=False)
+        account = Account(
+            phone=phone,
+            session_string=session_string,
+            is_primary=not any(acc.phone == phone for acc in existing) and len(existing) == 0,
+            is_premium=False,
+        )
+        await self._db.add_account(account)
+        connect_result = await self._handle_accounts_connect({"phone": phone})
+        return {"state": "success", "phone": phone, **connect_result}

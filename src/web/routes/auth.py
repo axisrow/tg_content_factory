@@ -1,8 +1,11 @@
+import io
 import logging
 from datetime import datetime, timezone
 
+import qrcode
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from qrcode.image.svg import SvgPathImage
 
 from src.models import Account, TelegramCommandStatus
 from src.telegram.auth import validate_session_string
@@ -13,6 +16,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 AUTH_PENDING_WARNING_SECONDS = 30
+# Web-side QR status polling cadence (#1551): each tick enqueues one
+# auth.qr_status command the worker answers from its in-memory QR flow.
+QR_POLL_INTERVAL_SECONDS = 5
 
 
 def _render(request: Request, name: str, context: dict):
@@ -257,3 +263,119 @@ async def import_session(
         return _error(f"Аккаунт {phone} уже существует. Удалите его перед импортом.")
     logger.info("account.import_session phone-added by=web")  # no session value
     return RedirectResponse(url="/settings?msg=account_connected", status_code=303)
+
+
+def _qr_svg(url: str) -> str:
+    """Render a tg://login URL as an inline SVG QR code (no PIL dependency)."""
+    image = qrcode.make(url, image_factory=SvgPathImage, box_size=1, border=1)
+    buffer = io.BytesIO()  # this qrcode writes bytes even for SVG factories
+    image.save(buffer)
+    return buffer.getvalue().decode()
+
+
+def _qr_base_context(request: Request) -> dict[str, object]:
+    return {
+        "step": "start",
+        "error": None,
+        "qr_id": "",
+        "qr_svg": "",
+        "api_configured": _is_api_configured(request),
+        "poll_interval": QR_POLL_INTERVAL_SECONDS,
+    }
+
+
+@router.get("/qr", response_class=HTMLResponse)
+async def qr_page(request: Request):
+    """QR login page (#1551).
+
+    Server-driven flow through the command queue, same pattern as /auth/login:
+    every screen state is derived from one queued command's status/result —
+    auth.qr_start (initial token), auth.qr_status (poll → fresh URL / terminal
+    state) or auth.qr_password (2FA). No fetch(): the page re-submits a poll
+    form on a timer and the browser follows the 303s.
+    """
+    command = await _auth_command(request)
+    context = _qr_base_context(request)
+    if command is not None and command.command_type.startswith("auth.qr"):
+        payload = command.payload or {}
+        result = command.result_payload or {}
+        context["qr_id"] = str(payload.get("qr_id", ""))
+        if command.status in {TelegramCommandStatus.PENDING, TelegramCommandStatus.RUNNING}:
+            pending_elapsed_seconds = _elapsed_seconds(command.started_at or command.created_at)
+            context.update(
+                {
+                    "step": "pending",
+                    "command_id": command.id,
+                    "pending_status": command.status.value,
+                    "pending_elapsed_seconds": pending_elapsed_seconds,
+                    "pending_slow": pending_elapsed_seconds >= AUTH_PENDING_WARNING_SECONDS,
+                }
+            )
+        elif command.status == TelegramCommandStatus.FAILED:
+            context.update({"step": "error", "error": command.error or "QR-логин завершился ошибкой"})
+        elif command.command_type == "auth.qr_password":
+            if result.get("state") in {"success", "consumed"}:
+                return RedirectResponse(url="/settings?msg=account_connected", status_code=303)
+            context.update({"step": "password", "error": result.get("error") or command.error})
+        else:  # auth.qr_start / auth.qr_status
+            state = result.get("state", "pending")
+            if state == "pending":
+                qr_id = str(result.get("qr_id", "")) or str(context["qr_id"])
+                url = str(result.get("url", ""))
+                context.update({"qr_id": qr_id})
+                if not qr_id or not url:
+                    context.update({"step": "error", "error": "QR-токен недоступен, начните заново"})
+                else:
+                    context.update({"step": "qr", "qr_svg": _qr_svg(url)})
+            elif state == "password_needed":
+                context.update({"step": "password", "error": result.get("error")})
+            elif state in {"success", "consumed"}:
+                return RedirectResponse(url="/settings?msg=account_connected", status_code=303)
+            else:  # failed
+                context.update(
+                    {"step": "error", "error": result.get("error") or command.error or "QR-логин не завершён"}
+                )
+    return _render(request, "qr_login.html", context)
+
+
+@router.post("/qr/start")
+async def qr_start(request: Request):
+    if not _is_api_configured(request):
+        context = _qr_base_context(request)
+        context.update(
+            {
+                "error": "API credentials не настроены. Введите api_id и api_hash.",
+                "api_configured": False,
+            }
+        )
+        return _render(request, "qr_login.html", context)
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "auth.qr_start",
+        payload={},
+        requested_by="web:auth.qr_start",
+    )
+    return RedirectResponse(url=f"/auth/qr?command_id={command_id}", status_code=303)
+
+
+@router.post("/qr/poll")
+async def qr_poll(request: Request, qr_id: str = Form("")):
+    if not qr_id:
+        return RedirectResponse(url="/auth/qr", status_code=303)
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "auth.qr_status",
+        payload={"qr_id": qr_id},
+        requested_by="web:auth.qr_status",
+    )
+    return RedirectResponse(url=f"/auth/qr?command_id={command_id}", status_code=303)
+
+
+@router.post("/qr/password")
+async def qr_password(request: Request, qr_id: str = Form(""), password: str = Form("")):
+    if not qr_id or not password:
+        return RedirectResponse(url="/auth/qr", status_code=303)
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "auth.qr_password",
+        payload={"qr_id": qr_id, "password_2fa": password},
+        requested_by="web:auth.qr_password",
+    )
+    return RedirectResponse(url=f"/auth/qr?command_id={command_id}", status_code=303)

@@ -96,6 +96,9 @@ dependencies = [
     # which the stdlib `re` cannot (#1240). Present transitively (dateparser,
     # tiktoken) but declared here because it is now a direct runtime import.
     "regex>=2024.11.6",
+    # QR login in the web panel (#1551): renders the tg://login token as an
+    # inline SVG (SvgPathImage) — no PIL pull, unlike the PNG factories.
+    "qrcode>=8.0",
 ]
 
 [project.optional-dependencies]
