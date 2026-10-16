@@ -85,10 +85,12 @@ async def analyze_impl(config_path: str, *, quick: bool = False, sample_size: in
             print("No channels found.")
             return
 
-        fmt = "{:<6} {:<25} {:<10} {:<10} {:<10} {:<10} {:<10} {:<10} {:<15}"
-        header = ("ChanID", "Title", "Uniq%", "SubRatio", "Cyr%", "Short%", "XDupe%", "Auto%", "Flags")
+        fmt = "{:<6} {:<25} {:<10} {:<10} {:<10} {:<10} {:<10} {:<10} {:<10} {:<10} {:<30}"
+        header = (
+            "ChanID", "Title", "Uniq%", "SubRatio", "Cyr%", "Short%", "XDupe%", "Auto%", "Views%", "Fwd%", "Flags",
+        )
         print(fmt.format(*header))
-        print("-" * 110)
+        print("-" * 135)
         for r in report.results:
             flags_str = ", ".join(r.flags) if r.flags else "-"
             print(
@@ -101,7 +103,9 @@ async def analyze_impl(config_path: str, *, quick: bool = False, sample_size: in
                     f"{r.short_msg_pct:.1f}" if r.short_msg_pct is not None else "-",
                     f"{r.cross_dupe_pct:.1f}" if r.cross_dupe_pct is not None else "-",
                     f"{r.auto_feed_pct:.1f}" if r.auto_feed_pct is not None else "-",
-                    flags_str[:15],
+                    f"{r.views_ratio_pct:.1f}" if r.views_ratio_pct is not None else "-",
+                    f"{r.forward_pct:.1f}" if r.forward_pct is not None else "-",
+                    flags_str[:30],
                 )
             )
         print(f"\nTotal: {report.total_channels}, Flagged: {report.filtered_count}")

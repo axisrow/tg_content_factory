@@ -147,6 +147,44 @@ def test_analyze_quick_sample_size_flows_through(tmp_path, cli_init_patch):
     mock_instance.analyze_all.assert_awaited_once_with(quick=True, sample_size=50)
 
 
+def test_analyze_prints_views_and_forward_columns(tmp_path, cli_init_patch, capsys):
+    """`filter analyze` exposes views_ratio_pct/forward_pct as table columns (#1550)."""
+    db_path = str(tmp_path / "filter_analyze_columns.db")
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
+    asyncio.run(db.initialize())
+    asyncio.run(db.add_account(Account(phone="+100", session_string="sess")))
+    with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
+        from src.cli.commands.filter import run
+        from src.filters.models import ChannelFilterResult
+
+        with patch("src.cli.commands.filter.ChannelAnalyzer") as mock_analyzer:
+            mock_instance = MagicMock()
+            mock_report = MagicMock()
+            mock_report.results = [
+                ChannelFilterResult(
+                    channel_id=4200,
+                    title="Farm",
+                    flags=["low_engagement", "forwarder"],
+                    views_ratio_pct=7.4,
+                    forward_pct=80.0,
+                    is_filtered=True,
+                )
+            ]
+            mock_report.total_channels = 1
+            mock_report.filtered_count = 1
+            mock_instance.analyze_all = AsyncMock(return_value=mock_report)
+            mock_analyzer.return_value = mock_instance
+
+            run(_ns(filter_action="analyze"))
+
+    out = capsys.readouterr().out
+    assert "Views%" in out
+    assert "Fwd%" in out
+    assert "7.4" in out
+    assert "80.0" in out
+    assert "low_engagement, forwarder" in out
+
+
 def test_filter_analyze_parser_accepts_quick_flag():
     """CLI exposes --quick on `filter analyze` (#774)."""
     from typer.testing import CliRunner
