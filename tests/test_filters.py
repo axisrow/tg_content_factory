@@ -1208,7 +1208,12 @@ class TestApplyFiltersLabelOnly:
         )
         is_filtered, filter_flags = await cur.fetchone()
         assert is_filtered == 0
-        assert set((filter_flags or "").split(",")) - {""} == set(LABEL_ONLY_FLAGS)
+        # forwarder — label-only, но каналу без форвардов не проставляется:
+        # ассерт по фактически заработанным меткам + контракт #1517 (метки
+        # выживают, блокирующих флагов нет).
+        flags = set((filter_flags or "").split(",")) - {""}
+        assert flags == {"non_cyrillic"}
+        assert flags <= set(LABEL_ONLY_FLAGS)
 
     async def test_label_only_apply_idempotent(self, db, raw_db):
         from src.filters.criteria import LABEL_ONLY_FLAGS
@@ -1226,7 +1231,10 @@ class TestApplyFiltersLabelOnly:
         )
         is_filtered, filter_flags = await cur.fetchone()
         assert is_filtered == 0
-        assert set((filter_flags or "").split(",")) - {""} == set(LABEL_ONLY_FLAGS)
+        # См. тест выше: forwarder в фикстуре не зарабатывается.
+        flags = set((filter_flags or "").split(",")) - {""}
+        assert flags == {"non_cyrillic"}
+        assert flags <= set(LABEL_ONLY_FLAGS)
 
     async def test_label_only_with_blocking_flag_filters(self, db, raw_db):
         # non_cyrillic + блокирующий suspicious_username → блокировка и оба флага.
