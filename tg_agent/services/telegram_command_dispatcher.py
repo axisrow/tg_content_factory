@@ -15,7 +15,10 @@ from tenacity.wait import wait_exponential
 from tg_agent.config import AppConfig
 from tg_agent.database import Database, DatabaseBusyError
 from tg_agent.live_runtime_pause import LiveRuntimePauseGate
-from tg_agent.models import RuntimeSnapshot, TelegramCommandStatus  # noqa: F401  (RuntimeSnapshot re-exported for tests)
+from tg_agent.models import (  # noqa: F401  (RuntimeSnapshot re-exported for tests)
+    RuntimeSnapshot,
+    TelegramCommandStatus,
+)
 from tg_agent.scheduler.service import SchedulerManager
 from tg_agent.services.dispatcher._constants import (
     COMMAND_STATUS_UPDATE_BUSY_RETRY_INITIAL_SEC,

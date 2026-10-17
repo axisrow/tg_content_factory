@@ -224,6 +224,15 @@ def search(
     all_channels: bool = typer.Option(
         False, "--all", help="Search all channels including filtered ones"
     ),
+    date_from: str | None = typer.Option(
+        None, "--date-from", help="Start date YYYY-MM-DD (DB modes: local/semantic/hybrid)"
+    ),
+    date_to: str | None = typer.Option(
+        None, "--date-to", help="End date YYYY-MM-DD (DB modes: local/semantic/hybrid)"
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--format", help="Output format (default: text)"
+    ),
     index_now: bool = typer.Option(
         False, "--index-now", help="Run semantic embeddings indexing/backfill before exiting"
     ),
@@ -249,6 +258,9 @@ def search(
             max_length=max_length,
             fts=fts,
             include_filtered=all_channels,
+            date_from=date_from,
+            date_to=date_to,
+            output_format=output_format.value,
             index_now=index_now,
             reset_index=reset_index,
             purge_cache=purge_cache,

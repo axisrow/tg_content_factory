@@ -13,6 +13,8 @@ from pydantic import ValidationError
 
 from tg_agent.database import Database
 from tg_agent.models import Channel, SearchResult, TelegramCommandStatus
+from tg_agent.search.engine import DB_SEARCH_MODES as _DB_SEARCH_MODES
+from tg_agent.search.engine import TELEGRAM_SEARCH_MODES as _TELEGRAM_SEARCH_MODES
 from tg_agent.services.search_service import SearchService
 from tg_agent.utils.safe_logging import elapsed_ms, query_log_fields
 from tg_agent.web import deps
@@ -23,11 +25,9 @@ from tg_agent.web.template_globals import _agent_available_for_request
 logger = logging.getLogger(__name__)
 
 # Telegram-backed search modes need a live ClientPool. The web container has
-# none (runtime_mode="web"), so these are proxied to the worker process (#643).
-_TELEGRAM_SEARCH_MODES = {"telegram", "my_chats", "channel"}
-# Local-DB-backed modes (no Telegram round-trip): plain local search plus the
-# semantic/hybrid retrievers that read the same SQLite store.
-_DB_SEARCH_MODES = {"local", "semantic", "hybrid"}
+# none (runtime_mode="web"), so these are proxied to the worker process (#643);
+# local-DB-backed modes (no Telegram round-trip) share the same split. Both
+# sets live on the engine next to SearchEngine so CLI and web cannot drift.
 _WORKER_SEARCH_TIMEOUT_SEC = 130.0
 _WORKER_SEARCH_POLL_SEC = 0.4
 

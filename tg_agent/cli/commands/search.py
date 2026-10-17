@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
+import io
 import logging
 
 from tg_agent.cli import runtime
-from tg_agent.search.engine import SearchEngine
+from tg_agent.search.engine import DB_SEARCH_MODES, TELEGRAM_SEARCH_MODES, SearchEngine
 from tg_agent.services.embedding_service import EmbeddingService
+from tg_agent.utils.json import safe_json_dumps
+from tg_agent.utils.text_safety import csv_safe_cell
 
 
 def _format_search_result_line(msg) -> str:
@@ -25,6 +29,69 @@ def _format_search_result_line(msg) -> str:
     return f"[{msg.date}] {channel_label}: {(msg.text or '')[:200]}"
 
 
+def _print_search_result(result, fmt: str) -> None:
+    """Render a SearchResult as text (default), json, or csv.
+
+    Same field set as ``messages read`` plus the channel labels the search hit
+    already carries (``@username``/title) — the digest workflow needs the source
+    attribution without a second lookup.
+    """
+    if fmt == "json":
+        items = [
+            {
+                "id": msg.id,
+                "channel_id": msg.channel_id,
+                "message_id": msg.message_id,
+                "date": msg.date,
+                "text": msg.text,
+                "channel_username": msg.channel_username,
+                "channel_title": msg.channel_title,
+                "views": msg.views,
+                "forwards": msg.forwards,
+            }
+            for msg in result.messages
+        ]
+        # Wrap in the full result object: a consumer with --limit N must see
+        # has_more/total (silent truncation = #1350 class) and error, not a
+        # bare [] that reads as "nothing found".
+        print(
+            safe_json_dumps(
+                {
+                    "query": result.query,
+                    "total": result.total,
+                    "has_more": result.has_more,
+                    "error": result.error,
+                    "messages": items,
+                },
+                indent=2,
+            )
+        )
+        return
+    if fmt == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(
+            ["id", "channel_id", "message_id", "date", "text",
+             "channel_username", "channel_title", "views", "forwards"]
+        )
+        for msg in result.messages:
+            writer.writerow([
+                msg.id, msg.channel_id, msg.message_id,
+                str(msg.date) if msg.date else "",
+                csv_safe_cell((msg.text or "")[:500]),
+                csv_safe_cell(msg.channel_username or ""),
+                csv_safe_cell(msg.channel_title or ""),
+                msg.views, msg.forwards,
+            ])
+        print(buf.getvalue(), end="")
+        return
+    total_display = f"{result.total}+" if result.has_more else str(result.total)
+    print(f"Found {total_display} results for '{result.query}':\n")
+    for msg in result.messages:
+        print(_format_search_result_line(msg))
+        print("---")
+
+
 async def search_impl(
     config_path: str,
     *,
@@ -36,6 +103,9 @@ async def search_impl(
     max_length: int | None = None,
     fts: bool = False,
     include_filtered: bool = False,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    output_format: str = "text",
     index_now: bool = False,
     reset_index: bool = False,
     purge_cache: bool = False,
@@ -60,8 +130,19 @@ async def search_impl(
             await db.close()
         return
 
+    # Date windows are a DB-mode feature — SearchEngine's live methods take no
+    # date bounds, so fail loudly instead of silently ignoring them (#1350 class).
+    if (date_from or date_to) and mode not in DB_SEARCH_MODES:
+        logging.error(
+            "--date-from/--date-to are only supported with modes: %s (got '%s').",
+            ", ".join(sorted(DB_SEARCH_MODES)),
+            mode,
+        )
+        await db.close()
+        return
+
     pool = None
-    if mode in ("telegram", "my_chats", "channel"):
+    if mode in TELEGRAM_SEARCH_MODES:
         _, pool = await runtime.init_pool(config, db)
         if not pool.clients:
             logging.error("No connected accounts. Run 'serve' and add accounts via web UI.")
@@ -92,6 +173,8 @@ async def search_impl(
             result = await engine.search_semantic(
                 query,
                 limit=limit,
+                date_from=date_from,
+                date_to=date_to,
                 min_length=min_length,
                 max_length=max_length,
                 include_filtered=include_filtered,
@@ -100,6 +183,8 @@ async def search_impl(
             result = await engine.search_hybrid(
                 query,
                 limit=limit,
+                date_from=date_from,
+                date_to=date_to,
                 min_length=min_length,
                 max_length=max_length,
                 is_fts=fts,
@@ -109,17 +194,15 @@ async def search_impl(
             result = await engine.search_local(
                 query,
                 limit=limit,
+                date_from=date_from,
+                date_to=date_to,
                 min_length=min_length,
                 max_length=max_length,
                 is_fts=fts,
                 include_filtered=include_filtered,
             )
 
-        total_display = f"{result.total}+" if result.has_more else str(result.total)
-        print(f"Found {total_display} results for '{result.query}':\n")
-        for msg in result.messages:
-            print(_format_search_result_line(msg))
-            print("---")
+        _print_search_result(result, output_format)
     finally:
         if pool:
             await pool.disconnect_all()
@@ -138,6 +221,9 @@ def run(args: argparse.Namespace) -> None:
             max_length=getattr(args, "max_length", None),
             fts=getattr(args, "fts", False),
             include_filtered=getattr(args, "all", False),
+            date_from=getattr(args, "date_from", None),
+            date_to=getattr(args, "date_to", None),
+            output_format=getattr(args, "output_format", "text"),
             index_now=getattr(args, "index_now", False),
             reset_index=getattr(args, "reset_index", False),
             purge_cache=getattr(args, "purge_cache", False),

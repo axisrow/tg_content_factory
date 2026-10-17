@@ -77,7 +77,8 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
 messages read <identifier> [--limit N] [--live] [--phone PHONE] [--query TEXT]
               [--date-from DATE] [--date-to DATE] [--topic-id ID] [--offset-id ID]
               [--format text|json|csv]
-search "query" [--limit N] [--mode MODE]
+search "query" [--limit N] [--mode MODE] [--date-from DATE] [--date-to DATE]
+       [--format text|json|csv]
 search-query list | get | add | edit | delete | toggle | run | stats
 ```
 
@@ -89,6 +90,10 @@ search-query list | get | add | edit | delete | toggle | run | stats
 - Commands with an optional `--phone` default to the **primary account** (DB flag);
   if the primary is not connected, the first connected account is used (#1480).
 - `search --mode` picks local DB (FTS5), direct Telegram API, or AI-powered search.
+  `--date-from`/`--date-to` constrain the window on the DB modes only
+  (`local`/`semantic`/`hybrid`) and are rejected with an error on live modes;
+  `--format json|csv` renders the hits with `@username`/title attribution —
+  the AI digest workflow ([digest.md](digest.md)) is built on these.
 
 ## dialogs — real actions in real chats
 

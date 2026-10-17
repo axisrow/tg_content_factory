@@ -9,6 +9,12 @@ from tg_agent.search.telegram_search import TelegramSearch
 from tg_agent.services.embedding_service import EmbeddingService
 from tg_agent.telegram.client_pool import ClientPool
 
+#: Search modes backed by the local SQLite store — the only modes that accept
+#: ``date_from``/``date_to`` windows (no Telegram round-trip).
+DB_SEARCH_MODES = frozenset({"local", "semantic", "hybrid"})
+#: Search modes that need a live ClientPool (Telegram round-trip, no date bounds).
+TELEGRAM_SEARCH_MODES = frozenset({"telegram", "my_chats", "channel"})
+
 _SEMANTIC_UNAVAILABLE = (
     "Семантический поиск недоступен: не установлен numpy и не загружено расширение "
     "sqlite-vec. Используйте «Локальная база» или установите зависимости."

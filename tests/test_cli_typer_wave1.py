@@ -182,6 +182,9 @@ def test_search_defaults():
         max_length=None,
         fts=False,
         include_filtered=False,
+        date_from=None,
+        date_to=None,
+        output_format="text",
         index_now=False,
         reset_index=False,
         purge_cache=False,
@@ -213,6 +216,24 @@ def test_search_all_maps_to_include_filtered():
     kwargs = mock_impl.call_args.kwargs
     assert kwargs["include_filtered"] is True
     assert kwargs["fts"] is True
+
+
+def test_search_date_and_format_thread_to_impl():
+    """New digest flags reach search_impl, including the OutputFormat → str conversion."""
+    mock_impl = MagicMock()
+    with (
+        patch("tg_agent.cli.typer_commands.search_cmd.search_impl", mock_impl),
+        patch("tg_agent.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app,
+            ["search", "q", "--date-from", "2025-01-01", "--date-to", "2025-01-02", "--format", "json"],
+        )
+    assert result.exit_code == 0
+    kwargs = mock_impl.call_args.kwargs
+    assert kwargs["date_from"] == "2025-01-01"
+    assert kwargs["date_to"] == "2025-01-02"
+    assert kwargs["output_format"] == "json"
 
 
 def test_search_channel_mode_threads_channel_id():
