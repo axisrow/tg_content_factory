@@ -51,7 +51,7 @@ For each user-approved candidate:
 
 ```bash
 tg-agent channel toggle <channel-id-or-username>
-tg-agent channel collect --channel-id <id>
+tg-agent channel collect <channel-id-or-username>
 ```
 
 `toggle` flips the cached inactive row to active with `origin="human"` (the
