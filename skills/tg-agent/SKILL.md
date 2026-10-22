@@ -93,10 +93,15 @@ off to the worker automatically — the CLI queues them (or writes the scheduler
 pokes the worker) instead of connecting directly; the command returns "queued" with the
 command id, the worker
 does the Telegram work. Commands that must open their own connection and have no
-queue equivalent (`messages read --live`, `dialogs read`, `dialogs download-media`)
-are **refused** after a short wait (`SessionLockError ... held by PID N`): Telegram
+queue equivalent (`messages read --live`, `dialogs read`, `dialogs download-media`,
+`account info`, `search --mode telegram`, `notification …`, `channel add`/`import`/`probe`,
+`pipeline publish`, …) are **refused at once** with exit 1 (`Error: A running tg-agent daemon
+(PID N) owns the Telegram sessions …`) — no Telegram connection is attempted: Telegram
 kills sessions seen from two connections at once. Stop the daemon (`tg-agent stop`) for
-those. Details: [reference.md](reference.md) → "Session lock" and "scheduling & background".
+those, then `tg-agent restart`. `pipeline run`/`generate` keep working next to the daemon
+but without Telegram access (Telegram-side nodes are skipped); `dialogs queue …` and
+`dialogs cache-status` are DB-only and always work. Details: [reference.md](reference.md) → "Session lock" and
+"scheduling & background".
 
 ## Legacy surfaces — do not use for integration
 

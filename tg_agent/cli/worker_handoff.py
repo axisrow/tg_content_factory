@@ -35,6 +35,17 @@ def direct_requested() -> bool:
     return os.environ.get(DIRECT_ENV_VAR, "").strip().lower() in {"1", "true", "yes"}
 
 
+def running_daemon_pid(config: AppConfig) -> int | None:
+    """PID recorded in the daemon PID file, for error messages only.
+
+    Best effort and never raises: liveness is :func:`serve_is_running`'s job.
+    """
+    try:
+        return read_pid(pid_file_path(config))
+    except Exception:
+        return None
+
+
 def serve_is_running(config: AppConfig) -> bool:
     """Return True when a managed daemon process owns the sessions AND runs a worker.
 

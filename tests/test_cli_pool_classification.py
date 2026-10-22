@@ -8,6 +8,11 @@ hard way.
 This is the guard that stops the class from coming back: a new ``init_pool`` call
 site is a deliberate decision about concurrency, and leaving it unclassified fails
 here rather than silently shipping another competing connection.
+
+Since #1521 ``runtime.init_pool()`` itself refuses while a daemon is live, so the
+default for an unlisted-but-classified site is REFUSED. Only a site that passes
+``allow_live_daemon=...`` can build a pool next to the daemon, and only the
+sites listed in ``BYPASSES_GUARD`` may pass it.
 """
 
 from __future__ import annotations
@@ -19,22 +24,30 @@ import pytest
 
 COMMANDS_DIR = Path(__file__).resolve().parent.parent / "tg_agent" / "cli" / "commands"
 
-# Hands work to the running worker through a queue instead of connecting itself.
+# Consult the daemon before opening a pool: hand work to the running worker
+# through a queue, or (generation) run without Telegram access.
 HANDS_OFF = {
     ("channel.py", "collect_impl"),
     ("collect.py", "collect_impl"),
     ("dialogs.py", "_dispatch"),
+    # pipeline run / generate (#1521): next to a live daemon generation runs
+    # without a pool — Telegram-side nodes already skip when it is None.
+    ("pipeline.py", "_generation_pool"),
     # ping run-due (#1415): the worker already runs ping_due hourly; a parallel
     # local run would pass the same threshold rule and double-send the nudge —
     # hand off via the PING_DUE task whose has_active_task dedup blocks overlap.
     ("ping.py", "run_due_impl"),
 }
 
-# Runs anyway: read-only diagnostics that survive the contention. The native
-# backend falls back to a fileless StringSession (tg_agent/telegram/backends.py), which
-# is why `account info` completed in production even while three of four sessions
-# hit the lock. Blocking these would remove working functionality for no gain.
-RUNS_ANYWAY = {
+# Refused while a daemon is live (#1521): no queue equivalent, so
+# ``runtime.init_pool()`` raises ``DaemonOwnsSessionsError`` (exit 1, "tg-agent
+# stop" hint) before any pool is built. These used to "run anyway", but since the
+# per-session lock (#1548) the daemon holds every session for its lifetime: the
+# CLI pool only waited out the lock grace per account and came up empty.
+REFUSED_WHILE_DAEMON = {
+    # verify-code (#1521): the account is persisted first; the pool is only a
+    # best-effort premium warm-up whose failure the command already reports.
+    ("account.py", "verify_code_impl"),
     ("account.py", "info_impl"),
     ("search.py", "search_impl"),
     ("messages.py", "messages_read_impl"),
@@ -48,9 +61,7 @@ RUNS_ANYWAY = {
     ("channel.py", "list_for_import_impl"),
     ("collect.py", "collect_sample_impl"),
     ("notification.py", "_build"),
-    ("pipeline.py", "_pipeline_run"),
     ("pipeline.py", "_pipeline_publish"),
-    ("pipeline.py", "_pipeline_generate"),
     # ping create (#1415): --username resolve is a read-only RPC, one RPC per
     # operator-invoked create — same shape as the diagnostics above.
     ("ping.py", "create_impl"),
@@ -60,42 +71,58 @@ RUNS_ANYWAY = {
     ("channel.py", "probe_impl"),
 }
 
-# Intentionally untouched: interactive auth (a live phone_code_hash bound to the
-# session cannot round-trip through a queue) and long-lived processes with their
-# own lifecycle.
+# Intentionally untouched: frozen long-lived legacy surfaces with their own
+# lifecycle. They pass ``allow_live_daemon=True`` and keep the pre-#1521
+# behaviour (the session lock still keeps them off the daemon's sessions).
 EXEMPT = {
-    ("account.py", "verify_code_impl"),
     ("agent.py", "chat_impl"),
+    ("mcp_server.py", "_serve"),
 }
 
-CLASSIFIED = HANDS_OFF | RUNS_ANYWAY | EXEMPT
+CLASSIFIED = HANDS_OFF | REFUSED_WHILE_DAEMON | EXEMPT
+
+# The only sites allowed to pass ``allow_live_daemon``: the exempt surfaces, and
+# hand-off sites forwarding an explicit operator ``--direct``.
+BYPASSES_GUARD = EXEMPT | {
+    ("channel.py", "collect_impl"),
+    ("dialogs.py", "_dispatch"),
+}
 
 
-def _pool_call_sites() -> set[tuple[str, str]]:
-    """Find every ``init_pool`` call, attributed to its enclosing function."""
-    found: set[tuple[str, str]] = set()
+def _is_init_pool_call(node: ast.AST) -> bool:
+    """``runtime.init_pool(...)`` or a bare ``init_pool(...)`` (``from ... import``)."""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return func.attr == "init_pool"
+    return isinstance(func, ast.Name) and func.id == "init_pool"
 
+
+def _pool_calls() -> list[tuple[str, str, ast.Call]]:
+    """Every ``init_pool`` call with its file and enclosing function."""
+    found: list[tuple[str, str, ast.Call]] = []
     for path in sorted(COMMANDS_DIR.glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
-
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for inner in ast.walk(node):
-                if not isinstance(inner, ast.Call):
-                    continue
-                func = inner.func
-                if isinstance(func, ast.Attribute) and func.attr == "init_pool":
-                    found.add((path.name, node.name))
-
+                if _is_init_pool_call(inner):
+                    found.append((path.name, node.name, inner))
     return found
+
+
+def _pool_call_sites() -> set[tuple[str, str]]:
+    """Find every ``init_pool`` call, attributed to its enclosing function."""
+    return {(file_name, func_name) for file_name, func_name, _call in _pool_calls()}
 
 
 @pytest.mark.mutmut_skip
 def test_every_pool_call_site_is_classified():
     """A new ``init_pool`` call must be classified before it can ship.
 
-    Add the (file, function) pair to HANDS_OFF, RUNS_ANYWAY or EXEMPT above —
+    Add the (file, function) pair to HANDS_OFF, REFUSED_WHILE_DAEMON or EXEMPT above —
     and prefer HANDS_OFF whenever the operation has a queue equivalent.
     """
     unclassified = _pool_call_sites() - CLASSIFIED
@@ -118,9 +145,9 @@ def test_classification_has_no_stale_entries():
 
 def test_the_three_classes_are_disjoint():
     """A call site has exactly one behaviour; overlap would make the guard lie."""
-    assert not (HANDS_OFF & RUNS_ANYWAY)
+    assert not (HANDS_OFF & REFUSED_WHILE_DAEMON)
     assert not (HANDS_OFF & EXEMPT)
-    assert not (RUNS_ANYWAY & EXEMPT)
+    assert not (REFUSED_WHILE_DAEMON & EXEMPT)
 
 
 @pytest.mark.parametrize("file_name, func_name", sorted(HANDS_OFF))
@@ -148,3 +175,18 @@ def test_hands_off_sites_consult_the_detector(file_name: str, func_name: str):
         f"{file_name}:{func_name} is listed as handing off to the worker but never "
         "calls worker_handoff.serve_is_running()"
     )
+
+
+def test_only_listed_sites_bypass_the_daemon_guard():
+    """``allow_live_daemon`` re-opens the #1521 hole, so every use must be listed.
+
+    A refused site passing it would silently build a second pool next to the
+    daemon again; a listed site that stopped passing it makes its claim stale.
+    """
+    passing = {
+        (file_name, func_name)
+        for file_name, func_name, call in _pool_calls()
+        if any(kw.arg == "allow_live_daemon" for kw in call.keywords)
+    }
+
+    assert passing == BYPASSES_GUARD

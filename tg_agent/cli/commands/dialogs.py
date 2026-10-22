@@ -939,9 +939,13 @@ async def _dialogs_create_channel(args, db, pool) -> None:
 async def _dialogs_cache_status(args, db, pool) -> None:
     phones = await db.repos.dialog_cache.get_all_phones()
     now_monotonic = time.monotonic()
+    # pool is None while a daemon owns the sessions (#1521): only the DB cache
+    # is visible then — this process's in-memory cache would be cold anyway.
+    mem_cache = pool._dialogs_cache if pool is not None else {}
+    mem_ttl = pool._dialogs_cache_ttl_sec if pool is not None else 0.0
 
     if not phones:
-        in_memory_phones = {key[0] for key in pool._dialogs_cache}
+        in_memory_phones = {key[0] for key in mem_cache}
         if not in_memory_phones:
             print("No cached dialogs.")
             return
@@ -950,17 +954,17 @@ async def _dialogs_cache_status(args, db, pool) -> None:
     fmt = "{:<20} {:<10} {:<28} {:<10}"
     print(fmt.format("Account", "DB entries", "DB cached at", "Mem entries"))
     print("-" * 72)
-    for phone in sorted(set(phones) | {key[0] for key in pool._dialogs_cache}):
+    for phone in sorted(set(phones) | {key[0] for key in mem_cache}):
         db_count = await db.repos.dialog_cache.count_dialogs(phone)
         cached_at = await db.repos.dialog_cache.get_cached_at(phone)
         cached_at_str = (
             cached_at.strftime("%Y-%m-%d %H:%M:%S UTC") if cached_at else "-"
         )
-        entry = pool._dialogs_cache.get((phone, "full"))
+        entry = mem_cache.get((phone, "full"))
         mem_entries = (
             len(entry.dialogs)
             if entry
-            and (now_monotonic - entry.fetched_at_monotonic) <= pool._dialogs_cache_ttl_sec
+            and (now_monotonic - entry.fetched_at_monotonic) <= mem_ttl
             else 0
         )
         print(fmt.format(phone, str(db_count), cached_at_str, str(mem_entries)))
@@ -1119,6 +1123,9 @@ async def _resolve_handoff_phone(args, db) -> str:
 # way `_dialogs_edit_permissions` (the in-process handler) already does
 # (Codex, PR #1324 round 3).
 _HANDOFF_STRING_BOOL_FIELDS = frozenset({"send_messages", "send_media"})
+# DB-only views: while a daemon owns the sessions they run without a pool
+# instead of being refused by ``init_pool`` (#1521).
+_POOL_FREE_WHILE_DAEMON_ACTIONS = frozenset({"queue", "cache-status"})
 _HANDOFF_WAIT_ACTIONS = frozenset({"resolve", "participants", "broadcast-stats", "refresh"})
 _HANDOFF_WAIT_TIMEOUT_SEC = 900.0
 _HANDOFF_POLL_INTERVAL_SEC = 1.0
@@ -1309,8 +1316,17 @@ async def _dispatch(
         if handed_off:
             await db.close()
             return
+        if args.dialogs_action in _POOL_FREE_WHILE_DAEMON_ACTIONS:
+            try:
+                handler, _needs_channel_service = _DIALOGS_HANDLERS[args.dialogs_action]
+                await handler(args, db, None)
+            finally:
+                await db.close()
+            return
 
-    _, pool = await runtime_mod.init_pool(config, db)
+    _, pool = await runtime_mod.init_pool(
+        config, db, allow_live_daemon=bool(getattr(args, "direct", False))
+    )
     try:
         entry = _DIALOGS_HANDLERS.get(args.dialogs_action)
         if entry is not None:

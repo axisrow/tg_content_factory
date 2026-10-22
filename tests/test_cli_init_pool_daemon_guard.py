@@ -121,8 +121,9 @@ def _run_main(argv: list[str]):
         ["account", "info"],
         ["notification", "status"],
         ["search", "query", "--mode", "telegram"],
+        ["dialogs", "list"],
     ],
-    ids=["messages-read-live", "account-info", "notification-status", "search-telegram"],
+    ids=["messages-read-live", "account-info", "notification-status", "search-telegram", "dialogs-list"],
 )
 def test_cli_commands_refuse_without_opening_a_pool(argv, cli_env, daemon_live, pool_spy, capsys):
     """End to end through ``main()``: exit 1, message on stderr, no pool built."""
@@ -134,5 +135,17 @@ def test_cli_commands_refuse_without_opening_a_pool(argv, cli_env, daemon_live, 
     captured = capsys.readouterr()
     assert "owns the Telegram sessions" in captured.err
     assert "Traceback" not in captured.err + captured.out
+    auth_cls.assert_not_called()
+    pool_cls.assert_not_called()
+
+
+def test_dialogs_queue_status_still_works_next_to_the_daemon(cli_env, daemon_live, pool_spy, capsys):
+    """The hand-off's own status view is DB-only: no refusal, no pool."""
+    pool_cls, auth_cls, _pool = pool_spy
+
+    code = _run_main(["dialogs", "queue", "status"])
+
+    assert code == 0
+    assert "Total: 0" in capsys.readouterr().out
     auth_cls.assert_not_called()
     pool_cls.assert_not_called()

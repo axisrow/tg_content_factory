@@ -733,7 +733,7 @@ def test_run_chat_prompt_real_manager_uses_db_deepagents_provider(cli_db, capsys
         await cmd_db.initialize()
         return config, cmd_db
 
-    async def fake_init_pool(_config, _db):
+    async def fake_init_pool(_config, _db, **_kwargs):
         return MagicMock(cleanup=AsyncMock()), MagicMock(disconnect_all=AsyncMock())
 
     def fake_init_chat_model(*, model, model_provider, **kwargs):

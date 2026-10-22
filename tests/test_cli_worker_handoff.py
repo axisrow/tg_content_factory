@@ -172,7 +172,7 @@ def test_collect_runs_directly_when_serve_is_not_running(channel_cli, capsys):
     pool.clients = {"+70001112233": MagicMock()}
     pool.disconnect_all = AsyncMock()
 
-    async def fake_init_pool(config, db_arg):
+    async def fake_init_pool(config, db_arg, **_kwargs):
         from tg_agent.telegram.auth import TelegramAuth
 
         return TelegramAuth(0, ""), pool
@@ -204,7 +204,7 @@ def test_direct_flag_overrides_running_serve(channel_cli, capsys):
     pool.clients = {"+70001112233": MagicMock()}
     pool.disconnect_all = AsyncMock()
 
-    async def fake_init_pool(config, db_arg):
+    async def fake_init_pool(config, db_arg, **_kwargs):
         from tg_agent.telegram.auth import TelegramAuth
 
         return TelegramAuth(0, ""), pool
@@ -346,7 +346,7 @@ def test_collect_channel_id_tgcf_cli_direct_forces_pool(collect_cli, capsys, mon
     pool.clients = {"+70001112233": MagicMock()}
     pool.disconnect_all = AsyncMock()
 
-    async def fake_init_pool(config, db_arg):
+    async def fake_init_pool(config, db_arg, **_kwargs):
         from tg_agent.telegram.auth import TelegramAuth
 
         return TelegramAuth(0, ""), pool

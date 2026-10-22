@@ -18,20 +18,33 @@ are **handed off automatically**: the CLI enqueues them for the worker instead o
 connecting directly, so they keep working unchanged (`--direct` forces the in-process
 path instead).
 
-Commands without a queue equivalent (`messages read --live`,
-`dialogs read`, `dialogs download-media`, …) wait for the daemon to
-release the session (up to `TGCF_SESSION_LOCK_GRACE_SECONDS`, default 20) and then fail:
+Commands without a queue equivalent (`messages read --live`, `dialogs read`,
+`dialogs download-media`, `account info`, `search --mode telegram|my_chats|channel`,
+`notification …`, `photo-loader …`, `channel add|import|add-bulk|list-for-import|refresh-types|refresh-meta|probe`,
+`collect sample`, `pipeline publish`, `ping create --username`, `test telegram`)
+are **refused before any connection is attempted** while the daemon runs (#1521) — exit 1,
+message on stderr:
 
 ```
-SessionLockError: Another tg-agent process is already connected with this session
-(lock .../session-<hash>.lock held by PID 12345). Refusing to connect a second time...
+Error: A running tg-agent daemon (PID 12345) owns the Telegram sessions, and this command
+needs its own connection (it has no worker hand-off). Stop the daemon first
+(`tg-agent stop`), run the command, then `tg-agent restart`.
 ```
 
 This is intentional: a second simultaneous connection with the same auth key risks
-Telegram killing the session (`AuthKeyDuplicatedError`). If you hit `SessionLockError`,
-stop the daemon first (`tg-agent stop`) — or switch to a hand-off `dialogs` action, which
-the running worker executes without a second connection. A refused command never
-disturbs the live session; when the holder exits, the lock clears on its own.
+Telegram killing the session (`AuthKeyDuplicatedError`). Stop the daemon first — or switch
+to a hand-off `dialogs` action, which the running worker executes without a second
+connection. A refused command never disturbs the live session. Two exceptions run
+next to the daemon instead of being refused: `pipeline run` / `pipeline generate` generate
+without Telegram access (Telegram-side nodes are skipped, a note goes to stderr), and the
+DB-only `dialogs queue …` / `dialogs cache-status` (the latter then shows only the DB cache).
+
+`TGCF_CLI_DIRECT=1` (or `--direct` where a command has one) skips this check. The
+per-session lock below it still applies: the command waits for the daemon to release the
+session (up to `TGCF_SESSION_LOCK_GRACE_SECONDS`, default 20) and then fails with
+`SessionLockError: Another tg-agent process is already connected with this session (lock
+.../session-<hash>.lock held by PID 12345)` — useful only while a daemon is shutting down.
+When the holder exits, the lock clears on its own.
 
 ## channels / collection
 

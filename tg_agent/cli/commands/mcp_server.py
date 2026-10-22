@@ -45,7 +45,8 @@ async def _serve(config_path: str, *, with_pool: bool) -> None:
     pool = None
     if with_pool:
         try:
-            _auth, pool = await init_pool(config, db)
+            # Legacy long-lived surface (frozen): keeps its pre-#1521 behaviour.
+            _auth, pool = await init_pool(config, db, allow_live_daemon=True)
         except Exception:
             logger.warning("Telegram pool init failed; pool-dependent tools will error", exc_info=True)
             pool = None

@@ -5,6 +5,9 @@ from collections.abc import Iterable
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+import click
+
+from tg_agent.cli import worker_handoff
 from tg_agent.config import load_config, resolve_session_encryption_secret
 from tg_agent.database import Database
 from tg_agent.settings_utils import parse_int_setting
@@ -116,7 +119,52 @@ async def init_db(config_path: str):
     return config, db
 
 
-async def init_pool(config, db: Database, *, phones: Iterable[str] | None = None):
+class DaemonOwnsSessionsError(click.ClickException):
+    """A live worker daemon owns the Telegram sessions; refuse a second pool (#1521).
+
+    A ``ClickException`` so ``main()`` prints it to stderr and exits 1 without a
+    traceback; callers that deliberately swallow pool-init failures (best-effort
+    warm-ups) keep doing so and get a readable ``str(exc)``.
+    """
+
+
+def _refuse_if_daemon_owns_sessions(config, *, allow_live_daemon: bool) -> None:
+    """Fail fast instead of building a pool next to a live daemon (#1521).
+
+    The daemon holds every account session for its lifetime (#1548 session
+    lock), so an in-process pool here would wait out the lock grace per account
+    and end up empty — or, without the lock, put a second MTProto connection on
+    the same auth key. Commands with a queue equivalent hand off to the worker
+    *before* reaching this point; everything else is refused here, in the one
+    entry point all of them share.
+    """
+    if allow_live_daemon or worker_handoff.direct_requested():
+        return
+    if not worker_handoff.serve_is_running(config):
+        return
+    pid = worker_handoff.running_daemon_pid(config)
+    holder = f"PID {pid}" if pid is not None else "the PID file"
+    raise DaemonOwnsSessionsError(
+        f"A running tg-agent daemon ({holder}) owns the Telegram sessions, and this "
+        "command needs its own connection (it has no worker hand-off). Stop the "
+        "daemon first (`tg-agent stop`), run the command, then `tg-agent restart`."
+    )
+
+
+async def init_pool(
+    config,
+    db: Database,
+    *,
+    phones: Iterable[str] | None = None,
+    allow_live_daemon: bool = False,
+):
+    """Build and initialize this process's ``ClientPool``.
+
+    Refuses with :class:`DaemonOwnsSessionsError` while a worker daemon is live,
+    unless ``allow_live_daemon`` (an explicit ``--direct``, or a long-lived
+    legacy surface with its own lifecycle) or ``TGCF_CLI_DIRECT=1`` is set.
+    """
+    _refuse_if_daemon_owns_sessions(config, allow_live_daemon=allow_live_daemon)
     api_id = config.telegram.api_id
     api_hash = config.telegram.api_hash
     if api_id == 0 or not api_hash:
