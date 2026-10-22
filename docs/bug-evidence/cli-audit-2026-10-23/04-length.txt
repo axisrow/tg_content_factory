@@ -1,0 +1,13 @@
+$ tg-agent --config config.yaml search abcde
+Found 1 results for 'abcde':
+
+[2026-10-22 09:00:00+00:00] @audit_beta (1002): abcde
+---
+
+$ tg-agent --config config.yaml search abcde --min-length 5
+Found 0 results for 'abcde':
+
+
+$ tg-agent --config config.yaml search abcde --max-length 5
+Found 0 results for 'abcde':
+

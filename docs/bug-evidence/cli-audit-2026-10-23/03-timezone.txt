@@ -1,0 +1,9 @@
+$ tg-agent --config config.yaml search morning --date-from 2026-10-20T10:00:00Z
+Found 1 results for 'morning':
+
+[2026-10-20 10:00:00+00:00] @audit_beta (1002): audit beta morning
+---
+
+$ tg-agent --config config.yaml search morning --date-from 2026-10-20T13:00:00+03:00
+Found 0 results for 'morning':
+

@@ -1,0 +1,24 @@
+$ tg-agent --config config.yaml settings server-time
+Текущее время сервера (UTC):
+  ISO8601: 2026-10-22T16:49:08.477931+00:00
+  Unix: 1792687748
+  Читаемо: 2026-10-22 16:49:08 UTC
+
+$ tg-agent --config config.yaml messages read @audit_alpha --date-from 2026-10-21T16:49:01Z
+Total: 1 messages (showing 1)
+
+[2026-10-22 08:00:00] #105 views=100 reactions: 👍 1
+  audit alpha long text long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long lon...
+
+
+$ tg-agent --config config.yaml analytics channel 1001 --days 1 | head -n 10
+Channel: Alpha — Проверка
+Username: audit_alpha
+Subscribers: -
+ERR: -
+ERR24: -
+Posts total: 5
+  today / week / period(1d): 3 / 5 / 3
+Avg views: -
+Avg forwards: -
+Avg reactions: -
