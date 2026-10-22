@@ -1,22 +1,24 @@
 """Детерминированный контент-рейтинг «полезное vs вода» (сценарий 4, 22.10.26).
 
 Прод-путь без LLM: classify_post / score_channel / тир-правила.
-Пороги черновые — их калибрует разметка LLM-судьи; тесты фиксируют механику,
-не конкретные пороги (пороги меняются калибровкой — читаются из criteria.py).
+Пороги калиброваны по разметке LLM-судьи 22.10.26 — читаются из criteria.py;
+тесты фиксируют механику и гардируют формулу снапшотом разметки.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 from tg_agent.filters.criteria import (
     USEFULNESS_MIN_POSTS,
-    USEFULNESS_TIER_USEFUL_OWN,
+    USEFULNESS_TIER_USEFUL_ENGAGED,
+    USEFULNESS_TIER_USEFUL_REWRITE,
     USEFULNESS_TIER_USEFUL_WATER,
-    USEFULNESS_TIER_WATER_REWRITE,
     USEFULNESS_TIER_WATER_SCORE,
 )
-from tg_agent.filters.usefulness import classify_post, score_channel
+from tg_agent.filters.usefulness import _tier, classify_post, score_channel
 
 
 def _filler_channel(n: int = 40) -> list[tuple[str, bool]]:
@@ -64,6 +66,71 @@ def test_own_markers_beat_retell_markers():
     assert authorship == "own"
 
 
+def test_english_bare_pronoun_is_not_own():
+    # Калибровка 22.10.26: \bI\b|\bmy\b убраны — любой англ. текст набирал own=100.
+    # Слабые местоимения не авторский сигнал; сильные фразы опыта — да.
+    authorship, _ = classify_post("I need a production-ready AI agent for my business.")
+    assert authorship is None
+    authorship, _ = classify_post("We tested the model on 3 benchmarks; our tests show 2x speedup.")
+    assert authorship == "own"
+
+
+def test_markdown_link_lead_is_rewrite_even_with_pronouns():
+    # Фриланс-брифы «[Title](url) I need a developer...» — фид, не личный опыт
+    # (канал 1273446931 набирал own=100 на таких постах).
+    authorship, _ = classify_post(
+        "[Google Ads Lead-Gen Setup](https://freelancer.com/projects/x.html) "
+        "I need a brand-new account built from the ground up."
+    )
+    assert authorship == "rewrite"
+
+
+def test_bot_handle_lead_is_rewrite():
+    # Бот-фид «@bot | [info](url)» (канал Spotify-загрузчика, judge W=95).
+    authorship, _ = classify_post(
+        "@Spotify_downloaderrr_bot | [info](https://open.spotify.com/track/6s08)"
+    )
+    assert authorship == "rewrite"
+
+
+def test_feed_template_phrase_is_rewrite():
+    # Шаблонные заголовки авто-фидов — рерайт даже без ссылок в начале.
+    authorship, _ = classify_post(
+        "🚨 **NEW PUMPFUN CALLOUT** 🪙 Symbio 💰 **Market cap:** `$9 412` 📊 Bonding curve: 57.1%"
+    )
+    assert authorship == "rewrite"
+
+
+def test_chinese_headline_bracket_is_quality_retell():
+    # Китайский новостной формат 【标题】正文 (金十数据/币快讯; judge qret=65-80).
+    authorship, _ = classify_post(
+        "【SemiAnalysis：2028年数据中心或面临过剩】 10 月 22 日，半导体研究机构表示，"
+        "目前市场已出现一定程度的芯片供应过剩。"
+    )
+    assert authorship == "quality_retell"
+
+
+def test_affiliate_water_stamp_is_watery():
+    # Amazon-аффилиатный фид (Next Dealz, judge W=85): «Prices & promotions subject».
+    _, watery = classify_post(
+        "About $4.97 https://www.amazon.com/dp/B00KB5OGCM OREO BTS Sandwich Cookies "
+        "__#ad____ Prices & promotions subject to change."
+    )
+    assert watery
+    authorship, watery = classify_post(
+        "About $4.97 https://www.amazon.com/dp/B00KB5OGCM OREO Cookies #ad"
+    )
+    assert authorship == "rewrite"
+
+
+def test_coupon_feed_is_rewrite():
+    # Владелец 22.10.26: купонники — хлам, не полезное. Штампы купонных фидов.
+    authorship, _ = classify_post(
+        "Free Udemy Course - Machine Learning Basics | 100% OFF Coupon Code"
+    )
+    assert authorship == "rewrite"
+
+
 def test_retell_markers_use_canonical_key():
     # Ключи классификации = канонический AUTHORSHIP_KEYS (общий с судьёй).
     authorship, _ = classify_post("По данным инсайдеров, стало известно о слиянии.")
@@ -108,9 +175,11 @@ def test_water_score_is_share_of_stamped_posts():
     assert abs(score.water_score - 100 * 40 / 41) < 0.1
 
 
-def test_forward_only_channel_is_water():
+def test_forward_only_channel_is_not_water():
+    # Калибровка 22.10.26: судья не считает рерайт водой (полезные агрегаторы имеют
+    # rewrite 80-100 при W=5) — water-тир только по штампам, форвард-канал = mixed.
     score = score_channel([("ANY", True)] * 40)
-    assert score.tier == "water"
+    assert score.tier == "mixed"
     assert score.rewrite_share == 100.0
 
 
@@ -135,22 +204,20 @@ def test_tier_water_on_high_water_score():
     assert score.tier == "water"
 
 
-def test_tier_water_on_rewrite_share():
-    posts = [(f"https://example.com/{i}", False) for i in range(USEFULNESS_MIN_POSTS)]
-    score = score_channel(posts)
-    assert score.rewrite_share >= USEFULNESS_TIER_WATER_REWRITE
-    assert score.tier == "water"
-
-
-def test_tier_useful_needs_low_water_and_own_share():
-    # Вода бьёт авторскость: 100% own-постов, но со штампами → water.
+def test_tier_useful_needs_low_water_low_rewrite_and_engagement():
+    # Вода бьёт всё: 100% own-постов, но со штампами → water.
     stamped_own = "Я попробовал новый агент; стоит отметить, мой опыт положительный."
     score = score_channel([(stamped_own, False)] * USEFULNESS_MIN_POSTS)
     assert score.water_score >= USEFULNESS_TIER_WATER_SCORE
-    assert score.own_share >= USEFULNESS_TIER_USEFUL_OWN
     assert score.tier == "water"
 
-    # Чистые own + quality_retell без штампов: own ≥ порога → useful.
+    # Rewrite-доминирование не полезно: фид-канал с rew > потолка → mixed.
+    bare = [(f"https://example.com/{i}", False) for i in range(USEFULNESS_MIN_POSTS)]
+    score = score_channel(bare)
+    assert score.rewrite_share > USEFULNESS_TIER_USEFUL_REWRITE
+    assert score.tier == "mixed"
+
+    # Чистые own + quality_retell без штампов: engaged ≥ порога → useful.
     own_post = "Мой опыт: бенчмарк 89.3%, цена $3/млн, вот мои выводы."
     retell_post = "По данным отчёта, релиз состоялся, контекст вырос вдвое."
     n_own = 12
@@ -158,13 +225,41 @@ def test_tier_useful_needs_low_water_and_own_share():
     posts += [(retell_post, False)] * (USEFULNESS_MIN_POSTS - n_own)
     score = score_channel(posts)
     assert score.water_score <= USEFULNESS_TIER_USEFUL_WATER
-    assert score.own_share >= USEFULNESS_TIER_USEFUL_OWN
+    assert score.own_share + score.quality_retell_share >= USEFULNESS_TIER_USEFUL_ENGAGED
     assert score.tier == "useful"
 
 
 def test_tier_mixed_middle():
-    posts = [("По данным отчёта, релиз состоялся.", False)] * USEFULNESS_MIN_POSTS
+    # Ни штампов, ни классифицированного контента: engaged=0 → не useful, не water.
+    posts = [("Нейросети решают широкий круг задач.", False)] * USEFULNESS_MIN_POSTS
     assert score_channel(posts).tier == "mixed"
+
+
+def test_calibration_tier_formula_reproduces_judge():
+    """Регресс-гард калибровки: формула тиров на судейских долях воспроизводит
+    разметку снапшота — ≥16 из 26 полезных каналов получают useful, и не больше
+    одного полезного вердикта у 24 бесполезных (включая купонники-override).
+    Судейские доли ≠ прод-доли на живых текстах, поэтому это floor, не точность."""
+    fixture = Path(__file__).parent / "fixtures" / "usefulness_calibration.json"
+    labeled = json.loads(fixture.read_text(encoding="utf-8"))["labeled_channels"]
+    reproduced = 0
+    useful_total = 0
+    false_useful = 0
+    for row in labeled:
+        shares = {
+            "own": row["judge_authorship"]["own"],
+            "quality_retell": row["judge_authorship"]["quality_retell"],
+            "rewrite": row["judge_authorship"]["rewrite"],
+        }
+        tier = _tier(USEFULNESS_MIN_POSTS, row["judge_water"], shares)
+        verdict = row.get("owner_override") or row["judge_useful"]
+        if verdict == "useful":
+            useful_total += 1
+            reproduced += tier == "useful"
+        elif tier == "useful":
+            false_useful += 1
+    assert reproduced >= 16
+    assert false_useful <= 1
 
 
 def test_empty_channel_is_no_data():

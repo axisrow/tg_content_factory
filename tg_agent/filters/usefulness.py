@@ -21,11 +21,12 @@ from tg_agent.filters.criteria import (
     AUTO_FEED_SHORT_TEXT,
     OWN_MARKER_RE,
     RETELL_PHRASES,
+    REWRITE_PHRASES,
     USEFULNESS_MIN_POSTS,
     USEFULNESS_SCAN_PREFIX,
-    USEFULNESS_TIER_USEFUL_OWN,
+    USEFULNESS_TIER_USEFUL_ENGAGED,
+    USEFULNESS_TIER_USEFUL_REWRITE,
     USEFULNESS_TIER_USEFUL_WATER,
-    USEFULNESS_TIER_WATER_REWRITE,
     USEFULNESS_TIER_WATER_SCORE,
     WATER_STAMP_PHRASES,
 )
@@ -66,9 +67,11 @@ class ChannelUsefulnessScore:
 def classify_post(text: str, is_forward: bool = False) -> tuple[str | None, bool]:
     """Авторская категория поста (или None) + маркер воды.
 
-    Категория — первый сработавший сигнал: форвард/голая ссылка = rewrite даже
-    при наличии «я» (пересылка с комментарием от первого лица остаётся пересылкой).
-    Возвращает ключи канонического AUTHORSHIP_KEYS — те же, что у судьи.
+    Категория — первый сработавший сигнал. Фид-форматы (форвард, ссылка-лид,
+    шаблонный заголовок авто-фида) = rewrite ДО own-проверки: бриф «I need a
+    developer» со ссылкой-лидом — не личный опыт (калибровка 22.10.26: фриланс/
+    токен-фиды набирали own=100 на \bI\b). Возвращает ключи канонического
+    AUTHORSHIP_KEYS — те же, что у судьи.
     """
     text = text or ""
     # Штампы/маркеры — локальные признаки начала поста: литеральный `in` по
@@ -76,10 +79,20 @@ def classify_post(text: str, is_forward: bool = False) -> tuple[str | None, bool
     # стоил бы минуты на отчёт (замер 22.10.26).
     probe = text[:USEFULNESS_SCAN_PREFIX].lower()
     watery = any(phrase in probe for phrase in WATER_STAMP_PHRASES)
+    has_http = "http" in probe
+    # Ссылка-лид (markdown или @-бот): O(1)-гейты дешевле фраз-скана.
+    link_lead = has_http and (probe.startswith("@") or (probe.startswith("[") and "](" in probe))
     if is_forward:
         authorship: str | None = "rewrite"
-    elif len(text) < AUTO_FEED_SHORT_TEXT and ("http" in probe or "t.me" in probe):
+    elif link_lead:
+        # Фид-формат — рерайт до own-проверки: бриф «I need a developer»
+        # со ссылкой-лидом — не личный опыт.
+        authorship = "rewrite"
+    elif len(text) < AUTO_FEED_SHORT_TEXT and (has_http or "t.me" in probe):
         # «Голая ссылка» — тот же литерал «короткого поста», что у auto_feed.
+        authorship = "rewrite"
+    elif any(phrase in probe for phrase in REWRITE_PHRASES):
+        # Шаблонные заголовки авто-фидов — рерайт даже без ссылки в начале.
         authorship = "rewrite"
     elif OWN_MARKER_RE.search(probe):
         authorship = "own"
@@ -118,14 +131,16 @@ def score_channel(posts: list[tuple[str, bool]]) -> ChannelUsefulnessScore:
 
 
 def _tier(n_posts: int, water_score: float, shares: dict[str, float]) -> str:
-    """Черновые правила тира; пороги фиксирует калибровка по разметке судьи."""
+    """Правила тира; пороги калиброваны по разметке судьи 22.10.26 (см. criteria)."""
     if n_posts < USEFULNESS_MIN_POSTS:
         return "no_data"
-    if (
-        water_score >= USEFULNESS_TIER_WATER_SCORE
-        or shares["rewrite"] >= USEFULNESS_TIER_WATER_REWRITE
-    ):
+    if water_score >= USEFULNESS_TIER_WATER_SCORE:
         return "water"
-    if water_score <= USEFULNESS_TIER_USEFUL_WATER and shares["own"] >= USEFULNESS_TIER_USEFUL_OWN:
+    engaged = shares["own"] + shares["quality_retell"]
+    if (
+        water_score <= USEFULNESS_TIER_USEFUL_WATER
+        and shares["rewrite"] <= USEFULNESS_TIER_USEFUL_REWRITE
+        and engaged >= USEFULNESS_TIER_USEFUL_ENGAGED
+    ):
         return "useful"
     return "mixed"

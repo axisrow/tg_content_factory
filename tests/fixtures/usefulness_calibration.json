@@ -1,0 +1,607 @@
+{
+ "_comment": "Снапшот разметки LLM-судьи (headless claude -p, 22.10.26), 50 каналов — ground truth для калибровки прод-эвристик usefulness. Сэмплы постов НЕ хранятся (живая БД); повторная калибровка — новый снапшот. Когорты: own_tag = тег «авторский контент», farm_flag = auto_feed/low_engagement/forwarder, big_other = крупные прочие. owner_override — вердикт владельца поверх судьи (купонники = хлам, 22.10.26).",
+ "labeled_channels": [
+  {
+   "channel_id": 1170990974,
+   "cohort": "farm_flag",
+   "judge_useful": "useful",
+   "judge_water": 5.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 20.0,
+    "rewrite": 80.0
+   },
+   "judge_confidence": 0.75
+  },
+  {
+   "channel_id": 1273446931,
+   "cohort": "farm_flag",
+   "judge_useful": "useless",
+   "judge_water": 15.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 0.0,
+    "rewrite": 100.0
+   },
+   "judge_confidence": 0.75
+  },
+  {
+   "channel_id": 1311943675,
+   "cohort": "farm_flag",
+   "judge_useful": "useless",
+   "judge_water": 10.0,
+   "judge_authorship": {
+    "own": 5.0,
+    "quality_retell": 0.0,
+    "rewrite": 95.0
+   },
+   "judge_confidence": 0.8
+  },
+  {
+   "channel_id": 1318339742,
+   "cohort": "big_other",
+   "judge_useful": "useful",
+   "judge_water": 15.0,
+   "judge_authorship": {
+    "own": 5.0,
+    "quality_retell": 65.0,
+    "rewrite": 30.0
+   },
+   "judge_confidence": 0.8
+  },
+  {
+   "channel_id": 1358154290,
+   "cohort": "farm_flag",
+   "judge_useful": "useless",
+   "judge_water": 15.0,
+   "judge_authorship": {
+    "own": 100.0,
+    "quality_retell": 0.0,
+    "rewrite": 0.0
+   },
+   "judge_confidence": 0.95
+  },
+  {
+   "channel_id": 1436080000,
+   "cohort": "own_tag",
+   "judge_useful": "useful",
+   "judge_water": 18.0,
+   "judge_authorship": {
+    "own": 10.0,
+    "quality_retell": 65.0,
+    "rewrite": 25.0
+   },
+   "judge_confidence": 0.85
+  },
+  {
+   "channel_id": 1480429163,
+   "cohort": "farm_flag",
+   "judge_useful": "useful",
+   "judge_water": 10.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 0.0,
+    "rewrite": 100.0
+   },
+   "judge_confidence": 0.95
+  },
+  {
+   "channel_id": 1486314548,
+   "cohort": "big_other",
+   "judge_useful": "useful",
+   "judge_water": 20.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 10.0,
+    "rewrite": 90.0
+   },
+   "judge_confidence": 0.82
+  },
+  {
+   "channel_id": 1517067467,
+   "cohort": "farm_flag",
+   "judge_useful": "useful",
+   "judge_water": 40.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 0.0,
+    "rewrite": 100.0
+   },
+   "judge_confidence": 0.75
+  },
+  {
+   "channel_id": 1518177959,
+   "cohort": "farm_flag",
+   "judge_useful": "useful",
+   "judge_water": 30.0,
+   "judge_authorship": {
+    "own": 20.0,
+    "quality_retell": 50.0,
+    "rewrite": 30.0
+   },
+   "judge_confidence": 0.75
+  },
+  {
+   "channel_id": 1610126983,
+   "cohort": "big_other",
+   "judge_useful": "useful",
+   "judge_water": 68.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 0.0,
+    "rewrite": 100.0
+   },
+   "judge_confidence": 0.75
+  },
+  {
+   "channel_id": 1693268862,
+   "cohort": "farm_flag",
+   "judge_useful": "useful",
+   "judge_water": 5.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 65.0,
+    "rewrite": 35.0
+   },
+   "judge_confidence": 0.9
+  },
+  {
+   "channel_id": 1698167203,
+   "cohort": "farm_flag",
+   "judge_useful": "useless",
+   "judge_water": 95.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 0.0,
+    "rewrite": 100.0
+   },
+   "judge_confidence": 0.95
+  },
+  {
+   "channel_id": 1727243060,
+   "cohort": "farm_flag",
+   "judge_useful": "useless",
+   "judge_water": 85.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 0.0,
+    "rewrite": 100.0
+   },
+   "judge_confidence": 0.97
+  },
+  {
+   "channel_id": 1735263367,
+   "cohort": "own_tag",
+   "judge_useful": "useful",
+   "judge_water": 30.0,
+   "judge_authorship": {
+    "own": 10.0,
+    "quality_retell": 75.0,
+    "rewrite": 15.0
+   },
+   "judge_confidence": 0.75
+  },
+  {
+   "channel_id": 1811476804,
+   "cohort": "own_tag",
+   "judge_useful": "useful",
+   "judge_water": 12.0,
+   "judge_authorship": {
+    "own": 30.0,
+    "quality_retell": 65.0,
+    "rewrite": 5.0
+   },
+   "judge_confidence": 0.85
+  },
+  {
+   "channel_id": 1846601423,
+   "cohort": "big_other",
+   "judge_useful": "useless",
+   "judge_water": 78.0,
+   "judge_authorship": {
+    "own": 100.0,
+    "quality_retell": 0.0,
+    "rewrite": 0.0
+   },
+   "judge_confidence": 0.85
+  },
+  {
+   "channel_id": 1861267084,
+   "cohort": "big_other",
+   "judge_useful": "useful",
+   "judge_water": 20.0,
+   "judge_authorship": {
+    "own": 10.0,
+    "quality_retell": 75.0,
+    "rewrite": 15.0
+   },
+   "judge_confidence": 0.65
+  },
+  {
+   "channel_id": 1874113080,
+   "cohort": "big_other",
+   "judge_useful": "useless",
+   "judge_water": 70.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 5.0,
+    "rewrite": 95.0
+   },
+   "judge_confidence": 0.85
+  },
+  {
+   "channel_id": 1948773894,
+   "cohort": "big_other",
+   "judge_useful": "useful",
+   "judge_water": 10.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 15.0,
+    "rewrite": 85.0
+   },
+   "judge_confidence": 0.85,
+   "owner_override": "useless"
+  },
+  {
+   "channel_id": 1971177011,
+   "cohort": "own_tag",
+   "judge_useful": "useful",
+   "judge_water": 10.0,
+   "judge_authorship": {
+    "own": 10.0,
+    "quality_retell": 80.0,
+    "rewrite": 10.0
+   },
+   "judge_confidence": 0.85
+  },
+  {
+   "channel_id": 1997217439,
+   "cohort": "big_other",
+   "judge_useful": "useless",
+   "judge_water": 80.0,
+   "judge_authorship": {
+    "own": 100.0,
+    "quality_retell": 0.0,
+    "rewrite": 0.0
+   },
+   "judge_confidence": 0.9
+  },
+  {
+   "channel_id": 2022046288,
+   "cohort": "big_other",
+   "judge_useful": "useless",
+   "judge_water": 15.0,
+   "judge_authorship": {
+    "own": 20.0,
+    "quality_retell": 10.0,
+    "rewrite": 70.0
+   },
+   "judge_confidence": 0.8
+  },
+  {
+   "channel_id": 2032940819,
+   "cohort": "big_other",
+   "judge_useful": "useful",
+   "judge_water": 20.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 80.0,
+    "rewrite": 20.0
+   },
+   "judge_confidence": 0.9
+  },
+  {
+   "channel_id": 2033412524,
+   "cohort": "big_other",
+   "judge_useful": "useful",
+   "judge_water": 12.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 10.0,
+    "rewrite": 90.0
+   },
+   "judge_confidence": 0.85,
+   "owner_override": "useless"
+  },
+  {
+   "channel_id": 2055446553,
+   "cohort": "farm_flag",
+   "judge_useful": "useless",
+   "judge_water": 75.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 0.0,
+    "rewrite": 100.0
+   },
+   "judge_confidence": 0.85
+  },
+  {
+   "channel_id": 2056591549,
+   "cohort": "own_tag",
+   "judge_useful": "useful",
+   "judge_water": 15.0,
+   "judge_authorship": {
+    "own": 30.0,
+    "quality_retell": 60.0,
+    "rewrite": 10.0
+   },
+   "judge_confidence": 0.85
+  },
+  {
+   "channel_id": 2070368973,
+   "cohort": "big_other",
+   "judge_useful": "useless",
+   "judge_water": 15.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 10.0,
+    "rewrite": 90.0
+   },
+   "judge_confidence": 0.8
+  },
+  {
+   "channel_id": 2077616731,
+   "cohort": "big_other",
+   "judge_useful": "useless",
+   "judge_water": 60.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 0.0,
+    "rewrite": 100.0
+   },
+   "judge_confidence": 0.9
+  },
+  {
+   "channel_id": 2108289721,
+   "cohort": "farm_flag",
+   "judge_useful": "useless",
+   "judge_water": 10.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 0.0,
+    "rewrite": 100.0
+   },
+   "judge_confidence": 0.85
+  },
+  {
+   "channel_id": 2139004015,
+   "cohort": "farm_flag",
+   "judge_useful": "useless",
+   "judge_water": 75.0,
+   "judge_authorship": {
+    "own": 10.0,
+    "quality_retell": 0.0,
+    "rewrite": 90.0
+   },
+   "judge_confidence": 0.8
+  },
+  {
+   "channel_id": 2146394514,
+   "cohort": "big_other",
+   "judge_useful": "useless",
+   "judge_water": 80.0,
+   "judge_authorship": {
+    "own": 5.0,
+    "quality_retell": 0.0,
+    "rewrite": 95.0
+   },
+   "judge_confidence": 0.9
+  },
+  {
+   "channel_id": 2147773294,
+   "cohort": "big_other",
+   "judge_useful": "useless",
+   "judge_water": 75.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 0.0,
+    "rewrite": 100.0
+   },
+   "judge_confidence": 0.95
+  },
+  {
+   "channel_id": 2201302010,
+   "cohort": "big_other",
+   "judge_useful": "useless",
+   "judge_water": 60.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 0.0,
+    "rewrite": 100.0
+   },
+   "judge_confidence": 0.85
+  },
+  {
+   "channel_id": 2294772081,
+   "cohort": "farm_flag",
+   "judge_useful": "useless",
+   "judge_water": 82.0,
+   "judge_authorship": {
+    "own": 40.0,
+    "quality_retell": 0.0,
+    "rewrite": 60.0
+   },
+   "judge_confidence": 0.92
+  },
+  {
+   "channel_id": 2298309511,
+   "cohort": "big_other",
+   "judge_useful": "useless",
+   "judge_water": 65.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 0.0,
+    "rewrite": 100.0
+   },
+   "judge_confidence": 0.9
+  },
+  {
+   "channel_id": 2440280800,
+   "cohort": "own_tag",
+   "judge_useful": "useful",
+   "judge_water": 30.0,
+   "judge_authorship": {
+    "own": 50.0,
+    "quality_retell": 40.0,
+    "rewrite": 10.0
+   },
+   "judge_confidence": 0.8
+  },
+  {
+   "channel_id": 2453800600,
+   "cohort": "big_other",
+   "judge_useful": "useless",
+   "judge_water": 80.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 0.0,
+    "rewrite": 100.0
+   },
+   "judge_confidence": 0.97
+  },
+  {
+   "channel_id": 2466388176,
+   "cohort": "own_tag",
+   "judge_useful": "useful",
+   "judge_water": 20.0,
+   "judge_authorship": {
+    "own": 45.0,
+    "quality_retell": 48.0,
+    "rewrite": 7.0
+   },
+   "judge_confidence": 0.88
+  },
+  {
+   "channel_id": 2467973181,
+   "cohort": "farm_flag",
+   "judge_useful": "useless",
+   "judge_water": 15.0,
+   "judge_authorship": {
+    "own": 2.0,
+    "quality_retell": 3.0,
+    "rewrite": 95.0
+   },
+   "judge_confidence": 0.9
+  },
+  {
+   "channel_id": 2565884218,
+   "cohort": "own_tag",
+   "judge_useful": "useful",
+   "judge_water": 15.0,
+   "judge_authorship": {
+    "own": 10.0,
+    "quality_retell": 75.0,
+    "rewrite": 15.0
+   },
+   "judge_confidence": 0.9
+  },
+  {
+   "channel_id": 2600390047,
+   "cohort": "own_tag",
+   "judge_useful": "useful",
+   "judge_water": 15.0,
+   "judge_authorship": {
+    "own": 25.0,
+    "quality_retell": 70.0,
+    "rewrite": 5.0
+   },
+   "judge_confidence": 0.88
+  },
+  {
+   "channel_id": 2744745248,
+   "cohort": "own_tag",
+   "judge_useful": "useful",
+   "judge_water": 35.0,
+   "judge_authorship": {
+    "own": 5.0,
+    "quality_retell": 35.0,
+    "rewrite": 60.0
+   },
+   "judge_confidence": 0.75
+  },
+  {
+   "channel_id": 2746552703,
+   "cohort": "own_tag",
+   "judge_useful": "useful",
+   "judge_water": 22.0,
+   "judge_authorship": {
+    "own": 75.0,
+    "quality_retell": 20.0,
+    "rewrite": 5.0
+   },
+   "judge_confidence": 0.9
+  },
+  {
+   "channel_id": 2791464130,
+   "cohort": "own_tag",
+   "judge_useful": "useful",
+   "judge_water": 12.0,
+   "judge_authorship": {
+    "own": 15.0,
+    "quality_retell": 70.0,
+    "rewrite": 15.0
+   },
+   "judge_confidence": 0.88
+  },
+  {
+   "channel_id": 2989691770,
+   "cohort": "own_tag",
+   "judge_useful": "useful",
+   "judge_water": 12.0,
+   "judge_authorship": {
+    "own": 20.0,
+    "quality_retell": 72.0,
+    "rewrite": 8.0
+   },
+   "judge_confidence": 0.9
+  },
+  {
+   "channel_id": 3147604656,
+   "cohort": "own_tag",
+   "judge_useful": "useful",
+   "judge_water": 10.0,
+   "judge_authorship": {
+    "own": 25.0,
+    "quality_retell": 65.0,
+    "rewrite": 10.0
+   },
+   "judge_confidence": 0.8
+  },
+  {
+   "channel_id": 3732248566,
+   "cohort": "big_other",
+   "judge_useful": "useless",
+   "judge_water": 10.0,
+   "judge_authorship": {
+    "own": 0.0,
+    "quality_retell": 0.0,
+    "rewrite": 100.0
+   },
+   "judge_confidence": 0.9
+  },
+  {
+   "channel_id": 3742987448,
+   "cohort": "own_tag",
+   "judge_useful": "useful",
+   "judge_water": 7.0,
+   "judge_authorship": {
+    "own": 20.0,
+    "quality_retell": 70.0,
+    "rewrite": 10.0
+   },
+   "judge_confidence": 0.9
+  },
+  {
+   "channel_id": 8529688828,
+   "cohort": "big_other",
+   "judge_useful": "useful",
+   "judge_water": 12.0,
+   "judge_authorship": {
+    "own": 40.0,
+    "quality_retell": 50.0,
+    "rewrite": 10.0
+   },
+   "judge_confidence": 0.7
+  }
+ ]
+}
