@@ -11,9 +11,13 @@ name: CI
 # whole suite.
 # Code coverage measurement was REMOVED by owner decision (2026-10-08): no
 # --cov anywhere, no fail_under ratchet (#1052 retired), no PR/push leg split
-# (#1456 retired) — every event runs the same bare commands, and the three
-# test jobs carry a five-minute BUDGET: a test job past five minutes reds CI
-# instead of quietly growing the wall.
+# (#1456 retired) — every event runs the same bare commands, and the test jobs
+# carry a wall BUDGET: a test job past its budget reds CI instead of quietly
+# growing the wall. smoke/serial keep the five-minute budget; the shards budget
+# was raised to ten minutes (owner decision, 2026-10-24) on measured data: the
+# slowest shard hit 297s of the old 300s budget (run 38687643910, 2026-10-15)
+# and 271-278s repeatedly, i.e. 1-10% headroom, while ubuntu-latest migrates
+# to Ubuntu 26 (actions/runner-images#14748).
 # Dropped the old `fix/**` / `codex/**` push triggers: they double-ran CI (once
 # for the branch push, once for the PR) and burned runners on intermediate,
 # draft, PR-less pushes. A push to a feature branch with no open PR no longer
@@ -220,10 +224,13 @@ jobs:
   # runners, not fewer tests; the full suite stays the gate.
   #
   # timeout-minutes is a BUDGET (owner decision, 2026-10-08): a shard that
-  # exceeds five minutes reds CI instead of quietly growing the wall.
+  # exceeds it reds CI instead of quietly growing the wall. Raised from five
+  # to ten minutes (owner decision, 2026-10-24) on two weeks of CI data: the
+  # slowest shard measured 297s of the 300s budget (run 38687643910) and
+  # 271-278s repeatedly — 2x the measured worst case, still a creep guard.
   tests-shards:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:

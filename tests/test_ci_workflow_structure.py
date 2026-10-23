@@ -13,8 +13,11 @@ undo them:
   file stay on one worker) survives; the shard legs take NO positional
   ``tests`` arg — the file list is the selection, a positional arg would make
   every shard run the full-suite union;
-- every test job carries a five-minute BUDGET (owner decision, 2026-10-08):
-  a test job past five minutes reds CI instead of quietly growing the wall.
+- every test job carries a wall BUDGET (owner decision, 2026-10-08): a test
+  job past its budget reds CI instead of quietly growing the wall. smoke and
+  serial keep the five-minute budget; the shards budget is ten minutes
+  (owner decision, 2026-10-24) — the slowest shard measured 297s of the old
+  300s budget (run 38687643910, 2026-10-15).
   Test jobs are also leg-free — the same commands run on PR and push;
 - code coverage measurement is REMOVED from CI (owner decision, 2026-10-08):
   no ``--cov`` flags, no ``coverage-combine`` job, no ``[tool.coverage]``
@@ -45,7 +48,9 @@ import yaml
 CI_YML = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
 
 TEST_JOBS = ("tests-smoke", "tests-shards", "tests-serial")
-TEST_BUDGET_MINUTES = 5
+# Per-job wall budgets in minutes. Shards got ten (2026-10-24): the slowest
+# shard measured 297s of the old 300s budget; the rest keep five.
+TEST_BUDGET_MINUTES = {"tests-smoke": 5, "tests-shards": 10, "tests-serial": 5}
 
 
 @pytest.fixture(scope="module")
@@ -109,16 +114,19 @@ def test_lint_job_runs_ruff(ci_config: dict) -> None:
 
 
 def test_test_jobs_have_five_minute_budget(ci_config: dict) -> None:
-    """Every test job reds when it exceeds five minutes (owner budget).
+    """Every test job reds when it exceeds its wall budget (owner budget).
 
-    ``timeout-minutes: 5`` is the enforcement knob: the runner kills the job
+    ``timeout-minutes`` is the enforcement knob: the runner kills the job
     and the check goes red. Without this pin the number can quietly drift back
-    to a hang-guard value and the wall starts creeping again.
+    to a hang-guard value and the wall starts creeping again. Per-job budgets
+    live in ``TEST_BUDGET_MINUTES``: smoke/serial at five, shards at ten
+    (2026-10-24 — the slowest shard measured 297s of the old 300s budget).
     """
     for name in TEST_JOBS:
         budget = ci_config["jobs"][name].get("timeout-minutes")
-        assert budget == TEST_BUDGET_MINUTES, (
-            f"{name} must carry the {TEST_BUDGET_MINUTES}-minute budget (got {budget!r})"
+        expected = TEST_BUDGET_MINUTES[name]
+        assert budget == expected, (
+            f"{name} must carry the {expected}-minute budget (got {budget!r})"
         )
 
 
