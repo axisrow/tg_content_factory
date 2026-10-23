@@ -64,6 +64,19 @@ def test_no_query():
         run(_args(index_now=False, query=""))
 
 
+def test_empty_query_rejected_before_engine(caplog):
+    # Regression pin for the guard cf3bf0f0 silently dropped: an empty query
+    # must log the required-query error and never instantiate SearchEngine.
+    db = make_cli_db()
+    config = make_cli_config()
+    with patch("tg_agent.cli.commands.search.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch("tg_agent.cli.commands.search.SearchEngine") as engine_cls, \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(index_now=False, query=""))
+    assert "Search query is required" in caplog.text
+    engine_cls.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # local search
 # ---------------------------------------------------------------------------

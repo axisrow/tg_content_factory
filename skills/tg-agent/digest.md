@@ -27,7 +27,7 @@ that keyword was NOT searched (do not pretend it was); `has_more=true` = that
 keyword's window is truncated — raise `--limit` (or split the window) and
 re-run, otherwise the digest is silently incomplete.
 
-Envelopes come back date-descending, so a week-sized window overflows any
+Envelopes come back in call order; messages inside each are date-descending, so a week-sized window overflows any
 `--limit` fast and the OLDEST days drop out first. Split the sweep into
 sub-windows of 3-4 days and merge (measured 18.10: a 7-day sweep at
 `--limit 50` silently lost days 1-4 of the window).
