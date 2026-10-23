@@ -628,10 +628,10 @@ class MessagesRepository:
             params.append(normalized_date_to)
 
         if min_length is not None:
-            conditions.append("LENGTH(m.text) > ?")
+            conditions.append("LENGTH(m.text) >= ?")
             params.append(min_length)
         if max_length is not None:
-            conditions.append("LENGTH(m.text) < ?")
+            conditions.append("LENGTH(m.text) <= ?")
             params.append(max_length)
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         return where, params
