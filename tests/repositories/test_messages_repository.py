@@ -505,6 +505,25 @@ async def test_search_messages_by_max_length(messages_repo):
     assert messages[0].text == "Short"
 
 
+async def test_search_messages_length_bounds_are_inclusive(messages_repo):
+    """A message exactly at min_length/max_length stays in the results (#1667)."""
+    await messages_repo.insert_messages_batch(
+        [
+            make_message(1, 100, "abc"),
+            make_message(1, 101, "abcde"),
+            make_message(1, 102, "abcdefg"),
+        ]
+    )
+
+    for params in (
+        SearchParams(min_length=5),
+        SearchParams(max_length=5),
+        SearchParams(min_length=5, max_length=5),
+    ):
+        messages, _total = await messages_repo.search_messages(params)
+        assert [m.text for m in messages] == ["abcde"]
+
+
 async def test_search_messages_pagination(messages_repo):
     """Test pagination with limit and offset."""
     for i in range(10):
