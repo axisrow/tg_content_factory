@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tg_agent.models import Channel, Message
 from tg_agent.services import trend_service as trend_service_module
 from tg_agent.services.trend_service import (
     MessageVelocity,
@@ -30,6 +32,49 @@ def mock_db():
 def service(mock_db):
     """TrendService instance."""
     return TrendService(mock_db)
+
+
+@pytest.mark.anyio
+async def test_trending_windows_exclude_boundary_date(db):
+    """Issue #1665 class: messages on the boundary date but chronologically
+    older than the N-day window must not be counted (ISO 'T' dates compared
+    against a space-separated datetime('now') boundary)."""
+    await db.repos.channels.add_channel(Channel(channel_id=300, title="trend ch"))
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(days=1)
+    midnight = datetime.combine(
+        window_start.date(), datetime.min.time(), tzinfo=timezone.utc
+    )
+    for i, dt in enumerate(
+        [
+            now - timedelta(hours=1),
+            midnight,
+            window_start - timedelta(minutes=1),
+        ]
+    ):
+        msg = Message(
+            channel_id=300,
+            message_id=i + 1,
+            text="hello",
+            views=100,
+            reactions_json='[{"emoji": "👍", "count": 1}]',
+            date=dt,
+        )
+        await db.repos.messages.insert_message(msg)
+
+    svc = TrendService(db)
+
+    # HAVING COUNT(m.id) >= 3: with the bug the channel reaches the threshold
+    # from boundary-date messages alone; correctly it has 1 in-window message.
+    assert await svc.get_trending_channels(days=1) == []
+
+    velocity = await svc.get_message_velocity(channel_id=300, days=1)
+    assert [(v.date, v.count) for v in velocity] == [
+        ((now - timedelta(hours=1)).date().isoformat(), 1)
+    ]
+
+    emojis = await svc.get_trending_emojis(days=1)
+    assert [(e.emoji, e.count) for e in emojis] == [("👍", 1)]
 
 
 # === get_trending_topics tests ===

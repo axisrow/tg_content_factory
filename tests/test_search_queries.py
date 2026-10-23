@@ -186,6 +186,41 @@ async def test_update_nonexistent(svc):
 
 
 @pytest.mark.anyio
+async def test_fts_daily_stats_day_boundary(bundle, db):
+    # Issue #1665 class: messages on the boundary date but chronologically
+    # older than the window must not be counted (ISO 'T' dates compared
+    # against a space-separated datetime('now') boundary).
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(days=1)
+    midnight = datetime.combine(
+        window_start.date(), datetime.min.time(), tzinfo=timezone.utc
+    )
+    ch = Channel(channel_id=200, title="ch")
+    await db.repos.channels.add_channel(ch)
+    for i, (text, dt) in enumerate(
+        [
+            ("alpha fresh", now - timedelta(hours=1)),
+            ("alpha boundary midnight", midnight),
+            ("alpha boundary minute", window_start - timedelta(minutes=1)),
+        ]
+    ):
+        msg = Message(channel_id=200, message_id=i + 1, text=text, date=dt)
+        await db.repos.messages.insert_message(msg)
+
+    sq = SearchQuery(query="alpha")
+    sq_id = await bundle.add(sq)
+    sq = await bundle.get_by_id(sq_id)
+
+    stats = await bundle.get_fts_daily_stats_for_query(sq, days=1)
+    assert len(stats) == 1
+    assert stats[0].count == 1
+
+    batch = await bundle.get_fts_daily_stats_batch([sq], days=1)
+    assert len(batch[sq_id]) == 1
+    assert batch[sq_id][0].count == 1
+
+
+@pytest.mark.anyio
 async def test_fts_boolean_query(bundle, db):
     """FTS5 boolean query with OR/AND should match correctly."""
     await _insert_messages(
