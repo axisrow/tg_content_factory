@@ -211,7 +211,9 @@ app.add_typer(collect_app, name="collect")
 @app.command(context_settings=_NEG_ID_POSITIONAL)
 def search(
     ctx: typer.Context,
-    query: str = typer.Argument("", help="Search query"),
+    query: list[str] = typer.Argument(
+        None, help="Search query (repeat positionally for batch mode: search \"q1\" \"q2\")"
+    ),
     limit: int = typer.Option(20, "--limit", help="Max results"),
     mode: SearchMode = typer.Option(
         SearchMode.local,
@@ -249,10 +251,12 @@ def search(
     """Search messages."""
     apply_startup(ctx)
     date_from, date_to = resolve_date_bounds(date_from, date_to)
+    # Single query keeps the exact str path/output; 2+ queries = batch mode.
+    query_value = query if query and len(query) > 1 else (query[0] if query else "")
     run_async(
         search_cmd.search_impl(
             ctx.obj.config,
-            query=query,
+            query=query_value,
             limit=limit,
             mode=mode.value,
             channel_id=channel_id,

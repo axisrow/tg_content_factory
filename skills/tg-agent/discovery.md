@@ -16,13 +16,13 @@ channels.
 ## 2. Sweep (real Telegram actions)
 
 ```bash
-tg-agent search "<keyword>" --mode telegram --limit 30
+tg-agent search "<keyword1>" "<keyword2>" --mode telegram --limit 30
 ```
 
-One call per keyword. This is the premium global search from the user's real
-account — daily quota is limited, FloodWait is possible. On a quota or
-FloodWait error: STOP, report how far you got, do not hammer retries. Keep
-the batch small on purpose.
+One call carries the whole keyword batch (batch mode). This is the premium
+global search from the user's real account — daily quota is limited, FloodWait
+is possible. On a quota or FloodWait error: STOP, report how far you got, do
+not hammer retries. Keep the batch small on purpose.
 
 Each sweep caches discovered channels into the DB as **inactive**
 (`is_active=0` — search is not an operator approval) and tags the cached

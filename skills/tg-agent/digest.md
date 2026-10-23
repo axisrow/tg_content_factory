@@ -8,24 +8,26 @@ the voice spec locally).
 ## 1. Collect the window
 
 Default window: the last **7 days** (weekly digest). Pull candidates per keyword;
-`--date-from` / `--date-to` work on the DB modes (`local`/`semantic`/`hybrid`):
+`--date-from` / `--date-to` work on the DB modes (`local`/`semantic`/`hybrid`).
+Batch mode takes ALL keywords in ONE call:
 
 ```bash
-tg-agent search "нейросети" --mode local --date-from 2026-10-10 --date-to 2026-10-17 --format json --limit 50
-tg-agent search "LLM"        --mode local --date-from 2026-10-10 --date-to 2026-10-17 --format json --limit 50
-# …one call per keyword
+tg-agent search "нейросети" "LLM" "OpenAI" "Anthropic" --mode local \
+  --date-from 2026-10-10 --date-to 2026-10-17 --format json --limit 200
 ```
 
 Starter keyword set (extend per request): `ИИ`, `нейросети`, `LLM`, `модель`,
 `релиз`, `OpenAI`, `Anthropic`, `Google DeepMind`, `benchmark`. If the sweep is
 thin, `--mode hybrid` or `--mode semantic` improve recall.
 
-The JSON envelope carries `total`, `has_more` and `error`. Before building the
-digest: `error` non-null = the keyword was NOT searched (do not pretend it
-was); `has_more=true` = the window is truncated — raise `--limit` (or split
-the window) and re-run, otherwise the digest is silently incomplete.
+The response is ONE JSON object `{"queries": [<envelope>, ...]}` — one envelope
+per keyword, in call order. Each envelope carries `total`, `has_more` and
+`error`. Before building the digest check EVERY envelope: `error` non-null =
+that keyword was NOT searched (do not pretend it was); `has_more=true` = that
+keyword's window is truncated — raise `--limit` (or split the window) and
+re-run, otherwise the digest is silently incomplete.
 
-Results come back date-descending, so a week-sized window overflows any
+Envelopes come back date-descending, so a week-sized window overflows any
 `--limit` fast and the OLDEST days drop out first. Split the sweep into
 sub-windows of 3-4 days and merge (measured 18.10: a 7-day sweep at
 `--limit 50` silently lost days 1-4 of the window).

@@ -29,15 +29,21 @@ def _format_search_result_line(msg) -> str:
     return f"[{msg.date}] {channel_label}: {(msg.text or '')[:200]}"
 
 
-def _print_search_result(result, fmt: str) -> None:
-    """Render a SearchResult as text (default), json, or csv.
+def _search_envelope(result) -> dict:
+    """Per-query JSON envelope for a SearchResult.
 
     Same field set as ``messages read`` plus the channel labels the search hit
     already carries (``@username``/title) — the digest workflow needs the source
-    attribution without a second lookup.
+    attribution without a second lookup. A consumer with --limit N must see
+    has_more/total (silent truncation = #1350 class) and error, not a bare []
+    that reads as "nothing found".
     """
-    if fmt == "json":
-        items = [
+    return {
+        "query": result.query,
+        "total": result.total,
+        "has_more": result.has_more,
+        "error": result.error,
+        "messages": [
             {
                 "id": msg.id,
                 "channel_id": msg.channel_id,
@@ -50,22 +56,14 @@ def _print_search_result(result, fmt: str) -> None:
                 "forwards": msg.forwards,
             }
             for msg in result.messages
-        ]
-        # Wrap in the full result object: a consumer with --limit N must see
-        # has_more/total (silent truncation = #1350 class) and error, not a
-        # bare [] that reads as "nothing found".
-        print(
-            safe_json_dumps(
-                {
-                    "query": result.query,
-                    "total": result.total,
-                    "has_more": result.has_more,
-                    "error": result.error,
-                    "messages": items,
-                },
-                indent=2,
-            )
-        )
+        ],
+    }
+
+
+def _print_search_result(result, fmt: str) -> None:
+    """Render a SearchResult as text (default), json, or csv."""
+    if fmt == "json":
+        print(safe_json_dumps(_search_envelope(result), indent=2))
         return
     if fmt == "csv":
         buf = io.StringIO()
@@ -92,10 +90,64 @@ def _print_search_result(result, fmt: str) -> None:
         print("---")
 
 
+async def _run_search_query(
+    engine: SearchEngine,
+    *,
+    query: str,
+    limit: int,
+    mode: str,
+    channel_id: int | None,
+    min_length: int | None,
+    max_length: int | None,
+    fts: bool,
+    include_filtered: bool,
+    date_from: str | None,
+    date_to: str | None,
+):
+    """Dispatch one query to the SearchEngine method for *mode*."""
+    if mode == "telegram":
+        return await engine.search_telegram(query, limit=limit)
+    if mode == "my_chats":
+        return await engine.search_my_chats(query, limit=limit)
+    if mode == "channel":
+        return await engine.search_in_channel(channel_id, query, limit=limit)
+    if mode == "semantic":
+        return await engine.search_semantic(
+            query,
+            limit=limit,
+            date_from=date_from,
+            date_to=date_to,
+            min_length=min_length,
+            max_length=max_length,
+            include_filtered=include_filtered,
+        )
+    if mode == "hybrid":
+        return await engine.search_hybrid(
+            query,
+            limit=limit,
+            date_from=date_from,
+            date_to=date_to,
+            min_length=min_length,
+            max_length=max_length,
+            is_fts=fts,
+            include_filtered=include_filtered,
+        )
+    return await engine.search_local(
+        query,
+        limit=limit,
+        date_from=date_from,
+        date_to=date_to,
+        min_length=min_length,
+        max_length=max_length,
+        is_fts=fts,
+        include_filtered=include_filtered,
+    )
+
+
 async def search_impl(
     config_path: str,
     *,
-    query: str = "",
+    query: str | list[str] = "",
     limit: int = 20,
     mode: str = "local",
     channel_id: int | None = None,
@@ -116,13 +168,17 @@ async def search_impl(
     below and the Typer ``search`` command (``tg_agent/cli/typer_commands.py``).
     Driven through the single async-bridge ``run_async`` by its callers, so
     there is no local ``asyncio.run`` in the migrated path.
+
+    Batch mode: *query* as a list runs every keyword against the same shared
+    filters and prints one JSON object ``{"queries": [envelope, ...]}``
+    (JSON output only).
     """
     config, db = await runtime.init_db(config_path)
 
     if purge_cache:
         try:
-            if not query:
-                logging.error("--purge-cache requires a query (the Premium search text to purge).")
+            if isinstance(query, list) or not query:
+                logging.error("--purge-cache requires a single query (the Premium search text to purge).")
                 return
             deleted = await db.repos.messages.delete_premium_search_results(query)
             print(f"Purged {deleted} cached message(s) from Premium search for '{query}'.")
@@ -157,52 +213,40 @@ async def search_impl(
             print(f"Indexed {indexed} messages for semantic search.")
             return
 
-        if not query:
+        queries = [query] if isinstance(query, str) else [q for q in query if q]
+        if not queries:
             logging.error("Search query is required unless --index-now is used.")
             return
 
         engine = SearchEngine(db, pool, config=config)
 
-        if mode == "telegram":
-            result = await engine.search_telegram(query, limit=limit)
-        elif mode == "my_chats":
-            result = await engine.search_my_chats(query, limit=limit)
-        elif mode == "channel":
-            result = await engine.search_in_channel(channel_id, query, limit=limit)
-        elif mode == "semantic":
-            result = await engine.search_semantic(
-                query,
+        async def run_one(q: str):
+            return await _run_search_query(
+                engine,
+                query=q,
                 limit=limit,
-                date_from=date_from,
-                date_to=date_to,
+                mode=mode,
+                channel_id=channel_id,
                 min_length=min_length,
                 max_length=max_length,
+                fts=fts,
                 include_filtered=include_filtered,
-            )
-        elif mode == "hybrid":
-            result = await engine.search_hybrid(
-                query,
-                limit=limit,
                 date_from=date_from,
                 date_to=date_to,
-                min_length=min_length,
-                max_length=max_length,
-                is_fts=fts,
-                include_filtered=include_filtered,
-            )
-        else:
-            result = await engine.search_local(
-                query,
-                limit=limit,
-                date_from=date_from,
-                date_to=date_to,
-                min_length=min_length,
-                max_length=max_length,
-                is_fts=fts,
-                include_filtered=include_filtered,
             )
 
-        _print_search_result(result, output_format)
+        if len(queries) == 1:
+            result = await run_one(queries[0])
+            _print_search_result(result, output_format)
+            return
+
+        # Batch: one JSON object of per-query envelopes — the digest sweep needs
+        # total/has_more/error per keyword without one CLI call per keyword.
+        if output_format != "json":
+            logging.error("Batch search (multiple queries) requires --format json.")
+            return
+        envelopes = [_search_envelope(await run_one(q)) for q in queries]
+        print(safe_json_dumps({"queries": envelopes}, indent=2))
     finally:
         if pool:
             await pool.disconnect_all()

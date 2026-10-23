@@ -88,3 +88,32 @@ def test_search_date_window_rejected_for_live_modes(cli_env, caplog):
     _run_search(mode="telegram", date_from="2025-01-01")
 
     assert "only supported" in caplog.text
+
+
+def test_search_batch_json_envelope_per_query(cli_env, capsys):
+    # Batch sweep: several keywords in ONE call, per-query envelope preserved —
+    # total/has_more/error are the digest workflow's completeness signal.
+    _seed(cli_env)
+
+    _run_search(query=["нейросети", "OpenAI"], output_format="json")
+
+    data = json.loads(capsys.readouterr().out)
+    assert set(data) == {"queries"}
+    first, second = data["queries"]
+    assert first["query"] == "нейросети"
+    assert first["total"] == 2
+    assert first["has_more"] is False
+    assert first["error"] is None
+    assert {m["message_id"] for m in first["messages"]} == {1, 2}
+    assert second["query"] == "OpenAI"
+    assert second["total"] == 1
+    assert [m["message_id"] for m in second["messages"]] == [1]
+
+
+def test_search_batch_requires_json_format(cli_env, caplog, capsys):
+    _seed(cli_env)
+
+    _run_search(query=["нейросети", "OpenAI"])
+
+    assert "--format json" in caplog.text
+    assert '"queries"' not in capsys.readouterr().out

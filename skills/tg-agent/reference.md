@@ -88,8 +88,8 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
 messages read <identifier> [--limit N] [--live] [--phone PHONE] [--query TEXT]
               [--date-from DATE] [--date-to DATE] [--topic-id ID] [--offset-id ID]
               [--format text|json|csv]
-search "query" [--limit N] [--mode MODE] [--date-from DATE] [--date-to DATE]
-       [--format text|json|csv]
+search "query" ["query2" ...] [--limit N] [--mode MODE] [--date-from DATE]
+       [--date-to DATE] [--format text|json|csv]
 search-query list | get | add | edit | delete | toggle | run | stats
 ```
 
@@ -122,6 +122,12 @@ search-query list | get | add | edit | delete | toggle | run | stats
   (#1593);
   `--format json|csv` renders the hits with `@username`/title attribution —
   the AI digest workflow ([digest.md](digest.md)) is built on these.
+- **Batch mode (#1668):** 2+ positional queries — `search "нейросети" "LLM" "OpenAI" …`
+  — run every keyword against the same shared filters in ONE call and print a
+  single JSON object `{"queries": [<envelope>, ...]}`; each envelope carries the
+  same `query/total/has_more/error/messages` contract (completeness is judged
+  per keyword). Batch requires `--format json`; live modes follow the same
+  rules as single-query calls (no `--date-from/--date-to`).
 
 ## dialogs — real actions in real chats
 

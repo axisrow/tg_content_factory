@@ -11,7 +11,11 @@ from __future__ import annotations
 import csv
 from datetime import datetime, timezone
 
-from tg_agent.cli.commands.search import _format_search_result_line, _print_search_result
+from tg_agent.cli.commands.search import (
+    _format_search_result_line,
+    _print_search_result,
+    _search_envelope,
+)
 from tg_agent.models import Message, SearchResult
 
 
@@ -62,3 +66,15 @@ def test_csv_keeps_full_text_over_500_chars(capsys) -> None:
     out = capsys.readouterr().out
     row = next(csv.reader(out.splitlines()[1:]))
     assert row[4] == long_text
+
+
+def test_envelope_exposes_truncation_contract() -> None:
+    # The per-query envelope is the digest sweep's completeness signal:
+    # total + has_more must survive into batch JSON, not just the message list.
+    result = SearchResult(messages=[_msg()], total=7, has_more=True, query="харнесс")
+    envelope = _search_envelope(result)
+    assert envelope["query"] == "харнесс"
+    assert envelope["total"] == 7
+    assert envelope["has_more"] is True
+    assert envelope["error"] is None
+    assert envelope["messages"][0]["message_id"] == 42
