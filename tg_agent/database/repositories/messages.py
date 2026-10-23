@@ -1819,7 +1819,10 @@ class MessagesRepository:
         if days is not None:
             cur = await self._db.execute(
                 "SELECT COUNT(*) AS cnt FROM messages "
-                "WHERE channel_id = ? AND date >= datetime('now', ?)",
+                # strftime with the same ISO-'T' format as the stored dates;
+                # datetime('now') emits a space separator, so lexicographic
+                # comparison wrongly included boundary-date messages (#1665).
+                "WHERE channel_id = ? AND date >= strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now', ?)",
                 (channel_id, f"-{days} days"),
             )
         else:

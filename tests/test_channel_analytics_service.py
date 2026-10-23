@@ -176,6 +176,45 @@ async def test_get_channel_overview_with_posts(db):
 
 
 @pytest.mark.anyio
+async def test_get_channel_overview_posts_day_boundary(db):
+    # Issue #1665: messages on the boundary date but chronologically older
+    # than 24h must not be counted by the 1-day window (the stored ISO 'T'
+    # date compared against a space-separated datetime('now') boundary).
+    await _seed_channel(db, channel_id=100123, title="Boundary Chan")
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(days=1)
+    midnight = datetime.combine(
+        window_start.date(), datetime.min.time(), tzinfo=timezone.utc
+    )
+
+    messages = [
+        Message(
+            channel_id=100123, message_id=1, text="fresh",
+            views=10, forwards=0, reply_count=0,
+            date=now - timedelta(hours=1),
+        ),
+        # Same calendar date as the window start, but before it.
+        Message(
+            channel_id=100123, message_id=2, text="boundary midnight",
+            views=10, forwards=0, reply_count=0,
+            date=midnight,
+        ),
+        Message(
+            channel_id=100123, message_id=3, text="boundary minute before",
+            views=10, forwards=0, reply_count=0,
+            date=window_start - timedelta(minutes=1),
+        ),
+    ]
+    await _seed_messages_batch(db, 100123, messages)
+
+    svc = ChannelAnalyticsService(db)
+    overview = await svc.get_channel_overview(100123, days=1)
+    assert overview.posts_week == 3
+    assert overview.posts_today == 1
+    assert overview.posts_month == 1
+
+
+@pytest.mark.anyio
 async def test_get_channel_overview_missing_channel(db):
     svc = ChannelAnalyticsService(db)
     overview = await svc.get_channel_overview(999999)
