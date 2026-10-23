@@ -213,7 +213,8 @@ async def search_impl(
             print(f"Indexed {indexed} messages for semantic search.")
             return
 
-        queries = [query] if isinstance(query, str) else [q for q in query if q]
+        queries = [query] if isinstance(query, str) else list(query)
+        queries = [q for q in queries if q]
         if not queries:
             logging.error("Search query is required unless --index-now is used.")
             return
