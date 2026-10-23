@@ -8,7 +8,7 @@ from __future__ import annotations
 
 CREDENTIALS_MASK = "••••••••"
 
-_SECRET_KEY_SUFFIXES = ("_api_key", "_token", "_secret", "_password")
+_SECRET_KEY_SUFFIXES = ("_api_key", "_api_hash", "_token", "_secret", "_password")
 _SECRET_KEY_NAMES = frozenset({"session_secret_key"})
 
 

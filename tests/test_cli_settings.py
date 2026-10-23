@@ -295,6 +295,7 @@ class TestSecretMasking:
     KEY = "semantic_embeddings_api_key"
     RAW = "sk-FAKEKEY-0123456789abcdefghijklmnopqrstuvwxyz"
     ENC_SECRET = "test-session-encryption-key"
+    TG_API_HASH = "0123456789abcdef0123456789abcdef"  # dummy, never a real hash
 
     def test_get_all_masks_secret_values(self, cli_env, cli_db, capsys):
         from tg_agent.cli.commands.settings import run
@@ -322,6 +323,26 @@ class TestSecretMasking:
         out = capsys.readouterr().out
         assert self.KEY in out
         assert self.RAW not in out
+        assert "••••••••" in out
+
+    def test_get_masks_tg_api_hash(self, cli_env, cli_db, capsys):
+        """Issue #1664: tg_api_hash is a credential — masked like api keys."""
+        from tg_agent.cli.commands.settings import run
+
+        asyncio.run(_write_setting(cli_db._db_path, "tg_api_hash", self.TG_API_HASH))
+        run(_ns(settings_action="get"))
+        out = capsys.readouterr().out
+        assert "tg_api_hash" in out  # row still listed
+        assert self.TG_API_HASH not in out  # value never printed
+        assert "••••••••" in out
+
+    def test_get_specific_tg_api_hash_masks_value(self, cli_env, cli_db, capsys):
+        from tg_agent.cli.commands.settings import run
+
+        asyncio.run(_write_setting(cli_db._db_path, "tg_api_hash", self.TG_API_HASH))
+        run(_ns(settings_action="get", key="tg_api_hash"))
+        out = capsys.readouterr().out
+        assert self.TG_API_HASH not in out
         assert "••••••••" in out
 
     def test_get_non_secret_key_still_prints_value(self, cli_env, cli_db, capsys):
