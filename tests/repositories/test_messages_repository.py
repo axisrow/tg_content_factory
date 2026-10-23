@@ -324,9 +324,12 @@ def test_normalize_date_to_none():
 
 
 def test_normalize_date_to_datetime_keeps_exact_precision():
-    """Full ISO datetime bounds are supported and compare exactly (#1593)."""
+    """Full ISO datetime bounds are supported and compare exactly (#1593).
+
+    Naive input is treated as UTC, matching ``normalize_utc`` (#1666).
+    """
     result, op = MessagesRepository._normalize_date_to("2026-03-16T12:00:00")
-    assert result == "2026-03-16T12:00:00"
+    assert result == "2026-03-16T12:00:00+00:00"
     assert op == "<="
 
 

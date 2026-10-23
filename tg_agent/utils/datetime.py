@@ -50,10 +50,15 @@ def parse_datetime_bound(value: str) -> datetime:
 
     Separated from :func:`parse_date_bound` so callers can keep the exact
     precision datetime bounds carry while date-only bounds normalize to whole
-    days (#1593). Raises ValueError on anything that is neither.
+    days (#1593). The result is normalized to UTC (naive input treated as UTC):
+    bounds reach SQL as ISO TEXT against stored ``m.date`` values, so
+    equivalent instants with different offsets (``10:00Z`` vs ``13:00+03:00``)
+    must render on one timescale or the lexicographic comparison silently
+    mis-windows the query (#1666). Raises ValueError on anything that is
+    neither.
     """
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return normalize_utc(datetime.fromisoformat(value.replace("Z", "+00:00")))
     except ValueError:
         raise ValueError(
             f"invalid date {value!r}: expected YYYY-MM-DD or an ISO datetime"
