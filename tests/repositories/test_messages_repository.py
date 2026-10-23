@@ -300,6 +300,19 @@ def test_normalize_date_from_impossible_date_rejected():
         MessagesRepository._normalize_date_from("2026-13-45")
 
 
+def test_normalize_date_from_offset_normalized_to_utc():
+    """An offset datetime bound normalizes to the same UTC instant (#1666).
+
+    Bounds reach the SQL comparison as ISO TEXT against stored ``m.date``;
+    a raw ``+03:00`` offset compares lexicographically against ``+00:00``
+    values and silently drops the boundary message.
+    """
+    assert (
+        MessagesRepository._normalize_date_from("2026-10-20T13:00:00+03:00")
+        == "2026-10-20T10:00:00+00:00"
+    )
+
+
 # _normalize_date_to tests
 
 
@@ -372,6 +385,34 @@ async def test_search_messages_all(messages_repo):
     messages, total = await messages_repo.search_messages(SearchParams())
     assert len(messages) == 2
     assert total == 2
+
+
+async def test_search_equivalent_tz_bounds_find_boundary_message(messages_repo):
+    """Equivalent UTC/offset bounds return identical results; the exact
+    boundary message survives --date-from, --date-to and their combination (#1666)."""
+    await messages_repo.insert_message(
+        make_message(
+            1,
+            200,
+            "audit beta morning",
+            date=datetime(2026, 10, 20, 10, 0, 0, tzinfo=timezone.utc),
+        )
+    )
+    utc_bound = "2026-10-20T10:00:00+00:00"
+    offset_bound = "2026-10-20T13:00:00+03:00"  # same instant as utc_bound
+    for date_from, date_to in [
+        (utc_bound, None),
+        (offset_bound, None),
+        (None, utc_bound),
+        (None, offset_bound),
+        (utc_bound, utc_bound),
+        (offset_bound, offset_bound),
+    ]:
+        messages, total = await messages_repo.search_messages(
+            SearchParams(query="morning", date_from=date_from, date_to=date_to)
+        )
+        assert total == 1, f"date_from={date_from!r} date_to={date_to!r}"
+        assert messages[0].text == "audit beta morning"
 
 
 async def test_search_messages_by_channel(messages_repo):

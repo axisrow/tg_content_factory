@@ -105,6 +105,19 @@ def test_resolve_date_bounds_rejects_garbage():
         resolve_date_bounds(None, "2026-13-45")
 
 
+def test_resolve_date_bounds_equivalent_tz_offsets_match_utc():
+    """Equivalent instants with different offsets normalize to UTC (#1666).
+
+    Bounds are compared as ISO TEXT against stored ``m.date`` values, so
+    ``13:00+03:00`` must render as ``10:00+00:00`` — the raw offset breaks the
+    lexicographic SQL comparison and silently drops the boundary message.
+    """
+    assert resolve_date_bounds("2026-10-20T13:00:00+03:00", "2026-10-20T18:00:00+05:00") == (
+        "2026-10-20T10:00:00+00:00",
+        "2026-10-20T13:00:00+00:00",
+    )
+
+
 # sync_prompt — Ctrl-C-safe stdin reads for confirmation gates (#1590)
 
 
