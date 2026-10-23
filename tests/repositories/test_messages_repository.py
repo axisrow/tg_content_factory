@@ -515,13 +515,13 @@ async def test_search_messages_length_bounds_are_inclusive(messages_repo):
         ]
     )
 
-    for params in (
-        SearchParams(min_length=5),
-        SearchParams(max_length=5),
-        SearchParams(min_length=5, max_length=5),
+    for params, expected in (
+        (SearchParams(min_length=5), ["abcde", "abcdefg"]),
+        (SearchParams(max_length=5), ["abc", "abcde"]),
+        (SearchParams(min_length=5, max_length=5), ["abcde"]),
     ):
         messages, _total = await messages_repo.search_messages(params)
-        assert [m.text for m in messages] == ["abcde"]
+        assert sorted(m.text for m in messages) == expected
 
 
 async def test_search_messages_pagination(messages_repo):
