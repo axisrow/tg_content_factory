@@ -113,7 +113,7 @@ def test_lint_job_runs_ruff(ci_config: dict) -> None:
     assert "ruff check" in text, "lint job must run `ruff check`"
 
 
-def test_test_jobs_have_five_minute_budget(ci_config: dict) -> None:
+def test_test_jobs_have_wall_budget(ci_config: dict) -> None:
     """Every test job reds when it exceeds its wall budget (owner budget).
 
     ``timeout-minutes`` is the enforcement knob: the runner kills the job
