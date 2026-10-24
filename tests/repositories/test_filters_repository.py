@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from tg_agent.database.repositories.channels import ChannelsRepository
-from tg_agent.database.repositories.filters import _has_cyrillic_udf
+from tg_agent.database.udf import has_cyrillic_udf as _has_cyrillic_udf
 from tg_agent.models import Channel
 
 _INSERT_MSG = (

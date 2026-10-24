@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import time
 from typing import TYPE_CHECKING, cast
 
 import typer
@@ -89,19 +90,18 @@ async def analyze_impl(
     #1138) and skips the cross-dupe self-join, finishing in seconds; without it the
     analysis scans the whole message history. ``sample_size`` only applies to quick.
 
-    rebuild=True пересчитывает накопительный справочник текст-статистики из всей
-    истории (#1679) и включает быстрый путь анализатора — ручной точный режим
-    (дефолтный запуск после backfill идёт по справочнику за секунды).
+    Full analyze reads the four text metrics from the incremental stats cache
+    (#1679); cross-dupe still scans history (the slow tail on large DBs).
+    rebuild=True пересчитывает справочник из всей истории и включает быстрый
+    путь — ручной точный режим (сам пересчёт на большой БД занимает десятки минут).
     """
     _, db = await runtime.init_db(config_path)
     try:
         if rebuild:
-            import time as _time
-
-            t0 = _time.monotonic()
+            t0 = time.monotonic()
             await db.filter_repo.rebuild_text_stats()
             await db.filter_repo.set_stats_populated(True)
-            print(f"Stats cache rebuilt in {_time.monotonic() - t0:.1f}s — fast path enabled.")
+            print(f"Stats cache rebuilt in {time.monotonic() - t0:.1f}s — fast path enabled.")
         analyzer = ChannelAnalyzer(db)
         report = await analyzer.analyze_all(quick=quick, sample_size=sample_size)
         if not report.results:

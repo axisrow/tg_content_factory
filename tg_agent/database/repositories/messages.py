@@ -23,7 +23,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, AsyncIterator
 
 from tg_agent.database.pool import ReadConnection
-from tg_agent.database.repositories.filters import _has_cyrillic_udf
+from tg_agent.database.udf import has_cyrillic_udf
 from tg_agent.models import Message, SearchParams, SearchQuery
 from tg_agent.telegram.reactions import parse_reactions_json
 from tg_agent.utils.datetime import (
@@ -296,41 +296,50 @@ class MessagesRepository:
                 row[1] += 1  # total_text
             if len(text) <= 10:
                 row[3] += 1  # short: не-NULL текст любой длины ≤10
-            if nonempty and _has_cyrillic_udf(text):
+            if nonempty and has_cyrillic_udf(text):
                 row[4] += 1  # cyr
             if nonempty and len(text) < 200:
-                # LIKE в SQLite регистронезависим для ASCII — повторяем через lower().
+                # LIKE в SQLite регистронезависим для ASCII — повторяем через lower();
+                # entities_json проверяем только если текст сам не совпал (он бывает
+                # объёмным — зря не копируем).
                 low = text.lower()
-                entities = (getattr(m, "entities_json", None) or "").lower()
-                if "http" in low or "t.me" in low or "http" in entities or "t.me" in entities:
+                if "http" in low or "t.me" in low:
                     row[5] += 1  # short_link
+                else:
+                    entities = (getattr(m, "entities_json", None) or "").lower()
+                    if "http" in entities or "t.me" in entities:
+                        row[5] += 1  # short_link
             if nonempty and getattr(m, "forward_from_channel_id", None) is None:
                 row[2] += 1  # total_text_no_fwd
                 prefixes.append((m.channel_id, text[:100], m.date.isoformat()))
         try:
-            await self._database.executemany_write(
-                """INSERT INTO channel_text_stats
-                     (channel_id, total_all, total_text, total_text_no_fwd,
-                      short, cyr, short_link)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(channel_id) DO UPDATE SET
-                     total_all = total_all + excluded.total_all,
-                     total_text = total_text + excluded.total_text,
-                     total_text_no_fwd = total_text_no_fwd + excluded.total_text_no_fwd,
-                     short = short + excluded.short,
-                     cyr = cyr + excluded.cyr,
-                     short_link = short_link + excluded.short_link""",
-                [(cid, *d) for cid, d in counters.items()],
-            )
-            if prefixes:
-                await self._database.executemany_write(
-                    """INSERT INTO channel_prefix_stats (channel_id, prefix, first_date, cnt)
-                       VALUES (?, ?, ?, 1)
-                       ON CONFLICT(channel_id, prefix) DO UPDATE SET
-                         first_date = MIN(first_date, excluded.first_date),
-                         cnt = cnt + 1""",
-                    prefixes,
+            # Одна транзакция вместо двух executemany_write: один write-lock
+            # и один commit, обе таблицы справочника обновляются атомарно
+            # (паттерн _upsert_reactions).
+            async with self._database.transaction() as conn:
+                await conn.executemany(
+                    """INSERT INTO channel_text_stats
+                         (channel_id, total_all, total_text, total_text_no_fwd,
+                          short, cyr, short_link)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(channel_id) DO UPDATE SET
+                         total_all = total_all + excluded.total_all,
+                         total_text = total_text + excluded.total_text,
+                         total_text_no_fwd = total_text_no_fwd + excluded.total_text_no_fwd,
+                         short = short + excluded.short,
+                         cyr = cyr + excluded.cyr,
+                         short_link = short_link + excluded.short_link""",
+                    [(cid, *d) for cid, d in counters.items()],
                 )
+                if prefixes:
+                    await conn.executemany(
+                        """INSERT INTO channel_prefix_stats (channel_id, prefix, first_date, cnt)
+                           VALUES (?, ?, ?, 1)
+                           ON CONFLICT(channel_id, prefix) DO UPDATE SET
+                             first_date = MIN(first_date, excluded.first_date),
+                             cnt = cnt + 1""",
+                        prefixes,
+                    )
         except Exception:
             logger.exception(
                 "Failed to update filter text stats for %d message(s)", len(messages)
@@ -1450,6 +1459,13 @@ class MessagesRepository:
             "MessagesRepository.delete_premium_search_results requires a Database reference"
         )
         async with self._database.transaction() as conn:
+            # Каналы, чей кэш уходит: справочник фильтратора (#1679) после
+            # частичного удаления надо пересчитать по ним точечно.
+            cur = await conn.execute(
+                "SELECT DISTINCT channel_id FROM messages WHERE premium_search_query = ?",
+                (query,),
+            )
+            affected_channels = [row["channel_id"] for row in await cur.fetchall()]
             # Clear both embedding stores (JSON + BLOB) before the messages they
             # key on are gone, same rowid-reuse reasoning as the channel deletes
             # (#1039, cycle-2 review).
@@ -1467,6 +1483,8 @@ class MessagesRepository:
                 "DELETE FROM messages WHERE premium_search_query = ?", (query,)
             )
             rowcount = cur.rowcount or 0
+        if affected_channels:
+            await self._database.repos.filters.rebuild_channel_text_stats(affected_channels)
         return rowcount
 
     async def get_stats(self) -> dict:

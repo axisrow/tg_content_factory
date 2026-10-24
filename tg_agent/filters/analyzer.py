@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -138,6 +139,44 @@ class ChannelAnalyzer:
         skip_cross_dupe: bool = False,
         sample_size: int | None = None,
     ) -> tuple:
+        if not skip_cross_dupe and sample_size is None and await self._repo.stats_populated():
+            # Быстрый путь (#1679): четыре текст-метрики из накопительного
+            # справочника, cross-dupe и окна — живым SQL параллельно (gather),
+            # как в полной версии. Cross-dupe намеренно не из справочника:
+            # его вариант упирается в три сортировки 22M префиксов и на живой
+            # БД медленнее оригинала (замер 24.10: >40 мин против 944s);
+            # секундный cross-dupe — тир-2, отдельный PR.
+            logger.info("filter/analyze: text maps from stats cache (#1679)")
+            (
+                uniqueness_map,
+                short_map,
+                cyrillic_map,
+                auto_feed_map,
+            ) = await self._repo.fetch_text_stats_maps_fast(channel_id)
+            (
+                cross_dupe_map,
+                engagement_map,
+                forward_map,
+                volume_map,
+                subscriber_map,
+            ) = await asyncio.gather(
+                self._repo.fetch_cross_dupe_map(channel_id),
+                self._repo.fetch_engagement_map(channel_id),
+                self._repo.fetch_forward_share_map(channel_id),
+                self._repo.fetch_volume_map(channel_id),
+                self._repo.fetch_subscriber_map(channel_id),
+            )
+            return (
+                uniqueness_map,
+                subscriber_map,
+                short_map,
+                cross_dupe_map,
+                cyrillic_map,
+                auto_feed_map,
+                engagement_map,
+                forward_map,
+                volume_map,
+            )
         if self._repo._can_parallel():
             logger.info(
                 "filter/analyze: all maps — started (parallel%s)",
@@ -499,42 +538,19 @@ class ChannelAnalyzer:
         if not channels:
             return FilterReport()
 
-        if not skip_cross_dupe and sample_size is None and await self._repo.stats_populated():
-            # Быстрый путь (#1679): text-метрики и cross-dupe из накопительного
-            # справочника вместо пяти полных сканов messages. Окно-метрики
-            # (engagement/forward/volume) — как раньше, они и так секунды.
-            # quick-режим всегда идёт по сэмплированному SQL (свежий срез).
-            logger.info("filter/analyze: text maps from stats cache (#1679)")
-            (
-                uniqueness_map,
-                short_map,
-                cyrillic_map,
-                auto_feed_map,
-            ) = await self._repo.fetch_text_stats_maps_fast(channel_id)
-            # Cross-dupe остаётся на исходном SQL (#1676): вариант по
-            # channel_prefix_stats упирается в три сортировки 22M префиксов
-            # и на живой БД медленнее оригинала (замер 24.10: >40 мин против
-            # 944s). Секундный cross-dupe — тир-2 (глобальный first-seen
-            # справочник), отдельный PR.
-            cross_dupe_map = await self._repo.fetch_cross_dupe_map(channel_id)
-            engagement_map = await self._repo.fetch_engagement_map(channel_id)
-            forward_map = await self._repo.fetch_forward_share_map(channel_id)
-            volume_map = await self._repo.fetch_volume_map(channel_id)
-            subscriber_map = await self._repo.fetch_subscriber_map(channel_id)
-        else:
-            (
-                uniqueness_map,
-                subscriber_map,
-                short_map,
-                cross_dupe_map,
-                cyrillic_map,
-                auto_feed_map,
-                engagement_map,
-                forward_map,
-                volume_map,
-            ) = await self._fetch_analysis_maps(
-                channel_id, skip_cross_dupe=skip_cross_dupe, sample_size=sample_size
-            )
+        (
+            uniqueness_map,
+            subscriber_map,
+            short_map,
+            cross_dupe_map,
+            cyrillic_map,
+            auto_feed_map,
+            engagement_map,
+            forward_map,
+            volume_map,
+        ) = await self._fetch_analysis_maps(
+            channel_id, skip_cross_dupe=skip_cross_dupe, sample_size=sample_size
+        )
         min_subs = await self._load_min_subscribers_filter()
         thresholds = await self._load_thresholds()
         results = self._build_channel_results(

@@ -4,29 +4,28 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from typing import TYPE_CHECKING, cast
 
 import aiosqlite
 
 from tg_agent.database.pool import ReadConnection
-
-# Intentionally duplicated from tg_agent/filters/criteria.py — UDF layer must not
-# depend on the filters package to keep DB initialisation self-contained.
-_CYRILLIC_RE = re.compile(r"[а-яА-ЯёЁ]")
+from tg_agent.database.udf import has_cyrillic_udf
 
 logger = logging.getLogger(__name__)
-
-
-def _has_cyrillic_udf(text: str | None) -> int:
-    if not text:
-        return 0
-    return 1 if _CYRILLIC_RE.search(text) else 0
 
 
 # ── SQL templates ─────────────────────────────────────────────────────────
 # Used by both the sequential fetch_* methods and the parallel
 # _fetch_*_conn helpers below.
+
+# Условие «пост со ссылкой наружу» (#1492: ссылка может жить и в entities_json).
+# Один фрагмент на всех потребителей (full, sampled, rebuild-скан справочника):
+# рассинхрон сделал бы справочник тихо расходящимся с живым SQL на большой БД,
+# где parity-тесты не гоняются.
+_SQL_LINK_LIKE = (
+    "(text LIKE '%http%' OR text LIKE '%t.me%'"
+    " OR entities_json LIKE '%http%' OR entities_json LIKE '%t.me%')"
+)
 
 _SQL_CHANNELS = """
     SELECT
@@ -133,13 +132,11 @@ _SQL_CYRILLIC = """
 # LIKE по NULL даёт 0, обычные посты без сущностей не меняют счёт.
 # Порог флага — в criteria.py (AUTO_FEED_*), литерал 200 здесь сознательно
 # дублирован: SQL-слой не импортирует пакет filters (см. комментарий к UDF выше).
-_SQL_AUTO_FEED = """
+_SQL_AUTO_FEED = f"""
     SELECT
         channel_id,
         COUNT(*) AS total,
-        SUM(CASE WHEN length(text) < 200
-                AND (text LIKE '%http%' OR text LIKE '%t.me%'
-                     OR entities_json LIKE '%http%' OR entities_json LIKE '%t.me%')
+        SUM(CASE WHEN length(text) < 200 AND {_SQL_LINK_LIKE}
             THEN 1 ELSE 0 END) AS short_link
     FROM messages
     WHERE text IS NOT NULL AND text != ''
@@ -210,7 +207,7 @@ _SQL_CYRILLIC_SAMPLED = """
     FROM channels ch
 """
 
-_SQL_AUTO_FEED_SAMPLED = """
+_SQL_AUTO_FEED_SAMPLED = f"""
     SELECT
         ch.channel_id AS channel_id,
         (SELECT COUNT(*) FROM (
@@ -218,10 +215,8 @@ _SQL_AUTO_FEED_SAMPLED = """
             WHERE m.channel_id = ch.channel_id
             ORDER BY m.message_id DESC LIMIT ?
          ) s WHERE s.text IS NOT NULL AND s.text != '') AS total,
-        (SELECT SUM(CASE WHEN length(text) < 200
-                    AND (text LIKE '%http%' OR text LIKE '%t.me%'
-                         OR entities_json LIKE '%http%' OR entities_json LIKE '%t.me%')
-                THEN 1 ELSE 0 END) FROM (
+        (SELECT SUM(CASE WHEN length(text) < 200 AND {_SQL_LINK_LIKE}
+                    THEN 1 ELSE 0 END) FROM (
             SELECT text, entities_json FROM messages m
             WHERE m.channel_id = ch.channel_id
             ORDER BY m.message_id DESC LIMIT ?
@@ -282,6 +277,51 @@ _SQL_VOLUME_24H = """
     FROM channels ch
 """
 
+
+def _sql_text_stats_insert(channel_filter: str) -> str:
+    """INSERT...SELECT счётчиков `channel_text_stats` из messages.
+
+    `channel_filter` — "" (полный rebuild) или "channel_id = ?" (точечный
+    пересчёт канала). Условия в точности повторяют текст-шаблоны выше
+    (total_text/short_link/cyr — непустой текст, short — любой не-NULL,
+    уникальный знаменатель — только не-форварды; таблица из #1679).
+    """
+    return f"""
+        INSERT INTO channel_text_stats
+            (channel_id, total_all, total_text, total_text_no_fwd,
+             short, cyr, short_link)
+        SELECT
+            channel_id,
+            COUNT(*),
+            SUM(CASE WHEN text IS NOT NULL AND text != '' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN text IS NOT NULL AND text != ''
+                      AND forward_from_channel_id IS NULL THEN 1 ELSE 0 END),
+            SUM(CASE WHEN text IS NOT NULL AND length(text) <= 10
+                     THEN 1 ELSE 0 END),
+            SUM(CASE WHEN text IS NOT NULL AND text != '' AND has_cyrillic(text)
+                     THEN 1 ELSE 0 END),
+            SUM(CASE WHEN text IS NOT NULL AND text != '' AND length(text) < 200
+                      AND {_SQL_LINK_LIKE}
+                     THEN 1 ELSE 0 END)
+        FROM messages
+        {f"WHERE {channel_filter}" if channel_filter else ""}
+        GROUP BY channel_id
+    """
+
+
+def _sql_prefix_stats_insert(channel_filter: str) -> str:
+    """INSERT...SELECT префиксной таблицы; `channel_filter` — как выше."""
+    return f"""
+        INSERT INTO channel_prefix_stats (channel_id, prefix, first_date, cnt)
+        SELECT channel_id, substr(text, 1, 100), MIN(date), COUNT(*)
+        FROM messages
+        WHERE text IS NOT NULL AND text != ''
+          AND forward_from_channel_id IS NULL
+          {f"AND {channel_filter}" if channel_filter else ""}
+        GROUP BY channel_id, substr(text, 1, 100)
+    """
+
+
 if TYPE_CHECKING:
     from tg_agent.database.facade import Database
 
@@ -309,7 +349,7 @@ class FilterRepository:
 
     async def _ensure_udf(self) -> None:
         if not self._udf_registered:
-            await self._db.create_function("has_cyrillic", 1, _has_cyrillic_udf, deterministic=True)
+            await self._db.create_function("has_cyrillic", 1, has_cyrillic_udf, deterministic=True)
             self._udf_registered = True
 
     # ── Sequential fetch methods (original, used for single-channel) ──────
@@ -614,8 +654,6 @@ class FilterRepository:
         return {row["channel_id"]: row["cnt"] for row in rows}
 
     # ── Быстрый путь из накопительного справочника (#1679) ─────────────────
-    # Литерал 'filter_stats_populated' дублируется в analyzer.py осознанно:
-    # SQL-слой не импортирует пакет filters (см. комментарий к UDF выше).
 
     async def stats_populated(self) -> bool:
         """True, если справочник text-статистики заполнен (backfill/--rebuild)."""
@@ -629,11 +667,7 @@ class FilterRepository:
         assert self._database is not None, (
             "FilterRepository.set_stats_populated requires a Database reference"
         )
-        await self._database.execute_write(
-            "INSERT INTO settings (key, value) VALUES ('filter_stats_populated', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            ("1" if value else "0",),
-        )
+        await self._database.set_setting("filter_stats_populated", "1" if value else "0")
 
     async def fetch_text_stats_maps_fast(
         self, channel_id: int | None = None
@@ -678,52 +712,6 @@ class FilterRepository:
         }
         return uniqueness_map, short_map, cyrillic_map, auto_feed_map
 
-    async def fetch_cross_dupe_from_prefixes(
-        self, channel_id: int | None = None
-    ) -> dict[int, tuple[int, int]]:
-        """Карта cross-dupe из справочника — tie-семантика #1676 без скана messages.
-
-        channel_prefix_stats уже агрегирует (channel, prefix) → MIN(date):
-        остаются только группировки по префиксу. length(prefix)>10 здесь
-        эквивалентен length(text)>10 полной версии (короткий текст даёт
-        префикс длиной с сам текст). global_first считается по ВСЕМ каналам
-        и при одиночном вызове тоже — иначе первоисточник фальш-флагается.
-        """
-        sql = """
-            WITH first_seen AS (
-                SELECT prefix, MIN(first_date) AS global_first
-                FROM channel_prefix_stats
-                WHERE length(prefix) > 10
-                GROUP BY prefix
-            ),
-            earliest_tie AS (
-                SELECT cp.prefix, COUNT(*) AS n_earliest
-                FROM channel_prefix_stats cp
-                JOIN first_seen fs
-                  ON fs.prefix = cp.prefix AND cp.first_date = fs.global_first
-                GROUP BY cp.prefix
-            )
-            SELECT
-                cp.channel_id,
-                COUNT(*) AS uniq_total,
-                SUM(CASE WHEN cp.first_date > fs.global_first
-                           OR (cp.first_date = fs.global_first AND et.n_earliest > 1)
-                         THEN 1 ELSE 0 END) AS duped
-            FROM channel_prefix_stats cp
-            JOIN first_seen fs ON fs.prefix = cp.prefix
-            JOIN earliest_tie et ON et.prefix = cp.prefix
-            {final_where}
-            GROUP BY cp.channel_id
-        """
-        final_where = ""
-        params: tuple = ()
-        if channel_id is not None:
-            final_where = "WHERE cp.channel_id = ?"
-            params = (channel_id,)
-        cur = await self._db.execute(sql.format(final_where=final_where), params)
-        rows = await cur.fetchall()
-        return {row["channel_id"]: (row["uniq_total"], row["duped"] or 0) for row in rows}
-
     async def rebuild_text_stats(self) -> None:
         """Полный пересчёт справочника из истории (#1679; `filter analyze --rebuild`).
 
@@ -743,43 +731,42 @@ class FilterRepository:
         # тесты этого не ловят).
         assert self._database.db is not None
         await self._database.db.create_function(
-            "has_cyrillic", 1, _has_cyrillic_udf, deterministic=True
+            "has_cyrillic", 1, has_cyrillic_udf, deterministic=True
         )
         await self._database.execute_write("DELETE FROM channel_text_stats")
         await self._database.execute_write("DELETE FROM channel_prefix_stats")
-        await self._database.execute_write(
-            """
-            INSERT INTO channel_text_stats
-                (channel_id, total_all, total_text, total_text_no_fwd,
-                 short, cyr, short_link)
-            SELECT
-                channel_id,
-                COUNT(*),
-                SUM(CASE WHEN text IS NOT NULL AND text != '' THEN 1 ELSE 0 END),
-                SUM(CASE WHEN text IS NOT NULL AND text != ''
-                          AND forward_from_channel_id IS NULL THEN 1 ELSE 0 END),
-                SUM(CASE WHEN text IS NOT NULL AND length(text) <= 10
-                         THEN 1 ELSE 0 END),
-                SUM(CASE WHEN text IS NOT NULL AND text != '' AND has_cyrillic(text)
-                         THEN 1 ELSE 0 END),
-                SUM(CASE WHEN text IS NOT NULL AND text != '' AND length(text) < 200
-                          AND (text LIKE '%http%' OR text LIKE '%t.me%'
-                               OR entities_json LIKE '%http%' OR entities_json LIKE '%t.me%')
-                         THEN 1 ELSE 0 END)
-            FROM messages
-            GROUP BY channel_id
-            """
+        await self._database.execute_write(_sql_text_stats_insert(""))
+        await self._database.execute_write(_sql_prefix_stats_insert(""))
+
+    async def rebuild_channel_text_stats(self, channel_ids: list[int]) -> None:
+        """Точечный пересчёт справочника по каналам (после частичных удалений).
+
+        Полный rebuild излишне дорог, когда удаление задело несколько каналов
+        (например, `delete_premium_search_results` чистит кэш выборочно):
+        пересчитываем только их строки из оставшихся сообщений — точное
+        значение, включая first_date префиксов.
+        """
+        assert self._database is not None, (
+            "FilterRepository.rebuild_channel_text_stats requires a Database reference"
         )
-        await self._database.execute_write(
-            """
-            INSERT INTO channel_prefix_stats (channel_id, prefix, first_date, cnt)
-            SELECT channel_id, substr(text, 1, 100), MIN(date), COUNT(*)
-            FROM messages
-            WHERE text IS NOT NULL AND text != ''
-              AND forward_from_channel_id IS NULL
-            GROUP BY channel_id, substr(text, 1, 100)
-            """
+        # UDF на write-коннекте — см. комментарий в rebuild_text_stats.
+        assert self._database.db is not None
+        await self._database.db.create_function(
+            "has_cyrillic", 1, has_cyrillic_udf, deterministic=True
         )
+        for cid in channel_ids:
+            await self._database.execute_write(
+                "DELETE FROM channel_text_stats WHERE channel_id = ?", (cid,)
+            )
+            await self._database.execute_write(
+                "DELETE FROM channel_prefix_stats WHERE channel_id = ?", (cid,)
+            )
+            await self._database.execute_write(
+                _sql_text_stats_insert("channel_id = ?"), (cid,)
+            )
+            await self._database.execute_write(
+                _sql_prefix_stats_insert("channel_id = ?"), (cid,)
+            )
 
     # ── Parallel fetch: separate read-only connections ─────────────────────
 
@@ -802,7 +789,7 @@ class FilterRepository:
             timeout=10.0,
         )
         conn.row_factory = aiosqlite.Row
-        await conn.create_function("has_cyrillic", 1, _has_cyrillic_udf, deterministic=True)
+        await conn.create_function("has_cyrillic", 1, has_cyrillic_udf, deterministic=True)
         return conn
 
     @staticmethod

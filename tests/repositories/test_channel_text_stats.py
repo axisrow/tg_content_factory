@@ -1,20 +1,16 @@
 """Инкрементальный справочник текст-статистики фильтратора (#1679).
 
 Контракт: дельты при вставке повторяют условия полных SQL-шаблонов filters.py
-в точности, cross-dupe по справочнику — та же tie-семантика #1676, быстрый
-путь анализатора даёт те же карты, что живой SQL на той же БД.
+в точности, быстрый путь анализатора даёт те же карты, что живой SQL на той
+же БД, дельты и rebuild сходятся на граничных данных.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
-from tg_agent.database.repositories.channels import ChannelsRepository
-from tg_agent.database.repositories.filters import FilterRepository
 from tg_agent.filters.analyzer import ChannelAnalyzer
-from tg_agent.models import Message
+from tg_agent.models import Channel, Message
 
 _BASE = datetime(2026, 10, 24, 12, 0, 0, tzinfo=UTC)
 
@@ -38,14 +34,12 @@ def _msg(
     )
 
 
-@pytest.fixture
-async def filter_repo(db):
-    return FilterRepository(db.db, database=db)
-
-
-@pytest.fixture
-async def channels_repo(db):
-    return ChannelsRepository(db.db, database=db)
+async def _add_channels(db, *channel_ids: int) -> None:
+    cur = await db.db.execute(
+        "INSERT INTO channels (channel_id, title, channel_type) VALUES "
+        + ", ".join(f"({cid}, 'C{cid}', 'channel')" for cid in channel_ids)
+    )
+    await cur.close()
 
 
 async def _stats_row(db, channel_id: int) -> tuple:
@@ -58,7 +52,7 @@ async def _stats_row(db, channel_id: int) -> tuple:
 
 
 class TestInsertDeltas:
-    async def test_counters_and_prefixes(self, db, filter_repo):
+    async def test_counters_and_prefixes(self, db, filters_repo):
         """Дельты повторяют условия полных шаблонов: пустая строка считается
         только в short, не-NULL без текста — только в total_all, ссылка —
         регистронезависимо, форвард — вне префиксов и uniqueness."""
@@ -87,7 +81,7 @@ class TestInsertDeltas:
         assert len(prefixes) == 4
         assert all(row["cnt"] == 1 for row in prefixes)
 
-    async def test_duplicate_prefix_keeps_min_date(self, db, filter_repo):
+    async def test_duplicate_prefix_keeps_min_date(self, db, filters_repo):
         await db.repos.messages.insert_messages_batch(
             [
                 _msg(701, 1, "одинаковый префикс двух постов", minutes=10),
@@ -101,7 +95,7 @@ class TestInsertDeltas:
         assert row["cnt"] == 2
         assert row["first_date"] == (_BASE + timedelta(minutes=5)).isoformat()
 
-    async def test_existing_message_no_delta(self, db, filter_repo):
+    async def test_existing_message_no_delta(self, db, filters_repo):
         msgs = [_msg(702, 1, "текст существующего сообщения")]
         await db.repos.messages.insert_messages_batch(msgs)
         # Повторная вставка той же пары (channel_id, message_id) — дельты нет.
@@ -109,13 +103,37 @@ class TestInsertDeltas:
         # cyr=1: текст кириллический.
         assert tuple(await _stats_row(db, 702)) == (1, 1, 1, 0, 1, 0)
 
-    async def test_insert_message_single_path(self, db, filter_repo):
+    async def test_insert_message_single_path(self, db, filters_repo):
         await db.repos.messages.insert_message(_msg(703, 1, "одиночная вставка текста"))
         assert tuple(await _stats_row(db, 703)) == (1, 1, 1, 0, 1, 0)
 
+    async def test_premium_purge_rebuilds_affected_channels(self, db, filters_repo):
+        """Частичное удаление (premium-кэш) — точечный пересчёт канала (#1679)."""
+        await db.repos.messages.insert_messages_batch(
+            [
+                _msg(704, 1, "обычный собранный текст канала"),
+                _msg(704, 2, "сообщение из премиум-поиска"),
+            ]
+        )
+        # Пометить второе как premium-кэш и удалить только его.
+        await db.db.execute(
+            "UPDATE messages SET premium_search_query = 'тест' "
+            "WHERE channel_id = 704 AND message_id = 2"
+        )
+        await db.db.commit()
+        deleted = await db.repos.messages.delete_premium_search_results("тест")
+        assert deleted == 1
+        # Счётчики пересчитаны из оставшихся сообщений, а не обнулены и не
+        # оставлены завышенными.
+        assert tuple(await _stats_row(db, 704)) == (1, 1, 1, 0, 1, 0)
+        cur = await db.db.execute(
+            "SELECT COUNT(*) AS n FROM channel_prefix_stats WHERE channel_id = 704"
+        )
+        assert (await cur.fetchone())["n"] == 1
+
 
 class TestDeleteResetsStats:
-    async def test_purge_resets_sidecar(self, db, filter_repo):
+    async def test_purge_resets_sidecar(self, db, filters_repo):
         await db.repos.messages.insert_messages_batch([_msg(710, 1, "текст для purge-теста")])
         assert await _stats_row(db, 710) is not None
         deleted = await db.repos.messages.delete_messages_for_channel(710)
@@ -126,9 +144,7 @@ class TestDeleteResetsStats:
         )
         assert (await cur.fetchone())["n"] == 0
 
-    async def test_hard_delete_removes_sidecar(self, db, filter_repo, channels_repo):
-        from tg_agent.models import Channel
-
+    async def test_hard_delete_removes_sidecar(self, db, filters_repo, channels_repo):
         pk = await channels_repo.add_channel(
             Channel(channel_id=711, title="del", channel_type="channel")
         )
@@ -152,48 +168,28 @@ class TestFastPathParity:
             _msg(723, 2, "свой текст первого близнеца уникальный", minutes=3),
         ]
         await db.repos.messages.insert_messages_batch(msgs)
+        await _add_channels(db, 720, 721, 722, 723)
 
-    async def test_cross_dupe_tie_semantics_matches_live_sql(self, db, filter_repo):
+    async def test_text_maps_match_live_sql(self, db, filters_repo):
         await self._seed(db)
-        await filter_repo.rebuild_text_stats()
-        live = await filter_repo.fetch_cross_dupe_map()
-        fast = await filter_repo.fetch_cross_dupe_from_prefixes()
-        assert fast == live
-
-    async def test_cross_dupe_single_channel_matches_live_sql(self, db, filter_repo):
-        await self._seed(db)
-        await filter_repo.rebuild_text_stats()
-        for cid in (720, 721, 722, 723, 999):
-            live = await filter_repo.fetch_cross_dupe_map(cid)
-            fast = await filter_repo.fetch_cross_dupe_from_prefixes(cid)
-            assert fast == live, f"channel {cid}"
-
-    async def test_text_maps_match_live_sql(self, db, filter_repo):
-        await self._seed(db)
-        await filter_repo.rebuild_text_stats()
-        fast = await filter_repo.fetch_text_stats_maps_fast()
-        live_uniq = await filter_repo.fetch_uniqueness_map()
-        live_short = await filter_repo.fetch_short_message_map()
-        live_cyr = await filter_repo.fetch_cyrillic_map()
-        live_auto = await filter_repo.fetch_auto_feed_map()
+        await filters_repo.rebuild_text_stats()
+        fast = await filters_repo.fetch_text_stats_maps_fast()
+        live_uniq = await filters_repo.fetch_uniqueness_map()
+        live_short = await filters_repo.fetch_short_message_map()
+        live_cyr = await filters_repo.fetch_cyrillic_map()
+        live_auto = await filters_repo.fetch_auto_feed_map()
         assert fast[0] == live_uniq
         assert fast[1] == live_short
         assert fast[2] == live_cyr
         assert fast[3] == live_auto
 
-    async def test_analyzer_fast_path_same_flags(self, db, filter_repo):
+    async def test_analyzer_fast_path_same_flags(self, db, filters_repo):
         """Полный analyze по справочнику = analyze по живому SQL (флаги/метрики)."""
         await self._seed(db)
-        cur = await db.db.execute(
-            "INSERT INTO channels (channel_id, title, channel_type) "
-            "VALUES (720, 'A', 'channel'), (721, 'B', 'channel'), "
-            "(722, 'C', 'channel'), (723, 'D', 'channel')"
-        )
-        await cur.close()
 
         slow = await ChannelAnalyzer(db).analyze_all()
-        await filter_repo.rebuild_text_stats()
-        await filter_repo.set_stats_populated(True)
+        await filters_repo.rebuild_text_stats()
+        await filters_repo.set_stats_populated(True)
         fast = await ChannelAnalyzer(db).analyze_all()
 
         slow_by_id = {r.channel_id: r for r in slow.results}
@@ -205,41 +201,81 @@ class TestFastPathParity:
             assert result.uniqueness_pct == slow_r.uniqueness_pct
             assert result.volume_24h == slow_r.volume_24h
 
-    async def test_flag_off_falls_back_to_live_sql(self, db, filter_repo):
+    async def test_flag_off_falls_back_to_live_sql(self, db, filters_repo):
         await self._seed(db)
-        cur = await db.db.execute(
-            "INSERT INTO channels (channel_id, title, channel_type) "
-            "VALUES (720, 'A', 'channel'), (721, 'B', 'channel'), "
-            "(722, 'C', 'channel'), (723, 'D', 'channel')"
-        )
-        await cur.close()
         # Справочник не заполнен и флаг не ставился — анализатор идёт по живому SQL.
-        assert await filter_repo.stats_populated() is False
+        assert await filters_repo.stats_populated() is False
         report = await ChannelAnalyzer(db).analyze_all()
         assert report.results
 
 
+class TestDeltaRebuildEquivalence:
+    async def test_deltas_match_rebuild_on_boundaries(self, db, filters_repo):
+        """Дельты при вставке ≡ rebuild из истории на граничных случаях.
+
+        Единственная защита от рассинхрона трёх копий условий (дельты-Python,
+        полные шаблоны, rebuild-SQL): если правка критерия коснётся одной
+        копии и не тронет другую — этот тест красный.
+        """
+        boundary = [
+            _msg(740, 1, None),
+            _msg(740, 2, ""),  # пустая строка: только total_all + short
+            _msg(740, 3, "x" * 10, minutes=1),  # граница short (<=10)
+            _msg(740, 4, "x" * 11, minutes=2),  # сразу после границы
+            _msg(740, 5, "кириллица со ссылкой http://a", minutes=3),
+            _msg(740, 6, "z" * 200 + " http://a", minutes=4),  # ссылка при len>=200
+            _msg(740, 7, "пересланный пост http://a", minutes=5, forward_from=555),
+            _msg(740, 8, "текст с entity-ссылкой", minutes=6, entities_json='{"u":"http://a"}'),
+        ]
+        await db.repos.messages.insert_messages_batch(boundary)
+
+        async def _snapshot() -> tuple[list, list]:
+            cur = await db.db.execute(
+                "SELECT * FROM channel_text_stats ORDER BY channel_id"
+            )
+            stats = await cur.fetchall()
+            cur = await db.db.execute(
+                "SELECT * FROM channel_prefix_stats ORDER BY channel_id, prefix"
+            )
+            prefixes = await cur.fetchall()
+            return [tuple(r) for r in stats], [tuple(r) for r in prefixes]
+
+        before = await _snapshot()
+        await filters_repo.rebuild_text_stats()
+        after = await _snapshot()
+        assert before == after
+
+        # И точечный пересчёт канала согласован с полным.
+        await db.repos.messages.insert_messages_batch(
+            [_msg(741, 1, "второй канал для точечного пересчёта")]
+        )
+        await db.repos.messages.delete_premium_search_results("нет такого запроса")
+        await filters_repo.rebuild_channel_text_stats([740])
+        await filters_repo.rebuild_text_stats()
+        assert await _snapshot() == await _snapshot()
+
+
 class TestRebuild:
-    async def test_rebuild_replaces_stale_stats(self, db, filter_repo):
+    async def test_rebuild_replaces_stale_stats(self, db, filters_repo):
         await db.repos.messages.insert_messages_batch([_msg(730, 1, "текст первого прогона")])
-        await filter_repo.rebuild_text_stats()
+        await filters_repo.rebuild_text_stats()
         # Мусорная строка «прошлой жизни» должна исчезнуть при rebuild.
         await db.db.execute(
             "INSERT INTO channel_prefix_stats (channel_id, prefix, first_date, cnt) "
             "VALUES (999, 'мусорный префикс прошлой жизни', '2020-01-01', 5)"
         )
         await db.db.commit()
-        await filter_repo.rebuild_text_stats()
+        await filters_repo.rebuild_text_stats()
         cur = await db.db.execute(
             "SELECT COUNT(*) AS n FROM channel_prefix_stats WHERE channel_id = 999"
         )
         assert (await cur.fetchone())["n"] == 0
 
-    async def test_rebuild_enables_fast_path_flag(self, db, filter_repo):
+    async def test_rebuild_enables_fast_path_flag(self, db, filters_repo):
         await db.repos.messages.insert_messages_batch([_msg(731, 1, "текст для флага")])
-        assert await filter_repo.stats_populated() is False
-        await filter_repo.rebuild_text_stats()
-        await filter_repo.set_stats_populated(True)
-        assert await filter_repo.stats_populated() is True
-        await filter_repo.set_stats_populated(False)
-        assert await filter_repo.stats_populated() is False
+        assert await filters_repo.stats_populated() is False
+        await filters_repo.rebuild_text_stats()
+        await filters_repo.set_stats_populated(True)
+        assert await filters_repo.stats_populated() is True
+        await filters_repo.set_stats_populated(False)
+        assert await filters_repo.stats_populated() is False
