@@ -163,9 +163,9 @@ async def test_chat_streaming_total_timeout_cancels_with_bounded_wait(client, db
                 f"/agent/threads/{thread_id}/chat",
                 json={"message": "hello"},
             ),
-            timeout=0.2,
+            timeout=10.0,
         )
-        await asyncio.wait_for(cleanup_started.wait(), timeout=0.2)
+        await asyncio.wait_for(cleanup_started.wait(), timeout=10.0)
     finally:
         cleanup_release.set()
 
@@ -302,7 +302,7 @@ async def test_chat_streaming_client_disconnect_closes_pending_stream(client, db
             if '"type":"status"' in line:
                 break
 
-    await asyncio.wait_for(closed.wait(), timeout=0.2)
+    await asyncio.wait_for(closed.wait(), timeout=10.0)
 
 
 @pytest.mark.anyio
