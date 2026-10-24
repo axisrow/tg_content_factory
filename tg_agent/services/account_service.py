@@ -65,7 +65,7 @@ class AccountService:
         accounts = await self._accounts.list_accounts()
         for acc in accounts:
             if acc.id == account_id:
-                await self._accounts.set_active(account_id, not acc.is_active)
+                await self._accounts.set_active(account_id, not acc.is_active, origin="human", actor="service")
                 if self._pool:
                     if not acc.is_active:
                         try:

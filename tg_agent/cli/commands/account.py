@@ -318,6 +318,19 @@ async def verify_code_impl(
         # between sign-in and this point safely re-persists the same session.
         await db.set_setting(_pending_key(phone), "")
 
+        stored = next(
+            (s for s in await db.get_account_summaries(active_only=False) if s.phone == phone),
+            None,
+        )
+        if stored is not None and not stored.is_active:
+            # Re-auth refreshed the session of an account the operator switched
+            # off; the upsert keeps it off (#1315), so don't connect it either.
+            print(
+                f"Account {phone} re-authorized; it stays disabled by the operator "
+                f"(enable with: account toggle {stored.id})."
+            )
+            return
+
         is_premium = False
         try:
             _, pool = await runtime.init_pool(config, db)
@@ -399,7 +412,7 @@ async def toggle_impl(config_path: str, *, account_id: int) -> None:
             print(f"Account id={account_id} not found")
             return
         new_state = not acc.is_active
-        await db.set_account_active(account_id, new_state)
+        await db.set_account_active(account_id, new_state, origin="human", actor="cli")
         print(f"Account id={account_id} ({acc.phone}): active={new_state}")
     finally:
         await db.close()

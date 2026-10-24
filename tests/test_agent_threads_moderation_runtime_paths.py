@@ -324,7 +324,7 @@ class TestBulkApproveRuns:
         result = await handlers["bulk_approve_runs"]({"run_ids": "1,2,3", "confirm": True})
         text = _text(result)
         assert "Одобрено 3 run(s)" in text
-        bulk.assert_awaited_once_with([1, 2, 3], "approved")
+        bulk.assert_awaited_once_with([1, 2, 3], "approved", origin="auto", actor="agent")
 
     @pytest.mark.anyio
     async def test_exception(self, mock_db):
@@ -348,7 +348,7 @@ class TestBulkRejectRuns:
         result = await handlers["bulk_reject_runs"]({"run_ids": "4,5", "confirm": True})
         text = _text(result)
         assert "Отклонено 2 run(s)" in text
-        bulk.assert_awaited_once_with([4, 5], "rejected")
+        bulk.assert_awaited_once_with([4, 5], "rejected", origin="auto", actor="agent")
 
     @pytest.mark.anyio
     async def test_invalid_ids(self, mock_db):

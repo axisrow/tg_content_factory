@@ -7,6 +7,10 @@
   с partial-unique-индексом как жёстким бэкстопом. 0 primary допустимо: первая
   вставка с ``is_primary=False`` и деактивация/удаление последнего primary
   оставляют пул без primary-аккаунта;
+* провенанс ``is_active`` (#1315) — выключение/включение оператором пишет
+  ``active_origin='human'``; повторная авторизация (upsert в `add_account`) и
+  автоматические записи такое решение не перезаписывают, а подавленная
+  автоматическая попытка попадает в журнал решений;
 * шифрование StringSession — `session_string` хранится как `enc:v2:*`; запись
   без `SESSION_ENCRYPTION_KEY` запрещена. Чтение разделено на «для UI» (статус
   сессии без расшифровки) и «для живого использования» (расшифровка, иначе
@@ -89,6 +93,10 @@ class AccountsRepository:
         соединении, поэтому для гарантированного id обновлённой строки читайте её
         отдельно по `phone`.
 
+        Повторная авторизация того же телефона обновляет сессию, но не трогает
+        ``is_active``, если его выставил оператор (``active_origin='human'``,
+        #1315): иначе re-auth молча включал бы выключенный аккаунт.
+
         Сессия всегда шифруется перед записью. Флаг primary назначается атомарно —
         запрошенный ``is_primary`` срабатывает, только если primary-аккаунта ещё
         нет (#733), иначе сохраняется 0.
@@ -115,7 +123,8 @@ class AccountsRepository:
                )
                ON CONFLICT(phone) DO UPDATE SET
                    session_string=excluded.session_string,
-                   is_active=excluded.is_active,
+                   is_active=CASE WHEN accounts.active_origin = 'human'
+                                  THEN accounts.is_active ELSE excluded.is_active END,
                    is_premium=excluded.is_premium""",
             (
                 account.phone,
@@ -512,22 +521,55 @@ class AccountsRepository:
             """
         )
 
-    async def set_account_active(self, account_id: int, active: bool) -> None:
+    async def set_account_active(
+        self,
+        account_id: int,
+        active: bool,
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> int:
         """Включить/выключить аккаунт, поддерживая инвариант single-primary (#733).
 
         При активации — назначает primary, если ни одного нет. При деактивации
         текущего primary — снимает флаг и продвигает на роль primary самый ранний
         оставшийся активный аккаунт (если активных не осталось, primary временно нет).
+
+        Провенанс (#1315), как у каналов: запись с ``origin='human'`` проходит
+        всегда и закрепляет ``active_origin='human'``; автоматическая запись поверх
+        человеческого решения подавляется (возвращает 0) и журналируется. Каждое
+        человеческое решение тоже пишется в журнал ``decisions``.
+        Возвращает число изменённых строк.
         """
         assert self._database is not None, (
             "AccountsRepository.set_account_active requires a Database reference"
         )
         async with self._database.transaction() as conn:
-            cur = await conn.execute(
-                "UPDATE accounts SET is_active = ? WHERE id = ?", (int(active), account_id)
+            row_cur = await conn.execute(
+                "SELECT id, phone, is_active, active_origin FROM accounts WHERE id = ?",
+                (account_id,),
             )
-            if (cur.rowcount or 0) == 0:
-                return
+            row = await row_cur.fetchone()
+            if row is None:
+                return 0
+            cur = await conn.execute(
+                "UPDATE accounts SET is_active = ?, active_origin = ? "
+                "WHERE id = ? AND (? = 'human' OR active_origin != 'human')",
+                (int(active), origin, account_id, origin),
+            )
+            rowcount = cur.rowcount or 0
+            if rowcount == 0:
+                logger.info(
+                    "Suppressed automatic account decision: phone=%s field=is_active "
+                    "requested=%s; human decision is authoritative",
+                    row["phone"],
+                    int(active),
+                )
+                await self._record_active_decision(row, active, origin=origin, actor=actor, reason=reason)
+                return 0
+            if origin == "human":
+                await self._record_active_decision(row, active, origin=origin, actor=actor, reason=reason)
             if active:
                 await conn.execute(
                     """
@@ -546,6 +588,31 @@ class AccountsRepository:
                     (account_id,),
                 )
                 await self._promote_primary_if_none(conn, active_only=True)
+            return rowcount
+
+    async def _record_active_decision(
+        self,
+        row: aiosqlite.Row,
+        active: bool,
+        *,
+        origin: str,
+        actor: str | None,
+        reason: str | None,
+    ) -> None:
+        """Journal an ``is_active`` decision inside the caller's open transaction."""
+        assert self._database is not None
+        await self._database.repos.decisions.record(
+            entity="account",
+            entity_key=row["id"],
+            entity_name=row["phone"],
+            field="is_active",
+            old_value=str(int(row["is_active"])),
+            new_value=str(int(active)),
+            origin=origin,
+            actor=actor,
+            reason=reason,
+            commit=False,
+        )
 
     async def set_account_primary(self, account_id: int) -> bool:
         """Atomically make *account_id* the sole primary, demoting the previous one.

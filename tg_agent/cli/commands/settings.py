@@ -104,6 +104,10 @@ async def set_impl(config_path: str, *, key: str, value: str) -> None:
                 await db.repos.settings.set_secret(key, value)
             except RuntimeError as exc:
                 cli_error(f"ERROR: {exc}")
+        elif key.startswith("scheduler_job_disabled:"):
+            # A job toggle is the operator's decision: journal it so startup
+            # canonicalization never re-enables it as legacy state (#1315).
+            await db.repos.settings.record_setting_decision(key, value, origin="human", actor="cli")
         else:
             await db.set_setting(key, value)
         display = CREDENTIALS_MASK if is_secret_setting_key(key) else value

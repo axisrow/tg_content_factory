@@ -615,6 +615,7 @@ async def agent_decision_origin(
     field: str,
     old_value: str | None,
     new_value: str,
+    entity: str = "channel",
 ) -> str:
     """Resolve provenance for an agent mutation.
 
@@ -628,13 +629,14 @@ async def agent_decision_origin(
     if on_behalf_of_user and not confirmation_passed:
         reason = "agent requested action on behalf of owner without confirmation"
         logger.warning(
-            "Agent claimed owner authority without confirmation: entity=%s key=%s field=%s",
+            "Agent claimed owner authority without confirmation: entity=%s name=%s key=%s field=%s",
+            entity,
             entity_name or entity_key,
             entity_key,
             field,
         )
         await db.repos.decisions.record(
-            entity="channel",
+            entity=entity,
             entity_key=entity_key,
             entity_name=entity_name,
             field=field,

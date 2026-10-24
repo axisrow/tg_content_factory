@@ -87,7 +87,7 @@ async def approve_run(request: Request, run_id: int):
     if run is None:
         return _moderation_redirect("run_not_found", error=True)
 
-    await db.repos.generation_runs.set_moderation_status(run_id, "approved")
+    await db.repos.generation_runs.set_moderation_status(run_id, "approved", origin="human", actor="web")
     return _moderation_redirect("run_approved")
 
 
@@ -98,7 +98,7 @@ async def reject_run(request: Request, run_id: int):
     if run is None:
         return _moderation_redirect("run_not_found", error=True)
 
-    await db.repos.generation_runs.set_moderation_status(run_id, "rejected")
+    await db.repos.generation_runs.set_moderation_status(run_id, "rejected", origin="human", actor="web")
     return _moderation_redirect("run_rejected")
 
 
@@ -172,4 +172,6 @@ async def _bulk_set_moderation(db, run_ids: list[int], status: str) -> None:
     """
     existing = [rid for rid in run_ids if await db.repos.generation_runs.get(rid) is not None]
     if existing:
-        await db.repos.generation_runs.set_moderation_status_bulk(existing, status)
+        await db.repos.generation_runs.set_moderation_status_bulk(
+            existing, status, origin="human", actor="web"
+        )

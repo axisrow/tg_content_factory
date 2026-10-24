@@ -13,7 +13,9 @@ from tg_agent.database.migrations import (
     _migrate_vec_to_portable,
     _migrate_zai_empty_base_url_to_coding,
     _migrate_zai_legacy_base_url,
+    backfill_account_active_origin,
     backfill_private_channel_provenance,
+    backfill_run_rejection_origin,
     convert_legacy_search_quarantine,
     run_migrations,
 )
@@ -330,6 +332,73 @@ async def test_legacy_search_quarantine_converts_only_never_collected_rows(tmp_p
 
         # One-shot: the marker makes a rerun a no-op.
         assert await convert_legacy_search_quarantine(conn) == 0
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_disabled_accounts_backfill_as_operator_decisions(tmp_path):
+    """#1315: is_active=0 has no automatic writer, so legacy disabled accounts are human."""
+    conn = await _connect(str(tmp_path / "account-origin.db"))
+    try:
+        await run_migrations(conn)
+        await conn.executescript(
+            """
+            INSERT INTO accounts (phone, session_string, is_active) VALUES ('+1', 's', 0);
+            INSERT INTO accounts (phone, session_string, is_active) VALUES ('+2', 's', 1);
+            DELETE FROM settings WHERE key = '_migration_account_active_origin_v1';
+            """
+        )
+        await conn.commit()
+
+        assert await backfill_account_active_origin(conn) == 1
+
+        cur = await conn.execute("SELECT phone, active_origin FROM accounts ORDER BY phone")
+        assert {r["phone"]: r["active_origin"] for r in await cur.fetchall()} == {
+            "+1": "human",
+            "+2": "auto",
+        }
+        cur = await conn.execute(
+            "SELECT entity_name, origin FROM decisions WHERE entity = 'account'"
+        )
+        assert [(r["entity_name"], r["origin"]) for r in await cur.fetchall()] == [("+1", "migration")]
+        # One-shot: a later auto-disabled row (none exist today) is not swept up.
+        await conn.execute("UPDATE accounts SET is_active = 0 WHERE phone = '+2'")
+        await conn.commit()
+        assert await backfill_account_active_origin(conn) == 0
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_rejected_runs_backfill_as_operator_decisions(tmp_path):
+    """#1315: legacy rejections become human so automation cannot re-approve them."""
+    conn = await _connect(str(tmp_path / "run-origin.db"))
+    try:
+        await run_migrations(conn)
+        await conn.executescript(
+            """
+            INSERT INTO generation_runs (id, moderation_status) VALUES (1, 'rejected');
+            INSERT INTO generation_runs (id, moderation_status) VALUES (2, 'approved');
+            DELETE FROM settings WHERE key = '_migration_generation_run_rejection_origin_v1';
+            """
+        )
+        await conn.commit()
+
+        assert await backfill_run_rejection_origin(conn) == 1
+
+        cur = await conn.execute("SELECT id, moderation_origin FROM generation_runs ORDER BY id")
+        assert [(r["id"], r["moderation_origin"]) for r in await cur.fetchall()] == [
+            (1, "human"),
+            (2, "auto"),
+        ]
+        cur = await conn.execute(
+            "SELECT entity_key, origin FROM decisions WHERE entity = 'generation_run'"
+        )
+        assert [(r["entity_key"], r["origin"]) for r in await cur.fetchall()] == [(1, "migration")]
+        assert await backfill_run_rejection_origin(conn) == 0
     finally:
         await conn.close()
 

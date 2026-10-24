@@ -123,6 +123,11 @@ class ClientLifecycleMixin:
         session_string = self._session_overrides.get(phone)
         if session_string is None:
             return None
+        # The override bridges the window between auth and the DB write. Once a
+        # row exists it is authoritative: a stale override must not lease an
+        # account the operator has switched off (#1315).
+        if active_only and await self._lease_pool.get_account(phone, active_only=False) is not None:
+            return None
         return Account(phone=phone, session_string=session_string, is_active=True)
 
     async def initialize(self, *, phones: Iterable[str] | None = None) -> None:

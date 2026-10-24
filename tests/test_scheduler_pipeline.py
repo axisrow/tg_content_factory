@@ -72,9 +72,20 @@ async def test_sync_pipeline_jobs_registers_only_content_generate():
     assert "pipeline_run_3" in scheduler.removed
 
 
+class FakeSettings(dict):
+    """Settings dict that also answers the decision-journal lookup (#1315)."""
+
+    def __init__(self, values=None, decided=()):
+        super().__init__(values or {})
+        self.decided = set(decided)
+
+    async def has_setting_decision(self, key):
+        return key in self.decided
+
+
 class FakeSchedulerBundle:
-    def __init__(self, settings=None):
-        self.settings = dict(settings or {})
+    def __init__(self, settings=None, decided=()):
+        self.settings = FakeSettings(settings, decided)
 
     async def get_setting(self, key):
         return self.settings.get(key)

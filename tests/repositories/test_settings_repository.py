@@ -68,3 +68,20 @@ async def test_get_setting_case_sensitive(settings_repo):
 
     assert await settings_repo.get_setting("TestKey") == "value1"
     assert await settings_repo.get_setting("testkey") == "value2"
+
+
+async def test_record_setting_decision_writes_value_and_journal(settings_repo):
+    """#1315: a deliberate setting change is distinguishable from legacy state."""
+    key = "scheduler_job_disabled:content_generate_3"
+    await settings_repo.set_setting(key, "0")
+    assert await settings_repo.has_setting_decision(key) is False
+
+    await settings_repo.record_setting_decision(key, "1", origin="human", actor="cli")
+
+    assert await settings_repo.get_setting(key) == "1"
+    assert await settings_repo.has_setting_decision(key) is True
+    assert await settings_repo.has_setting_decision("scheduler_job_disabled:other") is False
+    history = await settings_repo._database.repos.decisions.history(
+        "setting", None, field="value", entity_name=key
+    )
+    assert [(d.old_value, d.new_value, d.origin, d.actor) for d in history] == [("0", "1", "human", "cli")]

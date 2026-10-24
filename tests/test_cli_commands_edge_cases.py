@@ -620,7 +620,7 @@ class TestSchedulerJobToggle:
         db = MagicMock()
         db.repos = MagicMock()
         db.repos.settings.get_setting = AsyncMock(return_value="1")  # currently disabled
-        db.repos.settings.set_setting = AsyncMock()
+        db.repos.settings.record_setting_decision = AsyncMock()
         # The impl also enqueues scheduler.reconcile for the live worker.
         db.repos.telegram_commands.find_active_by_type = AsyncMock(return_value=None)
         db.repos.telegram_commands.create_command = AsyncMock(return_value=1)
@@ -637,7 +637,9 @@ class TestSchedulerJobToggle:
 
         out = capsys.readouterr().out
         assert "enabled" in out
-        db.repos.settings.set_setting.assert_awaited_once_with("scheduler_job_disabled:my_job", "0")
+        db.repos.settings.record_setting_decision.assert_awaited_once_with(
+            "scheduler_job_disabled:my_job", "0", origin="human", actor="cli"
+        )
 
     def test_toggle_disables_job(self, capsys):
         from tg_agent.cli.commands.scheduler import run
@@ -645,7 +647,7 @@ class TestSchedulerJobToggle:
         db = MagicMock()
         db.repos = MagicMock()
         db.repos.settings.get_setting = AsyncMock(return_value=None)  # not disabled
-        db.repos.settings.set_setting = AsyncMock()
+        db.repos.settings.record_setting_decision = AsyncMock()
         # The impl also enqueues scheduler.reconcile for the live worker.
         db.repos.telegram_commands.find_active_by_type = AsyncMock(return_value=None)
         db.repos.telegram_commands.create_command = AsyncMock(return_value=1)
@@ -662,6 +664,9 @@ class TestSchedulerJobToggle:
 
         out = capsys.readouterr().out
         assert "disabled" in out
+        db.repos.settings.record_setting_decision.assert_awaited_once_with(
+            "scheduler_job_disabled:test_job", "1", origin="human", actor="cli"
+        )
 
 
 class TestSchedulerSetInterval:

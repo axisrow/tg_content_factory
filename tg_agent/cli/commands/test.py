@@ -533,7 +533,9 @@ async def _run_account_toggle_check(copy_db: Database, results: list[CheckResult
             acc = accounts[0]
             account_id = cast(int, acc.id)
             original = acc.is_active
-            await copy_db.set_account_active(account_id, not original)
+            # The check simulates the operator's toggle on a DB copy, so it is a
+            # human write: an auto write over a human decision is suppressed (#1315).
+            await copy_db.set_account_active(account_id, not original, origin="human", actor="cli:test")
             refreshed = await copy_db.get_accounts()
             toggled = next(a for a in refreshed if a.id == account_id)
             if toggled.is_active is not (not original):

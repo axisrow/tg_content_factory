@@ -383,25 +383,30 @@ class TestPipelineBulkApprove:
         The pre-fix CLI loop autocommitted one set_moderation_status per id, so
         a crash partway through left earlier ids approved with no rollback. The
         atomic path wraps the survivors in one transaction — proven here by
-        making the underlying executemany apply the first row then explode.
+        letting the first row's UPDATE apply for real, then exploding on the second.
         """
         rid1 = _create_pending_run(cli_env)
         rid2 = _create_pending_run(cli_env)
 
         conn = cli_env.db
-        real_executemany = conn.executemany
+        real_execute = conn.execute
+        updates = 0
 
-        async def exploding_executemany(sql, seq):
-            seq = list(seq)
-            await real_executemany(sql, seq[:1])
-            raise RuntimeError("simulated mid-batch crash")
+        async def exploding_execute(sql, *args, **kwargs):
+            nonlocal updates
+            if sql.startswith("UPDATE generation_runs SET moderation_status"):
+                updates += 1
+                if updates == 2:
+                    raise RuntimeError("simulated mid-batch crash")
+            return await real_execute(sql, *args, **kwargs)
 
-        conn.executemany = exploding_executemany
+        conn.execute = exploding_execute
         try:
             with pytest.raises(RuntimeError, match="mid-batch"):
                 run(_ns(pipeline_action="bulk-approve", run_ids=[rid1, rid2]))
         finally:
-            conn.executemany = real_executemany
+            conn.execute = real_execute
+        assert updates == 2
 
         db_path = cli_env._db_path
         assert _read_run_moderation(db_path, rid1) == "pending"

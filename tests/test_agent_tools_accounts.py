@@ -107,7 +107,7 @@ class TestToggleAccountTool:
         result = await handlers["toggle_account"]({"account_id": 1})
         text = _text(result)
         assert "деактивирован" in text
-        mock_db.set_account_active.assert_awaited_once_with(1, False)
+        mock_db.set_account_active.assert_awaited_once_with(1, False, origin="auto", actor="agent")
 
     @pytest.mark.anyio
     async def test_inactive_account_gets_activated(self, mock_db):
@@ -118,7 +118,7 @@ class TestToggleAccountTool:
         result = await handlers["toggle_account"]({"account_id": 2})
         text = _text(result)
         assert "активирован" in text
-        mock_db.set_account_active.assert_awaited_once_with(2, True)
+        mock_db.set_account_active.assert_awaited_once_with(2, True, origin="auto", actor="agent")
 
     @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):

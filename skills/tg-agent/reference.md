@@ -239,6 +239,11 @@ Flow: `pipeline generate` produces text (optionally an image) → run lands in m
 `pipeline approve` + `publish` post to the target channel. Generated runs are tracked and
 inspectable via `pipeline runs` / `run-show`.
 
+`pipeline approve | reject | bulk-approve | bulk-reject` are operator decisions
+(`moderation_origin='human'`, journaled in `decisions`): automation never overrides
+them — the AUTO pipeline and agent tools cannot re-approve a run the operator
+rejected; the suppressed attempt is journaled instead (#1315).
+
 ## scheduling & background
 
 ```
@@ -257,6 +262,11 @@ live objects (`trigger` runs the enqueue-all collection; `task-cancel` interrupt
 RUNNING collection at the collector's next check; `clear-pending` also drains the
 worker's in-memory queue and flood-wait timers). Without a daemon the DB effect is
 immediate; the command executes on the next worker start.
+
+`job-toggle` (and `settings set scheduler_job_disabled:<id>`) journals the decision;
+the scheduler's startup migration of the legacy pre-#835/2 disabled state never
+re-enables a journaled job, so an operator-disabled `content_generate_<id>` stays
+off across restarts, fresh DBs and restored dumps (#1315).
 
 ## analytics
 
@@ -311,3 +321,7 @@ mcp-server [--no-pool]                  # legacy MCP bridge
 
 `account send-code` / `verify-code` are part of interactive phone authorization — the user
 runs these and types the code; agents must not drive them unattended.
+
+`account toggle` is an operator decision (`active_origin='human'`, journaled): a later
+re-auth (`verify-code`, QR, `import --force`) refreshes the session but keeps a
+disabled account disabled and out of the pool; re-enable it with `account toggle` (#1315).

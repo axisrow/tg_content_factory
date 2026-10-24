@@ -218,7 +218,7 @@ class TestToggleSchedulerJobTool:
         """#1568: without a live manager the toggle writes the settings key + reconcile."""
         mock_db.repos = MagicMock()
         mock_db.repos.settings.get_setting = AsyncMock(return_value=None)
-        mock_db.repos.settings.set_setting = AsyncMock()
+        mock_db.repos.settings.record_setting_decision = AsyncMock()
         mock_db.repos.telegram_commands.find_active_by_type = AsyncMock(return_value=None)
         mock_db.repos.telegram_commands.create_command = AsyncMock(return_value=13)
         handlers = _get_tool_handlers(mock_db)
@@ -226,8 +226,8 @@ class TestToggleSchedulerJobTool:
         text = _text(result)
         assert "выключена" in text
         assert "#13" in text
-        mock_db.repos.settings.set_setting.assert_awaited_once_with(
-            "scheduler_job_disabled:collect", "1"
+        mock_db.repos.settings.record_setting_decision.assert_awaited_once_with(
+            "scheduler_job_disabled:collect", "1", origin="auto", actor="agent"
         )
 
     @pytest.mark.anyio

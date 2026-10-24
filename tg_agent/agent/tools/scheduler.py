@@ -179,7 +179,11 @@ def register(db, client_pool, embedding_service, **kwargs):
             key = f"scheduler_job_disabled:{job_id}"
             current = await db.repos.settings.get_setting(key)
             new_disabled = current != "1"
-            await db.repos.settings.set_setting(key, "1" if new_disabled else "0")
+            # Journaled (#1315): a deliberate toggle is not legacy state for the
+            # scheduler's startup canonicalization.
+            await db.repos.settings.record_setting_decision(
+                key, "1" if new_disabled else "0", origin="auto", actor="agent"
+            )
             status = "выключена" if new_disabled else "включена"
             return _text_response(
                 f"Задача '{job_id}' {status}: "

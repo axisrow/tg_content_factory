@@ -329,9 +329,11 @@ class AccountBundle(_AccountReadOps):
         """Добавить аккаунт; возвращает его id."""
         return await self.accounts.add_account(account)
 
-    async def set_active(self, account_id: int, active: bool) -> None:
-        """Включить/выключить аккаунт по id."""
-        await self.accounts.set_account_active(account_id, active)
+    async def set_active(
+        self, account_id: int, active: bool, *, origin: str = "auto", actor: str | None = None
+    ) -> int:
+        """Включить/выключить аккаунт по id; ``origin='human'`` — решение оператора (#1315)."""
+        return await self.accounts.set_account_active(account_id, active, origin=origin, actor=actor)
 
     async def delete_account(self, account_id: int) -> None:
         """Удалить аккаунт по id."""

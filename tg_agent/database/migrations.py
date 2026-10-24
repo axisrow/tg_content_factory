@@ -16,6 +16,16 @@ _PRIVATE_CHANNEL_PROVENANCE_MARKER = "_migration_private_channel_provenance_v1"
 _PRIVATE_CHANNEL_PROVENANCE_REASON = "backfill: private group, owner-supplied"
 _CHANNEL_USERNAME_REPAIR_MARKER = "_migration_channels_username_repaired_v1"
 _CHANNEL_APPROVAL_LEGACY_MARKER = "_migration_channel_approval_legacy_v1"
+_ACCOUNT_ACTIVE_ORIGIN_MARKER = "_migration_account_active_origin_v1"
+_ACCOUNT_ACTIVE_ORIGIN_REASON = (
+    "backfill: accounts.is_active=0 has no automatic writer, so an existing "
+    "disabled account is an operator decision (#1315)"
+)
+_RUN_REJECTION_ORIGIN_MARKER = "_migration_generation_run_rejection_origin_v1"
+_RUN_REJECTION_ORIGIN_REASON = (
+    "backfill: moderation_status='rejected' is set only by a moderation "
+    "decision, never by the AUTO pipeline, so it is treated as the operator's (#1315)"
+)
 _CHANNEL_APPROVAL_LEGACY_REASON = (
     "backfill: search-discovered rows from #1308 (is_active=0) moved to the "
     "approval queue as approval_state='pending', is_active restored (#1313)"
@@ -856,6 +866,110 @@ async def convert_legacy_search_quarantine(db: aiosqlite.Connection) -> int:
     return len(rows)
 
 
+async def backfill_account_active_origin(db: aiosqlite.Connection) -> int:
+    """Mark pre-existing disabled accounts as operator decisions (#1315).
+
+    ``accounts.active_origin`` predates its writers: every row still carries the
+    default ``'auto'``. Nothing in the codebase switches an account off
+    automatically — ``is_active = 0`` is only ever written by an operator toggle —
+    so each disabled account is a human decision that a re-auth must not undo.
+    One-shot, guarded by a settings marker, in one transaction with
+    decision-journal entries.
+    """
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = ? LIMIT 1",
+        (_ACCOUNT_ACTIVE_ORIGIN_MARKER,),
+    )
+    if await cur.fetchone():
+        return 0
+    if not {"is_active", "active_origin"} <= await table_columns(db, "accounts"):
+        # An accounts table without these columns holds no disabled rows to mark.
+        return 0
+
+    await db.execute("BEGIN IMMEDIATE")
+    try:
+        cur = await db.execute(
+            "SELECT id, phone FROM accounts "
+            "WHERE is_active = 0 AND active_origin != 'human' ORDER BY id ASC"
+        )
+        rows: list[aiosqlite.Row] = list(await cur.fetchall())
+        for row in rows:
+            await db.execute(
+                "UPDATE accounts SET active_origin = 'human' WHERE id = ?",
+                (row["id"],),
+            )
+            await db.execute(
+                "INSERT INTO decisions "
+                "(entity, entity_key, entity_name, field, old_value, new_value, origin, actor, reason) "
+                "VALUES ('account', ?, ?, 'active_origin', 'auto', 'human', 'migration', NULL, ?)",
+                (row["id"], row["phone"], _ACCOUNT_ACTIVE_ORIGIN_REASON),
+            )
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, '1')",
+            (_ACCOUNT_ACTIVE_ORIGIN_MARKER,),
+        )
+        await db.execute("COMMIT")
+    except Exception:
+        await db.execute("ROLLBACK")
+        raise
+    if rows:
+        logger.info(
+            "Account provenance backfill: %d disabled accounts marked as operator decisions",
+            len(rows),
+        )
+    return len(rows)
+
+
+async def backfill_run_rejection_origin(db: aiosqlite.Connection) -> int:
+    """Mark pre-existing rejected generation runs as human decisions (#1315).
+
+    ``generation_runs.moderation_origin`` predates its writers, so every row
+    still says ``'auto'``. The AUTO pipeline only ever writes ``approved``;
+    ``rejected`` comes from a moderation action, which makes it terminal for
+    automation. Without this backfill an agent bulk-approve could still pull an
+    old rejection back into the publish queue. One-shot, marker-guarded, one
+    transaction, journaled with a single ``INSERT ... SELECT``.
+    """
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = ? LIMIT 1",
+        (_RUN_REJECTION_ORIGIN_MARKER,),
+    )
+    if await cur.fetchone():
+        return 0
+    if not {"moderation_status", "moderation_origin"} <= await table_columns(db, "generation_runs"):
+        return 0
+
+    await db.execute("BEGIN IMMEDIATE")
+    try:
+        await db.execute(
+            "INSERT INTO decisions "
+            "(entity, entity_key, entity_name, field, old_value, new_value, origin, actor, reason) "
+            "SELECT 'generation_run', id, NULL, 'moderation_origin', 'auto', 'human', "
+            "'migration', NULL, ? FROM generation_runs "
+            "WHERE moderation_status = 'rejected' AND moderation_origin != 'human'",
+            (_RUN_REJECTION_ORIGIN_REASON,),
+        )
+        upd = await db.execute(
+            "UPDATE generation_runs SET moderation_origin = 'human' "
+            "WHERE moderation_status = 'rejected' AND moderation_origin != 'human'"
+        )
+        converted = upd.rowcount or 0
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, '1')",
+            (_RUN_REJECTION_ORIGIN_MARKER,),
+        )
+        await db.execute("COMMIT")
+    except Exception:
+        await db.execute("ROLLBACK")
+        raise
+    if converted:
+        logger.info(
+            "Moderation provenance backfill: %d rejected runs marked as operator decisions",
+            converted,
+        )
+    return converted
+
+
 async def run_migrations(db: aiosqlite.Connection) -> bool:
     """Repair the SQLite schema without rewriting existing user data.
 
@@ -963,6 +1077,11 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     # One-off: #1308's temporary is_active=0 search rows become honest
     # approval_queue pending rows (#1313).
     await convert_legacy_search_quarantine(db)
+
+    # One-off: disabled accounts become explicit operator decisions so that a
+    # re-auth upsert no longer re-enables them (#1315).
+    await backfill_account_active_origin(db)
+    await backfill_run_rejection_origin(db)
 
     # One-off: fill message_reactions.date for rows that predate the column so
     # reaction analytics can filter by date without joining messages (#760).

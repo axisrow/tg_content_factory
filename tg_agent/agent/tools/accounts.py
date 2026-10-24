@@ -14,6 +14,7 @@ from tg_agent.agent.tools._registry import (
     _get_accounts,
     _text_response,
     account_session_status,
+    agent_decision_origin,
     arg_bool,
     available_live_read_phones,
     connected_phones_from_pool,
@@ -225,8 +226,16 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "toggle_account",
-        "Toggle account active/inactive status. account_id = id from list_accounts.",
-        {"account_id": Annotated[int, "ID аккаунта из list_accounts"]},
+        "Toggle account active/inactive status. account_id = id from list_accounts. "
+        "A change over the owner's own decision is suppressed unless the owner asked "
+        "for it (on_behalf_of_user=true) and confirmed (confirm=true).",
+        {
+            "account_id": Annotated[int, "ID аккаунта из list_accounts"],
+            "confirm": Annotated[bool, "Подтверждение действия владельцем"],
+            "on_behalf_of_user": Annotated[
+                bool, "true только если владелец прямо попросил выполнить действие"
+            ],
+        },
     )
     async def toggle_account(args):
         account_id = args.get("account_id")
@@ -238,7 +247,25 @@ def register(db, client_pool, embedding_service, **kwargs):
             if acc is None:
                 return _text_response(f"Аккаунт id={account_id} не найден.")
             new_status = not acc.is_active
-            await db.set_account_active(int(account_id), new_status)
+            origin = await agent_decision_origin(
+                db,
+                args,
+                confirmation_passed=arg_bool(args, "confirm"),
+                entity="account",
+                entity_key=acc.id,
+                entity_name=acc.phone,
+                field="is_active",
+                old_value=str(int(acc.is_active)),
+                new_value=str(int(new_status)),
+            )
+            changed = await db.set_account_active(
+                int(account_id), new_status, origin=origin, actor="agent"
+            )
+            if changed == 0:
+                return _text_response(
+                    f"Изменение статуса аккаунта {acc.phone} подавлено: "
+                    "сохранено решение владельца."
+                )
             status_text = "активирован" if new_status else "деактивирован"
             return _text_response(f"Аккаунт {acc.phone} {status_text}.")
         except Exception as e:

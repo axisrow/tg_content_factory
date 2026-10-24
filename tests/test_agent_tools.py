@@ -439,7 +439,9 @@ class TestApproveRejectRunTools:
 
         result = await handlers["approve_run"]({"run_id": 1})
         assert "одобрен" in _text(result)
-        mock_db.repos.generation_runs.set_moderation_status.assert_awaited_once_with(1, "approved")
+        mock_db.repos.generation_runs.set_moderation_status.assert_awaited_once_with(
+            1, "approved", origin="auto", actor="agent"
+        )
 
     @pytest.mark.anyio
     async def test_reject_success(self, mock_db):
@@ -452,7 +454,9 @@ class TestApproveRejectRunTools:
 
         result = await handlers["reject_run"]({"run_id": 1})
         assert "отклонён" in _text(result)
-        mock_db.repos.generation_runs.set_moderation_status.assert_awaited_once_with(1, "rejected")
+        mock_db.repos.generation_runs.set_moderation_status.assert_awaited_once_with(
+            1, "rejected", origin="auto", actor="agent"
+        )
 
     @pytest.mark.anyio
     async def test_approve_missing_run_id(self, mock_db):
@@ -1146,26 +1150,26 @@ class TestSchedulerToolsWorkerFallback:
     async def test_toggle_scheduler_job_writes_disabled_key(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.settings.get_setting = AsyncMock(return_value=None)
-        mock_db.repos.settings.set_setting = AsyncMock()
+        mock_db.repos.settings.record_setting_decision = AsyncMock()
         _enable_command_queue(mock_db)
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["toggle_scheduler_job"]({"job_id": "sq_3"})
         assert "выключена" in _text(result)
-        mock_db.repos.settings.set_setting.assert_awaited_once_with(
-            "scheduler_job_disabled:sq_3", "1"
+        mock_db.repos.settings.record_setting_decision.assert_awaited_once_with(
+            "scheduler_job_disabled:sq_3", "1", origin="auto", actor="agent"
         )
 
     @pytest.mark.anyio
     async def test_toggle_canonicalizes_legacy_pipeline_run_id(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.settings.get_setting = AsyncMock(return_value="1")
-        mock_db.repos.settings.set_setting = AsyncMock()
+        mock_db.repos.settings.record_setting_decision = AsyncMock()
         _enable_command_queue(mock_db)
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["toggle_scheduler_job"]({"job_id": "pipeline_run_5"})
         assert "включена" in _text(result)
-        mock_db.repos.settings.set_setting.assert_awaited_once_with(
-            "scheduler_job_disabled:content_generate_5", "0"
+        mock_db.repos.settings.record_setting_decision.assert_awaited_once_with(
+            "scheduler_job_disabled:content_generate_5", "0", origin="auto", actor="agent"
         )
 
 

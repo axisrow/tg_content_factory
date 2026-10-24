@@ -485,12 +485,22 @@ class Database:
         )
         await self._accounts.update_account_premium(phone, is_premium)
 
-    async def set_account_active(self, account_id: int, active: bool) -> None:
+    async def set_account_active(
+        self,
+        account_id: int,
+        active: bool,
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> int:
         self._require()
         assert self._accounts is not None, (
             "Database.set_account_active requires initialized AccountsRepository"
         )
-        await self._accounts.set_account_active(account_id, active)
+        return await self._accounts.set_account_active(
+            account_id, active, origin=origin, actor=actor, reason=reason
+        )
 
     async def delete_account(self, account_id: int) -> None:
         self._require()

@@ -43,7 +43,7 @@ async def test_account_service_toggle_no_pool(mock_bundle):
     svc = AccountService(mock_bundle)
 
     await svc.toggle(1)
-    mock_bundle.set_active.assert_called_once_with(1, False)
+    mock_bundle.set_active.assert_called_once_with(1, False, origin="human", actor="service")
 
 
 @pytest.mark.anyio
@@ -53,7 +53,7 @@ async def test_account_service_toggle_activate_with_pool(mock_bundle, mock_pool)
     svc = AccountService(mock_bundle, mock_pool)
 
     await svc.toggle(1)
-    mock_bundle.set_active.assert_called_once_with(1, True)
+    mock_bundle.set_active.assert_called_once_with(1, True, origin="human", actor="service")
     mock_pool.add_client.assert_called_once_with("+7999", "sess")
 
 
@@ -64,7 +64,7 @@ async def test_account_service_toggle_deactivate_with_pool(mock_bundle, mock_poo
     svc = AccountService(mock_bundle, mock_pool)
 
     await svc.toggle(1)
-    mock_bundle.set_active.assert_called_once_with(1, False)
+    mock_bundle.set_active.assert_called_once_with(1, False, origin="human", actor="service")
     mock_pool.remove_client.assert_called_once_with("+7999")
 
 
@@ -77,7 +77,7 @@ async def test_account_service_toggle_add_client_error(mock_bundle, mock_pool):
 
     # Should not raise exception, just log it
     await svc.toggle(1)
-    mock_bundle.set_active.assert_called_once_with(1, True)
+    mock_bundle.set_active.assert_called_once_with(1, True, origin="human", actor="service")
 
 
 @pytest.mark.anyio
@@ -94,7 +94,7 @@ async def test_account_service_toggle_deactivate_remove_client_error(mock_bundle
     # Must not raise — the pool error is logged, not propagated.
     await svc.toggle(1)
 
-    mock_bundle.set_active.assert_called_once_with(1, False)
+    mock_bundle.set_active.assert_called_once_with(1, False, origin="human", actor="service")
     mock_pool.remove_client.assert_called_once_with("+7999")
 
 

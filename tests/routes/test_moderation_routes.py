@@ -267,16 +267,20 @@ async def test_bulk_approve_is_atomic_on_midbatch_failure(client):
     _, run_id_1 = await _create_pipeline_and_run(db)
     _, run_id_2 = await _create_pipeline_and_run(db)
 
-    # Make the underlying executemany apply the first row, then explode.
+    # Let the first row's UPDATE apply for real, then explode on the second.
     conn = db.db
-    real_executemany = conn.executemany
+    real_execute = conn.execute
+    updates = 0
 
-    async def exploding_executemany(sql, seq):
-        seq = list(seq)
-        await real_executemany(sql, seq[:1])
-        raise RuntimeError("simulated mid-batch crash")
+    async def exploding_execute(sql, *args, **kwargs):
+        nonlocal updates
+        if sql.startswith("UPDATE generation_runs SET moderation_status"):
+            updates += 1
+            if updates == 2:
+                raise RuntimeError("simulated mid-batch crash")
+        return await real_execute(sql, *args, **kwargs)
 
-    conn.executemany = exploding_executemany
+    conn.execute = exploding_execute
     try:
         with pytest.raises(RuntimeError, match="mid-batch"):
             await client.post(
@@ -285,7 +289,7 @@ async def test_bulk_approve_is_atomic_on_midbatch_failure(client):
                 follow_redirects=False,
             )
     finally:
-        conn.executemany = real_executemany
+        conn.execute = real_execute
 
     # Neither run may have been left approved.
     run_1 = await db.repos.generation_runs.get(run_id_1)

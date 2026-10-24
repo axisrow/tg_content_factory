@@ -36,6 +36,11 @@ class AccountsCommandsMixin(_Base):
                 status = getattr(summary, "session_status", "unavailable")
                 raise RuntimeError(f"account_session_unavailable:{phone}:{status}")
             raise RuntimeError(f"account_not_found:{phone}")
+        if not account.is_active:
+            # Re-auth of an account the operator switched off refreshes its
+            # session but must not bring it back into the live pool (#1315).
+            logger.info("accounts.connect: %s is disabled; session saved, not connected", phone)
+            return {"phone": phone, "is_premium": account.is_premium, "is_active": False}
         await self._pool.add_client(phone, account.session_string)
         result = await self._pool.get_client_by_phone(phone)
         is_premium = False
@@ -61,7 +66,9 @@ class AccountsCommandsMixin(_Base):
         if account_summary is None:
             raise RuntimeError(f"account_not_found:{account_id}")
         new_active = not account_summary.is_active
-        await self._db.set_account_active(account_id, new_active)
+        # accounts.toggle is enqueued by the operator's own toggle (web/CLI), so the
+        # decision is human and survives a later re-auth (#1315).
+        await self._db.set_account_active(account_id, new_active, origin="human", actor="dispatcher")
         if new_active:
             try:
                 if live_account is None:

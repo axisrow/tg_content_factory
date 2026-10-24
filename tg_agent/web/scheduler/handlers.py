@@ -123,7 +123,9 @@ async def toggle_scheduler_job(request: Request, job_id: str) -> SchedulerRedire
     key = f"scheduler_job_disabled:{job_id}"
     current = await db.repos.settings.get_setting(key)
     new_disabled = current != "1"
-    await db.repos.settings.set_setting(key, "1" if new_disabled else "0")
+    await db.repos.settings.record_setting_decision(
+        key, "1" if new_disabled else "0", origin="human", actor="web"
+    )
     return await enqueue_scheduler_command(
         request,
         "scheduler.reconcile",

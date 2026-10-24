@@ -378,7 +378,9 @@ class ContentGenerationService:
         # CONTENT_PUBLISH handler (which selects moderation_status='approved')
         # can never deliver a failed generation to Telegram (review: Codex).
         if not dry_run and effective_publish_mode == PipelinePublishMode.AUTO.value:
-            await self._db.repos.generation_runs.set_moderation_status(run_id, "approved")
+            await self._db.repos.generation_runs.set_moderation_status(
+                run_id, "approved", origin="auto", actor="pipeline"
+            )
 
     async def _get_generation_run_after_save(self, run_id: int) -> GenerationRun:
         run = await self._db.repos.generation_runs.get(run_id)

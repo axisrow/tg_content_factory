@@ -93,3 +93,52 @@ class SettingsRepository:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, value),
         )
+
+    async def record_setting_decision(
+        self,
+        key: str,
+        value: str,
+        *,
+        origin: str,
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        """Записать настройку как осознанное решение и занести его в журнал (#1315).
+
+        Значение и запись журнала ``decisions`` (``entity='setting'``,
+        ``entity_name=key``, ``field='value'``) коммитятся одной транзакцией, так
+        что по журналу можно отличить решение оператора от унаследованного
+        состояния, которое автоматика вправе мигрировать.
+        """
+        assert self._database is not None, (
+            "SettingsRepository.record_setting_decision requires a Database reference"
+        )
+        async with self._database.transaction() as conn:
+            cur = await conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
+            row = await cur.fetchone()
+            await conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+            await self._database.repos.decisions.record(
+                entity="setting",
+                entity_name=key,
+                field="value",
+                old_value=row["value"] if row else None,
+                new_value=value,
+                origin=origin,
+                actor=actor,
+                reason=reason,
+                commit=False,
+            )
+
+    async def has_setting_decision(self, key: str) -> bool:
+        """Есть ли в журнале хоть одно решение по ключу ``key`` (#1315)."""
+        assert self._database is not None, (
+            "SettingsRepository.has_setting_decision requires a Database reference"
+        )
+        history = await self._database.repos.decisions.history(
+            "setting", None, field="value", limit=1, entity_name=key
+        )
+        return bool(history)

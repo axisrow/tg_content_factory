@@ -895,7 +895,9 @@ async def _pipeline_approve(args: argparse.Namespace, db, config, svc: PipelineS
     if run is None:
         print(f"Run id={args.run_id} not found")
         return
-    await db.repos.generation_runs.set_moderation_status(args.run_id, "approved")
+    await db.repos.generation_runs.set_moderation_status(
+        args.run_id, "approved", origin="human", actor="cli"
+    )
     print(f"Approved run id={args.run_id}")
 
 
@@ -905,7 +907,9 @@ async def _pipeline_reject(args: argparse.Namespace, db, config, svc: PipelineSe
     if run is None:
         print(f"Run id={args.run_id} not found")
         return
-    await db.repos.generation_runs.set_moderation_status(args.run_id, "rejected")
+    await db.repos.generation_runs.set_moderation_status(
+        args.run_id, "rejected", origin="human", actor="cli"
+    )
     print(f"Rejected run id={args.run_id}")
 
 
@@ -937,7 +941,7 @@ async def _pipeline_bulk_approve(args: argparse.Namespace, db, config, svc: Pipe
             continue
         existing_approve_ids.append(run_id)
     await db.repos.generation_runs.set_moderation_status_bulk(
-        existing_approve_ids, "approved"
+        existing_approve_ids, "approved", origin="human", actor="cli"
     )
     print(f"Bulk approved: {len(existing_approve_ids)}/{len(args.run_ids)}")
 
@@ -953,7 +957,7 @@ async def _pipeline_bulk_reject(args: argparse.Namespace, db, config, svc: Pipel
             continue
         existing_reject_ids.append(run_id)
     await db.repos.generation_runs.set_moderation_status_bulk(
-        existing_reject_ids, "rejected"
+        existing_reject_ids, "rejected", origin="human", actor="cli"
     )
     print(f"Bulk rejected: {len(existing_reject_ids)}/{len(args.run_ids)}")
 

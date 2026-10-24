@@ -731,6 +731,31 @@ class TestSchedulerCommandRW:
         assert _sched_read_setting(db_path, "scheduler_job_disabled:collect_all") == "0"
         assert "enabled" in capsys.readouterr().out
 
+    def test_job_toggle_journals_operator_decision(
+        self, tmp_path, cli_init_patch, sched_pool_patch, capsys
+    ):
+        """#1315: the toggle is journaled, so startup canonicalization keeps it."""
+        import sqlite3
+
+        db_path = _sched_init_empty_db(tmp_path, "sched_toggle_journal.db")
+
+        _sched_run_with_db(
+            db_path,
+            cli_init_patch,
+            _ns(scheduler_action="job-toggle", job_id="content_generate_5"),
+        )
+
+        conn = sqlite3.connect(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT entity, entity_name, new_value, origin, actor FROM decisions"
+            ).fetchall()
+        finally:
+            conn.close()
+        assert rows == [
+            ("setting", "scheduler_job_disabled:content_generate_5", "1", "human", "cli")
+        ]
+
     def test_set_interval_writes_setting(
         self, tmp_path, cli_init_patch, sched_pool_patch, capsys
     ):

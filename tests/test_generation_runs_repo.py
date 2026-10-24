@@ -43,27 +43,32 @@ async def test_set_moderation_status_bulk_rolls_back_on_midbatch_failure(db):
     The pre-fix bulk tool looped one autocommit ``set_moderation_status`` per
     id, so a crash after committing ids 1..N-1 left those approved with no way
     back. The atomic version wraps the whole batch in one ``BEGIN IMMEDIATE``;
-    we prove the rollback is real by letting the underlying ``executemany``
-    apply the first row and then raise — the committed DB must still show every
-    run as ``pending``.
+    we prove the rollback is real by letting the first row's UPDATE apply for
+    real and then raising on the second — the committed DB must still show
+    every run as ``pending``.
     """
     repo = db.repos.generation_runs
     ids = [await repo.create_run(7, f"p-{i}") for i in range(3)]
 
     conn = db.db
     assert conn is not None
-    real_executemany = conn.executemany
+    real_execute = conn.execute
+    updates = 0
 
-    async def exploding_executemany(sql, seq):
-        seq = list(seq)
-        # Apply the first row for real, then blow up mid-batch — exactly the
-        # window where the old per-id loop would have left a partial commit.
-        await real_executemany(sql, seq[:1])
-        raise RuntimeError("simulated mid-batch crash")
+    async def exploding_execute(sql, *args, **kwargs):
+        nonlocal updates
+        if sql.startswith("UPDATE generation_runs SET moderation_status"):
+            updates += 1
+            # Apply the first row for real, then blow up mid-batch — exactly the
+            # window where the old per-id loop would have left a partial commit.
+            if updates == 2:
+                raise RuntimeError("simulated mid-batch crash")
+        return await real_execute(sql, *args, **kwargs)
 
     with pytest.raises(RuntimeError, match="mid-batch"):
-        with _patched(conn, "executemany", exploding_executemany):
+        with _patched(conn, "execute", exploding_execute):
             await repo.set_moderation_status_bulk(ids, "approved")
+    assert updates == 2
 
     # The transaction must have rolled the first (real) write back.
     for run_id in ids:

@@ -104,7 +104,9 @@ class TestApproveRunTool:
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["approve_run"]({"run_id": 1})
         assert "одобрен" in _text(result)
-        mock_db.repos.generation_runs.set_moderation_status.assert_called_once_with(1, "approved")
+        mock_db.repos.generation_runs.set_moderation_status.assert_called_once_with(
+            1, "approved", origin="auto", actor="agent"
+        )
 
 
 class TestRejectRunTool:
@@ -116,7 +118,9 @@ class TestRejectRunTool:
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["reject_run"]({"run_id": 2})
         assert "отклонён" in _text(result)
-        mock_db.repos.generation_runs.set_moderation_status.assert_called_once_with(2, "rejected")
+        mock_db.repos.generation_runs.set_moderation_status.assert_called_once_with(
+            2, "rejected", origin="auto", actor="agent"
+        )
 
 
 class TestBulkApproveRunsTool:
@@ -183,7 +187,7 @@ class TestBulkApproveAtomicity:
         )
 
         assert "Одобрено 3 run(s)" in _text(result)
-        bulk.assert_awaited_once_with([1, 2, 3], "approved")
+        bulk.assert_awaited_once_with([1, 2, 3], "approved", origin="auto", actor="agent")
 
     @pytest.mark.anyio
     async def test_failure_reports_error_not_partial_success(self, mock_db):
@@ -214,7 +218,7 @@ class TestBulkRejectAtomicity:
         )
 
         assert "Отклонено 2 run(s)" in _text(result)
-        bulk.assert_awaited_once_with([5, 6], "rejected")
+        bulk.assert_awaited_once_with([5, 6], "rejected", origin="auto", actor="agent")
 
     @pytest.mark.anyio
     async def test_failure_reports_error_not_partial_success(self, mock_db):

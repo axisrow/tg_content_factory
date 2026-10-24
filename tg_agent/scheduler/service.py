@@ -471,6 +471,11 @@ class SchedulerManager:
         pipeline where content_generate_ is disabled but pipeline_run_ is NOT, clear the
         content_generate_ disabled flag (pipeline_run_ was the operator's live toggle). Guarded by
         a one-time settings flag so a later deliberate disable is never re-enabled.
+
+        The flag alone does not tell intent apart (#1315): on a fresh DB, a restored dump or a
+        reset flag, a deliberate disable of content_generate_ looks exactly like the legacy
+        split. Every toggle since #1315 journals its decision, so a journaled key is never
+        legacy state and is left alone.
         """
         if not self._scheduler_bundle:
             return
@@ -480,11 +485,18 @@ class SchedulerManager:
         for p in active_pipelines:
             if p.id is None:
                 continue
-            gen_disabled = await self._scheduler_bundle.get_setting(f"scheduler_job_disabled:content_generate_{p.id}")
+            gen_key = f"scheduler_job_disabled:content_generate_{p.id}"
+            gen_disabled = await self._scheduler_bundle.get_setting(gen_key)
             run_disabled = await self._scheduler_bundle.get_setting(f"scheduler_job_disabled:pipeline_run_{p.id}")
             if gen_disabled == "1" and run_disabled != "1":
+                if await self._scheduler_bundle.settings.has_setting_decision(gen_key):
+                    logger.info(
+                        "Kept deliberate disable of content_generate_%d: journaled decision, not legacy state",
+                        p.id,
+                    )
+                    continue
                 # pipeline_run_ was the live toggle; content_generate_ is now canonical → enable it.
-                await self._scheduler_bundle.set_setting(f"scheduler_job_disabled:content_generate_{p.id}", "0")
+                await self._scheduler_bundle.set_setting(gen_key, "0")
                 logger.info(
                     "Canonicalized legacy disabled state for pipeline %d: re-enabled content_generate_%d",
                     p.id,

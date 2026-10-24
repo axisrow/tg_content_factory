@@ -9,6 +9,7 @@ locked-хелперы Database (execute_write/transaction).
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import aiosqlite
@@ -20,6 +21,19 @@ from tg_agent.utils.json import safe_json_dumps, safe_json_loads
 
 if TYPE_CHECKING:
     from tg_agent.database.facade import Database
+
+logger = logging.getLogger(__name__)
+
+# A moderation write from these states is a no-op: ``publishing`` is owned by the
+# claim/release/refresh trio and ``published`` only by set_published_at (#1234).
+# The second clause is the provenance guard (#1315): an automatic write never
+# overrides a human moderation decision. Parameters: (status, origin, run_id, origin).
+_MODERATION_UPDATE_SQL = (
+    "UPDATE generation_runs SET moderation_status = ?, moderation_origin = ?, "
+    "updated_at = datetime('now') "
+    "WHERE id = ? AND moderation_status NOT IN ('publishing', 'published') "
+    "AND (? = 'human' OR moderation_origin != 'human')"
+)
 
 
 class GenerationRunsRepository:
@@ -107,7 +121,15 @@ class GenerationRunsRepository:
             (generated_text, safe_json_dumps(metadata or {}, ensure_ascii=False), run_id),
         )
 
-    async def set_moderation_status(self, run_id: int, status: str) -> None:
+    async def set_moderation_status(
+        self,
+        run_id: int,
+        status: str,
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> int:
         """Set the run's moderation lifecycle state (issue #1036).
 
         Valid values and what they mean for the content cycle:
@@ -132,15 +154,67 @@ class GenerationRunsRepository:
         guard lives in the WHERE clause so the check and the write stay
         atomic; writes from those states are no-ops. Re-decisions between
         non-terminal states (``approved`` ↔ ``rejected``) stay allowed.
+
+        Provenance (#1315): ``origin='human'`` is an operator decision — it is
+        stored in ``moderation_origin`` and journaled. An automatic write
+        (``origin='auto'``: the AUTO pipeline, an agent without the owner's
+        confirmed request) never overrides a human decision; the suppressed
+        attempt is journaled instead, so a human-rejected run cannot be put back
+        into the publish queue behind the operator's back.
+
+        Returns the number of updated rows (0 = no-op or suppressed).
         """
         assert self._database is not None, (
             "GenerationRunsRepository.set_moderation_status requires a Database reference"
         )
-        await self._database.execute_write(
-            "UPDATE generation_runs SET moderation_status = ?, updated_at = datetime('now') "
-            "WHERE id = ? AND moderation_status NOT IN ('publishing', 'published')",
-            (status, run_id),
+        async with self._database.transaction() as conn:
+            return await self._apply_moderation_decision(
+                conn, run_id, status, origin=origin, actor=actor, reason=reason
+            )
+
+    async def _apply_moderation_decision(
+        self,
+        conn: aiosqlite.Connection,
+        run_id: int,
+        status: str,
+        *,
+        origin: str,
+        actor: str | None,
+        reason: str | None,
+    ) -> int:
+        """Guarded moderation write + journal entry inside the caller's transaction."""
+        assert self._database is not None
+        cur = await conn.execute(
+            "SELECT moderation_status, moderation_origin FROM generation_runs WHERE id = ?",
+            (run_id,),
         )
+        row = await cur.fetchone()
+        if row is None:
+            return 0
+        cur = await conn.execute(_MODERATION_UPDATE_SQL, (status, origin, run_id, origin))
+        rowcount = cur.rowcount or 0
+        suppressed = rowcount == 0 and origin != "human" and row["moderation_origin"] == "human"
+        if suppressed:
+            logger.warning(
+                "Suppressed automatic moderation decision: run_id=%s %s -> %s; "
+                "human decision is authoritative",
+                run_id,
+                row["moderation_status"],
+                status,
+            )
+        if suppressed or (rowcount > 0 and origin == "human"):
+            await self._database.repos.decisions.record(
+                entity="generation_run",
+                entity_key=run_id,
+                field="moderation_status",
+                old_value=row["moderation_status"],
+                new_value=status,
+                origin=origin,
+                actor=actor,
+                reason=reason,
+                commit=False,
+            )
+        return rowcount
 
     async def claim_for_publish(self, run_id: int, expected_status: str) -> bool:
         """Atomically claim a run so concurrent publishers cannot both send it."""
@@ -178,7 +252,15 @@ class GenerationRunsRepository:
             (run_id,),
         )
 
-    async def set_moderation_status_bulk(self, run_ids: list[int], status: str) -> None:
+    async def set_moderation_status_bulk(
+        self,
+        run_ids: list[int],
+        status: str,
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> list[int]:
         """Atomically set ``moderation_status`` for many runs (issue #1041).
 
         Bulk approve/reject previously looped one autocommit
@@ -188,20 +270,26 @@ class GenerationRunsRepository:
         ``BEGIN IMMEDIATE`` transaction makes the batch all-or-nothing: a
         mid-batch error rolls the whole update back and propagates so the
         caller can surface the failure instead of a partial-success message.
+
+        Same guards as :meth:`set_moderation_status` (#1234 terminal states,
+        #1315 provenance). Returns the ids that were NOT updated (missing,
+        terminal, or protected by a human decision) so the caller can report
+        them instead of claiming the whole batch.
         """
         assert self._database is not None, (
             "GenerationRunsRepository.set_moderation_status_bulk requires a Database reference"
         )
         if not run_ids:
-            return
+            return []
+        skipped: list[int] = []
         async with self._database.transaction() as conn:
-            await conn.executemany(
-                # Same terminal-state guard as set_moderation_status (issue 1234):
-                # a bulk decision must not flip publishing/published runs either.
-                "UPDATE generation_runs SET moderation_status = ?, updated_at = datetime('now') "
-                "WHERE id = ? AND moderation_status NOT IN ('publishing', 'published')",
-                [(status, run_id) for run_id in run_ids],
-            )
+            for run_id in run_ids:
+                changed = await self._apply_moderation_decision(
+                    conn, run_id, status, origin=origin, actor=actor, reason=reason
+                )
+                if changed == 0:
+                    skipped.append(run_id)
+        return skipped
 
     async def set_image_url(self, run_id: int, image_url: str) -> None:
         """Привязать к запуску URL/путь сгенерированной картинки."""
@@ -298,9 +386,12 @@ class GenerationRunsRepository:
         assert self._database is not None, (
             "GenerationRunsRepository.set_published_at requires a Database reference"
         )
+        # A human rejection is final (#1315): even a stray caller cannot flip it
+        # to ``published``. The real path always comes from a ``publishing`` claim.
         await self._database.execute_write(
             ("UPDATE generation_runs SET published_at = datetime('now'), "
-             "moderation_status = 'published', updated_at = datetime('now') WHERE id = ?"),
+             "moderation_status = 'published', updated_at = datetime('now') WHERE id = ? "
+             "AND NOT (moderation_status = 'rejected' AND moderation_origin = 'human')"),
             (run_id,),
         )
 

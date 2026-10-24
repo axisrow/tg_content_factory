@@ -182,7 +182,11 @@ async def job_toggle_impl(config_path: str, *, job_id: str) -> None:
         key = f"scheduler_job_disabled:{job_id}"
         current = await db.repos.settings.get_setting(key)
         new_disabled = current != "1"
-        await db.repos.settings.set_setting(key, "1" if new_disabled else "0")
+        # Journaled as the operator's decision so startup canonicalization never
+        # mistakes it for legacy state and re-enables the job (#1315).
+        await db.repos.settings.record_setting_decision(
+            key, "1" if new_disabled else "0", origin="human", actor="cli"
+        )
         await _enqueue_reconcile(db, "job-toggle")
         status = "disabled" if new_disabled else "enabled"
         print(f"Job '{job_id}' {status}.")
