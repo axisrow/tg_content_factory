@@ -224,10 +224,13 @@ def test_filter_analyze_default_and_quick():
         runner.invoke(app, ["filter", "analyze"])
         runner.invoke(app, ["filter", "analyze", "--quick"])
         runner.invoke(app, ["filter", "analyze", "--quick", "--sample-size", "50"])
-    # sample_size defaults to the calibrated 300 and is forwarded alongside quick (#1138).
-    assert mock_impl.call_args_list[0].kwargs == {"quick": False, "sample_size": 300}
-    assert mock_impl.call_args_list[1].kwargs == {"quick": True, "sample_size": 300}
-    assert mock_impl.call_args_list[2].kwargs == {"quick": True, "sample_size": 50}
+        runner.invoke(app, ["filter", "analyze", "--rebuild"])
+    # sample_size defaults to the calibrated 300 and is forwarded alongside quick (#1138);
+    # rebuild forwards the manual exact-mode flag (#1679).
+    assert mock_impl.call_args_list[0].kwargs == {"quick": False, "sample_size": 300, "rebuild": False}
+    assert mock_impl.call_args_list[1].kwargs == {"quick": True, "sample_size": 300, "rebuild": False}
+    assert mock_impl.call_args_list[2].kwargs == {"quick": True, "sample_size": 50, "rebuild": False}
+    assert mock_impl.call_args_list[3].kwargs == {"quick": False, "sample_size": 300, "rebuild": True}
 
 
 def test_filter_apply_precheck_delegate():
