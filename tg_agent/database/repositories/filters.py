@@ -285,6 +285,10 @@ def _sql_text_stats_insert(channel_filter: str) -> str:
     пересчёт канала). Условия в точности повторяют текст-шаблоны выше
     (total_text/short_link/cyr — непустой текст, short — любой не-NULL,
     уникальный знаменатель — только не-форварды; таблица из #1679).
+    Upsert: дельта воркера, закоммиченная между DELETE и агрегатом при
+    rebuild (инструкции под отдельными короткими write-lock'ами), переживает
+    DELETE и без DO UPDATE роняла бы агрегат по UNIQUE(channel_id); точный
+    агрегат заменяет пережившую строку.
     """
     return f"""
         INSERT INTO channel_text_stats
@@ -306,11 +310,23 @@ def _sql_text_stats_insert(channel_filter: str) -> str:
         FROM messages
         {f"WHERE {channel_filter}" if channel_filter else ""}
         GROUP BY channel_id
+        ON CONFLICT(channel_id) DO UPDATE SET
+            total_all = excluded.total_all,
+            total_text = excluded.total_text,
+            total_text_no_fwd = excluded.total_text_no_fwd,
+            short = excluded.short,
+            cyr = excluded.cyr,
+            short_link = excluded.short_link
     """
 
 
 def _sql_prefix_stats_insert(channel_filter: str) -> str:
-    """INSERT...SELECT префиксной таблицы; `channel_filter` — как выше."""
+    """INSERT...SELECT префиксной таблицы; `channel_filter` — как выше.
+
+    Upsert — по той же причине, что и в `_sql_text_stats_insert`: дельта
+    воркера между DELETE и агрегатом переживает DELETE, DO UPDATE заменяет
+    её точным агрегатом вместо UNIQUE(channel_id, prefix) конфликта.
+    """
     return f"""
         INSERT INTO channel_prefix_stats (channel_id, prefix, first_date, cnt)
         SELECT channel_id, substr(text, 1, 100), MIN(date), COUNT(*)
@@ -319,6 +335,9 @@ def _sql_prefix_stats_insert(channel_filter: str) -> str:
           AND forward_from_channel_id IS NULL
           {f"AND {channel_filter}" if channel_filter else ""}
         GROUP BY channel_id, substr(text, 1, 100)
+        ON CONFLICT(channel_id, prefix) DO UPDATE SET
+            first_date = excluded.first_date,
+            cnt = excluded.cnt
     """
 
 
@@ -718,9 +737,11 @@ class FilterRepository:
         Два INSERT...SELECT: счётчики одним сканом messages (UDF has_cyrillic
         на write-коннекте), префиксы — GROUP BY (channel_id, prefix). Каждая
         инструкция — отдельный короткий write-lock: долгая транзакция заблокировала
-        бы сбор воркера на десятки минут. Пересечение с параллельными дельтами
-        вставки согласовано: дельта, попавшая между DELETE и INSERT...SELECT,
-        стирается DELETE и ровно один раз учитывается агрегатом.
+        бы сбор воркера на десятки минут. Пересечение с параллельными дельтами:
+        дельта, закоммиченная воркером в окне между DELETE и INSERT...SELECT,
+        переживает DELETE, поэтому оба агрегата — upsert (DO UPDATE): дельта,
+        учтённая в переживший строке, заменяется точным агрегатом вместо
+        UNIQUE-PK конфликта (ревью #1680).
         """
         assert self._database is not None, (
             "FilterRepository.rebuild_text_stats requires a Database reference"

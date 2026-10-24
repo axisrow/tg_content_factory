@@ -271,6 +271,53 @@ class TestRebuild:
         )
         assert (await cur.fetchone())["n"] == 0
 
+    async def test_rebuild_survives_delta_between_delete_and_insert(self, db, filters_repo):
+        """Гонка rebuild ↔ дельта воркера (ревью #1680).
+
+        Дельта, закоммиченная воркером в окне между DELETE и агрегатным
+        INSERT...SELECT (инструкции rebuild — отдельные короткие write-lock'и),
+        переживает DELETE; до upsert-а она роняла агрегат по UNIQUE-PK.
+        """
+        await db.repos.messages.insert_messages_batch([_msg(732, 1, "текст до гонки")])
+
+        orig_execute_write = db.execute_write
+        raced = False
+
+        async def racing_execute_write(sql, params=()):
+            nonlocal raced
+            await orig_execute_write(sql, params)
+            if not raced and sql.lstrip() == "DELETE FROM channel_text_stats":
+                raced = True
+                # Воркер коммитит дельту ровно в окне DELETE → INSERT.
+                await db.repos.messages.insert_messages_batch(
+                    [_msg(732, 2, "текст, собранный посреди rebuild", minutes=1)]
+                )
+
+        db.execute_write = racing_execute_write
+        try:
+            await filters_repo.rebuild_text_stats()
+        finally:
+            db.execute_write = orig_execute_write
+        assert raced
+        # Точный агрегат заменил пережившую дельту: обе строки в счётчиках
+        # (кириллица, длина > 10, без ссылок и форвардов).
+        assert tuple(await _stats_row(db, 732)) == (2, 2, 2, 0, 2, 0)
+
+        # Итог гонки ≡ чистый rebuild на той же истории.
+
+        async def _snapshot() -> tuple[list, list]:
+            cur = await db.db.execute("SELECT * FROM channel_text_stats ORDER BY channel_id")
+            stats = await cur.fetchall()
+            cur = await db.db.execute(
+                "SELECT * FROM channel_prefix_stats ORDER BY channel_id, prefix"
+            )
+            prefixes = await cur.fetchall()
+            return [tuple(r) for r in stats], [tuple(r) for r in prefixes]
+
+        after_race = await _snapshot()
+        await filters_repo.rebuild_text_stats()
+        assert await _snapshot() == after_race
+
     async def test_rebuild_enables_fast_path_flag(self, db, filters_repo):
         await db.repos.messages.insert_messages_batch([_msg(731, 1, "текст для флага")])
         assert await filters_repo.stats_populated() is False
