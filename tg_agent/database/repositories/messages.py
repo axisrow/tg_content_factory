@@ -23,6 +23,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, AsyncIterator
 
 from tg_agent.database.pool import ReadConnection
+from tg_agent.database.repositories.filters import _has_cyrillic_udf
 from tg_agent.models import Message, SearchParams, SearchQuery
 from tg_agent.telegram.reactions import parse_reactions_json
 from tg_agent.utils.datetime import (
@@ -244,6 +245,8 @@ class MessagesRepository:
                 ),
             )
             inserted = cur.rowcount > 0
+            if inserted:
+                await self._apply_stats_deltas([msg])
             if not inserted:
                 await self._refresh_existing_messages([msg], clear_premium_search_query=True)
             if msg.reactions_json:
@@ -262,6 +265,76 @@ class MessagesRepository:
                 msg.message_id,
             )
             return False
+
+    async def _apply_stats_deltas(self, messages: list[Message]) -> None:
+        """Инкрементальная поддержка справочника фильтратора (#1679).
+
+        text/date сообщения неизменяемы после вставки, поэтому per-channel
+        агрегаты и префиксную таблицу можно поддерживать дельтами при вставке —
+        `filter analyze` читает справочник вместо пяти полных сканов истории.
+        Условия счётчиков повторяют полные SQL-шаблоны filters.py в точности:
+        total_text/short_link/cyr — по непустому тексту (форварды включены),
+        short — по любому не-NULL тексту (пустая строка считается, len 0),
+        префиксы — только не-форвардный непустой текст. Сбой справочника не
+        роняет вставку сообщения — расхождение лечит `filter analyze --rebuild`.
+        """
+        if not messages:
+            return
+        assert self._database is not None, (
+            "MessagesRepository._apply_stats_deltas requires a Database reference"
+        )
+        counters: dict[int, list[int]] = {}
+        prefixes: list[tuple[int, str, str]] = []
+        for m in messages:
+            text = m.text
+            row = counters.setdefault(m.channel_id, [0, 0, 0, 0, 0, 0])
+            row[0] += 1  # total_all
+            if text is None:
+                continue
+            nonempty = text != ""
+            if nonempty:
+                row[1] += 1  # total_text
+            if len(text) <= 10:
+                row[3] += 1  # short: не-NULL текст любой длины ≤10
+            if nonempty and _has_cyrillic_udf(text):
+                row[4] += 1  # cyr
+            if nonempty and len(text) < 200:
+                # LIKE в SQLite регистронезависим для ASCII — повторяем через lower().
+                low = text.lower()
+                entities = (getattr(m, "entities_json", None) or "").lower()
+                if "http" in low or "t.me" in low or "http" in entities or "t.me" in entities:
+                    row[5] += 1  # short_link
+            if nonempty and getattr(m, "forward_from_channel_id", None) is None:
+                row[2] += 1  # total_text_no_fwd
+                prefixes.append((m.channel_id, text[:100], m.date.isoformat()))
+        try:
+            await self._database.executemany_write(
+                """INSERT INTO channel_text_stats
+                     (channel_id, total_all, total_text, total_text_no_fwd,
+                      short, cyr, short_link)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(channel_id) DO UPDATE SET
+                     total_all = total_all + excluded.total_all,
+                     total_text = total_text + excluded.total_text,
+                     total_text_no_fwd = total_text_no_fwd + excluded.total_text_no_fwd,
+                     short = short + excluded.short,
+                     cyr = cyr + excluded.cyr,
+                     short_link = short_link + excluded.short_link""",
+                [(cid, *d) for cid, d in counters.items()],
+            )
+            if prefixes:
+                await self._database.executemany_write(
+                    """INSERT INTO channel_prefix_stats (channel_id, prefix, first_date, cnt)
+                       VALUES (?, ?, ?, 1)
+                       ON CONFLICT(channel_id, prefix) DO UPDATE SET
+                         first_date = MIN(first_date, excluded.first_date),
+                         cnt = cnt + 1""",
+                    prefixes,
+                )
+        except Exception:
+            logger.exception(
+                "Failed to update filter text stats for %d message(s)", len(messages)
+            )
 
     async def _upsert_reactions(
         self, channel_id: int, message_id: int, reactions_json: str, message_date: str
@@ -372,6 +445,14 @@ class MessagesRepository:
                 data,
             )
             count = cur.rowcount if cur.rowcount >= 0 else len(messages)
+            # Дельты справочника — только по реально новым строкам: дубликат,
+            # пропущенный INSERT OR IGNORE, не должен надувать счётчики.
+            # При сбое пре-фетча existing_keys пуст → считаем всё новыми
+            # (возможен завысивший счётчик; лечится `filter analyze --rebuild`).
+            new_messages = [
+                m for m in messages if (m.channel_id, m.message_id) not in existing_keys
+            ]
+            await self._apply_stats_deltas(new_messages)
         except DatabaseBusyError:
             # Transient lock — let the caller decide (the collector reverts
             # last_collected_id and re-collects next cycle). Swallowing this
@@ -1327,6 +1408,15 @@ class MessagesRepository:
                 "DELETE FROM message_embeddings WHERE message_id IN "
                 "(SELECT id FROM messages WHERE channel_id = ?)",
                 (channel_id,),
+            )
+            # Справочник фильтратора (#1679) — sidecar без FK: после purge строк
+            # сообщений нет, живой SQL видит нули; сбрасываем и справочник, чтобы
+            # счётчики не завышали. Новые вставки снова наполнят его дельтами.
+            await conn.execute(
+                "DELETE FROM channel_text_stats WHERE channel_id = ?", (channel_id,),
+            )
+            await conn.execute(
+                "DELETE FROM channel_prefix_stats WHERE channel_id = ?", (channel_id,),
             )
             # NOTE (#1039): `notified_messages` and `pipeline_action_log` are
             # deliberately NOT deleted here. purge is a *soft* delete — the

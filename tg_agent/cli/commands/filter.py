@@ -76,15 +76,32 @@ def _print_result(result, verb: str = "Purged") -> None:
             print(f"  ✗ {err}")
 
 
-async def analyze_impl(config_path: str, *, quick: bool = False, sample_size: int | None = None) -> None:
+async def analyze_impl(
+    config_path: str,
+    *,
+    quick: bool = False,
+    sample_size: int | None = None,
+    rebuild: bool = False,
+) -> None:
     """Analyze channels and print the uniqueness / ratio / flags report.
 
     quick=True samples the last ``sample_size`` messages per channel (default 300,
     #1138) and skips the cross-dupe self-join, finishing in seconds; without it the
     analysis scans the whole message history. ``sample_size`` only applies to quick.
+
+    rebuild=True пересчитывает накопительный справочник текст-статистики из всей
+    истории (#1679) и включает быстрый путь анализатора — ручной точный режим
+    (дефолтный запуск после backfill идёт по справочнику за секунды).
     """
     _, db = await runtime.init_db(config_path)
     try:
+        if rebuild:
+            import time as _time
+
+            t0 = _time.monotonic()
+            await db.filter_repo.rebuild_text_stats()
+            await db.filter_repo.set_stats_populated(True)
+            print(f"Stats cache rebuilt in {_time.monotonic() - t0:.1f}s — fast path enabled.")
         analyzer = ChannelAnalyzer(db)
         report = await analyzer.analyze_all(quick=quick, sample_size=sample_size)
         if not report.results:
@@ -464,10 +481,18 @@ def filter_analyze(
             f"(default: {DEFAULT_QUICK_SAMPLE_SIZE}; ignored without --quick)"
         ),
     ),
+    rebuild: bool = typer.Option(
+        False,
+        "--rebuild",
+        help=(
+            "Recompute the incremental stats cache from full history (#1679) "
+            "and enable the fast analyze path (manual exact mode)"
+        ),
+    ),
 ) -> None:
     """Analyze channels and show report."""
     apply_startup(ctx)
-    run_async(analyze_impl(ctx.obj.config, quick=quick, sample_size=sample_size))
+    run_async(analyze_impl(ctx.obj.config, quick=quick, sample_size=sample_size, rebuild=rebuild))
 
 
 @filter_app.command("apply")

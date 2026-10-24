@@ -65,7 +65,10 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
   mass poster: ≥100 messages/24h AND above the P95 of per-channel 24h volume); the uniqueness /
   subscriber-ratio / cross-dupe / cyrillic thresholds are overridable via
   `settings filter-criteria` (defaults built in, out-of-range values fall back to defaults);
-  filtered channels are skipped unless `force=True`. Channels approved by a human
+  full analyze reads an incremental stats cache (#1679) and takes seconds once populated —
+  `filter analyze --rebuild` recomputes the cache from full history (exact manual mode, first
+  run on a large DB takes tens of minutes); filtered channels are skipped unless `force=True`.
+  Channels approved by a human
   (`filtered_origin='human'`) are invisible to the analyzer — no metrics, no verdicts,
   no proposals; `--channel-id <human>` prints «No channels found.» (#1312).
 - `filter suspects` — read-only contradiction report (#1490): channels carrying the

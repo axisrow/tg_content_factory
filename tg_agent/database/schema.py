@@ -689,4 +689,30 @@ CREATE TABLE IF NOT EXISTS transcripts (
     created_at TEXT NOT NULL,
     PRIMARY KEY (chat_id, message_id, source)
 );
+
+-- Инкрементальный справочник текст-статистики фильтратора (#1679): text/date
+-- сообщения неизменяемы после вставки, поэтому per-channel агрегаты можно
+-- поддерживать дельтами при вставке вместо пяти полных сканов на каждый
+-- `filter analyze`. `channel_prefix_stats` обслуживает и uniqueness
+-- (COUNT(*) на канал), и cross-dupe (length(prefix)>10 ⟺ length(text)>10).
+-- До backfill (`filter analyze --rebuild`) справочник пуст — анализатор идёт
+-- по прежнему SQL-пути; флаг `filter_stats_populated` в settings включает
+-- быстрый путь.
+CREATE TABLE IF NOT EXISTS channel_text_stats (
+    channel_id INTEGER PRIMARY KEY,
+    total_all INTEGER NOT NULL DEFAULT 0,
+    total_text INTEGER NOT NULL DEFAULT 0,
+    total_text_no_fwd INTEGER NOT NULL DEFAULT 0,
+    short INTEGER NOT NULL DEFAULT 0,
+    cyr INTEGER NOT NULL DEFAULT 0,
+    short_link INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS channel_prefix_stats (
+    channel_id INTEGER NOT NULL,
+    prefix TEXT NOT NULL,
+    first_date TEXT NOT NULL,
+    cnt INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (channel_id, prefix)
+);
 """

@@ -613,6 +613,174 @@ class FilterRepository:
         rows = await cur.fetchall()
         return {row["channel_id"]: row["cnt"] for row in rows}
 
+    # ── Быстрый путь из накопительного справочника (#1679) ─────────────────
+    # Литерал 'filter_stats_populated' дублируется в analyzer.py осознанно:
+    # SQL-слой не импортирует пакет filters (см. комментарий к UDF выше).
+
+    async def stats_populated(self) -> bool:
+        """True, если справочник text-статистики заполнен (backfill/--rebuild)."""
+        if self._database is None:
+            return False
+        raw = await self._database.get_setting("filter_stats_populated")
+        return raw == "1"
+
+    async def set_stats_populated(self, value: bool) -> None:
+        """Включить/выключить быстрый путь анализатора."""
+        assert self._database is not None, (
+            "FilterRepository.set_stats_populated requires a Database reference"
+        )
+        await self._database.execute_write(
+            "INSERT INTO settings (key, value) VALUES ('filter_stats_populated', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            ("1" if value else "0",),
+        )
+
+    async def fetch_text_stats_maps_fast(
+        self, channel_id: int | None = None
+    ) -> tuple[
+        dict[int, tuple[int, int]],  # uniqueness (total, uniq)
+        dict[int, tuple[int, int]],  # short (total, short)
+        dict[int, tuple[int, int]],  # cyrillic (total, cyr)
+        dict[int, tuple[int, int]],  # auto_feed (total, short_link)
+    ]:
+        """(uniqueness, short, cyrillic, auto_feed) карты из справочника.
+
+        Формы карт байт-в-байт как у полных SQL-путей: uniqueness (total, uniq)
+        по не-форвардному тексту, остальные — (total, metric) по непустому
+        тексту (short — total_all). Читает две маленькие таблицы (счётчики +
+        COUNT по префиксам) вместо четырёх сканов messages.
+        """
+        where = " WHERE channel_id = ?" if channel_id is not None else ""
+        params: tuple = (channel_id,) if channel_id is not None else ()
+        cur = await self._db.execute(
+            "SELECT channel_id, total_all, total_text, total_text_no_fwd, "
+            "short, cyr, short_link FROM channel_text_stats" + where,
+            params,
+        )
+        stats = {row["channel_id"]: row for row in await cur.fetchall()}
+        cur = await self._db.execute(
+            "SELECT channel_id, COUNT(*) AS n FROM channel_prefix_stats" + where
+            + " GROUP BY channel_id",
+            params,
+        )
+        uniq_counts = {row["channel_id"]: row["n"] for row in await cur.fetchall()}
+        uniqueness_map: dict[int, tuple[int, int]] = {
+            cid: (row["total_text_no_fwd"], uniq_counts.get(cid, 0)) for cid, row in stats.items()
+        }
+        short_map: dict[int, tuple[int, int]] = {
+            cid: (row["total_all"], row["short"]) for cid, row in stats.items()
+        }
+        cyrillic_map: dict[int, tuple[int, int]] = {
+            cid: (row["total_text"], row["cyr"]) for cid, row in stats.items()
+        }
+        auto_feed_map: dict[int, tuple[int, int]] = {
+            cid: (row["total_text"], row["short_link"]) for cid, row in stats.items()
+        }
+        return uniqueness_map, short_map, cyrillic_map, auto_feed_map
+
+    async def fetch_cross_dupe_from_prefixes(
+        self, channel_id: int | None = None
+    ) -> dict[int, tuple[int, int]]:
+        """Карта cross-dupe из справочника — tie-семантика #1676 без скана messages.
+
+        channel_prefix_stats уже агрегирует (channel, prefix) → MIN(date):
+        остаются только группировки по префиксу. length(prefix)>10 здесь
+        эквивалентен length(text)>10 полной версии (короткий текст даёт
+        префикс длиной с сам текст). global_first считается по ВСЕМ каналам
+        и при одиночном вызове тоже — иначе первоисточник фальш-флагается.
+        """
+        sql = """
+            WITH first_seen AS (
+                SELECT prefix, MIN(first_date) AS global_first
+                FROM channel_prefix_stats
+                WHERE length(prefix) > 10
+                GROUP BY prefix
+            ),
+            earliest_tie AS (
+                SELECT cp.prefix, COUNT(*) AS n_earliest
+                FROM channel_prefix_stats cp
+                JOIN first_seen fs
+                  ON fs.prefix = cp.prefix AND cp.first_date = fs.global_first
+                GROUP BY cp.prefix
+            )
+            SELECT
+                cp.channel_id,
+                COUNT(*) AS uniq_total,
+                SUM(CASE WHEN cp.first_date > fs.global_first
+                           OR (cp.first_date = fs.global_first AND et.n_earliest > 1)
+                         THEN 1 ELSE 0 END) AS duped
+            FROM channel_prefix_stats cp
+            JOIN first_seen fs ON fs.prefix = cp.prefix
+            JOIN earliest_tie et ON et.prefix = cp.prefix
+            {final_where}
+            GROUP BY cp.channel_id
+        """
+        final_where = ""
+        params: tuple = ()
+        if channel_id is not None:
+            final_where = "WHERE cp.channel_id = ?"
+            params = (channel_id,)
+        cur = await self._db.execute(sql.format(final_where=final_where), params)
+        rows = await cur.fetchall()
+        return {row["channel_id"]: (row["uniq_total"], row["duped"] or 0) for row in rows}
+
+    async def rebuild_text_stats(self) -> None:
+        """Полный пересчёт справочника из истории (#1679; `filter analyze --rebuild`).
+
+        Два INSERT...SELECT: счётчики одним сканом messages (UDF has_cyrillic
+        на write-коннекте), префиксы — GROUP BY (channel_id, prefix). Каждая
+        инструкция — отдельный короткий write-lock: долгая транзакция заблокировала
+        бы сбор воркера на десятки минут. Пересечение с параллельными дельтами
+        вставки согласовано: дельта, попавшая между DELETE и INSERT...SELECT,
+        стирается DELETE и ровно один раз учитывается агрегатом.
+        """
+        assert self._database is not None, (
+            "FilterRepository.rebuild_text_stats requires a Database reference"
+        )
+        # UDF нужен на WRITE-коннекте фасада: execute_write идёт мимо read-pool,
+        # а _ensure_udf регистрирует только на читающем пути (live-кейс #1679:
+        # `no such function: has_cyrillic`; на :memory: коннект общий, поэтому
+        # тесты этого не ловят).
+        assert self._database.db is not None
+        await self._database.db.create_function(
+            "has_cyrillic", 1, _has_cyrillic_udf, deterministic=True
+        )
+        await self._database.execute_write("DELETE FROM channel_text_stats")
+        await self._database.execute_write("DELETE FROM channel_prefix_stats")
+        await self._database.execute_write(
+            """
+            INSERT INTO channel_text_stats
+                (channel_id, total_all, total_text, total_text_no_fwd,
+                 short, cyr, short_link)
+            SELECT
+                channel_id,
+                COUNT(*),
+                SUM(CASE WHEN text IS NOT NULL AND text != '' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN text IS NOT NULL AND text != ''
+                          AND forward_from_channel_id IS NULL THEN 1 ELSE 0 END),
+                SUM(CASE WHEN text IS NOT NULL AND length(text) <= 10
+                         THEN 1 ELSE 0 END),
+                SUM(CASE WHEN text IS NOT NULL AND text != '' AND has_cyrillic(text)
+                         THEN 1 ELSE 0 END),
+                SUM(CASE WHEN text IS NOT NULL AND text != '' AND length(text) < 200
+                          AND (text LIKE '%http%' OR text LIKE '%t.me%'
+                               OR entities_json LIKE '%http%' OR entities_json LIKE '%t.me%')
+                         THEN 1 ELSE 0 END)
+            FROM messages
+            GROUP BY channel_id
+            """
+        )
+        await self._database.execute_write(
+            """
+            INSERT INTO channel_prefix_stats (channel_id, prefix, first_date, cnt)
+            SELECT channel_id, substr(text, 1, 100), MIN(date), COUNT(*)
+            FROM messages
+            WHERE text IS NOT NULL AND text != ''
+              AND forward_from_channel_id IS NULL
+            GROUP BY channel_id, substr(text, 1, 100)
+            """
+        )
+
     # ── Parallel fetch: separate read-only connections ─────────────────────
 
     def _can_parallel(self) -> bool:

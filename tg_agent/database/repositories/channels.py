@@ -1099,6 +1099,14 @@ class ChannelsRepository:
             await conn.execute(
                 "DELETE FROM pipeline_action_log WHERE channel_id = ?", (channel_id,),
             )
+            # Справочник фильтратора (#1679) — sidecar без FK, чистится вместе
+            # с каналом, иначе строки остались бы как сироты (см. #1039).
+            await conn.execute(
+                "DELETE FROM channel_text_stats WHERE channel_id = ?", (channel_id,),
+            )
+            await conn.execute(
+                "DELETE FROM channel_prefix_stats WHERE channel_id = ?", (channel_id,),
+            )
             await conn.execute("DELETE FROM channels WHERE id = ?", (pk,))
 
     # ── Tag helpers ──────────────────────────────────────────────────────────
