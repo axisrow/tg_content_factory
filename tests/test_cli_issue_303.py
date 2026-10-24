@@ -101,7 +101,7 @@ def test_dialogs_run_is_primary_entrypoint(cli_db, cli_init_patch, capsys):
     pool.clients = {"+79001234567": AsyncMock()}
     pool.disconnect_all = AsyncMock()
 
-    async def fake_init_pool(config, db):
+    async def fake_init_pool(config, db, **_kwargs):
         return MagicMock(), pool
 
     dialogs_payload = [

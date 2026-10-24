@@ -1120,7 +1120,7 @@ async def collect_impl(
 
     pool = None
     try:
-        _, pool = await runtime.init_pool(config, db)
+        _, pool = await runtime.init_pool(config, db, allow_live_daemon=direct)
         if not pool.clients:
             logging.error("No connected accounts.")
             return

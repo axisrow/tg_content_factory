@@ -757,6 +757,77 @@ def test_pipeline_run_with_preview(tmp_path, cli_init_patch, capsys):
     assert "Preview content here" in out
 
 
+def test_pipeline_run_next_to_live_daemon_generates_without_a_pool(
+    tmp_path, cli_init_patch, capsys, monkeypatch
+):
+    """With a live daemon, ``pipeline run`` generates pool-less instead of competing (#1521).
+
+    The daemon owns the Telegram sessions; generation needs them only for
+    Telegram-side nodes (which skip without a pool), so no ``ClientPool`` may be
+    built and the run must still complete.
+    """
+    db_path = str(tmp_path / "cli_pipeline_run_daemon.db")
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+    pipeline_id = asyncio.run(
+        db.repos.content_pipelines.add(
+            pipeline=ContentPipeline(
+                name="Daemon Pipeline",
+                prompt_template="Summarize {context}",
+                publish_mode=PipelinePublishMode.MODERATED,
+                llm_model="gpt-4",
+            ),
+            source_channel_ids=[1001],
+            targets=[],
+        )
+    )
+    seen_pools: list[object] = []
+
+    async def fake_run_generation(
+        self, pipeline, model, max_tokens, temperature, since_hours=24.0, **kwargs
+    ):
+        seen_pools.append(self._client_pool)
+        return {
+            "generated_text": "Daemon-side draft",
+            "citations": [],
+            "publish_mode": None,
+            "result_kind": "generated_items",
+            "result_count": 1,
+        }
+
+    monkeypatch.setattr("tg_agent.cli.worker_handoff.serve_is_running", lambda _config: True)
+    monkeypatch.delenv("TGCF_CLI_DIRECT", raising=False)
+    with (
+        cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS),
+        patch(
+            "tg_agent.services.content_generation_service.ContentGenerationService._run_generation",
+            fake_run_generation,
+        ),
+        patch("tg_agent.services.provider_service.RuntimeProviderRegistry.has_providers", return_value=True),
+        patch("tg_agent.cli.runtime.ClientPool") as pool_cls,
+    ):
+        from tg_agent.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="run",
+                id=pipeline_id,
+                limit=10,
+                max_tokens=256,
+                temperature=0.7,
+                preview=False,
+                publish=False,
+            )
+        )
+
+    pool_cls.assert_not_called()
+    assert seen_pools == [None]
+    captured = capsys.readouterr()
+    assert "Generation completed" in captured.out
+    assert "owns the Telegram sessions" in captured.err
+
+
 def test_pipeline_run_not_found(tmp_path, cli_init_patch, capsys):
     """Test run action with non-existent pipeline."""
     db_path = str(tmp_path / "cli_pipeline_run_nf.db")

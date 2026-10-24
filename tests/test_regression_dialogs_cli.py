@@ -92,7 +92,7 @@ class TestMyTelegramActions:
         async def fake_init_db(cfg):
             return config, db
 
-        async def fake_init_pool(cfg, d):
+        async def fake_init_pool(cfg, d, **_kwargs):
             return cfg, pool
 
         with (
@@ -685,7 +685,7 @@ class TestMyTelegramNoAccounts:
         async def fake_init_db(cfg):
             return config, db
 
-        async def fake_init_pool(cfg, d):
+        async def fake_init_pool(cfg, d, **_kwargs):
             return cfg, pool
 
         with (
@@ -868,7 +868,7 @@ class TestMyTelegramMoreBranches:
         async def fake_init_db(cfg):
             return config, db
 
-        async def fake_init_pool(cfg, d):
+        async def fake_init_pool(cfg, d, **_kwargs):
             return cfg, pool
 
         with (

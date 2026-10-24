@@ -42,7 +42,7 @@ def _run(args, cli_db, *, serve_running: bool, pool=None):
     async def fake_init_db(_):
         return config, cli_db
 
-    async def fake_init_pool(_, __):
+    async def fake_init_pool(_, __, **_kwargs):
         from tg_agent.telegram.auth import TelegramAuth
 
         return TelegramAuth(0, ""), used_pool
@@ -186,24 +186,37 @@ def test_direct_flag_bypasses_the_queue(cli_db):
     assert _commands(cli_db) == []
 
 
-def test_read_only_actions_still_run_locally(cli_db):
-    """Listing and cache inspection have no queue equivalent and must not hang.
+@pytest.mark.parametrize(
+    "ns_kwargs",
+    [
+        {"dialogs_action": "cache-status", "phone": ""},
+        {
+            "dialogs_action": "queue",
+            "queue_action": "status",
+            "command_type": None,
+            "phone": None,
+            "limit": 20,
+        },
+    ],
+    ids=["cache-status", "queue-status"],
+)
+def test_db_only_actions_run_without_a_pool_while_serve_runs(cli_db, capsys, ns_kwargs):
+    """DB-only views keep working next to a live daemon, without a pool (#1521).
 
-    Only actions with a real ``dialogs.*`` command type are handed over; local
-    read-only views keep working against the DB as before.
+    ``init_pool`` refuses while the daemon owns the sessions, so these must not
+    reach it at all — they only read the DB (dialog cache, command queue).
     """
-    pool = _mock_pool()
-    pool.get_dialogs_for_phone = AsyncMock(return_value=[])
-
     init_pool = _run(
-        _ns(dialogs_action="cache-status", phone="", direct=False),
+        _ns(direct=False, **ns_kwargs),
         cli_db,
         serve_running=True,
-        pool=pool,
+        pool=_mock_pool(),
     )
 
-    init_pool.assert_called_once()
+    init_pool.assert_not_called()
     assert _commands(cli_db) == []
+    out = capsys.readouterr().out
+    assert "No cached dialogs." in out or "Total: 0" in out
 
 
 def test_edit_admin_handoff_preserves_is_admin_and_title(cli_db):
