@@ -315,8 +315,8 @@ async def test_paginated_flood_updates_breaker_once() -> None:
     with pytest.raises(HandledFloodWaitError):
         await stream.__anext__()
 
-    breaker = Pool._flood_breaker._breakers[("telegram_stream_dialogs", "+66...2247")]
-    assert breaker.fail_counter == 1
+    breaker = Pool._flood_breaker
+    assert breaker._fails[("telegram_stream_dialogs", "+66...2247")] == 1
 
 
 @pytest.mark.asyncio
