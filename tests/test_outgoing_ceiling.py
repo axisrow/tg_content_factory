@@ -142,14 +142,17 @@ async def test_gate_refusal_surrenders_its_ceiling_slot() -> None:
     session = TelegramTransportSession(client, phone="+7000", pool=Pool())
 
     assert await session.send_message(SimpleNamespace(user_id=1), "a") == "ok"
-    # One passed call is charged to each mechanism exactly once (no double duty).
-    assert len(Pool._outgoing_ceiling._limiter._calls["process"]) == 1
     with pytest.raises(TelegramRateLimitedError):
         await session.send_message(SimpleNamespace(user_id=2), "b")
     assert len(client.sent_at) == 1, "refused send still reached Telegram"
-    # The refused call surrendered its ceiling slot (documented cost).
-    assert len(Pool._outgoing_ceiling._limiter._calls["process"]) == 2
     assert sleeper.waits == [], "ceiling had room: no wait was needed"
+    # The passed call was charged exactly once and the refused call kept its
+    # slot (documented cost): the window is now exactly full, so the next
+    # caller sleeps precisely to the boundary.  A refusal that surrendered
+    # its slot — or a pass that was not charged — leaves room, and the
+    # acquire below would return without waiting.
+    await Pool._outgoing_ceiling.acquire()
+    assert sleeper.waits == [60.0], "refusal kept its slot: window exactly full"
 
 
 @pytest.mark.asyncio
@@ -256,11 +259,24 @@ async def test_history_stream_pages_draw_ceiling_slots() -> None:
     await stream.aclose()
 
     assert len(page_calls) == 2
+    # The per-account history bucket is charged once (logical stream only),
+    # read through the gate's public snapshot while the fake clock still sits
+    # at the stream's instant (the ceiling waits below slide it forward).
+    from typing import cast
+
+    snapshot = cast(
+        "dict[str, dict[str, object]]", Pool._rate_limit_gate.snapshot("+7000")["categories"]
+    )
+    assert snapshot["history"]["used"] == 1
     # Logical slot + two page slots: the ceiling never under-counts a stream.
-    assert len(Pool._outgoing_ceiling._limiter._calls["process"]) == 3
-    # The per-account history bucket is charged once (logical stream only).
-    history = Pool._rate_limit_gate._limiters["history"]._calls["+7000"]
-    assert len(history) == 1
+    # Exactly three slots were drawn: seven more fit without waiting, the
+    # eighth sleeps the full window.  A page that skipped the ceiling — or a
+    # double charge — shifts that boundary and goes red here.
+    for _ in range(7):
+        await Pool._outgoing_ceiling.acquire()
+    assert sleeper.waits == []
+    await Pool._outgoing_ceiling.acquire()
+    assert sleeper.waits == [30.0]
 
 
 @pytest.mark.asyncio
@@ -302,11 +318,14 @@ async def test_stream_pages_do_not_recheck_the_stream_breaker_probe() -> None:
             return self.page
 
     class Client:
+        def __init__(self) -> None:
+            self.page_calls = 0
+
         def iter_messages(self, entity, **kwargs):
             return PageIterator(self)
 
         async def __call__(self, request):
-            pass
+            self.page_calls += 1
 
     class Pool:
         _rate_limit_gate = TelegramRateLimitGate(time_func=clock)
@@ -321,16 +340,19 @@ async def test_stream_pages_do_not_recheck_the_stream_breaker_probe() -> None:
     Pool._flood_breaker.record_flood("telegram_stream_messages", "+7000")
     clock.now += 61.0  # cooldown elapsed: the next check claims the half-open probe
 
-    session = TelegramTransportSession(Client(), phone="+7000", pool=Pool())
+    client = Client()
+    session = TelegramTransportSession(client, phone="+7000", pool=Pool())
     stream = session.stream_messages("peer")
     assert await stream.__anext__() == 1
     with pytest.raises(StopAsyncIteration):
         await stream.__anext__()
     await stream.aclose()
 
-    # The stream drained: the probe was claimed by the outer check and
-    # released by its record_success — no page may have re-checked it.
-    assert not Pool._flood_breaker._probe_in_flight
+    # The stream drained AND its page RPC executed while the outer check held
+    # the half-open probe: a page that re-checked the probe would have been
+    # refused with TelegramOperationSuspendedError and stranded the stream,
+    # so this assertion goes red under exactly that mutation.
+    assert client.page_calls == 1
 
 
 @pytest.mark.asyncio
@@ -343,7 +365,11 @@ async def test_history_page_flood_is_recorded_once_by_the_stream() -> None:
     """
     from telethon.errors import FloodWaitError
     from telethon.tl.functions.messages import GetHistoryRequest
-    from telethon_floodgate import FloodCircuitBreaker, HandledFloodWaitError
+    from telethon_floodgate import (
+        FloodCircuitBreaker,
+        HandledFloodWaitError,
+        TelegramOperationSuspendedError,
+    )
 
     flood = FloodWaitError(request=None, capture=0)
     flood.seconds = 23
@@ -387,8 +413,11 @@ async def test_history_page_flood_is_recorded_once_by_the_stream() -> None:
 
     class Pool:
         _rate_limit_gate = TelegramRateLimitGate(time_func=_FakeClock())
+        # Threshold 2 = exactly one recorded flood short of tripping: the
+        # exactly-once contract below is provable through the public check/
+        # record_flood surface alone.
         _flood_breaker = FloodCircuitBreaker(
-            threshold=3, cooldown_seconds=300.0, time_func=_FakeClock()
+            threshold=2, cooldown_seconds=300.0, time_func=_FakeClock()
         )
         _outgoing_ceiling = OutgoingRateCeiling(
             RateLimitSpec(max_calls=10, window_sec=30.0), time_func=_FakeClock()
@@ -402,8 +431,16 @@ async def test_history_page_flood_is_recorded_once_by_the_stream() -> None:
         await stream.__anext__()
 
     assert client.page_calls == 2
-    key = ("telegram_stream_messages", "+7000")
-    assert Pool._flood_breaker._fails[key] == 1, "the page flood is recorded exactly once"
+    # Exactly once, observable through the breaker contract: the stream is
+    # the sole recorder, so one page flood leaves the pair one failure short
+    # of the threshold...
+    Pool._flood_breaker.check("telegram_stream_messages", "+7000")
+    # ...and one more reported flood trips it.  A page that also recorded
+    # (double record) would have tripped it already; a lost record would
+    # keep this final check passing.
+    Pool._flood_breaker.record_flood("telegram_stream_messages", "+7000")
+    with pytest.raises(TelegramOperationSuspendedError):
+        Pool._flood_breaker.check("telegram_stream_messages", "+7000")
 
 
 @pytest.mark.asyncio
@@ -438,11 +475,14 @@ async def test_dialog_stream_pages_do_not_recheck_the_stream_breaker_probe() -> 
             return self.page
 
     class Client:
+        def __init__(self) -> None:
+            self.page_calls = 0
+
         def iter_dialogs(self, **kwargs):
             return PageIterator(self)
 
         async def __call__(self, request):
-            pass
+            self.page_calls += 1
 
     class Pool:
         _rate_limit_gate = TelegramRateLimitGate(time_func=clock)
@@ -456,14 +496,17 @@ async def test_dialog_stream_pages_do_not_recheck_the_stream_breaker_probe() -> 
     Pool._flood_breaker.record_flood("telegram_stream_dialogs", "+7000")
     clock.now += 61.0
 
-    session = TelegramTransportSession(Client(), phone="+7000", pool=Pool())
+    client = Client()
+    session = TelegramTransportSession(client, phone="+7000", pool=Pool())
     stream = session.stream_dialogs()
     assert await stream.__anext__() == 1
     with pytest.raises(StopAsyncIteration):
         await stream.__anext__()
     await stream.aclose()
 
-    assert not Pool._flood_breaker._probe_in_flight
+    # Same observable no-recheck proof as the history branch above: the page
+    # RPC ran while the outer check held the half-open probe.
+    assert client.page_calls == 1
 
 
 @pytest.mark.asyncio
@@ -525,12 +568,18 @@ def test_pool_ships_process_wide_ceiling() -> None:
 
     Literals on purpose: if someone retunes PROCESS_OUTGOING_SPEC, this test
     must go red so the recalibration is a visible, reviewed change (#1417).
+    Driven through the limiter's public non-blocking API — ``try_acquire``
+    defers without ever sleeping, so the spec is pinned by behavior and no
+    internal attribute is read.
     """
     pool = ClientPool(MagicMock(api_id=1, api_hash="h"), MagicMock())
     ceiling = pool._outgoing_ceiling
     assert isinstance(ceiling, OutgoingRateCeiling)
-    assert ceiling._limiter._max_calls == 120
-    assert ceiling._limiter._window_sec == 30.0
+    # 120 calls fit the window exactly; the 121st defers to its boundary
+    # (~30s out, jitter-free) — pinning max_calls=120 and window_sec=30.0.
+    assert ceiling._limiter.try_acquire_many("process", 120) == 0.0
+    retry = ceiling._limiter.try_acquire("process")
+    assert 29.0 < retry <= 30.0
 
 
 @pytest.mark.asyncio

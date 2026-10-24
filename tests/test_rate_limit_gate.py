@@ -11,6 +11,7 @@ from telethon_floodgate import (
     FloodCircuitBreaker,
     HandledFloodWaitError,
     RateLimitSpec,
+    TelegramOperationSuspendedError,
     TelegramPeerRateLimitedError,
     TelegramRateLimitedError,
     TelegramRateLimitGate,
@@ -43,13 +44,12 @@ def test_sweep_budget_covers_every_pass_the_loop_will_attempt() -> None:
 
     Its budget is kept in step with the sweep loop's own pass limit, so the
     loop's limiters (max passes, time budget, no-progress check) and the flood
-    breaker are what bound a sweep — not a starved bucket.
+    breaker are what bound a sweep — not a starved bucket.  Proven through the
+    public contract: a DEFAULT gate must admit every pass the loop attempts
+    (a shrunk package budget or a raised pass limit goes red here), so no
+    private package constant needs importing.
     """
-    from telethon_floodgate.rate_limit_gate import DIALOG_SWEEP_MAX_CALLS
-
     from tg_agent.telegram.pool_dialogs import DIALOG_FETCH_MAX_PASSES
-
-    assert DIALOG_SWEEP_MAX_CALLS >= DIALOG_FETCH_MAX_PASSES
 
     clock = _Clock()
     gate = TelegramRateLimitGate(time_func=clock)
@@ -307,7 +307,10 @@ async def test_paginated_flood_updates_breaker_once() -> None:
 
     class Pool:
         _rate_limit_gate = TelegramRateLimitGate()
-        _flood_breaker = FloodCircuitBreaker(threshold=3, cooldown_seconds=300)
+        # Threshold 2 = exactly one recorded flood short of tripping: the
+        # exactly-once contract below is provable through the public check/
+        # record_flood surface alone.
+        _flood_breaker = FloodCircuitBreaker(threshold=2, cooldown_seconds=300)
 
     session = TelegramTransportSession(Client(), phone="+66...2247", pool=Pool())
     stream = session.stream_dialogs()
@@ -315,8 +318,14 @@ async def test_paginated_flood_updates_breaker_once() -> None:
     with pytest.raises(HandledFloodWaitError):
         await stream.__anext__()
 
-    breaker = Pool._flood_breaker
-    assert breaker._fails[("telegram_stream_dialogs", "+66...2247")] == 1
+    # Exactly once, observable through the breaker contract: one page flood
+    # leaves the pair one failure short of the threshold...
+    Pool._flood_breaker.check("telegram_stream_dialogs", "+66...2247")
+    # ...and one more reported flood trips it.  A double record would have
+    # tripped it already; a lost record would keep this final check passing.
+    Pool._flood_breaker.record_flood("telegram_stream_dialogs", "+66...2247")
+    with pytest.raises(TelegramOperationSuspendedError):
+        Pool._flood_breaker.check("telegram_stream_dialogs", "+66...2247")
 
 
 @pytest.mark.asyncio
@@ -438,17 +447,24 @@ def test_pool_applies_production_history_calibration() -> None:
 
     The released floodgate default (600/min) never bound: production peaks ran
     at 115 fetches/min.  The override lives in the pool, so the pool is what
-    this pins; the remaining categories must stay untouched package defaults.
+    this pins — read through the gate's public ``snapshot()``, not limiter
+    internals.  Other categories must keep the package defaults, asserted as
+    equality with a fresh default gate rather than literals: the calibration
+    of those belongs to the package.
     """
+    from typing import cast
+
     from tg_agent.telegram.client_pool import ClientPool
 
     pool = ClientPool(MagicMock(api_id=1, api_hash="h"), MagicMock())
-    history = pool._rate_limit_gate._limiters["history"]
-    assert history._max_calls == 24
-    assert history._window_sec == 30.0
+    categories = cast(
+        "dict[str, dict[str, object]]", pool._rate_limit_gate.snapshot("+7000")["categories"]
+    )
+    assert categories["history"]["max_calls"] == 24
+    assert categories["history"]["window_sec"] == 30.0
     # Untouched categories keep their package defaults.
-    send = pool._rate_limit_gate._limiters["send"]
-    assert (send._max_calls, send._window_sec) == (30, 60.0)
+    default = cast("dict[str, dict[str, object]]", TelegramRateLimitGate().snapshot("+7000")["categories"])
+    assert categories["send"] == default["send"]
 
 
 def test_history_calibration_stops_a_collector_burst_before_telegram() -> None:
