@@ -355,9 +355,10 @@ class TestAnalyzerCrossChannelDupes:
         assert copier.cross_dupe_pct == 100.0
         assert "cross_channel_spam" in copier.flags
 
-    async def test_same_moment_not_flagged(self, db, raw_db):
-        # Равные даты (одновременная публикация) никому не считаются дупликатом:
-        # дупликат — строго «позже чужого».
+    async def test_same_moment_flagged_both(self, db, raw_db):
+        # Равные даты (одновременная публикация) — дупли для всех участников
+        # повтора (#1676, решение владельца 24.10.26): сеть близнецов, постящая
+        # копии в одну секунду, больше не проходит из-за тай-брейка по секунде.
         await _insert_channel(raw_db, 302)
         await _insert_channel(raw_db, 303, title="Mirror")
         shared = ["this is a duplicated message across channels"]
@@ -365,8 +366,11 @@ class TestAnalyzerCrossChannelDupes:
         await _insert_messages(raw_db, 303, shared)
         analyzer = ChannelAnalyzer(db)
         result = await analyzer.analyze_channel(302)
-        assert result.cross_dupe_pct == 0.0
-        assert "cross_channel_spam" not in result.flags
+        assert result.cross_dupe_pct == 100.0
+        assert "cross_channel_spam" in result.flags
+        mirror = await analyzer.analyze_channel(303)
+        assert mirror.cross_dupe_pct == 100.0
+        assert "cross_channel_spam" in mirror.flags
 
     async def test_forward_repost_not_flagged(self, db, raw_db):
         # Репост с атрибуцией (forward_from_channel_id) не считается дупликатом:
@@ -2116,9 +2120,9 @@ class TestAnalyzerHighVolume:
         assert result.volume_24h == 123
         assert "high_volume" in result.flags
 
-    async def test_apply_is_label_only(self, db, raw_db):
-        # Label-only: флаг пишется в filter_flags, но is_filtered остаётся 0 —
-        # блокирующий вердикт только после калибровки на живой БД.
+    async def test_apply_is_blocking(self, db, raw_db):
+        # Блокирующий (#1676): high_volume ставит is_filtered=1, флаг остаётся
+        # в filter_flags как метка для куратора.
         await _insert_channel(raw_db, 5800)
         await _insert_window_messages(raw_db, 5800, 123)
         for i in range(9):
@@ -2131,9 +2135,9 @@ class TestAnalyzerHighVolume:
             "SELECT is_filtered, filter_flags FROM channels WHERE channel_id = 5800"
         )
         row = await cur.fetchone()
-        assert row["is_filtered"] == 0
+        assert row["is_filtered"] == 1
         assert "high_volume" in row["filter_flags"]
-        assert "high_volume" in LABEL_ONLY_FLAGS
+        assert "high_volume" not in LABEL_ONLY_FLAGS
 
     async def test_quick_mode_computes_volume(self, db, raw_db):
         # 24ч-окно не зависит от quick-семпла: sample_size=10 меньше объёма

@@ -94,8 +94,9 @@ HIGH_VOLUME_MIN_24H = 100
 # для LLM-кураторства, но не ставит is_filtered — нерусскоязычные ИИ-каналы
 # (TestingCatalog, AI_News_CN и т.п.) собираются, язык виден куратору.
 # forwarder — там же (16.10.26): пересылочный канал — не спам.
-# high_volume — там же (#1571): label-only до калибровки на живой БД.
-LABEL_ONLY_FLAGS = frozenset({"non_cyrillic", "forwarder", "high_volume"})
+# high_volume больше не label-only (#1676, решение владельца 24.10.26):
+# P95-лента блокирует сбор.
+LABEL_ONLY_FLAGS = frozenset({"non_cyrillic", "forwarder"})
 
 # Тег-эскроу: канал с тегом KEEP_TAG исключается из авто-фильтрации целиком —
 # apply_filters сбрасывает всем is_filtered, но keep-каналу возвращает is_filtered=0

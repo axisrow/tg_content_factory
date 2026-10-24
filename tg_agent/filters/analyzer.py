@@ -372,7 +372,6 @@ class ChannelAnalyzer:
         volume_24h: int | None = volume_map.get(channel_id_value)
         if volume_24h is not None and high_volume_p95 is not None:
             if volume_24h >= max(high_volume_p95, HIGH_VOLUME_MIN_24H):
-                # Label-only (LABEL_ONLY_FLAGS): до калибровки на живой БД.
                 flags.append("high_volume")
         return volume_24h
 
