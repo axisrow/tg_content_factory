@@ -348,6 +348,11 @@ async def test_stream_pages_do_not_recheck_the_stream_breaker_probe() -> None:
         await stream.__anext__()
     await stream.aclose()
 
+    # The drain also settled the claimed half-open probe (record_success in
+    # the stream's drain path): a further check must sail through — an
+    # unsettled probe keeps the pair HALF_OPEN and would raise here.
+    Pool._flood_breaker.check("telegram_stream_messages", "+7000")
+
     # The stream drained AND its page RPC executed while the outer check held
     # the half-open probe: a page that re-checked the probe would have been
     # refused with TelegramOperationSuspendedError and stranded the stream,
@@ -503,6 +508,10 @@ async def test_dialog_stream_pages_do_not_recheck_the_stream_breaker_probe() -> 
     with pytest.raises(StopAsyncIteration):
         await stream.__anext__()
     await stream.aclose()
+
+    # Same settle-half proof as the history probe test: the drain released
+    # the claimed probe via record_success, so a further check must not raise.
+    Pool._flood_breaker.check("telegram_stream_dialogs", "+7000")
 
     # Same observable no-recheck proof as the history branch above: the page
     # RPC ran while the outer check held the half-open probe.
