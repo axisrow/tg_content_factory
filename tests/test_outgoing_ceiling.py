@@ -330,7 +330,8 @@ async def test_stream_pages_do_not_recheck_the_stream_breaker_probe() -> None:
 
     # The stream drained: the probe was claimed by the outer check and
     # released by its record_success — no page may have re-checked it.
-    assert Pool._flood_breaker._probe_in_flight == set()
+    # floodgate >=0.1.4: _probe_in_flight is a dict (key -> grant time).
+    assert Pool._flood_breaker._probe_in_flight == {}
 
 
 @pytest.mark.asyncio
@@ -402,9 +403,11 @@ async def test_history_page_flood_is_recorded_once_by_the_stream() -> None:
         await stream.__anext__()
 
     assert client.page_calls == 2
-    key = ("telegram_stream_messages", "+7000")
-    breaker = Pool._flood_breaker._breakers[key]
-    assert breaker.fail_counter == 1, "the page flood is recorded exactly once"
+    # floodgate >=0.1.4 (three-state FSM): per-key fail count lives in _fails,
+    # there is no pybreaker-per-key _breakers object anymore.
+    assert Pool._flood_breaker._fails[("telegram_stream_messages", "+7000")] == 1, (
+        "the page flood is recorded exactly once"
+    )
 
 
 @pytest.mark.asyncio
@@ -464,7 +467,7 @@ async def test_dialog_stream_pages_do_not_recheck_the_stream_breaker_probe() -> 
         await stream.__anext__()
     await stream.aclose()
 
-    assert Pool._flood_breaker._probe_in_flight == set()
+    assert Pool._flood_breaker._probe_in_flight == {}
 
 
 @pytest.mark.asyncio
