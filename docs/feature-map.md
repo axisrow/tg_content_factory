@@ -16,7 +16,7 @@
 
 | # | Поверхность | Для кого | Где живёт |
 |---|-------------|----------|-----------|
-| 1 | **FastAPI REST** (`/api/*`, JSON) | для **программ** (interop, внешние воркеры) | `tg_agent/web/routes/tasks.py` (`/api/tasks`, #829) + машинные JSON parity-эндпоинты внутри HTML-роутеров (CLI↔Web parity) |
+| 1 | **FastAPI REST** (`/api/*`, JSON) | для **программ** | машинные JSON parity-эндпоинты внутри HTML-роутеров (CLI↔Web parity) |
 | 2 | **Web** (HTML/HTMX) | для **человека** в браузере | `tg_agent/web/routes/` — Jinja2-шаблоны, HTMX-фрагменты, формы |
 | 3 | **CLI** | команды терминала | `tg_agent/cli/commands/` (тела `*_impl`) + `tg_agent/cli/typer_commands.py` (Typer-приложение `app`, ~212 leaf-команд) |
 | 4 | **Agent-tools** | тулы AI-агента (MCP) | `tg_agent/agent/tools/` (173 tools в 20 группах) |
@@ -24,7 +24,7 @@
 
 ### Важно про FastAPI vs Web
 
-- **FastAPI REST** — JSON-эндпоинты, потребляемые **программами**. Единственный полноценный REST-контур для внешних интеграций — `/api/tasks` (interop #829: create/claim/complete/fail). Остальные JSON-эндпоинты (`/jobs/api/list`, `/calendar/api/calendar`, `/messages/{identifier}`, `/pipelines/{id}/runs`, `/settings/flood-status`, `/rss.xml`…) — это **машинные parity-зеркала** внутри HTML-роутеров, дающие CLI↔Web паритет и доступ для скриптов. (Пути указаны с реальными префиксами роутеров из `tg_agent/web/assembly.py`.)
+- **FastAPI REST** — JSON-эндпоинты, потребляемые **программами**. Отдельного REST-контура для внешних интеграций нет (interop-контур `/api/tasks` удалён в #1431). JSON-эндпоинты (`/jobs/api/list`, `/calendar/api/calendar`, `/messages/{identifier}`, `/pipelines/{id}/runs`, `/settings/flood-status`, `/rss.xml`…) — это **машинные parity-зеркала** внутри HTML-роутеров, дающие CLI↔Web паритет и доступ для скриптов. (Пути указаны с реальными префиксами роутеров из `tg_agent/web/assembly.py`.)
 - **Web** — то, что видит человек: HTML-страницы, HTMX-частичные обновления, SSE-стримы (agent chat, generate-stream), формы. Это НЕ JSON и НЕ для программ.
 - Один и тот же роутер часто отдаёт **обе** поверхности (HTML-страница + JSON parity-эндпоинт). В таблицах ниже они разнесены.
 
@@ -462,8 +462,8 @@ Rate/cost-лимиты на провайдеров, учёт дневных за
 **Всего сервисов: 27** (после слияний: Поиск = поиск-по-базе + live-TG; Аналитика = аналитика + тренды; Календарь — отдельно; DM-цикл добавлен #1580).
 
 Инвентарь поверхностей:
-- **FastAPI REST** — 1 полноценный REST-контур (`/api/tasks`, interop #829) + машинные JSON parity-эндпоинты в ~15 роутерах
-- **Web** (HTML/HTMX) — 27 смонтированных роутеров (`tg_agent/web/assembly.py`), 18 UI-страниц меню
+- **FastAPI REST** — машинные JSON parity-эндпоинты в ~15 роутерах (interop-контур `/api/tasks` удалён в #1431)
+- **Web** (HTML/HTMX) — 26 смонтированных роутеров (`tg_agent/web/assembly.py`), 18 UI-страниц меню
 - **CLI** — 26 top-level команд, ~211 leaf-команд
 - **Agent-tools** — 21 группа, 188 tools (80 read / 91 write / 17 delete) — авторитетный счёт из `TOOL_CATEGORIES`/`MODULE_GROUPS` (`tg_agent/agent/tools/permissions.py`, инвариант `tests/test_agent_tools_permissions.py`)
 - **TUI** — 1 app (`AgentTuiApp`), покрывает только сервис «AI-агент»

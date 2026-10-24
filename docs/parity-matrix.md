@@ -15,7 +15,7 @@
 
 | # | Поверхность | Для кого | Где живёт | Узкая? |
 |---|-------------|----------|-----------|:------:|
-| 1 | **FastAPI REST** (`/api/*`, JSON) | для **программ** (interop) | `tg_agent/web/routes/tasks.py` (`/api/tasks`, #829) + машинные JSON parity-зеркала внутри HTML-роутеров | ✅ узкая |
+| 1 | **FastAPI REST** (`/api/*`, JSON) | для **программ** | машинные JSON parity-зеркала внутри HTML-роутеров (interop-контур `/api/tasks` удалён в #1431) | ✅ узкая |
 | 2 | **Web** (HTML/HTMX) | для **человека** в браузере | `tg_agent/web/routes/` — Jinja2/HTMX/SSE/формы | — |
 | 3 | **CLI** | команды терминала | `tg_agent/cli/commands/` (тела `*_impl`) + `tg_agent/cli/typer_commands.py` (Typer-объявления) | — |
 | 4 | **Agent-tools** | тулы AI-агента (MCP) | `tg_agent/agent/tools/` | — |
@@ -29,8 +29,8 @@
 
 | Поверхность | Счётчик | Источник истины |
 |-------------|---------|-----------------|
-| **FastAPI REST** | 1 полноценный interop-контур (`/api/tasks`) + JSON parity-зеркала в ~15 роутерах | `tg_agent/web/routes/tasks.py` + `JSONResponse`-эндпоинты |
-| **Web** | 27 смонтированных роутеров, ~18 UI-страниц меню | `tg_agent/web/assembly.py` |
+| **FastAPI REST** | JSON parity-зеркала в ~15 роутерах (interop-контур `/api/tasks` удалён, #1431) | `JSONResponse`-эндпоинты |
+| **Web** | 26 смонтированных роутеров, ~18 UI-страниц меню | `tg_agent/web/assembly.py` |
 | **CLI** | 26 top-level команд (`server_control` даёт `stop`+`restart`), ~214 leaf-команд | `tg_agent/cli/typer_commands.py` (приложение Typer `app`) |
 | **Agent-tools** | **188 tools**, **21 группа**, **80 read / 91 write / 17 delete** | `permissions.py` (`TOOL_CATEGORIES`, `MODULE_GROUPS`) |
 | **TUI** | 1 app (`AgentTuiApp`) — покрывает ровно 1 сервис («AI-агент») | `tg_agent/cli/commands/agent_tui.py` |
@@ -46,7 +46,7 @@
 | ✅ | поверхность есть |
 | — | поверхности нет |
 | ⚠️ | **пробел parity** — функция ЕСТЬ в др. поверхностях, тут неоправданно забыта (нарушает инвариант) |
-| 🟦 | **by design** — поверхности нет осознанно (узкая поверхность: TUI=только чат, FastAPI=только interop/parity-зеркало) |
+| 🟦 | **by design** — поверхности нет осознанно (узкая поверхность: TUI=только чат, FastAPI=только parity-зеркало) |
 | 🟥 | **нет выделенной поверхности нигде** — сервис управляется только через config / не подключён; это НЕ parity-пробел в смысле инварианта (нечему быть «забытым в одной поверхности»), а вопрос «нужна ли поверхность вообще» |
 | N/A | поверхность неприменима к этому сервису |
 
@@ -177,5 +177,5 @@
 - **Настоящие пробелы parity: 3** (Jobs→CLI, Jobs→agent, Providers→agent) — нарушают инвариант `CLAUDE.md:160`, рекомендованы к закрытию (sub-issue 1–2).
 - **Спорные: 3** (server-control, test, messages-read) — склоняюсь к «by design».
 - **Не подключённые сервисы (не parity): ErrorRecovery + A/B** — владелец решил их **подключить** (#1044, эпик «подключить неиспользуемое»), не удалять; parity появится после подключения. Plus 1 config-only off-by-default (Prod Limits).
-- **TUI и FastAPI** ведут себя как узкие поверхности корректно: TUI = только чат (1/26), FastAPI = interop + JSON-зеркала, без неоправданных пробелов.
+- **TUI и FastAPI** ведут себя как узкие поверхности корректно: TUI = только чат (1/26), FastAPI = JSON-зеркала, без неоправданных пробелов.
 - **Известные из #1022 пробелы верифицированы и расширены**: к Jobs/Providers/Limits добавлены server-control, test, messages-read, mcp-server; уточнён статус Export-web (JSON, не HTML) и Providers-web (JSON в settings-роутере).

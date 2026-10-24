@@ -995,3 +995,30 @@ async def test_expired_lease_invisible_to_no_lease_claim(collection_tasks_repo):
     task = await collection_tasks_repo.get_collection_task(task_id)
     assert task.status == CollectionTaskStatus.RUNNING
     assert task.claimed_by == "worker-a"
+
+
+# Legacy interop rows after the /api/tasks removal (#1431)
+
+
+async def test_legacy_interop_rows_stay_inert_after_contour_removal(collection_tasks_repo):
+    """Rows of the removed interop types (dm_reply, chat_answer, fetch_dialogs,
+    fetch_history) may still sit in deployed databases. Without the REST claim API
+    nothing executes them: no internal pull or claim may pick them up, and reading
+    them must not fail even though their enum values are gone."""
+    from tg_agent.services.unified_dispatcher import HANDLED_TYPES
+
+    legacy_types = ("dm_reply", "chat_answer", "fetch_dialogs", "fetch_history")
+    assert not set(legacy_types) & {t.value for t in CollectionTaskType}
+    ids = [
+        await collection_tasks_repo.create_generic_task(task_type, payload={"text": "hi"})
+        for task_type in legacy_types
+    ]
+
+    assert await collection_tasks_repo.get_pending_channel_tasks() == []
+    claimed = await collection_tasks_repo.claim_next_due_generic_task(
+        datetime.now(tz=timezone.utc), HANDLED_TYPES
+    )
+    assert claimed is None
+    for task_id in ids:
+        task = await collection_tasks_repo.get_collection_task(task_id)
+        assert task is not None and task.status == CollectionTaskStatus.PENDING

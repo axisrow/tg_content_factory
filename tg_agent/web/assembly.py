@@ -156,7 +156,6 @@ def register_routes(app: FastAPI) -> None:
     from tg_agent.web.routes.search import router as search_router
     from tg_agent.web.routes.search_queries import router as search_queries_router
     from tg_agent.web.routes.settings import router as settings_router
-    from tg_agent.web.routes.tasks import router as tasks_router
     from tg_agent.web.routes.telegram_commands import router as telegram_commands_router
 
     app.include_router(agent_router, prefix="/agent")
@@ -180,7 +179,6 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(dialogs_router, prefix="/dialogs")
     app.include_router(dms_router, prefix="/dms")
     app.include_router(telegram_commands_router, prefix="/telegram-commands")
-    app.include_router(tasks_router, prefix="/api/tasks")
     app.include_router(jobs_router, prefix="/jobs")
     app.include_router(photo_loader_router, prefix="/dialogs/photos")
     app.include_router(debug_router, prefix="/debug")

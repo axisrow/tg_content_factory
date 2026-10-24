@@ -256,13 +256,7 @@ class CollectionTaskStatus(StrEnum):
 
 class CollectionTaskType(StrEnum):
     """Вид фоновой задачи в `collection_tasks` — определяет, какой обработчик её
-    исполняет.
-
-    Большинство типов исполняют внутренние воркеры фабрики (UnifiedDispatcher,
-    CollectionQueue). Interop-типы (`DM_REPLY`, `CHAT_ANSWER`, `FETCH_DIALOGS`,
-    `FETCH_HISTORY`) фабрика только создаёт — их забирает внешний воркер
-    tg_messenger через REST-claim API (см.
-    [`EXTERNAL_INTEROP_TASK_TYPES`][tg_agent.models.EXTERNAL_INTEROP_TASK_TYPES]).
+    исполняет (внутренние воркеры фабрики: UnifiedDispatcher, CollectionQueue).
     """
 
     CHANNEL_COLLECT = "channel_collect"
@@ -277,27 +271,6 @@ class CollectionTaskType(StrEnum):
     CONTENT_PUBLISH = "content_publish"
     TRANSLATE_BATCH = "translate_batch"
     EXPORT = "export"
-    # Interop types (#960): produced by tg_content_factory, executed by an
-    # external tg_messenger worker via the /api/tasks REST claim API (#961).
-    # The factory's own workers (UnifiedDispatcher, CollectionQueue) never claim
-    # these — they are absent from HANDLED_TYPES and from the CHANNEL_COLLECT
-    # pull — so they sit PENDING until the external worker claims them.
-    DM_REPLY = "dm_reply"
-    CHAT_ANSWER = "chat_answer"
-    FETCH_DIALOGS = "fetch_dialogs"
-    FETCH_HISTORY = "fetch_history"
-
-
-# Task types executed by an external interop worker (tg_messenger), never by the
-# factory's internal dispatchers. See #829 / #960.
-EXTERNAL_INTEROP_TASK_TYPES: frozenset[CollectionTaskType] = frozenset(
-    {
-        CollectionTaskType.DM_REPLY,
-        CollectionTaskType.CHAT_ANSWER,
-        CollectionTaskType.FETCH_DIALOGS,
-        CollectionTaskType.FETCH_HISTORY,
-    }
-)
 
 
 class TelegramCommandStatus(StrEnum):
@@ -671,70 +644,14 @@ class ExportTaskPayload(BaseModel):
     requested_by: str | None = None
 
 
-# Interop payloads (#960). Produced by the factory, consumed by an external
-# tg_messenger worker. ``v`` is the payload schema version so the worker can
-# evolve independently; ``task_kind`` mirrors the enum value for self-describing
-# rows.
-#
-# By design these are NOT added to CollectionTasksRepository._deserialize_payload
-# / create_generic_task's typed union: the factory only produces them (the REST
-# API stores the request body as an opaque JSON dict) and never executes them, so
-# it never needs typed read access — the external worker owns validation/execution.
-class DmReplyTaskPayload(BaseModel):
-    """Interop-нагрузка DM_REPLY (#960): ответ в личку, исполняет внешний воркер.
-
-    `peer` — @username или числовой id собеседника; `v` — версия схемы нагрузки,
-    чтобы внешний воркер мог эволюционировать независимо.
-    """
-
-    v: int = 1
-    task_kind: str = CollectionTaskType.DM_REPLY.value
-    peer: str = Field(min_length=1)  # @username or numeric user id of the DM peer
-    text: str = Field(min_length=1)
-    reply_to_message_id: int | None = None
-
-
-class ChatAnswerTaskPayload(BaseModel):
-    """Interop-нагрузка CHAT_ANSWER (#960): ответ в чат `chat_id`, исполняет
-    внешний воркер. `v` — версия схемы нагрузки."""
-
-    v: int = 1
-    task_kind: str = CollectionTaskType.CHAT_ANSWER.value
-    chat_id: int
-    text: str = Field(min_length=1)
-    reply_to_message_id: int | None = None
-
-
-class FetchDialogsTaskPayload(BaseModel):
-    """Interop-нагрузка FETCH_DIALOGS (#960): запрос списка диалогов у внешнего
-    воркера (`archived` включает архивные). `v` — версия схемы нагрузки."""
-
-    v: int = 1
-    task_kind: str = CollectionTaskType.FETCH_DIALOGS.value
-    limit: int = 100
-    archived: bool = False
-
-
-class FetchHistoryTaskPayload(BaseModel):
-    """Interop-нагрузка FETCH_HISTORY (#960): запрос истории диалога `peer` у
-    внешнего воркера с пагинацией от `offset_id`. `v` — версия схемы нагрузки."""
-
-    v: int = 1
-    task_kind: str = CollectionTaskType.FETCH_HISTORY.value
-    peer: str = Field(min_length=1)  # @username or numeric chat/channel id
-    limit: int = 100
-    offset_id: int = 0
-
-
 class CollectionTask(BaseModel):
     """Строка таблицы `collection_tasks` — единица фоновой работы.
 
     Несёт тип ([`CollectionTaskType`][tg_agent.models.CollectionTaskType]) и статус
     ([`CollectionTaskStatus`][tg_agent.models.CollectionTaskStatus]) плюс
-    типизированный `payload` (union нагрузок под конкретный тип задачи, обычный
-    dict — для interop-типов). `last_progress_at` отличает реально застрявший
-    сбор от упавшего воркера; `result_payload` пишет внешний interop-воркер.
-    `parent_task_id` связывает порождённые подзадачи с родителем.
+    типизированный `payload` (union нагрузок под конкретный тип задачи, либо
+    обычный dict). `last_progress_at` отличает реально застрявший сбор от
+    упавшего воркера. `parent_task_id` связывает порождённые подзадачи с родителем.
     """
 
     id: int | None = None
@@ -766,7 +683,8 @@ class CollectionTask(BaseModel):
     # When progress (messages_collected) last advanced — used by the scheduler
     # health page to tell a genuinely stuck collection apart from a downed worker.
     last_progress_at: datetime | None = None
-    # Result written back by an external interop worker on completion (#961).
+    # Result payload column from the removed /api/tasks interop contour (#961,
+    # removed in #1431). Kept because the column exists in deployed databases.
     result_payload: dict[str, Any] | None = None
     # Lease/TTL ownership for external interop claims (#1468): who holds the
     # task and since when; a RUNNING task is reclaimable once the lease expires.
