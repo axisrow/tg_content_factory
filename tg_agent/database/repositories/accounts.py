@@ -372,6 +372,22 @@ class AccountsRepository:
             created_at=parse_datetime(row["created_at"]),
         )
 
+    async def export_accounts_raw(self) -> list[Account]:
+        """Все аккаунты «как есть»: `session_string` — значение из БД БЕЗ расшифровки.
+
+        Только для миграций хранилищ (копирование аккаунтов в глобальный store,
+        #1683): поле `session_string` здесь может быть шифротекстом `enc:v2:*`,
+        поэтому строить из таких объектов живой клиент нельзя. Для обычной
+        работы — :meth:`get_accounts` / :meth:`get_account_summaries`.
+        """
+        cur = await self._db.execute(
+            "SELECT * FROM accounts ORDER BY is_primary DESC, id ASC"
+        )
+        rows = await cur.fetchall()
+        return [
+            self._account_from_row(row, str(row["session_string"] or "")) for row in rows
+        ]
+
     async def get_accounts(self, active_only: bool = False) -> list[Account]:
         """Полные [`Account`][tg_agent.models.Account] с расшифрованными сессиями для живого использования.
 

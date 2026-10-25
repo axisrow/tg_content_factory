@@ -240,6 +240,19 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
         "local read-only whitelist/blacklist contradiction report; covered by repo and CLI unit tests"
     ),
     ("filter", "toggle"): "local filter mutation",
+    ("global", "disable"): (
+        "local project→store switch: removes the .tg-agent-global marker; file-only, "
+        "no live Telegram, covered by offline CLI tests (#1683)"
+    ),
+    ("global", "enable"): (
+        "local project→store switch: writes the marker and optionally seeds the global "
+        "store from local DB rows (ciphertext copy); DB/file-only, no live Telegram, "
+        "covered by offline CLI tests (#1683)"
+    ),
+    ("global", "status"): (
+        "list-only local config view (marker + resolved store paths); no live Telegram, "
+        "covered by offline CLI tests (#1683)"
+    ),
     ("image", "generate"): "provider spend/write operation",
     ("image", "models"): "provider/network enumeration",
     ("notification", "delete"): "BotFather/stateful notification mutation",

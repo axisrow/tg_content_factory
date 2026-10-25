@@ -19,6 +19,7 @@ data/*
 *.db-wal
 *.session
 .env
+.tg-agent-global
 pattaya.xlsx
 
 # Virtual environments

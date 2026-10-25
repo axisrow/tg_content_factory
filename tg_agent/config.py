@@ -237,6 +237,60 @@ class AppConfig(BaseModel):
 _ENV_PATTERN = re.compile(r"\$\{(\w+)\}")
 
 
+# --- Global account store (#1683) ------------------------------------------ #
+# A machine-wide account store several project directories can share. The
+# switch is a marker file in the project root (cwd), written by
+# `tg-agent global enable` and removed by `global disable`; while it exists,
+# load_config resolves the database and the Telegram session cache into the
+# global store instead of the project-local data/ tree.
+
+GLOBAL_STORE_DIR_ENV = "TG_AGENT_GLOBAL_DIR"
+GLOBAL_STORE_MARKER = ".tg-agent-global"
+GLOBAL_DB_NAME = "tg_search.db"
+GLOBAL_SESSIONS_SUBDIR = "telegram_sessions"
+
+
+def global_store_root() -> Path:
+    """Каталог глобального хранилища аккаунтов: `~/.tg-agent` или `$TG_AGENT_GLOBAL_DIR`.
+
+    Переменная окружения — способ изолировать хранилище в тестах и нестандартных
+    раскладках; значение разворачивается в абсолютный путь в момент вызова.
+    """
+    override = os.environ.get(GLOBAL_STORE_DIR_ENV, "").strip()
+    root = Path(override).expanduser() if override else Path.home() / ".tg-agent"
+    return root.resolve()
+
+
+def global_marker_path() -> Path:
+    """Маркер подключения проекта к глобальному хранилищу — в корне проекта (cwd)."""
+    return Path.cwd() / GLOBAL_STORE_MARKER
+
+
+def read_global_store_marker() -> Path | None:
+    """Каталог глобального хранилища, если проект подключён (маркер существует); иначе ``None``."""
+    try:
+        raw = global_marker_path().read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return Path(raw) if raw else None
+
+
+def apply_global_store(config: AppConfig) -> None:
+    """Перенаправить базу и сессии проекта в глобальное хранилище (#1683).
+
+    Пока в корне проекта лежит маркер `global enable`, база и каталог сессий
+    читаются из общего каталога; остальные пути (логи, изображения, выгрузки)
+    остаются локальными. Явный `TG_SESSION_CACHE_DIR` сильнее маркера — это
+    осознанное переопределение окружения конкретного процесса.
+    """
+    root = read_global_store_marker()
+    if root is None:
+        return
+    config.database.path = str(root / GLOBAL_DB_NAME)
+    if not os.environ.get("TG_SESSION_CACHE_DIR", "").strip():
+        config.telegram_runtime.session_cache_dir = str(root / GLOBAL_SESSIONS_SUBDIR)
+
+
 def is_provider_model_ref(value: str) -> bool:
     """True, если строка имеет вид `provider:model` с непустыми частями.
 
@@ -320,6 +374,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
             "will stay disabled until it is corrected.",
             config.agent.fallback_model,
         )
+    apply_global_store(config)
     return config
 
 

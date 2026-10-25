@@ -32,6 +32,7 @@ from tg_agent.cli.commands import debug as debug_cmd
 from tg_agent.cli.commands import dialogs as dialogs_cmd
 from tg_agent.cli.commands import export as export_cmd
 from tg_agent.cli.commands import filter as filter_cmd
+from tg_agent.cli.commands import global_store as global_store_cmd
 from tg_agent.cli.commands import image as image_cmd
 from tg_agent.cli.commands import mcp_server as mcp_server_cmd
 from tg_agent.cli.commands import messages as messages_cmd
@@ -72,6 +73,7 @@ from tg_agent.cli.commands.dialogs import dialogs_app
 from tg_agent.cli.commands.dm import dm_app
 from tg_agent.cli.commands.export import export_app
 from tg_agent.cli.commands.filter import filter_app
+from tg_agent.cli.commands.global_store import global_app
 from tg_agent.cli.commands.image import image_app
 from tg_agent.cli.commands.messages import messages_app
 from tg_agent.cli.commands.notification import notification_app
@@ -413,6 +415,13 @@ app.add_typer(agent_app, name="agent")
 #                publish / batch-list / items / batch-cancel / auto-create / auto-list /
 
 app.add_typer(photo_loader_app, name="photo-loader")
+
+
+# --------------------------------------------------------------------------- #
+# global → enable / disable / status — shared account store (#1683)
+# --------------------------------------------------------------------------- #
+
+app.add_typer(global_app, name="global")
 
 
 # --------------------------------------------------------------------------- #
