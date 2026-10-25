@@ -74,7 +74,7 @@ async def _seed_global_store(config, local_db: Database, root: Path) -> int | No
         if existing:
             print(
                 f"Global store already has {len(existing)} account(s) — "
-                f"local accounts left untouched."
+                "local accounts left untouched."
             )
             return 0
         if not raw_accounts:

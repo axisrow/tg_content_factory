@@ -25,6 +25,10 @@ tg-agent --version
 - Check an account is authorized: `tg-agent account list`. If none, first authorization is
   **interactive** — the user must run `tg-agent account add` themselves (they receive a
   Telegram login code). Never try to automate the code entry.
+- Fresh project shows `No accounts found`? Accounts are per-project by default. Attach the
+  project to the machine-wide store once with `tg-agent global enable` (shared DB at
+  `~/.tg-agent`, seeded from local accounts on first enable; `global status` shows the
+  effective store) — the shared accounts become visible without re-logging in.
 - `.env` from the current directory is picked up automatically.
 - If Telegram connections time out (MTProto IPs blocked on this network), set
   `TG_PROXY=socks5://user:pass@host:port` (no-auth `socks5://host:port`, or
@@ -55,6 +59,7 @@ Task → group (details in [reference.md](reference.md)):
 | Dormant-DM friendly pings: monitor silent 1:1 chats, auto re-ping on a decaying schedule | `ping` |
 | Content factory (LLM pipelines, images) | `pipeline`, `photo-loader` |
 | Analytics, notifications, scheduling, accounts, settings | `analytics`, `notification`, `scheduler`, `account`, `settings` |
+| Shared account store across projects (attach/detach/status) | `global` |
 
 ## Safety — this is the user's real Telegram
 

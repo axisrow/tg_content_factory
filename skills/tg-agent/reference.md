@@ -292,6 +292,15 @@ ground truth that calibrates `usefulness` thresholds, never a production path.
 account list | info | toggle | set-primary | delete | add
 account send-code | verify-code        # interactive first-time auth — user does this themselves
 account flood-status | flood-clear
+global enable | disable | status       # shared account store across projects (#1683)
+# global: `enable` attaches the current project to the machine-wide store
+# (~/.tg-agent, TG_AGENT_GLOBAL_DIR overrides) via a .tg-agent-global marker in the
+# project root; accounts and Telegram sessions then resolve to the shared store in
+# every attached project, logs/images/downloads stay project-local. First enable of
+# an empty store seeds it from the project's local accounts (enc:v2 ciphertext
+# copied as-is — SESSION_ENCRYPTION_KEY stays required, never printed). `disable`
+# removes the marker (local files untouched); `status` prints the effective store.
+# Restart any running worker/daemon in the project after enable/disable.
 notification setup | status | delete | test | dry-run | set-account
 settings get | set | info | server-time | agent | filter-criteria | reactions | semantic
 # settings: secret-looking keys (*_api_key, *_token, *_secret, session_secret_key) are

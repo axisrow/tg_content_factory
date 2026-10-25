@@ -98,6 +98,7 @@ _COMMAND_MODULE_ALIASES_FOR_TEST_PATCHING = (
     dialogs_cmd,
     export_cmd,
     filter_cmd,
+    global_store_cmd,
     image_cmd,
     messages_cmd,
     notification_cmd,
