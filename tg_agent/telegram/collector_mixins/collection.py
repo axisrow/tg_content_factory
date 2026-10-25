@@ -512,7 +512,7 @@ class CollectionMixin:
                     exc.retry_after_sec,
                 )
             except Exception as e:
-                logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
+                logger.warning("Failed to prefetch dialogs for %s: %s", phone, e, exc_info=True)
 
         return session, phone, resolve_cache_only
 
@@ -1064,6 +1064,7 @@ class CollectionMixin:
                         "Failed to update forum topics for %d: %s",
                         channel_id,
                         e,
+                        exc_info=True,
                     )
 
         if (
@@ -1450,7 +1451,7 @@ class CollectionMixin:
                     )
                     return []
                 except Exception as e:
-                    logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
+                    logger.warning("Failed to prefetch dialogs for %s: %s", phone, e, exc_info=True)
 
             try:
                 entity = await run_with_flood_wait(

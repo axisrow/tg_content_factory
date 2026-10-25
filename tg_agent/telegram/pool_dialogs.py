@@ -333,7 +333,7 @@ class DialogsMixin:
                 return False
             cached = await repo.list_dialogs(phone)
         except Exception as exc:  # pragma: no cover - defensive: never block warming
-            logger.warning("warm_all_dialogs: cannot read sweep state for %s: %s", phone, exc)
+            logger.warning("warm_all_dialogs: cannot read sweep state for %s: %s", phone, exc, exc_info=True)
             return False
         if not cached:
             return False
@@ -1015,7 +1015,7 @@ class DialogsMixin:
                 )
                 continue
             except Exception as e:
-                logger.warning("resolve_channel: failed to resolve '%s': %s", identifier, e)
+                logger.warning("resolve_channel: failed to resolve '%s': %s", identifier, e, exc_info=True)
                 return None
             finally:
                 await self.release_client(phone)
@@ -1088,7 +1088,7 @@ class DialogsMixin:
                 )
                 continue
             except Exception as e:
-                logger.warning("resolve_any_entity: failed to resolve '%s': %s", identifier, e)
+                logger.warning("resolve_any_entity: failed to resolve '%s': %s", identifier, e, exc_info=True)
                 return None
             finally:
                 await self.release_client(used_phone)
@@ -1310,6 +1310,7 @@ class DialogsMixin:
                 "fetch_channel_meta: failed to fetch full meta for channel_id %s: %s",
                 channel_id,
                 e,
+                exc_info=True,
             )
             return None
         finally:
@@ -1792,7 +1793,7 @@ class DialogsMixin:
                     )
                     outcomes[cid] = False
                 except Exception as e:
-                    logger.warning("leave_channels: failed for %d: %s", cid, e)
+                    logger.warning("leave_channels: failed for %d: %s", cid, e, exc_info=True)
                     outcomes[cid] = False
         finally:
             await self.release_client(phone)
@@ -1869,7 +1870,7 @@ class DialogsMixin:
                     )
                     outcomes[cid] = False
                 except Exception as e:
-                    logger.warning("delete_dialogs: failed for %d: %s", cid, e)
+                    logger.warning("delete_dialogs: failed for %d: %s", cid, e, exc_info=True)
                     outcomes[cid] = False
         finally:
             await self.release_client(phone)

@@ -38,7 +38,7 @@ async def fetch_channel_meta(pool: Any, channel_id: int, channel_type: str | Non
     try:
         return await fetcher(channel_id, channel_type)
     except Exception as exc:
-        logger.warning("Failed to fetch channel metadata for %s: %s", channel_id, exc)
+        logger.warning("Failed to fetch channel metadata for %s: %s", channel_id, exc, exc_info=True)
         return None
 
 
@@ -101,5 +101,5 @@ async def enqueue_stats_for_new_channels(
     try:
         return await create_stats_task(StatsAllTaskPayload(channel_ids=unique_ids))
     except Exception as exc:
-        logger.warning("Failed to enqueue stats task after %s: %s", context, exc)
+        logger.warning("Failed to enqueue stats task after %s: %s", context, exc, exc_info=True)
         return None

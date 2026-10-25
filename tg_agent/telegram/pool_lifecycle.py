@@ -150,7 +150,7 @@ class ClientLifecycleMixin:
                 logger.info("Connected account: %s (primary=%s)", acc.phone, acc.is_primary)
                 return lease
             except Exception as e:
-                logger.error("Failed to connect %s: %s", acc.phone, e)
+                logger.error("Failed to connect %s: %s", acc.phone, e, exc_info=True)
                 return None
 
         tasks = {asyncio.create_task(_connect_one(acc)): acc for acc in new_accounts}
@@ -166,7 +166,7 @@ class ClientLifecycleMixin:
                 if is_premium != acc.is_premium:
                     await self._db.update_account_premium(acc.phone, is_premium)
             except Exception as e:
-                logger.warning("Failed to fetch premium status for %s: %s", acc.phone, e)
+                logger.warning("Failed to fetch premium status for %s: %s", acc.phone, e, exc_info=True)
             finally:
                 await self._backend_router.release(lease)
         if pending:
