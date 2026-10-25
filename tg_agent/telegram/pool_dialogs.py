@@ -541,7 +541,7 @@ class DialogsMixin:
                     exc.retry_after_sec,
                 )
             except Exception as e:
-                logger.warning("warm_all_dialogs: failed for %s: %s", p, e)
+                logger.warning("warm_all_dialogs: failed for %s: %s", p, e, exc_info=True)
             finally:
                 await self.release_client(p)
 

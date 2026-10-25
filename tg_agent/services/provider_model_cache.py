@@ -218,7 +218,9 @@ class ProviderModelCacheMixin:
             )
         except Exception as exc:
             live_error = str(exc)
-            logger.warning("Provider model refresh failed for %s: %s", provider_name, exc)
+            logger.warning(
+                "Provider model refresh failed for %s: %s", provider_name, exc, exc_info=True
+            )
             entry = ProviderModelCacheEntry(
                 provider=provider_name,
                 models=list(existing_entry.models or list(spec.static_models)),

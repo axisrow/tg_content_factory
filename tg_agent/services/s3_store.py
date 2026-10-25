@@ -102,7 +102,7 @@ class S3Store:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, lambda: self._presigned_get(self._client(), key))
         except Exception as exc:
-            logger.warning("S3 re-sign failed for %s: %s", url, exc)
+            logger.warning("S3 re-sign failed for %s: %s", url, exc, exc_info=True)
             return url
 
     def _client(self):
@@ -143,7 +143,7 @@ class S3Store:
             logger.warning("boto3 not installed; S3 upload skipped for %s", local_path)
             return None
         except Exception as exc:
-            logger.warning("S3 upload failed for %s: %s", local_path, exc)
+            logger.warning("S3 upload failed for %s: %s", local_path, exc, exc_info=True)
             return None
 
     async def upload_url(self, url: str, key: str | None = None) -> str | None:
@@ -193,7 +193,7 @@ class S3Store:
             logger.warning("boto3 not installed; S3 mirror skipped for %s", url)
             return None
         except Exception as exc:
-            logger.warning("S3 mirror failed for %s: %s", url, exc)
+            logger.warning("S3 mirror failed for %s: %s", url, exc, exc_info=True)
             return None
 
     @classmethod

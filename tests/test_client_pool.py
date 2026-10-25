@@ -526,7 +526,7 @@ async def test_warm_rate_limit_gate_skips_phone_and_continues(real_pool_harness_
 
 
 @pytest.mark.anyio
-async def test_warm_single_phone_timeout(real_pool_harness_factory, monkeypatch):
+async def test_warm_single_phone_timeout(real_pool_harness_factory, monkeypatch, caplog):
     """A hanging get_dialogs should time out and not block other phones."""
     import asyncio
     import time
@@ -549,13 +549,22 @@ async def test_warm_single_phone_timeout(real_pool_harness_factory, monkeypatch)
         "+70000000002": ok_client,
     })
 
-    t0 = time.monotonic()
-    await harness.pool.warm_all_dialogs()
-    elapsed = time.monotonic() - t0
+    with caplog.at_level("WARNING", logger="tg_agent.telegram.pool_dialogs"):
+        t0 = time.monotonic()
+        await harness.pool.warm_all_dialogs()
+        elapsed = time.monotonic() - t0
 
     # 1s timeout on first phone + near-instant on second
     assert elapsed < 10.0, f"warm took {elapsed:.1f}s, expected < 10s"
     ok_client.get_dialogs.assert_awaited()
+    # The failure must stay diagnosable: empty-str exceptions (asyncio.TimeoutError)
+    # render as "", so the warning must carry the traceback via exc_info.
+    failed = [record for record in caplog.records if "failed for" in record.getMessage()]
+    assert failed, "expected a warm failure warning for the hung phone"
+    assert failed[0].exc_info is not None, (
+        "warning must carry exc_info — TimeoutError() prints as an empty string"
+    )
+    assert failed[0].exc_info[0] is asyncio.TimeoutError
 
 
 @pytest.mark.anyio
