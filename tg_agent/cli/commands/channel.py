@@ -989,6 +989,8 @@ async def probe_impl(
             participants_count=participants,
             username=username,
             min_subscribers=min_subscribers,
+            # Chat small groups have no .broadcast attr → chat, like the analyzer.
+            is_broadcast=bool(getattr(entity, "broadcast", False)),
         )
         if as_json:
             print(

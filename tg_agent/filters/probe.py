@@ -58,11 +58,17 @@ def probe_channel_snapshots(
     participants_count: int | None,
     username: str | None,
     min_subscribers: int | None = None,
+    is_broadcast: bool | None = None,
 ) -> dict:
     """Build the flag card from a latest-first sample of live posts.
 
     ``min_subscribers`` mirrors the ``min_subscribers_filter`` setting (0/None
     disables the check, as in the analyzer).
+    ``is_broadcast`` mirrors the analyzer's chat-only guard: chat_noise is
+    computed only for chat peers (groups/megagroups/forums); for a broadcast
+    channel — or an unknown peer type, judged as broadcast like the analyzer
+    does — the flag stays None so a probe flag and a post-collect flag mean
+    the same thing.
     """
     total = len(messages)
     card: dict = {
@@ -104,8 +110,10 @@ def probe_channel_snapshots(
     else:
         flag("non_cyrillic", None, "no text posts in sample")
 
-    # chat_noise: доля постов ≤10 символов > 70% (для каналов — informational).
-    if non_empty:
+    # chat_noise: доля постов ≤10 символов > 70% — ЧАТОВЫЙ флаг, как в
+    # анализаторе (_append_chat_noise_flag считает его только для чатов);
+    # у broadcast-канала флаг не считается (None), а не «informational».
+    if is_broadcast is False and non_empty:
         short = sum(1 for t in non_empty if len(t) <= CHAT_NOISE_SHORT_TEXT)
         pct = short / len(non_empty) * 100
         flag(
@@ -113,8 +121,10 @@ def probe_channel_snapshots(
             pct > CHAT_NOISE_THRESHOLD,
             f"{pct:.1f}% posts ≤{CHAT_NOISE_SHORT_TEXT} chars ({CHAT_NOISE_THRESHOLD}% threshold)",
         )
-    else:
+    elif is_broadcast is False:
         flag("chat_noise", None, "no text posts in sample")
+    else:
+        flag("chat_noise", None, "chat-only flag (broadcast or unknown peer type)")
 
     # auto_feed: ≥85% постов <200 символов со ссылкой (total ≥ 30).
     if total >= AUTO_FEED_MIN_MESSAGES:

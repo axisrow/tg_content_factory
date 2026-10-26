@@ -9,13 +9,22 @@ from tg_agent.filters.criteria import (
 from tg_agent.filters.probe import ProbeMessage, probe_channel_snapshots
 
 
-def mk(text="пост про ИИ и нейросети с достаточной длиной", views: int | None = None, is_forward=False, urls=()):
+def mk(
+    text: str | None = "пост про ИИ и нейросети с достаточной длиной",
+    views: int | None = None,
+    is_forward=False,
+    urls=(),
+):
     return ProbeMessage(text=text, views=views, is_forward=is_forward, urls=urls)
 
 
-def probe(msgs, participants=None, username=None, min_subscribers=None):
+def probe(msgs, participants=None, username=None, min_subscribers=None, is_broadcast=None):
     return probe_channel_snapshots(
-        msgs, participants_count=participants, username=username, min_subscribers=min_subscribers
+        msgs,
+        participants_count=participants,
+        username=username,
+        min_subscribers=min_subscribers,
+        is_broadcast=is_broadcast,
     )
 
 
@@ -96,6 +105,21 @@ def test_suspicious_username():
     assert probe(sample(35), username="S0IMD1EDUAW")["flags"]["suspicious_username"]["hit"] is True
     assert probe(sample(35), username="my_ai_channel")["flags"]["suspicious_username"]["hit"] is False
     assert probe(sample(35), username=None)["flags"]["suspicious_username"]["hit"] is None
+
+
+def test_chat_noise_is_chat_only_like_the_analyzer():
+    # The analyzer (_append_chat_noise_flag) computes chat_noise for chat
+    # peers only; the probe must agree — a broadcast (or unknown-type)
+    # channel never gets the flag, not even "informational".
+    noisy = [mk(text="ok")] * 35  # 35 short posts → 100% > 70%
+    chat = probe(noisy, participants=100, is_broadcast=False)
+    assert chat["flags"]["chat_noise"]["hit"] is True
+    broadcast = probe(noisy, participants=100, is_broadcast=True)
+    assert broadcast["flags"]["chat_noise"]["hit"] is None
+    unknown = probe(noisy, participants=100, is_broadcast=None)
+    assert unknown["flags"]["chat_noise"]["hit"] is None
+    # chat with no text posts → insufficient data, not a verdict
+    assert probe([mk(text=None)] * 35, participants=100, is_broadcast=False)["flags"]["chat_noise"]["hit"] is None
 
 
 def test_card_reports_db_only_metrics():
