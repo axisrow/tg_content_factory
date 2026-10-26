@@ -1170,7 +1170,11 @@ async def test_publish_service_stalled_send_is_bounded_and_unconfirmed():
         patch.object(ps, "SEND_TIMEOUT_SEC", 0.005),
         patch.object(ps, "SEND_CONFIRMATION_GRACE_SEC", 0.005),
     ):
-        results = await asyncio.wait_for(service.publish_run(run, make_pipeline()), timeout=0.1)
+        # The bound under test is SEND_TIMEOUT_SEC (5ms); this outer guard only
+        # catches a truly stuck dispatcher. Generous headroom: under the mutmut
+        # stats sandbox every call detours through trampolines, and 0.1s was
+        # too tight for the same stall logic to finish.
+        results = await asyncio.wait_for(service.publish_run(run, make_pipeline()), timeout=10.0)
 
     assert results[0].success is False
     assert results[0].uncertain is True
