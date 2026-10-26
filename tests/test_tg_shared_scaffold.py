@@ -29,6 +29,9 @@ SHARED_SRC = SHARED_ROOT / "src"
 sys.path.insert(0, str(SHARED_SRC))
 
 
+# mutmut_skip: scans packages/tg_shared on disk — the tree is not part of the
+# mutants sandbox (mutmut copies only tg_agent/ + tests/).
+@pytest.mark.mutmut_skip
 def test_shared_package_tree_and_packaging_markers() -> None:
     """#1420 AC: py.typed, changelog with the released versions, license present."""
     assert (SHARED_SRC / "tg_shared" / "__init__.py").is_file()
@@ -133,6 +136,8 @@ async def test_json_store_active_only_and_unknown_phone_noop(tmp_path) -> None:
     assert len(await store.get_accounts()) == 2
 
 
+# mutmut_skip: scans packages/tg_shared on disk — not part of the mutants sandbox.
+@pytest.mark.mutmut_skip
 @pytest.mark.parametrize(
     "missing",
     ["__init__.py", "py.typed", "models.py", "storage.py", "json_store.py"],

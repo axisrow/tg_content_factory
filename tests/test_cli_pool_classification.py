@@ -178,6 +178,9 @@ def test_hands_off_sites_consult_the_detector(file_name: str, func_name: str):
     )
 
 
+# mutmut_skip: repo-contract AST scan — mutmut trampoline defs (x_*__mutmut_N)
+# duplicate the guarded call sites inside the mutants sandbox.
+@pytest.mark.mutmut_skip
 def test_only_listed_sites_bypass_the_daemon_guard():
     """``allow_live_daemon`` re-opens the #1521 hole, so every use must be listed.
 

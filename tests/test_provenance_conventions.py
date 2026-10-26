@@ -73,6 +73,9 @@ def _guarded_fields(table: str, set_clause: str) -> set[str]:
     return {field for field in _GUARDED_FIELDS[table] if re.search(rf"\b{field}\b", set_clause)}
 
 
+# mutmut_skip: source-text scan — mutant variant copies mutate pinned SQL
+# literals (e.g. accounts -> ACCOUNTS) and trip the scanner inside the sandbox.
+@pytest.mark.mutmut_skip
 def test_no_raw_updates_of_provenance_guarded_columns():
     offenders: list[str] = []
     for path in _iter_py_sources():
