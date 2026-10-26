@@ -63,7 +63,8 @@ until then — do not invent a voice.
      leave empty if the channel never carries digests -->
 """
 
-_KEY_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+# Optional leading dash: real TG channel ids are negative (-100...).
+_KEY_RE = re.compile(r"^-?[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 
 
 def _spec_path(channel_key: str) -> Path:

@@ -100,7 +100,14 @@ def test_reinit_after_delete_regenerates(tmp_path, monkeypatch):
     assert (designs / "digest_channel.md").exists()
 
 
-@pytest.mark.parametrize("bad", ["../evil", "a/b", "a\\b", ".", "..", ""])
+def test_init_accepts_negative_numeric_channel_id(tmp_path, monkeypatch):
+    designs = _isolate(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["style", "init", "--channel", "-1001234567890"])
+    assert result.exit_code == 0
+    assert (designs / "-1001234567890.md").exists()
+
+
+@pytest.mark.parametrize("bad", ["../evil", "a/b", "a\\b", ".", "..", "-.", "-..", ""])
 def test_init_rejects_unsafe_keys(tmp_path, monkeypatch, bad):
     designs = _isolate(tmp_path, monkeypatch)
     result = runner.invoke(app, ["style", "init", "--channel", bad])
