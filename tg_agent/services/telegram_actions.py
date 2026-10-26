@@ -434,10 +434,13 @@ class TelegramActionService:
         phone: str,
         recipient: Any,
         text: str,
+        link_preview: bool = False,
     ) -> SendMessageResult:
+        # Operator channels never render web previews on links (#1584-adjacent
+        # digest flow: a bare URL silently produced one); opt in explicitly.
         async with self._client(phone=phone, native=True) as (client, acquired_phone):
             entity = await self._resolve_entity(client, phone=acquired_phone, identifier=recipient)
-            message = await client.send_message(entity, text)
+            message = await client.send_message(entity, text, link_preview=link_preview)
             return SendMessageResult(phone=acquired_phone, message_id=getattr(message, "id", None))
 
     async def edit_message(
@@ -447,10 +450,11 @@ class TelegramActionService:
         chat_id: Any,
         message_id: int,
         text: str,
+        link_preview: bool = False,
     ) -> TelegramActionResult:
         async with self._client(phone=phone, native=True) as (client, acquired_phone):
             entity = await self._resolve_entity(client, phone=acquired_phone, identifier=chat_id)
-            await client.edit_message(entity, int(message_id), text)
+            await client.edit_message(entity, int(message_id), text, link_preview=link_preview)
             return TelegramActionResult(phone=acquired_phone)
 
     async def delete_messages(

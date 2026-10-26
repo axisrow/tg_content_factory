@@ -248,3 +248,32 @@ async def test_action_service_raises_when_client_unavailable():
 
     with pytest.raises(TelegramActionClientUnavailableError):
         await TelegramActionService(pool).send_message(phone="+1", recipient="@u", text="hi")
+
+
+@pytest.mark.anyio
+async def test_send_message_disables_link_preview_by_default():
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value="entity")
+    client.send_message = AsyncMock(return_value=SimpleNamespace(id=7))
+    pool = _pool_with_client(client)
+
+    result = await TelegramActionService(pool).send_message(phone="+1", recipient="@u", text="hi")
+
+    assert result.message_id == 7
+    client.send_message.assert_awaited_once_with("entity", "hi", link_preview=False)
+    pool.release_client.assert_awaited_once_with("+1")
+
+
+@pytest.mark.anyio
+async def test_edit_message_disables_link_preview_by_default():
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value="entity")
+    client.edit_message = AsyncMock()
+    pool = _pool_with_client(client)
+
+    await TelegramActionService(pool).edit_message(
+        phone="+1", chat_id="@chat", message_id=9, text="new"
+    )
+
+    client.edit_message.assert_awaited_once_with("entity", 9, "new", link_preview=False)
+    pool.release_client.assert_awaited_once_with("+1")
