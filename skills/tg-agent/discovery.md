@@ -56,7 +56,8 @@ tg-agent channel probe <channel-id-or-username> --limit 300 --json
 
 The card runs the analyzer's own thresholds (engagement vs subscribers,
 forwarder share, auto-feed, uniqueness, language, suspicious username) over
-the last 300 posts; 100 posts is the minimum for verdicts. Put the verdict
+the last 300 posts; below 30 posts the card reports `insufficient` and the
+verdicts are weak (100 is only the engagement/forwarder window). Put the verdict
 in the short-list: channels with `forwarder`/`auto_feed`/`low_engagement`
 flags go to the bottom or into the discard pile. Cross-channel spam is only
 checkable after the first collection (`filter analyze --quick`).
