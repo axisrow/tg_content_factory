@@ -1,9 +1,8 @@
 """Shared media-type classification for Telethon messages.
 
-Single source of truth used by both the search transformer
-(:class:`~tg_agent.search.transformers.TelegramMessageTransformer`) and the
-collector (:class:`~tg_agent.telegram.collector.Collector`) so that adding a new
-media type updates classification everywhere at once.
+Single source of truth for media classification; every consumer (search
+transformers, collectors) classifies media through this helper so that adding
+a new media type updates classification everywhere at once.
 """
 
 from __future__ import annotations

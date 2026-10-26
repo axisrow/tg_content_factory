@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tg-shared"
-version = "0.1.0"
-description = "Shared Telegram core for tg-agent (factory) and tg-messenger: account storage contract, flood protection, message models"
+version = "0.2.0"
+description = "Shared Telegram core for tg-agent (factory) and tg-messenger: account storage contract, auth/sessions, botfather, message identity/media models"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -23,6 +23,8 @@ classifiers = [
 ]
 dependencies = [
     "pydantic>=2.13.4,<3",
+    "telethon>=1.43.2",
+    "tenacity>=9.1.4",
 ]
 
 # Points at the monorepo until the package is split into its own repository
