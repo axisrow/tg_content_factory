@@ -29,6 +29,13 @@ nobody looks at screens; every consumer is a program.
 # Install dev dependencies
 pip install -e ".[dev]"
 
+# Install the monorepo shared package — the factory imports tg_shared at
+# runtime (#1421 wave A), so without this step the CLI/daemon dies with
+# ModuleNotFoundError: tg_shared (pytest alone is covered by the root
+# conftest.py sys.path shim). A declared pyproject dependency lands when
+# tg-shared is published (#1424 wave).
+pip install -e packages/tg_shared
+
 # Verify that the project is installed (required by isolated tooling such as
 # mutmut; the distribution name is tg-agent, not the repository name).
 python -m pip show tg-agent
