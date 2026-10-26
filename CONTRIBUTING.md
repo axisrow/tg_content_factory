@@ -113,6 +113,8 @@ Advisory tools wired into CI: `bandit`, `pip-audit`. Optional: `mutmut`
 ## PR expectations
 
 - one logical change per PR
+- acceptance criterion defined before implementation: observable result (condition → action → where to check), touched paths, explicit exclusions from the PR's promise
 - tests with the correct level markers; bug fixes need a failing-test-first commit
+- PR body states commands, results, and a CI link; partial/cancelled/skipped runs are not a full pass — reconcile the description with the final diff before merging
 - docstrings on public functions (interrogate ratchet is a soft floor, don't lower it)
 - `ruff check .` and `lint-imports` clean; CI green

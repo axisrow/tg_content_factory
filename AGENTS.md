@@ -22,5 +22,13 @@ Pytest is the test runner, with `pytest-asyncio`, `pytest-timeout`, and `pytest-
 ## Commit & Pull Request Guidelines
 Recent history uses Conventional Commit prefixes such as `feat(web): ...`, `fix: ...`, and `refactor(web): ...`. Keep commits scoped and imperative. PRs should explain the user-visible change, note schema/config impacts, link the issue or PR number when relevant, and include screenshots for dashboard/template changes. Before opening a PR, run Ruff plus both pytest lanes locally.
 
+Define the acceptance criterion before implementing: the observable result as *condition → action → where the effect is visible*, plus the touched paths and explicit exclusions from the PR's promise.
+
+- Bug fixes: a test that fails on the original bug precedes the fix; tests verify the effect, not a mock call or absence of an exception.
+- Cross-subsystem changes: at least one full-scenario test; verify repeats, races, cancellation, restart, and partial failure only where they apply to the change — not on trivial edits.
+- Confirm new code is actually wired up and the dependency/environment matches; a push-only path (untestable locally) gets an equivalent run before merge.
+- PR body reports commands, results, and a CI link; a partial, cancelled, or skipped run is not a full pass — keep expectations separate from measurements.
+- Before merging: description and criteria reconciled with the final diff; an unmet mandatory criterion blocks acceptance unless explicitly excluded from scope.
+
 ## Security & Configuration Tips
 Keep secrets in `.env`, not in tracked files. Required runtime values include `TG_API_ID`, `TG_API_HASH`, and `WEB_PASS`; `SESSION_ENCRYPTION_KEY` should be set before storing live sessions. Prefer `config.yaml` with `${ENV_VAR}` substitution for local overrides.
