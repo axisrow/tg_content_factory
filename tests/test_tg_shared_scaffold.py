@@ -30,18 +30,19 @@ sys.path.insert(0, str(SHARED_SRC))
 
 
 def test_shared_package_tree_and_packaging_markers() -> None:
-    """#1420 AC: py.typed, changelog with the first version, license present."""
+    """#1420 AC: py.typed, changelog with the released versions, license present."""
     assert (SHARED_SRC / "tg_shared" / "__init__.py").is_file()
     assert (SHARED_SRC / "tg_shared" / "py.typed").is_file()
     changelog = (SHARED_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "0.1.0" in changelog
+    assert "0.2.0" in changelog  # wave A module migration (#1421)
     assert (SHARED_ROOT / "LICENSE").is_file()
 
 
 def test_shared_package_imports_standalone() -> None:
     import tg_shared
 
-    assert tg_shared.__version__ == "0.1.0"
+    assert tg_shared.__version__ == "0.2.0"
     assert tg_shared.SharedAccount is not None
     assert tg_shared.SharedAccountStore is not None
     assert tg_shared.JsonFileStore is not None

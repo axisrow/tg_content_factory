@@ -117,6 +117,9 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      - name: Install tg-shared (monorepo package, #1421)
+        run: pip install -e packages/tg_shared
+
       - name: Import architecture contracts
         run: lint-imports --config .importlinter
 
@@ -208,6 +211,9 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      - name: Install tg-shared (monorepo package, #1421)
+        run: pip install -e packages/tg_shared
+
       - name: Pytest (smoke preflight)
         run: pytest tests -q -m smoke
 
@@ -249,6 +255,9 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      - name: Install tg-shared (monorepo package, #1421)
+        run: pip install -e packages/tg_shared
+
       # On CI conftest.py uses every runner core (the load throttle is
       # dev-only), so `-n auto` fans out across all vCPUs. --durations surfaces
       # the slowest tests each run for ongoing tuning (#944).
@@ -276,6 +285,9 @@ jobs:
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
+
+      - name: Install tg-shared (monorepo package, #1421)
+        run: pip install -e packages/tg_shared
 
       - name: Pytest (aiosqlite serial, per-file parallel)
         run: pytest tests -q -m aiosqlite_serial -n auto --dist=loadfile
