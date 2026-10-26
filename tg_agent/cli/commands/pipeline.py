@@ -511,14 +511,18 @@ async def _pipeline_delete(args: argparse.Namespace, db, config, svc: PipelineSe
 async def _generation_pool(config, db) -> ClientPool | None:
     """Telegram pool for generation, or ``None`` while a daemon owns the sessions.
 
-    Generation needs Telegram only for Telegram-side nodes, which already skip
-    without a pool, so next to a live daemon it runs pool-less instead of being
-    refused by ``init_pool`` (#1521).
+    Generation itself needs no Telegram; Telegram-side nodes (react/forward/
+    delete-message/edit-message) fail loudly without a pool, so a pipeline
+    containing them must run with the daemon stopped. Pipelines without them
+    run pool-less next to a live daemon instead of being refused by
+    ``init_pool`` (#1521).
     """
     if not worker_handoff.direct_requested() and worker_handoff.serve_is_running(config):
         print(
             "A running tg-agent daemon owns the Telegram sessions: generating without "
-            "Telegram access (Telegram-side nodes are skipped).",
+            "Telegram access. Telegram-side nodes (react/forward/delete-message/"
+            "edit-message) will fail — stop the daemon (`tg-agent stop`) to run "
+            "pipelines containing them.",
             file=sys.stderr,
         )
         return None

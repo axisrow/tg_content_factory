@@ -762,9 +762,9 @@ def test_pipeline_run_next_to_live_daemon_generates_without_a_pool(
 ):
     """With a live daemon, ``pipeline run`` generates pool-less instead of competing (#1521).
 
-    The daemon owns the Telegram sessions; generation needs them only for
-    Telegram-side nodes (which skip without a pool), so no ``ClientPool`` may be
-    built and the run must still complete.
+    The daemon owns the Telegram sessions; generation itself needs no pool
+    (Telegram-side nodes would fail without one — this pipeline has none), so
+    no ``ClientPool`` may be built and the run must still complete.
     """
     db_path = str(tmp_path / "cli_pipeline_run_daemon.db")
     db = Database(db_path, session_encryption_secret="test-session-encryption-key")

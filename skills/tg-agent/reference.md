@@ -36,7 +36,9 @@ Telegram killing the session (`AuthKeyDuplicatedError`). Stop the daemon first �
 to a hand-off `dialogs` action, which the running worker executes without a second
 connection. A refused command never disturbs the live session. Two exceptions run
 next to the daemon instead of being refused: `pipeline run` / `pipeline generate` generate
-without Telegram access (Telegram-side nodes are skipped, a note goes to stderr), and the
+without Telegram access (a note goes to stderr; Telegram-side nodes — react/forward/
+delete-message/edit-message — fail without a pool, so pipelines containing them must
+wait for `tg-agent stop`), and the
 DB-only `dialogs queue …` / `dialogs cache-status` (the latter then shows only the DB cache).
 
 `TGCF_CLI_DIRECT=1` (or `--direct` where a command has one) skips this check. The
