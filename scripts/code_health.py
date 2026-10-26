@@ -291,6 +291,52 @@ def section_dead_code(path: Path, top: int) -> None:
             print(f"  {ln}")
 
 
+# Тестовое дерево сканируется всегда (независимо от --path): рецепт тестов —
+# тестируемый объект реальный, фейкается только транспорт.
+TESTS_DIR = Path(__file__).resolve().parent.parent / "tests"
+
+# #1412: MagicMock(spec=ClientPool) не видит атрибутов, заданных в __init__
+# (например _rate_limit_gate), поэтому getattr-гард вида
+# getattr(pool, "_x", None) рядом с таким моком молча возвращает дефолт —
+# проверяемая ветка мертва. Эвристика уровня файла: spec=ClientPool и
+# getattr-гард сосуществуют в одном тест-файле → файл в отчёт.
+POOL_SPEC_FAKE_RE = re.compile(r"\bspec(?:_set)?\s*=\s*ClientPool\b")
+GETATTR_GUARD_RE = re.compile(r"\bgetattr\(\s*\w+\s*,\s*(['\"])[:a-zA-Z_]\w*\1\s*,")
+
+
+def section_pool_spec_fakes(top: int) -> None:
+    """Advisory (#1412): spec=ClientPool-фейки рядом с getattr-гардами."""
+    header("spec=ClientPool + getattr-гарды в тестах (advisory, #1412)")
+    if not TESTS_DIR.is_dir():
+        print(dim(f"каталог {TESTS_DIR} не найден — секция пропущена"))
+        return
+    spec_counts: Counter[Path] = Counter()
+    guard_files: set[Path] = set()
+    for path, text in read_sources(iter_py_files(TESTS_DIR)).items():
+        n_spec = len(POOL_SPEC_FAKE_RE.findall(text))
+        if n_spec:
+            spec_counts[path] = n_spec
+        if GETATTR_GUARD_RE.search(text):
+            guard_files.add(path)
+
+    total = sum(spec_counts.values())
+    print(f"Моков spec=ClientPool: {bold(str(total))} в {len(spec_counts)} файлах")
+    flagged = [(p, spec_counts[p]) for p in spec_counts if p in guard_files]
+    if flagged:
+        print(warn(f"\nФайлов, где spec=ClientPool соседствует с getattr-гардом: {len(flagged)}"))
+        for path, n in sorted(flagged, key=lambda x: -x[1])[:top]:
+            print(f"  {n:>4}  {path}")
+        print(
+            dim(
+                "\n  spec= не покрывает атрибуты экземпляра из __init__: getattr-гард рядом"
+                "\n  с таким моком может молча держать дефолт. Объект под тестом должен"
+                "\n  быть реальным, фейкается только транспорт (урок #1367/#1412)."
+            )
+        )
+    else:
+        print(good("Файлов с соседством spec=ClientPool и getattr-гардов нет — ок"))
+
+
 # --------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------- #
@@ -328,6 +374,7 @@ def main() -> int:
     over_threshold = section_complexity(path, args.top, args.fail_on)
     section_maintainability(path, args.top)
     section_dead_code(path, args.top)
+    section_pool_spec_fakes(args.top)
 
     header("Итог")
     if args.fail_on:
