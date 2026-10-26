@@ -248,6 +248,7 @@ GLOBAL_STORE_DIR_ENV = "TG_AGENT_GLOBAL_DIR"
 GLOBAL_STORE_MARKER = ".tg-agent-global"
 GLOBAL_DB_NAME = "tg_search.db"
 GLOBAL_SESSIONS_SUBDIR = "telegram_sessions"
+GLOBAL_DESIGNS_SUBDIR = "designs"
 
 
 def global_store_root() -> Path:
@@ -259,6 +260,18 @@ def global_store_root() -> Path:
     override = os.environ.get(GLOBAL_STORE_DIR_ENV, "").strip()
     root = Path(override).expanduser() if override else Path.home() / ".tg-agent"
     return root.resolve()
+
+
+def designs_root() -> Path:
+    """Каталог локальных стилевых спек каналов (#1687): ``<global_store_root>/designs``.
+
+    Стилевые спеки (голос владельца) — персональный контент вне репозитория
+    (#1584: случайно закоммиченный design.md пришлось выдавливать force-push'ем),
+    поэтому живут рядом с глобальным хранилищем аккаунтов, вне worktree:
+    ``git status`` чист по построению. От маркера ``global enable`` не зависят —
+    это контент машины, а не подключение проекта к стору аккаунтов.
+    """
+    return global_store_root() / GLOBAL_DESIGNS_SUBDIR
 
 
 def global_marker_path() -> Path:

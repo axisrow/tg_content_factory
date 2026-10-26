@@ -86,7 +86,11 @@ Merge all hits into ONE JSON object — the schema every consumer can rely on:
 ## 4. Output and publish
 
 - Build the JSON first, then render the user-facing text in the requester's
-  channel voice (their local spec), not your own taste.
+  channel voice (their local spec), not your own taste. Fetch the voice with
+  `tg-agent style show --channel <target>`; if it is missing, bootstrap the
+  template with `tg-agent style init --channel <target>` and fill it in
+  together with the user before rendering. Specs live outside the repository
+  (`~/.tg-agent/designs/`) and are never committed.
 - **Item template (owner-confirmed 2026-10-22)** — title, blank line, body
   (fact → numbers → verdict), blank line, then ONE bare URL: the item's
   `link` (primary source). No markdown labels around it. A stack of `t.me`

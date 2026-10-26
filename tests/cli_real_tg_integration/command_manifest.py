@@ -324,6 +324,12 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("settings", "reactions"): "local settings write",
     ("settings", "semantic"): "local settings write",
     ("settings", "set"): "local settings write",
+    ("style", "init"): (
+        "bootstraps a local-only style spec under ~/.tg-agent/designs (file-only, "
+        "never committed, #1687); covered by offline CLI tests"
+    ),
+    ("style", "list"): "list-only local style spec view; file-only, no live Telegram (#1687)",
+    ("style", "show"): "list-only local style spec view; file-only, no live Telegram (#1687)",
     ("test", "write"): "diagnostic aggregate with local DB writes",
     ("translate", "detect"): "local message backfill mutation",
     ("translate", "message"): "provider/network translation",

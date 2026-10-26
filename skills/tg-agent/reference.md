@@ -330,6 +330,14 @@ global enable | disable | status       # shared account store across projects (#
 # copied as-is — SESSION_ENCRYPTION_KEY stays required, never printed). `disable`
 # removes the marker (local files untouched); `status` prints the effective store.
 # Restart any running worker/daemon in the project after enable/disable.
+style init | list | show --channel <id>  # local-only per-channel style specs (#1687)
+# style: per-channel posting-voice specs (skeleton, nicknames, emoji policy, digest
+# rules) stored OUTSIDE the repository in ~/.tg-agent/designs/<key>.md
+# (TG_AGENT_GLOBAL_DIR overrides) — never committed (#1584). `init` bootstraps the
+# placeholder template for a channel (username, t.me link or numeric id) and refuses
+# to overwrite an existing spec without --force; `list` shows the specs; `show`
+# prints the spec — read it to render content in the channel's voice, and fill a
+# fresh template in together with the user.
 notification setup | status | delete | test | dry-run | set-account
 settings get | set | info | server-time | agent | filter-criteria | reactions | semantic
 # settings: secret-looking keys (*_api_key, *_token, *_secret, session_secret_key) are

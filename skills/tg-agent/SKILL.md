@@ -48,6 +48,7 @@ Task → group (details in [reference.md](reference.md)):
 | Task | Group |
 |------|-------|
 | AI news digest (structured, schema-first) | [digest.md](digest.md) — window search → schema JSON → format per request → publish on approval |
+| Per-channel posting style specs (local-only, never committed) | `style init|list|show --channel <id>` — voice specs live in `~/.tg-agent/designs/`; bootstrap a missing one, read it before rendering for a channel |
 | Channel discovery by keywords (premium search) | [discovery.md](discovery.md) — keyword sweep → candidates short-list → toggle on explicit approval |
 | Read message history | `messages read <id> [--query TEXT --date-from D --date-to D --topic-id ID --limit N --format json]` |
 | Search collected history | `search "query" ["query2" ...] [--limit N --mode local|semantic|hybrid|telegram|my_chats|channel]` — 2+ queries = batch JSON |

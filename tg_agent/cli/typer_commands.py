@@ -84,6 +84,7 @@ from tg_agent.cli.commands.provider import provider_app
 from tg_agent.cli.commands.scheduler import scheduler_app
 from tg_agent.cli.commands.search_query import search_query_app
 from tg_agent.cli.commands.settings import settings_app
+from tg_agent.cli.commands.style import style_app
 from tg_agent.cli.commands.test import test_app
 from tg_agent.cli.commands.translate import translate_app
 from tg_agent.cli.typer_app import app, apply_startup, run_async
@@ -423,6 +424,13 @@ app.add_typer(photo_loader_app, name="photo-loader")
 # --------------------------------------------------------------------------- #
 
 app.add_typer(global_app, name="global")
+
+
+# --------------------------------------------------------------------------- #
+# style → init / list / show — local-only per-channel style specs (#1687)
+# --------------------------------------------------------------------------- #
+
+app.add_typer(style_app, name="style")
 
 
 # --------------------------------------------------------------------------- #

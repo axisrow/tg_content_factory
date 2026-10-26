@@ -115,6 +115,7 @@ python -m tg_agent.main provider list|add|delete|probe|refresh|test-all
 python -m tg_agent.main export json|csv|rss
 python -m tg_agent.main translate stats|detect|run|message
 python -m tg_agent.main settings get|set|info|server-time|agent|filter-criteria|reactions|semantic
+python -m tg_agent.main style init|list|show --channel <id>   # local-only per-channel style specs (~/.tg-agent/designs, never committed)
 python -m tg_agent.main debug logs|memory|timing
 python -m tg_agent.main image generate|models|providers|generated
 python -m tg_agent.main mcp-server [--no-pool]   # LEGACY: stdio MCP bridge over the agent tool registry (frozen)
