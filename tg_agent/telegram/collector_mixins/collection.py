@@ -208,10 +208,18 @@ class CollectionMixin:
         channel = await channel_lookup if isawaitable(channel_lookup) else channel_lookup
         if not isinstance(channel, Channel):
             channel = None
-        if channel and "manual" in {
-            flag.strip() for flag in (channel.filter_flags or "").split(",") if flag.strip()
-        }:
-            logger.info("Skipping auto-purge for manually filtered channel %d", channel_id)
+        # Provenance (#1316): a human decision wins regardless of how it was
+        # recorded. The "manual" flag covers the operator sticky flag, but the
+        # private-channel provenance backfill (#1410) marks channels
+        # filtered_origin='human' without touching filter_flags — check the
+        # origin column itself so their messages are never auto-purged.
+        if channel and (
+            channel.filtered_origin == "human"
+            or "manual" in {
+                flag.strip() for flag in (channel.filter_flags or "").split(",") if flag.strip()
+            }
+        ):
+            logger.info("Skipping auto-purge for human-provenance channel %d", channel_id)
             return False
         try:
             deleted = await self._db.delete_messages_for_channel(channel_id)
