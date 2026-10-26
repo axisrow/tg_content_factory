@@ -35,7 +35,7 @@ from tg_agent.database.repositories.accounts import AccountSessionDecryptError
 from tg_agent.models import Account
 from tg_agent.services.notification_target_service import NotificationTargetService
 from tg_agent.settings_utils import parse_int_setting
-from tg_agent.telegram.auth import TelegramAuth, validate_session_string
+from tg_shared.auth import TelegramAuth, validate_session_string
 
 if TYPE_CHECKING:
     from tg_agent.database import Database

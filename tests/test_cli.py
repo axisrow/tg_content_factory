@@ -29,7 +29,7 @@ def cli_env_with_pool(cli_env):
     fake_pool.disconnect_all = AsyncMock()
 
     async def fake_init_pool(config, db, **_kwargs):
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         return TelegramAuth(0, ""), fake_pool
 
@@ -829,7 +829,7 @@ class TestCLICollect:
         fake_pool.disconnect_all = AsyncMock()
 
         async def fake_init_pool(config, db, **_kwargs):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
 
             return TelegramAuth(0, ""), fake_pool
 
@@ -859,7 +859,7 @@ class TestCLICollect:
         fake_pool.disconnect_all = AsyncMock()
 
         async def fake_init_pool(config, db, **_kwargs):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
 
             return TelegramAuth(0, ""), fake_pool
 
@@ -1521,7 +1521,7 @@ class TestCLIDialogsTopics:
         )
 
         async def fake_init_pool(config, db, **_kwargs):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
 
             return TelegramAuth(0, ""), fp
 
@@ -1554,7 +1554,7 @@ class TestCLIDialogsTopics:
         fp.get_forum_topics = AsyncMock(return_value=[])  # pool returns nothing
 
         async def fake_init_pool(config, db, **_kwargs):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
 
             return TelegramAuth(0, ""), fp
 
@@ -1574,7 +1574,7 @@ class TestCLIDialogsTopics:
         fp.get_forum_topics = AsyncMock(return_value=[])
 
         async def fake_init_pool(config, db, **_kwargs):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
 
             return TelegramAuth(0, ""), fp
 

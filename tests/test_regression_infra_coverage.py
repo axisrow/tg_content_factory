@@ -55,8 +55,8 @@ def _make_pool_with_clients(phones=None):
 
 class TestClientPoolCachedDialog:
     async def test_get_cached_dialog_found(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool, DialogCacheEntry
+        from tg_shared.auth import TelegramAuth
         auth = MagicMock(spec=TelegramAuth)
         pool = ClientPool(auth, db)
         pool._dialogs_cache[("phone", "full")] = DialogCacheEntry(
@@ -68,8 +68,8 @@ class TestClientPoolCachedDialog:
         assert result["title"] == "Test"
 
     async def test_get_cached_dialog_not_found(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool, DialogCacheEntry
+        from tg_shared.auth import TelegramAuth
         auth = MagicMock(spec=TelegramAuth)
         pool = ClientPool(auth, db)
         pool._dialogs_cache[("phone", "full")] = DialogCacheEntry(
@@ -80,8 +80,8 @@ class TestClientPoolCachedDialog:
         assert result is None
 
     async def test_get_cached_dialog_expired(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool, DialogCacheEntry
+        from tg_shared.auth import TelegramAuth
         auth = MagicMock(spec=TelegramAuth)
         pool = ClientPool(auth, db)
         pool._dialogs_cache[("phone", "full")] = DialogCacheEntry(
@@ -93,8 +93,8 @@ class TestClientPoolCachedDialog:
         assert ("phone", "full") not in pool._dialogs_cache
 
     async def test_get_dialogs_from_full_cache_filtered(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool, DialogCacheEntry
+        from tg_shared.auth import TelegramAuth
         auth = MagicMock(spec=TelegramAuth)
         pool = ClientPool(auth, db)
         pool._dialogs_cache[("phone", "full")] = DialogCacheEntry(
@@ -207,7 +207,7 @@ class TestTelegramAuthCoverage:
 
     async def test_cleanup(self):
         """Lines 200-207: cleanup pending clients."""
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         auth = TelegramAuth(api_id=123, api_hash="abc")
         mock_client = MagicMock()
@@ -220,7 +220,7 @@ class TestTelegramAuthCoverage:
 
     async def test_cleanup_disconnect_error(self):
         """Lines 203-206: cleanup with disconnect error."""
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         auth = TelegramAuth(api_id=123, api_hash="abc")
         mock_client = MagicMock()
@@ -232,7 +232,7 @@ class TestTelegramAuthCoverage:
 
     async def test_disconnect_pending_client(self):
         """Lines 91-99: disconnect previous pending client."""
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         auth = TelegramAuth(api_id=123, api_hash="abc")
         mock_client = MagicMock()
@@ -245,7 +245,7 @@ class TestTelegramAuthCoverage:
 
     async def test_disconnect_pending_client_error(self):
         """Lines 98-99: disconnect error is swallowed."""
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         auth = TelegramAuth(api_id=123, api_hash="abc")
         mock_client = MagicMock()
@@ -257,7 +257,7 @@ class TestTelegramAuthCoverage:
 
     async def test_verify_code_hash_mismatch(self):
         """Lines 168-169: hash mismatch."""
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         auth = TelegramAuth(api_id=123, api_hash="abc")
         mock_client = MagicMock()
@@ -768,7 +768,7 @@ class TestTelegramAuthBatch3:
 
     async def test_verify_code_success(self):
         """Lines 171-187: successful verification."""
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         auth = TelegramAuth(api_id=123, api_hash="abc")
         mock_client = MagicMock()
@@ -788,7 +788,7 @@ class TestTelegramAuthBatch3:
         """Lines 174-177: 2FA password needed."""
         from telethon.errors import SessionPasswordNeededError
 
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         auth = TelegramAuth(api_id=123, api_hash="abc")
         mock_client = MagicMock()
@@ -812,7 +812,7 @@ class TestTelegramAuthBatch3:
         """Lines 175-176: 2FA needed but no password."""
         from telethon.errors import SessionPasswordNeededError
 
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         auth = TelegramAuth(api_id=123, api_hash="abc")
         mock_client = MagicMock()
@@ -826,7 +826,7 @@ class TestTelegramAuthBatch3:
 
     async def test_verify_code_disconnect_error(self):
         """Lines 183-184: disconnect error during cleanup."""
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         auth = TelegramAuth(api_id=123, api_hash="abc")
         mock_client = MagicMock()
@@ -843,11 +843,11 @@ class TestTelegramAuthBatch3:
 
     async def test_send_code_error(self):
         """Lines 108-113: send_code error."""
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         auth = TelegramAuth(api_id=123, api_hash="abc")
 
-        with patch("tg_agent.telegram.auth.TelegramClient") as mock_tc:
+        with patch("tg_shared.auth.TelegramClient") as mock_tc:
             mock_client = MagicMock()
             mock_client.connect = AsyncMock()
             mock_client.send_code_request = AsyncMock(side_effect=RuntimeError("API error"))
@@ -860,11 +860,11 @@ class TestTelegramAuthBatch3:
 
     async def test_send_code_disconnect_error_during_cleanup(self):
         """Lines 111-112: disconnect error during send_code error handling."""
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         auth = TelegramAuth(api_id=123, api_hash="abc")
 
-        with patch("tg_agent.telegram.auth.TelegramClient") as mock_tc:
+        with patch("tg_shared.auth.TelegramClient") as mock_tc:
             mock_client = MagicMock()
             mock_client.connect = AsyncMock()
             mock_client.send_code_request = AsyncMock(side_effect=RuntimeError("API error"))
@@ -876,7 +876,7 @@ class TestTelegramAuthBatch3:
 
     async def test_resend_code(self):
         """Lines 129-154: resend code."""
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         auth = TelegramAuth(api_id=123, api_hash="abc")
         mock_client = MagicMock()
@@ -1343,7 +1343,7 @@ class TestSessionMaterializerCoverage:
         import importlib
         import uuid
 
-        import tg_agent.telegram.session_materializer as sm_module
+        import tg_shared.session_materializer as sm_module
 
         importlib.reload(sm_module)  # ensure clean module state
 
@@ -1367,7 +1367,7 @@ class TestSessionMaterializerCoverage:
         """Lines 54-59."""
         import os
 
-        from tg_agent.telegram.session_materializer import SessionMaterializer
+        from tg_shared.session_materializer import SessionMaterializer
 
         mat = SessionMaterializer(tmp_path / "sessions2")
         path = mat.ensure_empty_env_file()

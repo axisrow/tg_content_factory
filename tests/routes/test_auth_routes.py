@@ -465,7 +465,7 @@ async def test_send_code_connect_timeout_marks_failed_and_shows_error(client, mo
     db = app.state.db
     pool = app.state.pool
     auth = app.state.auth
-    monkeypatch.setattr("tg_agent.telegram.auth.AUTH_CONNECT_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("tg_shared.auth.AUTH_CONNECT_TIMEOUT_SECONDS", 0.01)
 
     async def hang_forever():
         await asyncio.Event().wait()
@@ -475,7 +475,7 @@ async def test_send_code_connect_timeout_marks_failed_and_shows_error(client, mo
     mock_client.disconnect = AsyncMock()
     mock_client.send_code_request = AsyncMock()
 
-    with patch("tg_agent.telegram.auth.TelegramClient", return_value=mock_client):
+    with patch("tg_shared.auth.TelegramClient", return_value=mock_client):
         resp = await client.post(
             "/auth/send-code",
             data={"phone": "+1234567890"},

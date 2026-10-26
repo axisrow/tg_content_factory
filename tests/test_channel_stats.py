@@ -154,8 +154,8 @@ async def _create_stats_web_test_context(tmp_path, collector):
     from tg_agent.scheduler.service import SchedulerManager
     from tg_agent.search.ai_search import AISearchEngine
     from tg_agent.search.engine import SearchEngine
-    from tg_agent.telegram.auth import TelegramAuth
     from tg_agent.web.app import create_app
+    from tg_shared.auth import TelegramAuth
 
     config = make_test_config(tmp_path)
     app = create_app(config)

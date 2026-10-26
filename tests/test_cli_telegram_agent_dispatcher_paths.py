@@ -311,8 +311,8 @@ class TestTelegramLiveFloodDecision:
 class TestClientPoolDialogsCache:
     @pytest.mark.anyio
     async def test_invalidate_all(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool
+        from tg_shared.auth import TelegramAuth
 
         pool = ClientPool(TelegramAuth(0, ""), db)
         pool._store_cached_dialogs("+7", "full", [{"channel_id": 1}])
@@ -323,8 +323,8 @@ class TestClientPoolDialogsCache:
 
     @pytest.mark.anyio
     async def test_invalidate_by_phone(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool
+        from tg_shared.auth import TelegramAuth
 
         pool = ClientPool(TelegramAuth(0, ""), db)
         pool._store_cached_dialogs("+7", "full", [{"channel_id": 1}])
@@ -335,8 +335,8 @@ class TestClientPoolDialogsCache:
 
     @pytest.mark.anyio
     async def test_get_cached_expired(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool
+        from tg_shared.auth import TelegramAuth
 
         pool = ClientPool(TelegramAuth(0, ""), db)
         pool._store_cached_dialogs("+7", "full", [{"channel_id": 1}])
@@ -347,8 +347,8 @@ class TestClientPoolDialogsCache:
 
     @pytest.mark.anyio
     async def test_get_cached_channels_only_from_full(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool
+        from tg_shared.auth import TelegramAuth
 
         pool = ClientPool(TelegramAuth(0, ""), db)
         pool._store_cached_dialogs("+7", "full", [
@@ -361,8 +361,8 @@ class TestClientPoolDialogsCache:
 
     @pytest.mark.anyio
     async def test_get_cached_channels_only_full_expired(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool
+        from tg_shared.auth import TelegramAuth
 
         pool = ClientPool(TelegramAuth(0, ""), db)
         pool._store_cached_dialogs("+7", "full", [{"channel_id": 1}])
@@ -374,8 +374,8 @@ class TestClientPoolDialogsCache:
 class TestClientPoolPremiumFlood:
     @pytest.mark.anyio
     async def test_report_premium_flood(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool
+        from tg_shared.auth import TelegramAuth
 
         pool = ClientPool(TelegramAuth(0, ""), db)
         await pool.report_premium_flood("+7", 60)
@@ -383,8 +383,8 @@ class TestClientPoolPremiumFlood:
 
     @pytest.mark.anyio
     async def test_clear_premium_flood(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool
+        from tg_shared.auth import TelegramAuth
 
         pool = ClientPool(TelegramAuth(0, ""), db)
         await pool.report_premium_flood("+7", 60)
@@ -393,8 +393,8 @@ class TestClientPoolPremiumFlood:
 
     @pytest.mark.anyio
     async def test_premium_flood_expires_stale_entries(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool
+        from tg_shared.auth import TelegramAuth
 
         pool = ClientPool(TelegramAuth(0, ""), db)
         # Add an expired entry
@@ -408,8 +408,8 @@ class TestClientPoolPremiumFlood:
 class TestClientPoolStatsAvailability:
     @pytest.mark.anyio
     async def test_get_stats_availability(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool
+        from tg_shared.auth import TelegramAuth
 
         pool = ClientPool(TelegramAuth(0, ""), db)
         result = await pool.get_stats_availability()
@@ -417,8 +417,8 @@ class TestClientPoolStatsAvailability:
 
     @pytest.mark.anyio
     async def test_get_premium_stats_no_premium(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool
+        from tg_shared.auth import TelegramAuth
 
         pool = ClientPool(TelegramAuth(0, ""), db)
         result = await pool.get_premium_stats_availability()
@@ -428,8 +428,8 @@ class TestClientPoolStatsAvailability:
 class TestClientPoolDialogsFetched:
     @pytest.mark.anyio
     async def test_mark_and_check(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool
+        from tg_shared.auth import TelegramAuth
 
         pool = ClientPool(TelegramAuth(0, ""), db)
         assert not pool.is_dialogs_fetched("+7")
@@ -440,8 +440,8 @@ class TestClientPoolDialogsFetched:
 class TestClientPoolPremiumUnavailabilityReason:
     @pytest.mark.anyio
     async def test_no_premium_accounts(self, db):
-        from tg_agent.telegram.auth import TelegramAuth
         from tg_agent.telegram.client_pool import ClientPool
+        from tg_shared.auth import TelegramAuth
 
         pool = ClientPool(TelegramAuth(0, ""), db)
         reason = await pool.get_premium_unavailability_reason()

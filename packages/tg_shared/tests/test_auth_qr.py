@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from telethon.errors import PasswordHashInvalidError, SessionPasswordNeededError
 
-from tg_agent.telegram.auth import QR_MAX_REFRESHES, TelegramAuth
+from tg_shared.auth import QR_MAX_REFRESHES, TelegramAuth
 
 BARE_PHONE = "79991234567"  # Telethon user.phone arrives without the leading +
 SESSION_STR = "session_string_qr"
@@ -66,7 +66,7 @@ async def test_qr_start_returns_url_and_pending_state():
     try:
         qrlogin = FakeQRLogin(hang=True)
         client.qr_login = AsyncMock(return_value=qrlogin)
-        with patch("tg_agent.telegram.auth.TelegramClient", return_value=client):
+        with patch("tg_shared.auth.TelegramClient", return_value=client):
             started = await auth.qr_start()
         assert started["url"] == "tg://login?token=AAA"
         assert started["qr_id"]
@@ -86,7 +86,7 @@ async def test_qr_wait_loop_refreshes_url_on_expiry():
     try:
         # one expiry → recreate → fresh URL, then park (still scannable)
         client.qr_login = AsyncMock(return_value=FakeQRLogin([asyncio.TimeoutError(), "hang"]))
-        with patch("tg_agent.telegram.auth.TelegramClient", return_value=client):
+        with patch("tg_shared.auth.TelegramClient", return_value=client):
             started = await auth.qr_start()
         task = auth._qr.task
         for _ in range(50):  # let the loop hit the expiry and recreate
@@ -107,7 +107,7 @@ async def test_qr_wait_loop_success_captures_session_one_shot():
     auth = TelegramAuth(1, "h")
     try:
         client.qr_login = AsyncMock(return_value=FakeQRLogin([SimpleNamespace(phone=BARE_PHONE)]))
-        with patch("tg_agent.telegram.auth.TelegramClient", return_value=client):
+        with patch("tg_shared.auth.TelegramClient", return_value=client):
             started = await auth.qr_start()
         await auth._qr.task
         status = auth.qr_status(started["qr_id"])
@@ -132,7 +132,7 @@ async def test_consume_requires_success_state():
         client.qr_login = AsyncMock(
             return_value=FakeQRLogin([SessionPasswordNeededError(request=None)])
         )
-        with patch("tg_agent.telegram.auth.TelegramClient", return_value=client):
+        with patch("tg_shared.auth.TelegramClient", return_value=client):
             started = await auth.qr_start()
         await auth._qr.task
         assert auth.qr_status(started["qr_id"])["state"] == "password_needed"
@@ -148,7 +148,7 @@ async def test_qr_password_flow_invalid_then_valid():
         client.qr_login = AsyncMock(
             return_value=FakeQRLogin([SessionPasswordNeededError(request=None)])
         )
-        with patch("tg_agent.telegram.auth.TelegramClient", return_value=client):
+        with patch("tg_shared.auth.TelegramClient", return_value=client):
             started = await auth.qr_start()
         await auth._qr.task
 
@@ -175,7 +175,7 @@ async def test_qr_password_empty_returns_password_required_without_sign_in():
         client.qr_login = AsyncMock(
             return_value=FakeQRLogin([SessionPasswordNeededError(request=None)])
         )
-        with patch("tg_agent.telegram.auth.TelegramClient", return_value=client):
+        with patch("tg_shared.auth.TelegramClient", return_value=client):
             started = await auth.qr_start()
         await auth._qr.task
         client.sign_in = AsyncMock()  # AsyncMock carries assert_not_awaited
@@ -191,7 +191,7 @@ async def test_qr_password_rejects_non_password_needed_state():
     auth = TelegramAuth(1, "h")
     try:
         client.qr_login = AsyncMock(return_value=FakeQRLogin([SimpleNamespace(phone=BARE_PHONE)]))
-        with patch("tg_agent.telegram.auth.TelegramClient", return_value=client):
+        with patch("tg_shared.auth.TelegramClient", return_value=client):
             started = await auth.qr_start()
         await auth._qr.task
         with pytest.raises(ValueError, match="qr_state_not_password_needed"):
@@ -205,7 +205,7 @@ async def test_qr_status_unknown_id_returns_none():
     auth = TelegramAuth(1, "h")
     try:
         client.qr_login = AsyncMock(return_value=FakeQRLogin(hang=True))
-        with patch("tg_agent.telegram.auth.TelegramClient", return_value=client):
+        with patch("tg_shared.auth.TelegramClient", return_value=client):
             await auth.qr_start()
         assert auth.qr_status("no_such_id") is None
         with pytest.raises(ValueError, match="qr_session_not_found"):
@@ -220,7 +220,7 @@ async def test_qr_expired_max_refreshes_fails_and_disconnects():
     try:
         # empty script: every wait() times out immediately → refreshes to the cap
         client.qr_login = AsyncMock(return_value=FakeQRLogin())
-        with patch("tg_agent.telegram.auth.TelegramClient", return_value=client):
+        with patch("tg_shared.auth.TelegramClient", return_value=client):
             started = await auth.qr_start()
         await auth._qr.task
         status = auth.qr_status(started["qr_id"])
@@ -237,10 +237,10 @@ async def test_qr_start_cancels_previous_flow():
     auth = TelegramAuth(1, "h")
     try:
         client.qr_login = AsyncMock(return_value=FakeQRLogin(hang=True))
-        with patch("tg_agent.telegram.auth.TelegramClient", return_value=client):
+        with patch("tg_shared.auth.TelegramClient", return_value=client):
             started1 = await auth.qr_start()
         old_task = auth._qr.task
-        with patch("tg_agent.telegram.auth.TelegramClient", return_value=client):
+        with patch("tg_shared.auth.TelegramClient", return_value=client):
             started2 = await auth.qr_start()
         assert started2["qr_id"] != started1["qr_id"]
         assert auth.qr_status(started1["qr_id"]) is None
@@ -254,7 +254,7 @@ async def test_qr_start_connect_failure_disconnects_and_leaves_no_state():
     client = _client_mock()
     client.connect = AsyncMock(side_effect=OSError("net down"))
     auth = TelegramAuth(1, "h")
-    with patch("tg_agent.telegram.auth.TelegramClient", return_value=client):
+    with patch("tg_shared.auth.TelegramClient", return_value=client):
         with pytest.raises(OSError):
             await auth.qr_start()
     client.disconnect.assert_awaited()
@@ -265,7 +265,7 @@ async def test_cleanup_cancels_running_qr_task():
     client = _client_mock()
     auth = TelegramAuth(1, "h")
     client.qr_login = AsyncMock(return_value=FakeQRLogin(hang=True))
-    with patch("tg_agent.telegram.auth.TelegramClient", return_value=client):
+    with patch("tg_shared.auth.TelegramClient", return_value=client):
         await auth.qr_start()
     task = auth._qr.task
     await auth.cleanup()
@@ -279,7 +279,7 @@ async def test_qr_fail_flips_only_consumed_flow():
     auth = TelegramAuth(1, "h")
     try:
         client.qr_login = AsyncMock(return_value=FakeQRLogin([SimpleNamespace(phone=BARE_PHONE)]))
-        with patch("tg_agent.telegram.auth.TelegramClient", return_value=client):
+        with patch("tg_shared.auth.TelegramClient", return_value=client):
             started = await auth.qr_start()
         qr_id = started["qr_id"]
 

@@ -7,7 +7,7 @@ from tg_agent.database import Database
 from tg_agent.database.bundles import NotificationBundle
 from tg_agent.models import NotificationBot
 from tg_agent.services.notification_target_service import NotificationTargetService
-from tg_agent.telegram import botfather
+from tg_shared import botfather
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ class NotificationService:
 
         Idempotent after a remote delete (issue #1085): if the bot is already
         gone from Telegram, ``botfather.delete_bot`` raises
-        :class:`~tg_agent.telegram.botfather.BotNotFoundError`. That is treated as
+        :class:`~tg_shared.botfather.BotNotFoundError`. That is treated as
         "the Telegram delete already happened" — we skip the TG step and proceed
         straight to the DB-row cleanup, so a repeat teardown can finally remove
         an orphan row left behind when a prior DB-delete failed (#1041). Any

@@ -1486,7 +1486,7 @@ async def test_settings_page_blocks_agent_provider_writes_without_encryption_sec
             "resolve_channel": AsyncMock(),
         },
     )()
-    from tg_agent.telegram.auth import TelegramAuth
+    from tg_shared.auth import TelegramAuth
 
     app.state.auth = TelegramAuth(12345, "test_hash")
     app.state.notifier = None
@@ -2106,7 +2106,7 @@ async def test_settings_shows_accounts(tmp_path):
     await db.add_account(account)
 
     app.state.pool = type("Pool", (), {"clients": {"+79991234567": object()}})()
-    from tg_agent.telegram.auth import TelegramAuth
+    from tg_shared.auth import TelegramAuth
 
     app.state.auth = TelegramAuth(12345, "test_hash")
     app.state.notifier = None
@@ -2350,7 +2350,7 @@ async def test_resolve_channel_fail(tmp_path):
             "get_dialogs": _get_dialogs,
         },
     )()
-    from tg_agent.telegram.auth import TelegramAuth
+    from tg_shared.auth import TelegramAuth
 
     app.state.auth = TelegramAuth(12345, "test_hash")
     app.state.notifier = None
@@ -2549,7 +2549,7 @@ async def test_add_scam_channel_is_inactive(tmp_path):
             "fetch_channel_meta": _fetch_meta,
         },
     )()
-    from tg_agent.telegram.auth import TelegramAuth
+    from tg_shared.auth import TelegramAuth
 
     app.state.auth = TelegramAuth(12345, "test_hash")
     app.state.notifier = None
@@ -2630,7 +2630,7 @@ async def test_bulk_add_scam_dialog_is_inactive(tmp_path):
             "get_dialogs": _get_dialogs_scam,
         },
     )()
-    from tg_agent.telegram.auth import TelegramAuth
+    from tg_shared.auth import TelegramAuth
 
     app.state.auth = TelegramAuth(12345, "test_hash")
     app.state.notifier = None

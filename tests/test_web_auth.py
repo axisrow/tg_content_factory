@@ -13,7 +13,7 @@ import pytest
 from tests.helpers import build_web_app, make_auth_client
 from tg_agent.config import AppConfig
 from tg_agent.models import Account, TelegramCommand, TelegramCommandStatus
-from tg_agent.telegram.auth import TelegramAuth
+from tg_shared.auth import TelegramAuth
 
 
 class TestLoginPage:

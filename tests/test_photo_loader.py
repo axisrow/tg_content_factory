@@ -894,7 +894,7 @@ def test_photo_loader_cli_send_command(tmp_path, cli_init_patch, capsys):
     fake_pool.get_client_by_phone = AsyncMock(return_value=(send_client, "+7000"))
 
     async def fake_init_pool(config, db):
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         return TelegramAuth(0, ""), fake_pool
 

@@ -57,8 +57,9 @@ ruff check tg_agent/ tests/ conftest.py
 ruff check --fix tg_agent/ tests/ conftest.py
 
 # Run parallel-safe tests (-n auto is capped at 4 workers by root conftest.py;
-# override via TGCF_PYTEST_XDIST_WORKERS; single-test runs with :: force 1 worker)
-pytest tests/ -v -m "not aiosqlite_serial" -n auto
+# override via TGCF_PYTEST_XDIST_WORKERS; single-test runs with :: force 1 worker).
+# The tg_shared package tests (#1421 wave A) live outside tests/ — include both roots.
+pytest tests/ packages/tg_shared/tests -v -m "not aiosqlite_serial" -n auto
 
 # Run aiosqlite-backed tests sequentially within each file, with independent files in parallel
 pytest tests/ -q -m aiosqlite_serial -n auto --dist=loadfile

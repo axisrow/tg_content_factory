@@ -25,13 +25,13 @@ from telethon_floodgate import (
 from telethon_floodgate.peer import peer_key
 
 from tg_agent.models import Account
-from tg_agent.telegram.auth import TelegramAuth, connect_with_auth_key_retry
 from tg_agent.telegram.mtproto_watchdog import bind_telethon_base_logger
 from tg_agent.telegram.outgoing_ceiling import OutgoingRateCeiling
 from tg_agent.telegram.reactions import normalize_outgoing_reaction_emoji
 from tg_agent.telegram.schema_drift import translate_schema_drift
 from tg_agent.telegram.session_lock import acquire_session_lock
-from tg_agent.telegram.session_materializer import SessionMaterializer
+from tg_shared.auth import TelegramAuth, connect_with_auth_key_retry
+from tg_shared.session_materializer import SessionMaterializer
 
 logger = logging.getLogger(__name__)
 

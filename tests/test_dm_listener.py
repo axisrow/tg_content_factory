@@ -9,9 +9,9 @@ from types import SimpleNamespace
 
 from tg_agent.database import Database
 from tg_agent.models import Account
-from tg_agent.telegram.auth import TelegramAuth
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.telegram.dm_listener import DmListener, IncomingDmEvent
+from tg_shared.auth import TelegramAuth
 
 
 class _FakeRawClient:

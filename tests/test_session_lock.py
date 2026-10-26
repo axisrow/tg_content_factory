@@ -18,7 +18,6 @@ from telethon.errors import AuthKeyDuplicatedError
 
 from tg_agent.models import Account
 from tg_agent.telegram import backends as backends_module
-from tg_agent.telegram.auth import TelegramAuth, connect_with_auth_key_retry
 from tg_agent.telegram.backends import (
     BackendClientLease,
     BackendRouter,
@@ -31,6 +30,7 @@ from tg_agent.telegram.session_lock import (
     acquire_session_lock,
     release_all_session_locks,
 )
+from tg_shared.auth import TelegramAuth, connect_with_auth_key_retry
 
 PHONE = "+15550000001"
 SESSION = "test-session-string-1548"

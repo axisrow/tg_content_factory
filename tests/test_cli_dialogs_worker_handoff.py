@@ -43,7 +43,7 @@ def _run(args, cli_db, *, serve_running: bool, pool=None):
         return config, cli_db
 
     async def fake_init_pool(_, __, **_kwargs):
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         return TelegramAuth(0, ""), used_pool
 

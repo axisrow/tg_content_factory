@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from telethon.errors import SessionPasswordNeededError
 
-from tg_agent.telegram.auth import (
+from tg_shared.auth import (
     TelegramAuth,
     TwoFactorRequiredError,
     _describe_code_type,
@@ -38,11 +38,11 @@ _PROXY_DICT = {"proxy_type": "socks5", "addr": "h", "port": 1080, "rdns": True}
 
 class TestDescribeCodeType:
     def test_app(self):
-        with patch("tg_agent.telegram.auth.SentCodeTypeApp", FakeSentCodeTypeApp):
+        with patch("tg_shared.auth.SentCodeTypeApp", FakeSentCodeTypeApp):
             assert _describe_code_type(FakeSentCodeTypeApp()) == "приложение Telegram"
 
     def test_sms(self):
-        with patch("tg_agent.telegram.auth.SentCodeTypeSms", FakeSentCodeTypeSms):
+        with patch("tg_shared.auth.SentCodeTypeSms", FakeSentCodeTypeSms):
             assert _describe_code_type(FakeSentCodeTypeSms()) == "SMS"
 
     def test_fallback(self):
@@ -54,11 +54,11 @@ class TestDescribeNextType:
         assert _describe_next_type(None) is None
 
     def test_sms(self):
-        with patch("tg_agent.telegram.auth.CodeTypeSms", FakeCodeTypeSms):
+        with patch("tg_shared.auth.CodeTypeSms", FakeCodeTypeSms):
             assert _describe_next_type(FakeCodeTypeSms()) == "SMS"
 
     def test_call(self):
-        with patch("tg_agent.telegram.auth.CodeTypeCall", FakeCodeTypeCall):
+        with patch("tg_shared.auth.CodeTypeCall", FakeCodeTypeCall):
             assert _describe_next_type(FakeCodeTypeCall()) == "звонок"
 
     def test_unknown(self):
@@ -84,9 +84,9 @@ class TestSendCode:
         mock_client.send_code_request = AsyncMock(return_value=fake_result)
 
         with (
-            patch("tg_agent.telegram.auth.TelegramClient", return_value=mock_client),
-            patch("tg_agent.telegram.auth.SentCodeTypeApp", FakeSentCodeTypeApp),
-            patch("tg_agent.telegram.auth.CodeTypeSms", FakeCodeTypeSms),
+            patch("tg_shared.auth.TelegramClient", return_value=mock_client),
+            patch("tg_shared.auth.SentCodeTypeApp", FakeSentCodeTypeApp),
+            patch("tg_shared.auth.CodeTypeSms", FakeCodeTypeSms),
         ):
             info = await auth.send_code("+1234567890")
 
@@ -117,8 +117,8 @@ class TestSendCode:
         new_client.send_code_request = AsyncMock(return_value=fake_result)
 
         with (
-            patch("tg_agent.telegram.auth.TelegramClient", return_value=new_client),
-            patch("tg_agent.telegram.auth.SentCodeTypeApp", FakeSentCodeTypeApp),
+            patch("tg_shared.auth.TelegramClient", return_value=new_client),
+            patch("tg_shared.auth.SentCodeTypeApp", FakeSentCodeTypeApp),
         ):
             await auth.send_code("+1234567890")
 
@@ -146,8 +146,8 @@ class TestSendCode:
         )
 
         with (
-            patch("tg_agent.telegram.auth.TelegramClient", return_value=mock_client) as fake_tc,
-            patch("tg_agent.telegram.auth.SentCodeTypeApp", FakeSentCodeTypeApp),
+            patch("tg_shared.auth.TelegramClient", return_value=mock_client) as fake_tc,
+            patch("tg_shared.auth.SentCodeTypeApp", FakeSentCodeTypeApp),
         ):
             await auth.send_code("+1234567890")
 
@@ -177,7 +177,7 @@ class TestResendCode:
         )
         mock_client.return_value = fake_result
 
-        with (patch("tg_agent.telegram.auth.SentCodeTypeSms", FakeSentCodeTypeSms),):
+        with (patch("tg_shared.auth.SentCodeTypeSms", FakeSentCodeTypeSms),):
             info = await auth.resend_code("+1234567890")
 
         assert info["phone_code_hash"] == "new_hash"
@@ -218,7 +218,7 @@ class TestVerifyCode:
         mock_client.sign_in.side_effect = SessionPasswordNeededError(request=None)
         auth._pending["+1234567890"] = (mock_client, "hash123")
 
-        with caplog.at_level(logging.INFO, logger="tg_agent.telegram.auth"):
+        with caplog.at_level(logging.INFO, logger="tg_shared.auth"):
             with pytest.raises(TwoFactorRequiredError):
                 await auth.verify_code("+1234567890", "11111", "hash123")
 
@@ -328,8 +328,8 @@ class TestSignInFresh:
             return SimpleNamespace(_value=value)
 
         with (
-            patch("tg_agent.telegram.auth.TelegramClient", return_value=mock_client),
-            patch("tg_agent.telegram.auth.StringSession", _fake_string_session),
+            patch("tg_shared.auth.TelegramClient", return_value=mock_client),
+            patch("tg_shared.auth.StringSession", _fake_string_session),
         ):
             session = await auth.sign_in_fresh(
                 "+1234567890",
@@ -360,8 +360,8 @@ class TestSignInFresh:
         mock_client.session = SimpleNamespace(save=_exploding_save)
 
         with (
-            patch("tg_agent.telegram.auth.TelegramClient", return_value=mock_client),
-            patch("tg_agent.telegram.auth.StringSession", lambda _value="": SimpleNamespace()),
+            patch("tg_shared.auth.TelegramClient", return_value=mock_client),
+            patch("tg_shared.auth.StringSession", lambda _value="": SimpleNamespace()),
         ):
             with pytest.raises(RuntimeError, match="save failed post sign_in"):
                 await auth.sign_in_fresh(
@@ -395,8 +395,8 @@ async def test_send_code_pins_full_result_contract():
     mock_client.send_code_request = AsyncMock(return_value=fake_result)
 
     with (
-        patch("tg_agent.telegram.auth.TelegramClient", return_value=mock_client) as fake_tc,
-        patch("tg_agent.telegram.auth.SentCodeTypeApp", FakeSentCodeTypeApp),
+        patch("tg_shared.auth.TelegramClient", return_value=mock_client) as fake_tc,
+        patch("tg_shared.auth.SentCodeTypeApp", FakeSentCodeTypeApp),
     ):
         info = await auth.send_code("+1234567890")
 
@@ -433,7 +433,7 @@ async def test_resend_code_reuses_original_phone_and_code_hash():
     client.session = SimpleNamespace(save=lambda: "session_resend")
     auth._pending["+1234567890"] = (client, "hash_old")
 
-    with patch("tg_agent.telegram.auth.SentCodeTypeApp", FakeSentCodeTypeApp):
+    with patch("tg_shared.auth.SentCodeTypeApp", FakeSentCodeTypeApp):
         info = await auth.resend_code("+1234567890")
 
     request = client.call_args.args[0]
@@ -472,8 +472,8 @@ async def test_sign_in_fresh_consumed_code_requires_and_uses_2fa_password():
     mock_client.session = SimpleNamespace(save=lambda: "session_fresh")
 
     with (
-        patch("tg_agent.telegram.auth.TelegramClient", return_value=mock_client),
-        patch("tg_agent.telegram.auth.StringSession", lambda _value="": SimpleNamespace()),
+        patch("tg_shared.auth.TelegramClient", return_value=mock_client),
+        patch("tg_shared.auth.StringSession", lambda _value="": SimpleNamespace()),
     ):
         with pytest.raises(TwoFactorRequiredError):
             await auth.sign_in_fresh(
@@ -508,8 +508,8 @@ async def test_sign_in_fresh_password_needed_falls_back_to_2fa():
     client.sign_in = AsyncMock(side_effect=SessionPasswordNeededError(request=None))
     client.session = SimpleNamespace(save=lambda: "session_no_2fa")
     with (
-        patch("tg_agent.telegram.auth.TelegramClient", return_value=client),
-        patch("tg_agent.telegram.auth.StringSession", lambda _value="": SimpleNamespace()),
+        patch("tg_shared.auth.TelegramClient", return_value=client),
+        patch("tg_shared.auth.StringSession", lambda _value="": SimpleNamespace()),
     ):
         with pytest.raises(TwoFactorRequiredError):
             await auth.sign_in_fresh("+1234567890", "11111", "hash1", session_str="state")
@@ -527,8 +527,8 @@ async def test_sign_in_fresh_password_needed_falls_back_to_2fa():
     client2.sign_in = AsyncMock(side_effect=_sign_in)
     client2.session = SimpleNamespace(save=lambda: "session_2fa")
     with (
-        patch("tg_agent.telegram.auth.TelegramClient", return_value=client2),
-        patch("tg_agent.telegram.auth.StringSession", lambda _value="": SimpleNamespace()),
+        patch("tg_shared.auth.TelegramClient", return_value=client2),
+        patch("tg_shared.auth.StringSession", lambda _value="": SimpleNamespace()),
     ):
         result = await auth.sign_in_fresh(
             "+1234567890", "11111", "hash1", session_str="state", password_2fa="hunter2"
@@ -555,6 +555,6 @@ def test_describe_code_type_labels_every_delivery_variant():
     ]
     for cls_name, label in cases:
         fake_cls = type(cls_name, (), {})
-        with patch(f"tg_agent.telegram.auth.{cls_name}", fake_cls):
+        with patch(f"tg_shared.auth.{cls_name}", fake_cls):
             assert _describe_code_type(fake_cls()) == label
     assert _describe_code_type(object()) == "Telegram"

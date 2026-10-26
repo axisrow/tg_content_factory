@@ -39,7 +39,6 @@ from tg_agent.services.search_service import SearchService
 from tg_agent.services.task_enqueuer import TaskEnqueuer
 from tg_agent.services.telegram_command_service import TelegramCommandService
 from tg_agent.services.unified_dispatcher import UnifiedDispatcher
-from tg_agent.telegram.auth import TelegramAuth
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.telegram.collector import Collector
 from tg_agent.telegram.notifier import Notifier
@@ -47,6 +46,7 @@ from tg_agent.web.container import AppContainer, WebClientPool, WebCollector, We
 from tg_agent.web.log_handler import LogBuffer
 from tg_agent.web.paths import TEMPLATES_DIR
 from tg_agent.web.timing import TimingBuffer
+from tg_shared.auth import TelegramAuth
 
 T = TypeVar("T")
 _MISSING = object()

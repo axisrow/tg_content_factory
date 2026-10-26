@@ -27,7 +27,7 @@ def cli_env_with_pool(cli_env):
     fake_pool.get_resolve_username_backoff_remaining_sec = MagicMock(return_value=0)
 
     async def fake_init_pool(config, db, **_kwargs):
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         return TelegramAuth(0, ""), fake_pool
 
@@ -669,7 +669,7 @@ def sched_pool_patch():
     fake_pool.disconnect_all = AsyncMock()
 
     async def fake_init_pool(config, db, **_kwargs):
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         return TelegramAuth(0, ""), fake_pool
 

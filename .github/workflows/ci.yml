@@ -90,7 +90,7 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Ruff
-        run: ruff check tg_agent tests conftest.py
+        run: ruff check tg_agent tests packages/tg_shared conftest.py
 
   # Static gates run as their own job so they fail fast and in parallel with the
   # long tests jobs (#944, #1097 §5). Holds the import-architecture contracts and

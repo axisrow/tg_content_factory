@@ -188,6 +188,9 @@ ignore = [
     "ASYNC109",  # public timeout= params passed to asyncio.wait_for are intentional
 ]
 
+[tool.ruff.lint.isort]
+known-first-party = ["tg_agent", "tg_shared", "tests"]
+
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["typer.Option", "typer.Argument", "fastapi.Depends", "fastapi.File", "fastapi.Form"]
 

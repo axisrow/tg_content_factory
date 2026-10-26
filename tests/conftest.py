@@ -15,8 +15,8 @@ from telethon.sessions import StringSession
 from tests.helpers import RealPoolHarness
 from tg_agent.config import AppConfig, parse_proxy_url
 from tg_agent.database import Database
-from tg_agent.telegram.auth import TelegramAuth
-from tg_agent.telegram.session_materializer import SessionMaterializer
+from tg_shared.auth import TelegramAuth
+from tg_shared.session_materializer import SessionMaterializer
 
 os.environ.setdefault("SESSION_ENCRYPTION_KEY", "test-session-encryption-key")
 

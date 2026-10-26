@@ -65,7 +65,7 @@ def cli_env_with_mock_pool(cli_env):
     )
 
     async def fake_init_pool(config, db, **_kwargs):
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         return TelegramAuth(0, ""), mock_pool
 

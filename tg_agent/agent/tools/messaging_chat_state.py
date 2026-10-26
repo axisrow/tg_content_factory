@@ -26,13 +26,13 @@ from tg_agent.services.telegram_actions import (
     TelegramActionClientUnavailableError,
     TelegramActionService,
 )
-from tg_agent.telegram.identity import extract_message_sender_identity
 from tg_agent.telegram.reactions import (
     fetch_message_reaction_users,
     format_message_reactions,
     format_reaction_users_result,
     normalize_reaction_users_limit,
 )
+from tg_shared.identity import extract_message_sender_identity
 
 
 def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:

@@ -86,7 +86,7 @@ def _run_cli(action, pool, db, extra_ns=None):
         return AppConfig(), db
 
     async def fake_init_pool(config, database, **_kwargs):
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
         return TelegramAuth(0, ""), pool
 
     with (
@@ -554,7 +554,7 @@ class TestCliRead:
     """CLI dialogs read — live history via tg_messenger (src/telegram/dm_history.py)."""
 
     def _client_with_history(self, messages):
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         pool, client = _mock_pool()
         pool._auth = TelegramAuth(12345, "fakehash")
@@ -617,7 +617,7 @@ class TestCliRead:
         assert "No connected accounts." in capsys.readouterr().err
 
     def test_read_error(self, cli_db, capsys):
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         pool, client = _mock_pool()
         pool._auth = TelegramAuth(12345, "fakehash")

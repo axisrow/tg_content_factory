@@ -18,11 +18,11 @@ from tg_agent.scheduler.service import SchedulerManager
 from tg_agent.search.ai_search import AISearchEngine
 from tg_agent.search.engine import SearchEngine
 from tg_agent.services.provider_service import RuntimeProviderRegistry
-from tg_agent.telegram.auth import TelegramAuth
 from tg_agent.telegram.collector import Collector
 from tg_agent.web.app import create_app
 from tg_agent.web.bootstrap import build_container_with_templates
 from tg_agent.web.log_handler import LogBuffer
+from tg_shared.auth import TelegramAuth
 
 
 @pytest.fixture

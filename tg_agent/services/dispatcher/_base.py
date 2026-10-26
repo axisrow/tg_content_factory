@@ -20,10 +20,10 @@ if TYPE_CHECKING:
     from tg_agent.live_runtime_pause import LiveRuntimePauseGate
     from tg_agent.scheduler.service import SchedulerManager
     from tg_agent.search.engine import SearchEngine
-    from tg_agent.telegram.auth import TelegramAuth
     from tg_agent.telegram.client_pool import ClientPool
     from tg_agent.telegram.collector import Collector
     from tg_agent.telegram.notifier import Notifier
+    from tg_shared.auth import TelegramAuth
 
 
 class _DispatcherProtocol(Protocol):

@@ -30,7 +30,7 @@ from tg_agent.models import Account, AccountSummary
 from tg_agent.services.account_availability import compute_account_availability
 from tg_agent.services.notification_target_service import NotificationTargetService
 from tg_agent.services.runtime_diagnostics import evaluate_worker_heartbeat
-from tg_agent.telegram.auth import validate_session_string
+from tg_shared.auth import validate_session_string
 
 if TYPE_CHECKING:
     from tg_agent.telegram.client_pool import ClientPool

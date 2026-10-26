@@ -21,10 +21,10 @@ from datetime import datetime, timezone
 
 from tg_agent.models import Message
 from tg_agent.services.translation_service import TranslationService
-from tg_agent.telegram.identity import extract_message_sender_identity
-from tg_agent.telegram.media import get_media_type
 from tg_agent.telegram.reactions import extract_message_reactions_json
 from tg_agent.telegram.rich_text import webpage_page_text
+from tg_shared.identity import extract_message_sender_identity
+from tg_shared.media import get_media_type
 
 # Telethon service-action class name → coarse semantic label. Lifted verbatim
 # from ``Collector._SERVICE_ACTION_SEMANTICS`` so the mapping has a single home.

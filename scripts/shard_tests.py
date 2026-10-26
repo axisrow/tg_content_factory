@@ -30,7 +30,7 @@ def collect_files(marker: str) -> list[tuple[str, int]]:
     enter the shard lists.
     """
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests", "--collect-only", "-q", "-m", marker],
+        [sys.executable, "-m", "pytest", "tests", "packages/tg_shared/tests", "--collect-only", "-q", "-m", marker],
         capture_output=True,
         text=True,
     )

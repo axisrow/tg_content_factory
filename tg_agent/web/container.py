@@ -36,7 +36,6 @@ from tg_agent.services.task_enqueuer import TaskEnqueuer
 from tg_agent.services.telegram_command_dispatcher import TelegramCommandDispatcher
 from tg_agent.services.translation_service import TranslationService
 from tg_agent.services.unified_dispatcher import UnifiedDispatcher
-from tg_agent.telegram.auth import TelegramAuth
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.telegram.collector import Collector
 from tg_agent.telegram.dm_catchup import DmCatchupService
@@ -45,6 +44,7 @@ from tg_agent.telegram.notifier import Notifier
 from tg_agent.web.log_handler import LogBuffer
 from tg_agent.web.runtime_shims import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
 from tg_agent.web.timing import TimingBuffer
+from tg_shared.auth import TelegramAuth
 
 WebClientPool: TypeAlias = ClientPool | SnapshotClientPool
 WebCollector: TypeAlias = Collector | SnapshotCollector

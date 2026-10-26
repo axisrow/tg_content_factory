@@ -8,7 +8,7 @@ import pytest
 from telethon.crypto import AuthKey
 from telethon.sessions import MemorySession, SQLiteSession, StringSession
 
-from tg_agent.telegram.session_materializer import SessionMaterializer
+from tg_shared.session_materializer import SessionMaterializer
 
 pytestmark = pytest.mark.real_materializer
 
@@ -175,7 +175,7 @@ def test_materialize_warns_when_wal_upgrade_blocked_by_live_transaction(tmp_path
     blocker = sqlite3.connect(session_file)
     blocker.execute("BEGIN IMMEDIATE")
     try:
-        with caplog.at_level(logging.WARNING, logger="tg_agent.telegram.session_materializer"):
+        with caplog.at_level(logging.WARNING, logger="tg_shared.session_materializer"):
             # Same string → hash matches → early-return (cache-hit) branch.
             result = materializer.materialize("+70000000001", session_string)
     finally:

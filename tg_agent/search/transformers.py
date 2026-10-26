@@ -5,8 +5,8 @@ from datetime import timezone
 from tg_agent.models import Message
 from tg_agent.services.translation_service import TranslationService
 from tg_agent.telegram.collector_message_parse import plain_text_and_entities_json
-from tg_agent.telegram.identity import SenderIdentity, extract_message_sender_identity, extract_sender_identity
 from tg_agent.telegram.reactions import extract_message_reactions_json
+from tg_shared.identity import SenderIdentity, extract_message_sender_identity, extract_sender_identity
 
 
 class TelegramMessageTransformer:
@@ -33,7 +33,7 @@ class TelegramMessageTransformer:
 
     @staticmethod
     def media_type_from_message(msg) -> str | None:
-        from tg_agent.telegram.media import get_media_type
+        from tg_shared.media import get_media_type
 
         return get_media_type(msg)
 

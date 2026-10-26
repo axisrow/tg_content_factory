@@ -68,7 +68,6 @@ from tg_agent.database import Database
 from tg_agent.database.live_accounts import load_live_usable_accounts  # noqa: F401
 from tg_agent.models import Account, TelegramUserInfo  # noqa: F401
 from tg_agent.telegram.account_lease_pool import AccountLeasePool
-from tg_agent.telegram.auth import TelegramAuth
 from tg_agent.telegram.backends import (
     BackendClientLease,
     BackendRouter,
@@ -86,7 +85,8 @@ from tg_agent.telegram.pool_dialogs import (
 from tg_agent.telegram.pool_flood import FloodRotationMixin
 from tg_agent.telegram.pool_lifecycle import ClientLifecycleMixin
 from tg_agent.telegram.resolve_guard import ResolveGuardMixin, build_resolve_rate_limiter
-from tg_agent.telegram.session_materializer import SessionMaterializer
+from tg_shared.auth import TelegramAuth
+from tg_shared.session_materializer import SessionMaterializer
 
 logger = logging.getLogger(__name__)
 

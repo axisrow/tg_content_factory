@@ -3,10 +3,18 @@ from __future__ import annotations
 import ast
 import os
 import re
+import sys
 from functools import lru_cache
 from pathlib import Path
 
 import pytest
+
+# tg-shared (#1421, wave A): the factory imports the shared package straight
+# from the monorepo checkout until the split (same shim as the scaffold test;
+# a declared dependency lands with the #1424 wave).
+_SHARED_SRC = Path(__file__).resolve().parent / "packages" / "tg_shared" / "src"
+if str(_SHARED_SRC) not in sys.path:
+    sys.path.insert(0, str(_SHARED_SRC))
 
 _REAL_TG_PARALLEL_GATES = (
     "RUN_REAL_TELEGRAM_SAFE",

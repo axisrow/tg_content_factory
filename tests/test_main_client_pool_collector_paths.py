@@ -610,14 +610,14 @@ class TestTelegramAuth:
     """Cover auth edge cases."""
 
     def test_auth_init(self):
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         auth = TelegramAuth(12345, "test_hash")
         assert auth.api_id == 12345
         assert auth.api_hash == "test_hash"
 
     def test_auth_init_no_credentials(self):
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         auth = TelegramAuth(0, "")
         assert auth.api_id == 0
@@ -625,7 +625,7 @@ class TestTelegramAuth:
     @pytest.mark.anyio
     async def test_verify_code_no_pending(self):
         """Line 165: no pending auth raises ValueError."""
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         auth = TelegramAuth(12345, "test")
         with pytest.raises(ValueError, match="No pending auth"):
@@ -634,7 +634,7 @@ class TestTelegramAuth:
     def test_describe_code_type_app(self):
         from telethon.tl.types.auth import SentCodeTypeApp
 
-        from tg_agent.telegram.auth import _describe_code_type
+        from tg_shared.auth import _describe_code_type
 
         result = _describe_code_type(SentCodeTypeApp(length=5))
         assert result == "приложение Telegram"
@@ -642,19 +642,19 @@ class TestTelegramAuth:
     def test_describe_code_type_sms(self):
         from telethon.tl.types.auth import SentCodeTypeSms
 
-        from tg_agent.telegram.auth import _describe_code_type
+        from tg_shared.auth import _describe_code_type
 
         result = _describe_code_type(SentCodeTypeSms(length=5))
         assert result == "SMS"
 
     def test_describe_code_type_unknown(self):
-        from tg_agent.telegram.auth import _describe_code_type
+        from tg_shared.auth import _describe_code_type
 
         result = _describe_code_type("unknown_type")
         assert result == "Telegram"
 
     def test_describe_next_type_none(self):
-        from tg_agent.telegram.auth import _describe_next_type
+        from tg_shared.auth import _describe_next_type
 
         result = _describe_next_type(None)
         assert result is None
@@ -662,7 +662,7 @@ class TestTelegramAuth:
     def test_describe_next_type_sms(self):
         from telethon.tl.types.auth import CodeTypeSms
 
-        from tg_agent.telegram.auth import _describe_next_type
+        from tg_shared.auth import _describe_next_type
 
         result = _describe_next_type(CodeTypeSms())
         assert result == "SMS"
@@ -670,13 +670,13 @@ class TestTelegramAuth:
     def test_describe_next_type_call(self):
         from telethon.tl.types.auth import CodeTypeCall
 
-        from tg_agent.telegram.auth import _describe_next_type
+        from tg_shared.auth import _describe_next_type
 
         result = _describe_next_type(CodeTypeCall())
         assert result == "звонок"
 
     def test_describe_next_type_unknown(self):
-        from tg_agent.telegram.auth import _describe_next_type
+        from tg_shared.auth import _describe_next_type
 
         result = _describe_next_type("unknown")
         assert result is None
@@ -1106,7 +1106,7 @@ class TestSessionMaterializerCacheHit:
     """Cover cached session return path (line 32) and cache_dir property (line 18)."""
 
     def test_cache_dir_property(self, tmp_path):
-        from tg_agent.telegram.session_materializer import SessionMaterializer
+        from tg_shared.session_materializer import SessionMaterializer
 
         mat = SessionMaterializer(tmp_path / "sess_cache")
         assert mat.cache_dir == tmp_path / "sess_cache"
@@ -1116,7 +1116,7 @@ class TestSessionMaterializerCacheHit:
         """Line 32: session file + matching hash → return cached path."""
         import hashlib
 
-        from tg_agent.telegram.session_materializer import SessionMaterializer
+        from tg_shared.session_materializer import SessionMaterializer
 
         mat = SessionMaterializer(tmp_path)
         phone = "+cache_hit"

@@ -41,7 +41,6 @@ from tg_agent.services.telegram_actions import TelegramActionService
 from tg_agent.services.telegram_command_dispatcher import TelegramCommandDispatcher
 from tg_agent.services.unified_dispatcher import UnifiedDispatcher
 from tg_agent.settings_utils import parse_int_setting
-from tg_agent.telegram.auth import TelegramAuth
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.telegram.collector import Collector
 from tg_agent.telegram.dm_catchup import DmCatchupService
@@ -54,6 +53,7 @@ from tg_agent.web.paths import TEMPLATES_DIR
 from tg_agent.web.runtime_shims import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
 from tg_agent.web.template_globals import configure_template_globals
 from tg_agent.web.timing import TimingBuffer
+from tg_shared.auth import TelegramAuth
 
 logger = logging.getLogger(__name__)
 _is_dev = os.environ.get("ENV", "PROD").upper() == "DEV"

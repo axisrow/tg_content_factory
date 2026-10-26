@@ -19,7 +19,7 @@ from telethon.sessions import StringSession
 from tg_agent.cli.commands import account as account_cmd
 from tg_agent.database import Database
 from tg_agent.models import Account
-from tg_agent.telegram.auth import validate_session_string
+from tg_shared.auth import validate_session_string
 
 
 def _make_valid_session_string() -> str:

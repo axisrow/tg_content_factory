@@ -8,8 +8,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from qrcode.image.svg import SvgPathImage
 
 from tg_agent.models import Account, TelegramCommandStatus
-from tg_agent.telegram.auth import validate_session_string
 from tg_agent.web import deps
+from tg_shared.auth import validate_session_string
 
 logger = logging.getLogger(__name__)
 

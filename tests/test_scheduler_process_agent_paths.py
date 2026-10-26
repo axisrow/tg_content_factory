@@ -420,7 +420,7 @@ class TestCLINotification:
         fake_pool.disconnect_all = AsyncMock()
 
         async def fake_init_pool(config, db):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
             return TelegramAuth(0, ""), fake_pool
 
         with patch("tg_agent.cli.runtime.init_pool", side_effect=fake_init_pool):
@@ -455,7 +455,7 @@ class TestCLINotification:
         )
 
         async def fake_init_pool(config, db):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
             return TelegramAuth(0, ""), fake_pool
 
         with patch("tg_agent.cli.runtime.init_pool", side_effect=fake_init_pool):
@@ -477,7 +477,7 @@ class TestCLINotification:
         fake_pool.disconnect_all = AsyncMock()
 
         async def fake_init_pool(config, db):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
             return TelegramAuth(0, ""), fake_pool
 
         with patch("tg_agent.cli.runtime.init_pool", side_effect=fake_init_pool):
@@ -497,7 +497,7 @@ class TestCLINotification:
         fake_pool.disconnect_all = AsyncMock()
 
         async def fake_init_pool(config, db):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
             return TelegramAuth(0, ""), fake_pool
 
         # Patch the whole NotificationService so send_notification is available

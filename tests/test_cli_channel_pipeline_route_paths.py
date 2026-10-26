@@ -35,7 +35,7 @@ def _fake_init_pool_no_clients():
     """Returns a fake_init_pool that yields a pool with no clients."""
 
     async def _inner(config, db):
-        from tg_agent.telegram.auth import TelegramAuth
+        from tg_shared.auth import TelegramAuth
 
         pool = AsyncMock()
         pool.clients = {}
@@ -112,7 +112,7 @@ class TestCLIChannelStats:
         fake_pool.disconnect_all = AsyncMock()
 
         async def _init_pool(config, db):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
 
             return TelegramAuth(0, ""), fake_pool
 
@@ -151,7 +151,7 @@ class TestCLIChannelStats:
         fake_collector = AsyncMock()
 
         async def _init_pool(config, db):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
 
             return TelegramAuth(0, ""), fake_pool
 
@@ -218,7 +218,7 @@ class TestCLIChannelRefreshTypes:
         fake_pool.release_client = AsyncMock()
 
         async def _init_pool(config, db):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
 
             return TelegramAuth(0, ""), fake_pool
 
@@ -247,7 +247,7 @@ class TestCLIChannelRefreshMeta:
         fake_pool.disconnect_all = AsyncMock()
 
         async def _init_pool(config, db):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
 
             return TelegramAuth(0, ""), fake_pool
 
@@ -264,7 +264,7 @@ class TestCLIChannelRefreshMeta:
         fake_pool.disconnect_all = AsyncMock()
 
         async def _init_pool(config, db):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
 
             return TelegramAuth(0, ""), fake_pool
 
@@ -285,7 +285,7 @@ class TestCLIChannelRefreshMeta:
         )
 
         async def _init_pool(config, db):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
 
             return TelegramAuth(0, ""), fake_pool
 
@@ -311,7 +311,7 @@ class TestCLIChannelRefreshMeta:
         )
 
         async def _init_pool(config, db):
-            from tg_agent.telegram.auth import TelegramAuth
+            from tg_shared.auth import TelegramAuth
 
             return TelegramAuth(0, ""), fake_pool
 
@@ -898,9 +898,9 @@ async def _base_app_b3(tmp_path):
     from tg_agent.scheduler.service import SchedulerManager
     from tg_agent.search.ai_search import AISearchEngine
     from tg_agent.search.engine import SearchEngine
-    from tg_agent.telegram.auth import TelegramAuth
     from tg_agent.telegram.collector import Collector
     from tg_agent.web.app import create_app
+    from tg_shared.auth import TelegramAuth
 
     config = AppConfig()
     config.database.path = str(tmp_path / "batch3.db")

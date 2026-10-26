@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from tg_agent.telegram.identity import (
+from tg_shared.identity import (
     SenderIdentity,
     extract_message_sender_identity,
     extract_sender_identity,
