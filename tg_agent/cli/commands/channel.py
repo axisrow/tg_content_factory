@@ -373,6 +373,41 @@ async def review_keep_impl(config_path: str, *, identifier: str) -> None:
         await db.close()
 
 
+async def pending_list_impl(config_path: str) -> None:
+    """``channel pending-list`` — the approval queue (#1314)."""
+    _, db = await runtime.init_db(config_path)
+    try:
+        pending = await db.repos.channels.list_pending_approval()
+        if not pending:
+            print("No channels are awaiting approval.")
+            return
+        print(f"Channels awaiting approval: {len(pending)}")
+        for ch in pending:
+            print(f"pk={ch.id}\t{ch.title} (@{ch.username or ch.channel_id})")
+    finally:
+        await db.close()
+
+
+async def reject_impl(config_path: str, *, identifier: str) -> None:
+    """``channel reject`` — reject a pending-approval channel.
+
+    The owner's refusal: the pending row (and its cached messages, which only
+    exist because search stored them) is deleted; the decision itself stays in
+    the ``decisions`` journal (#1313).
+    """
+    _, db = await runtime.init_db(config_path)
+    try:
+        pending = await db.repos.channels.list_pending_approval()
+        ch = resolve_channel(pending, identifier)
+        if not ch:
+            print(f"Channel '{identifier}' is not in the approval queue")
+            return
+        await db.repos.channels.reject_channel(ch.id, actor="cli", reason="channel reject")
+        print(f"REJECTED: {ch.title} (pk={ch.id}) — removed from the approval queue")
+    finally:
+        await db.close()
+
+
 async def import_impl(config_path: str, *, source: str) -> None:
     """``channel import`` — bulk-add channels from a file or identifier list."""
     config, db = await runtime.init_db(config_path)
@@ -1223,6 +1258,10 @@ def run(args: argparse.Namespace) -> None:
         coro = review_confirm_impl(config_path, identifier=args.identifier)
     elif action == "review-keep":
         coro = review_keep_impl(config_path, identifier=args.identifier)
+    elif action == "pending-list":
+        coro = pending_list_impl(config_path)
+    elif action == "reject":
+        coro = reject_impl(config_path, identifier=args.identifier)
     elif action == "import":
         coro = import_impl(config_path, source=args.source)
     elif action == "stats":
@@ -1274,7 +1313,8 @@ def run(args: argparse.Namespace) -> None:
 
 # --------------------------------------------------------------------------- #
 # channel → list / add / delete / toggle / collect / stats / refresh-types /
-#   refresh-meta / review-list / review-confirm / review-keep / import /
+#   refresh-meta / review-list / review-confirm / review-keep / pending-list /
+#   reject / import /
 #   add-bulk / list-for-import / candidates / tag (NESTED depth-2: list/add/delete/set/get)
 # --------------------------------------------------------------------------- #
 
@@ -1412,6 +1452,23 @@ def channel_review_keep(
     """Clear a channel's review flag and keep it active."""
     apply_startup(ctx)
     run_async(review_keep_impl(ctx.obj.config, identifier=identifier))
+
+
+@channel_app.command("pending-list")
+def channel_pending_list(ctx: typer.Context) -> None:
+    """List channels awaiting approval (#1314)."""
+    apply_startup(ctx)
+    run_async(pending_list_impl(ctx.obj.config))
+
+
+@channel_app.command("reject", context_settings=_NEG_ID_POSITIONAL)
+def channel_reject(
+    ctx: typer.Context,
+    identifier: str = typer.Argument(..., help="Channel pk, channel_id, or @username"),
+) -> None:
+    """Reject a channel from the approval queue (deletes the pending row)."""
+    apply_startup(ctx)
+    run_async(reject_impl(ctx.obj.config, identifier=identifier))
 
 
 @channel_app.command("import", context_settings=_NEG_ID_POSITIONAL)

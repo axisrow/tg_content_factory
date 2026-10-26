@@ -658,6 +658,15 @@ async def start_container(container: AppContainer) -> None:
         runtime_mode=runtime_mode,
         t_start=t_start,
     )
+    # Approval queue (#1314): a non-empty queue means discovery is waiting on a
+    # human — log it so the source doesn't silently vanish from view.
+    pending = await container.db.repos.channels.list_pending_approval()
+    if pending:
+        logger.info(
+            "startup: %d channel(s) await approval (approval_state='pending') — "
+            "see `channel pending-list`",
+            len(pending),
+        )
     logger.info("startup: READY (total %.1fs)", time.monotonic() - t_start)
     if _is_dev and scheduler_dev_started_at is not None:
         logger.info("startup/start: scheduler %.2fs", time.monotonic() - scheduler_dev_started_at)

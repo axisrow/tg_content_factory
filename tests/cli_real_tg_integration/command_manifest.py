@@ -208,6 +208,8 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("channel", "review-confirm"): "local channel deactivate mutation; DB-only, no Telegram",
     ("channel", "review-keep"): "local channel state mutation; DB-only, no Telegram",
     ("channel", "review-list"): "list-only local quarantine view; DB-only, no Telegram",
+    ("channel", "pending-list"): "list-only local approval queue view; DB-only, no Telegram",
+    ("channel", "reject"): "local approval-queue rejection mutation; DB-only, no Telegram",
     ("channel", "tag", "add"): "local tag write",
     ("channel", "tag", "delete"): "local tag delete mutation",
     ("channel", "tag", "set"): "local channel tag write",

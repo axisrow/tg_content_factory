@@ -52,7 +52,7 @@ When the holder exits, the lock clears on its own.
 
 ```
 channel list | add | delete | toggle | collect | stats | refresh-types | refresh-meta | probe
-channel import | add-bulk | list-for-import | candidates | tag (list|add|delete|set|get)
+channel import | add-bulk | list-for-import | candidates | pending-list | reject | tag (list|add|delete|set|get)
 filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | purge-messages | hard-delete
 ```
 
@@ -74,6 +74,10 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
   premium search (`search --mode telegram`): pending-approval rows whose cached messages carry the
   search-query tag. Pick ones worth collecting, then `channel toggle <identifier>`
   (approves with human origin) + `channel collect <identifier>` for the first fetch.
+- `channel pending-list` — the full approval queue (#1314): every pending row, including
+  ones without search-tagged messages that `candidates` skips.
+- `channel reject <identifier>` — refuse a pending-approval candidate: deletes the pending
+  row and its cached messages; the decision stays in the `decisions` journal.
 - `filter analyze|apply` — score channels for spam/quality (flags incl. `low_engagement` —
   dead engagement: avg views <10% of subscribers over the last 100 posts; `forwarder` —
   forwarding channel: ≥50% of the last 100 posts are forwards, label-only; `high_volume` —

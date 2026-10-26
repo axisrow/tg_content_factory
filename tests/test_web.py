@@ -367,6 +367,9 @@ async def test_startup_continues_after_pool_initialize_timeout(tmp_path, db, cap
     gen_runs = SimpleNamespace(reset_running_on_startup=AsyncMock(return_value=0))
     dm_drafts = SimpleNamespace(reset_sending_on_startup=AsyncMock(return_value=0))
     tg_cmds = SimpleNamespace(reset_running_on_startup=AsyncMock(return_value=0))
+    # start_container announces a non-empty approval queue (#1314); the stub
+    # mirrors the real repos contract with an empty queue.
+    channels = SimpleNamespace(list_pending_approval=AsyncMock(return_value=[]))
 
     container = SimpleNamespace(
         auth=auth,
@@ -375,7 +378,10 @@ async def test_startup_continues_after_pool_initialize_timeout(tmp_path, db, cap
         photo_task_service=photo_task_service,
         db=SimpleNamespace(
             repos=SimpleNamespace(
-                generation_runs=gen_runs, dm_reply_drafts=dm_drafts, telegram_commands=tg_cmds
+                generation_runs=gen_runs,
+                dm_reply_drafts=dm_drafts,
+                telegram_commands=tg_cmds,
+                channels=channels,
             ),
             get_setting=AsyncMock(return_value=None),
         ),

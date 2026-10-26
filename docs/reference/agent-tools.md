@@ -37,6 +37,8 @@
 | `refresh_channel_types` | WRITE | Обновить типы каналов |
 | `refresh_channel_meta` | WRITE | Обновить метаданные (about, linked_chat_id, has_comments) |
 | `list_channels_for_review` | READ | Список каналов на ручном ревью (карантин неоднозначных not-found) |
+| `channels_pending_list` | READ | Очередь одобрения: pending-каналы discovery (#1313) |
+| `channels_approve` | WRITE | Одобрить pending-канал; только on_behalf_of_user + confirm |
 | `review_keep_channel` | WRITE | Снять канал с ревью, оставить активным (ложная тревога) |
 | `confirm_channel_dead` | DELETE | Подтвердить, что канал мёртв, и деактивировать его |
 | `list_tags` | READ | Список тегов |

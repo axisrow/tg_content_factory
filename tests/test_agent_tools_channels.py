@@ -630,3 +630,105 @@ class TestChannelReviewTools:
         assert "подавлена" in _text(result)
         mock_db.set_channel_type.assert_not_awaited()
         mock_db.repos.channels.clear_channel_review.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# channels_pending_list / channels_approve — approval queue surfaces (#1314)
+# ---------------------------------------------------------------------------
+
+
+class TestChannelsPendingListTool:
+    @pytest.mark.anyio
+    async def test_empty(self, mock_db):
+        mock_db.repos.channels.list_pending_approval = AsyncMock(return_value=[])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["channels_pending_list"]({})
+        assert "пуста" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_lists_pending(self, mock_db):
+        ch = _make_channel(pk=7, channel_id=707, title="Queued")
+        mock_db.repos.channels.list_pending_approval = AsyncMock(return_value=[ch])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["channels_pending_list"]({})
+        text = _text(result)
+        assert "pk=7" in text
+        assert "Queued" in text
+
+
+class TestChannelsApproveTool:
+    @pytest.mark.anyio
+    async def test_missing_pk_returns_error(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["channels_approve"]({})
+        assert "pk обязателен" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_channel_not_found(self, mock_db):
+        mock_db.get_channel_by_pk = AsyncMock(return_value=None)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["channels_approve"]({"pk": 99})
+        assert "не найден" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_no_confirm_returns_gate_no_change(self, mock_db):
+        ch = _make_channel(pk=2, channel_id=202, title="Gated")
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        mock_db.repos.decisions.record = AsyncMock()
+        mock_db.repos.channels.approve_channel = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["channels_approve"]({"pk": 2})
+        assert "confirm=true" in _text(result)
+        mock_db.repos.channels.approve_channel.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_confirm_without_owner_claim_is_suppressed(self, mock_db):
+        """Automation decides only where automation decided before: a bare
+        agent confirm must not approve a source out of the queue (#1307)."""
+        ch = _make_channel(pk=2, channel_id=202, title="Guarded")
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        mock_db.repos.decisions.record = AsyncMock()
+        mock_db.repos.channels.approve_channel = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["channels_approve"]({"pk": 2, "confirm": True})
+        assert "подавлено" in _text(result)
+        mock_db.repos.channels.approve_channel.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_owner_claim_without_confirmation_is_journaled_auto(self, mock_db):
+        ch = _make_channel(pk=2, channel_id=202, title="Sneaky")
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        mock_db.repos.decisions.record = AsyncMock()
+        mock_db.repos.channels.approve_channel = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["channels_approve"]({"pk": 2, "on_behalf_of_user": True})
+        assert "confirm=true" in _text(result)
+        mock_db.repos.channels.approve_channel.assert_not_awaited()
+        assert mock_db.repos.decisions.record.call_args.kwargs["origin"] == "auto"
+
+    @pytest.mark.anyio
+    async def test_owner_confirmed_approves_with_human_origin(self, mock_db):
+        ch = _make_channel(pk=2, channel_id=202, title="Approved")
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        mock_db.repos.decisions.record = AsyncMock()
+        mock_db.repos.channels.approve_channel = AsyncMock(return_value=1)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["channels_approve"](
+            {"pk": 2, "confirm": True, "on_behalf_of_user": True}
+        )
+        assert "одобрен" in _text(result)
+        mock_db.repos.channels.approve_channel.assert_awaited_once_with(
+            2, actor="agent", reason="owner-confirmed via agent"
+        )
+
+    @pytest.mark.anyio
+    async def test_not_in_queue_reported(self, mock_db):
+        ch = _make_channel(pk=2, channel_id=202, title="AlreadyDecided")
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        mock_db.repos.decisions.record = AsyncMock()
+        mock_db.repos.channels.approve_channel = AsyncMock(return_value=0)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["channels_approve"](
+            {"pk": 2, "confirm": True, "on_behalf_of_user": True}
+        )
+        assert "не в очереди одобрения" in _text(result)

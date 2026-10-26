@@ -51,7 +51,7 @@ Task → group (details in [reference.md](reference.md)):
 | Channel discovery by keywords (premium search) | [discovery.md](discovery.md) — keyword sweep → candidates short-list → toggle on explicit approval |
 | Read message history | `messages read <id> [--query TEXT --date-from D --date-to D --topic-id ID --limit N --format json]` |
 | Search collected history | `search "query" ["query2" ...] [--limit N --mode local|semantic|hybrid|telegram|my_chats|channel]` — 2+ queries = batch JSON |
-| Search-discovered channel candidates (premium search cache) | `channel candidates [--json]` |
+| Search-discovered channel candidates (premium search cache) | `channel candidates [--json]`, full queue `channel pending-list`; decide per candidate: `channel toggle` (approve) / `channel reject` |
 | Channels: list, add, collect, stats, import | `channel`, `filter` |
 | Chats: read, send, edit, forward, media, participants, admins — real actions, see Safety | `dialogs` |
 | Incoming-DM reply drafts: prepare → owner approves → worker sends (queue, no double-send) | `dm drafts` |

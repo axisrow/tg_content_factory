@@ -14,6 +14,7 @@ from tests.helpers import cli_add_channel as _add_channel
 from tests.helpers import cli_ns as _ns
 from tests.helpers import fake_asyncio_run, make_cli_config, make_cli_db
 from tg_agent.cli.commands.channel import _handle_tag, run, tag_get_impl, tag_set_impl
+from tg_agent.database import Database
 
 # ---------------------------------------------------------------------------
 # _handle_tag (pure logic + db mock)
@@ -388,3 +389,52 @@ class TestChannelCandidates:
         assert "803" in out
         assert "802" in out
         assert "801" not in out
+
+
+# ---------------------------------------------------------------------------
+# channel pending-list / reject — approval queue surfaces (#1314)
+# ---------------------------------------------------------------------------
+
+
+class TestChannelPendingList:
+    def test_empty(self, cli_env, capsys):
+        run(_ns(channel_action="pending-list"))
+        assert "No channels are awaiting approval." in capsys.readouterr().out
+
+    def test_lists_pending(self, cli_env, capsys):
+        _add_channel(cli_env, channel_id=610, title="QueueMe", approval_state="pending")
+        run(_ns(channel_action="pending-list"))
+        out = capsys.readouterr().out
+        assert "Channels awaiting approval: 1" in out
+        assert "QueueMe" in out
+
+
+class TestChannelReject:
+    def test_not_in_queue(self, cli_env, capsys):
+        run(_ns(channel_action="reject", identifier="99999"))
+        assert "not in the approval queue" in capsys.readouterr().out
+
+    def test_reject_deletes_row_and_journals(self, cli_env, tmp_path, capsys):
+        _add_channel(cli_env, channel_id=620, title="RejectMe", approval_state="pending")
+        run(_ns(channel_action="reject", identifier="620"))
+        assert "REJECTED" in capsys.readouterr().out
+
+        # DB after: the pending row is gone, the human decision stays journaled.
+        async def check():
+            fresh = Database(str(tmp_path / "cli_test.db"))
+            await fresh.initialize()
+            try:
+                assert await fresh.repos.channels.list_pending_approval() == []
+                decisions = await fresh.repos.decisions.history(
+                    entity="channel", entity_key=620
+                )
+                assert len(decisions) == 1
+                decision = decisions[0]
+                assert decision.origin == "human"
+                assert decision.actor == "cli"
+                assert decision.field == "approval_state"
+                assert decision.new_value == "rejected"
+            finally:
+                await fresh.close()
+
+        asyncio.run(check())

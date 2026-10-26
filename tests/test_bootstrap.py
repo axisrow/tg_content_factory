@@ -676,3 +676,47 @@ async def test_persist_incoming_dm_skips_event_without_ids(db, caplog):
 
     assert await db.repos.incoming_dms.count_unprocessed() == 0
     assert any("without chat_id" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Approval queue startup log (#1314)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_start_container_logs_nonempty_approval_queue(tmp_path, caplog):
+    """A non-empty approval queue is announced at startup (#1314)."""
+    import logging
+
+    from tg_agent.models import Channel
+
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    await db.add_channel(
+        Channel(channel_id=830, title="PendingLog", approval_state="pending")
+    )
+    container = _make_container(db)
+    container.scheduler = AsyncMock()
+    try:
+        with caplog.at_level(logging.INFO, logger="tg_agent.web.bootstrap"):
+            await start_container(container)
+        assert any("await approval" in r.message for r in caplog.records)
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_silent_on_empty_approval_queue(tmp_path, caplog):
+    """No pending channels — no approval-queue startup line."""
+    import logging
+
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    container = _make_container(db)
+    container.scheduler = AsyncMock()
+    try:
+        with caplog.at_level(logging.INFO, logger="tg_agent.web.bootstrap"):
+            await start_container(container)
+        assert not any("await approval" in r.message for r in caplog.records)
+    finally:
+        await db.close()

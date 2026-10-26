@@ -34,6 +34,8 @@ TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
         "refresh_channel_types": ToolMeta(ToolCategory.WRITE),
         "refresh_channel_meta": ToolMeta(ToolCategory.WRITE),
         "list_channels_for_review": ToolMeta(ToolCategory.READ),
+        "channels_pending_list": ToolMeta(ToolCategory.READ),
+        "channels_approve": ToolMeta(ToolCategory.WRITE),
         "review_keep_channel": ToolMeta(ToolCategory.WRITE),
         "confirm_channel_dead": ToolMeta(ToolCategory.DELETE),
         "list_tags": ToolMeta(ToolCategory.READ),
@@ -368,6 +370,104 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка получения списка на ревью: {e}")
 
     tools.append(list_channels_for_review)
+
+    # ------------------------------------------------------------------
+    # channels_pending_list (READ) — approval queue (#1314)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "channels_pending_list",
+        "List channels sitting in the approval queue (discovered by premium search, "
+        "gated from collection until a human decides). Each row has pk, channel_id, "
+        "title and username. Use channels_approve to let one into collection.",
+        {},
+    )
+    async def channels_pending_list(args):
+        try:
+            pending = await db.repos.channels.list_pending_approval()
+            if not pending:
+                return _text_response("Очередь одобрения пуста.")
+            lines = [f"Каналов в очереди одобрения: {len(pending)}."]
+            for ch in pending:
+                lines.append(f"  pk={ch.id} {ch.title} (@{ch.username or ch.channel_id})")
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка получения очереди одобрения: {e}")
+
+    tools.append(channels_pending_list)
+
+    # ------------------------------------------------------------------
+    # channels_approve (WRITE + confirm) — let a pending channel into collection
+    # ------------------------------------------------------------------
+
+    @tool(
+        "channels_approve",
+        "Approve a pending-approval channel (approval queue): it becomes collectable and "
+        "gets active_origin='human', so auto heuristics can no longer deactivate it. "
+        "pk = DB primary key — get it from channels_pending_list. This is the owner's "
+        "decision: it only executes when the owner asked for it (on_behalf_of_user=true) "
+        "and confirmed (confirm=true); otherwise it is suppressed.",
+        {
+            "pk": Annotated[int, "ID записи в БД (первичный ключ из channels_pending_list)"],
+            "confirm": Annotated[bool, "Подтверждение действия владельцем"],
+            "on_behalf_of_user": Annotated[
+                bool, "true только если владелец прямо попросил выполнить действие"
+            ],
+        },
+    )
+    async def channels_approve(args):
+        try:
+            pk = arg_int(args, "pk", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        try:
+            ch = await db.get_channel_by_pk(pk)
+            if not ch:
+                return _text_response(f"Канал pk={pk} не найден.")
+            gate = require_confirmation(
+                f"одобрит канал '{ch.title}' (pk={pk}) для сбора", args
+            )
+            if gate:
+                # Journal an owner-authority claim that arrived without the
+                # confirm (same as confirm_channel_dead).
+                await agent_decision_origin(
+                    db,
+                    args,
+                    confirmation_passed=False,
+                    entity_key=ch.channel_id,
+                    entity_name=ch.title,
+                    field="approval_state",
+                    old_value=str(ch.approval_state),
+                    new_value="approved",
+                )
+                return gate
+            origin = await agent_decision_origin(
+                db,
+                args,
+                confirmation_passed=True,
+                entity_key=ch.channel_id,
+                entity_name=ch.title,
+                field="approval_state",
+                old_value=str(ch.approval_state),
+                new_value="approved",
+            )
+            if origin != "human":
+                return _text_response(
+                    f"Одобрение канала '{ch.title}' (pk={pk}) подавлено: решение за "
+                    "владельцем — автоматика не может одобрить источник из очереди."
+                )
+            changed = await db.repos.channels.approve_channel(
+                pk, actor="agent", reason="owner-confirmed via agent"
+            )
+            if changed == 0:
+                return _text_response(f"Канал '{ch.title}' (pk={pk}) не в очереди одобрения.")
+            return _text_response(
+                f"Канал '{ch.title}' (pk={pk}) одобрен — активен с origin=human."
+            )
+        except Exception as e:
+            return _text_response(f"Ошибка одобрения канала: {e}")
+
+    tools.append(channels_approve)
 
     # ------------------------------------------------------------------
     # review_keep_channel (WRITE) — false alarm, clear the flag
