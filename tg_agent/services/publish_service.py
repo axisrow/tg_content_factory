@@ -361,7 +361,10 @@ class PublishService:
                 def _send() -> Any:
                     return session.publish_files(entity, image_url, caption=run.generated_text)
             else:
-                send_kwargs: dict = {}
+                # Text posts (digest flow): a bare URL must not render a Telegram
+                # web preview card — same default as dialogs send/edit (#1693).
+                # Media captions via send_file never render previews.
+                send_kwargs: dict = {"link_preview": False}
                 if reply_to is not None:
                     send_kwargs["reply_to"] = reply_to
 

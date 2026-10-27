@@ -170,7 +170,8 @@ dialogs archive-history
 ```
 
 All of these touch the user's live Telegram account — see Safety in SKILL.md.
-`dialogs send` posts a message to a chat by identifier; `dialogs queue` (with the
+`dialogs send` posts a message to a chat by identifier (links render without a
+Telegram web preview); `dialogs queue` (with the
 `status`, `cancel`, `clear-pending` subcommands) manages the send queue.
 `dialogs read` supports history reads with limits.
 `dialogs transcribe <chat> <message-id> [--engine telegram|groq|openai|whisper]` returns the

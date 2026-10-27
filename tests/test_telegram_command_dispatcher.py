@@ -1018,8 +1018,9 @@ class _PhoneRoutingClient:
     async def get_entity(self, identifier):
         return MagicMock(id=identifier, _client_phone=self.phone)
 
-    async def send_message(self, entity, text):
+    async def send_message(self, entity, text, **kwargs):
         # Tag every send with the owning phone so the test can assert isolation.
+        # kwargs mirror the real Telethon signature (link_preview etc.).
         self.sent.append((entity, text))
         return MagicMock(id=len(self.sent), _client_phone=self.phone)
 
