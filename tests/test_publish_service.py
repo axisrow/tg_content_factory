@@ -462,6 +462,32 @@ async def test_publish_service_retry_skips_delivered_targets():
 
 
 @pytest.mark.anyio
+async def test_publish_service_text_send_disables_link_preview():
+    """Text posts send with link_preview=False — a bare URL in a digest post
+    must not render a Telegram web preview card (PR #1693 review follow-up)."""
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1111111111", dialog_id=-1001)]
+    )
+    pool = FakeClientPool()
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Digest item https://example.com/post",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    results = await service.publish_run(run, make_pipeline())
+
+    assert results[0].success is True
+    sent = pool._clients["+1111111111"].sent_messages[0]
+    assert sent["kwargs"]["link_preview"] is False
+
+
+@pytest.mark.anyio
 async def test_publish_service_all_targets_already_delivered():
     """All targets already delivered: no new sends, set_metadata NOT called, run marked published (issue #633)."""
     db = FakeDB()
