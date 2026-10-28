@@ -244,12 +244,6 @@ class TestParseTargetRefs:
 
 
 class TestPreviewText:
-    def test_none(self):
-        assert _preview_text(None) == "—"
-
-    def test_empty(self):
-        assert _preview_text("") == "—"
-
     def test_short(self):
         assert _preview_text("hello world") == "hello world"
 

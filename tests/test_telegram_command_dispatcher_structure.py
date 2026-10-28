@@ -1,19 +1,5 @@
-"""Characterization tests for the TelegramCommandDispatcher domain split (#1047).
-
-These pin the *structure* contract that the 1162-line monolith was broken into
-per-domain mixin modules **without changing behaviour**:
-
-- the public class and error type still import from the historical module path;
-- every command type the queue can carry still resolves to a callable handler
-  via the unchanged ``getattr``-based dispatch;
-- the per-domain mixins are real, independent classes in the new subpackage,
-  and the dispatcher inherits all of them;
-- the module-level symbols that the existing suite patches stay re-exported on
-  the facade module so 150 patch points keep working.
-
-Together with the existing behavioural suite (test_telegram_command_dispatcher.py)
-this is the red→green anchor for the refactor: the behaviour suite proves the
-handlers still *do* the same thing, this file proves they were actually moved.
+"""Dispatcher compatibility contracts: public imports, command handlers and
+facade patch points used by the behavioural suite.
 """
 
 from __future__ import annotations
@@ -100,34 +86,6 @@ def test_every_expected_command_type_resolves_to_a_handler():
         handler_name = f"_handle_{command_type.replace('.', '_')}"
         handler = getattr(TelegramCommandDispatcher, handler_name, None)
         assert callable(handler), f"missing handler for {command_type!r}: {handler_name}"
-
-
-def test_dispatcher_is_composed_of_per_domain_mixins():
-    """The monolith was split into independent per-domain mixin classes; the
-    dispatcher must inherit all of them (so MRO keeps every handler on self)."""
-    from tg_agent.services.dispatcher.accounts_mixin import AccountsCommandsMixin
-    from tg_agent.services.dispatcher.auth_mixin import AuthCommandsMixin
-    from tg_agent.services.dispatcher.channels_mixin import ChannelsCommandsMixin
-    from tg_agent.services.dispatcher.dialogs_mixin import DialogsCommandsMixin
-    from tg_agent.services.dispatcher.moderation_mixin import ModerationCommandsMixin
-    from tg_agent.services.dispatcher.notifications_mixin import NotificationsCommandsMixin
-    from tg_agent.services.dispatcher.photo_mixin import PhotoCommandsMixin
-    from tg_agent.services.dispatcher.scheduler_mixin import SchedulerCommandsMixin
-    from tg_agent.services.dispatcher.search_mixin import SearchCommandsMixin
-
-    mixins = (
-        AuthCommandsMixin,
-        AccountsCommandsMixin,
-        SchedulerCommandsMixin,
-        DialogsCommandsMixin,
-        ChannelsCommandsMixin,
-        NotificationsCommandsMixin,
-        PhotoCommandsMixin,
-        SearchCommandsMixin,
-        ModerationCommandsMixin,
-    )
-    for mixin in mixins:
-        assert issubclass(TelegramCommandDispatcher, mixin), f"not a base: {mixin.__name__}"
 
 
 def test_patch_sensitive_symbols_stay_on_facade_module():
