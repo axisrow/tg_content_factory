@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from contextlib import AsyncExitStack
 
 from tg_agent.cli.runtime import init_db, init_pool
 from tg_agent.cli.typer_app import run_async
@@ -42,30 +43,34 @@ async def _serve(config_path: str, *, with_pool: bool) -> None:
     from tg_agent.agent.tools.permissions import load_tool_access_policy
 
     config, db = await init_db(config_path)
-    pool = None
-    if with_pool:
-        try:
-            # Legacy long-lived surface (frozen): keeps its pre-#1521 behaviour.
-            _auth, pool = await init_pool(config, db, allow_live_daemon=True)
-        except Exception:
-            logger.warning("Telegram pool init failed; pool-dependent tools will error", exc_info=True)
-            pool = None
+    from tg_agent.plugin_api import start_plugins
 
-    # Enforce the agent tool ACL at registration time. The call-time session gate
-    # lives in a ContextVar set only inside AgentManager's process, so it cannot
-    # reach this subprocess — without this filter Codex would see every write/
-    # delete tool regardless of the admin's deny/requestable settings. gate_active
-    # is False here (headless): DENIED and REQUESTABLE tools are both withheld.
-    access_policy = await load_tool_access_policy(db, use_cache=False)
-    server_config = make_mcp_server(db, client_pool=pool, config=config, access_policy=access_policy)
-    server = server_config["instance"]  # the underlying mcp.server.Server
-    logger.info("MCP server ready over stdio (pool=%s, ACL enforced)", "on" if pool else "off")
+    async with AsyncExitStack() as cleanup:
+        cleanup.push_async_callback(db.close)
+        pool = None
+        if with_pool:
+            try:
+                # Legacy long-lived surface (frozen): keeps its pre-#1521 behaviour.
+                auth, pool = await init_pool(config, db, allow_live_daemon=True)
+                if auth is not None:
+                    cleanup.push_async_callback(auth.cleanup)
+                if pool is not None:
+                    cleanup.push_async_callback(pool.disconnect_all)
+            except Exception:
+                logger.warning("Telegram pool init failed; pool-dependent tools will error", exc_info=True)
+                pool = None
 
-    try:
+        plugins = await start_plugins(db, config, pool)
+        cleanup.push_async_callback(plugins.close)
+        # Metadata must exist before loading ACL. A headless MCP process cannot
+        # prompt for grants, so denied and requestable tools stay hidden.
+        access_policy = await load_tool_access_policy(db, use_cache=False)
+        server_config = make_mcp_server(db, client_pool=pool, config=config, access_policy=access_policy)
+        server = server_config["instance"]
+        logger.info("MCP server ready over stdio (pool=%s, ACL enforced)", "on" if pool else "off")
+
         async with stdio_server() as (read_stream, write_stream):
             await server.run(read_stream, write_stream, server.create_initialization_options())
-    finally:
-        await db.close()
 
 
 def serve_mcp(config_path: str, *, no_pool: bool = False) -> None:

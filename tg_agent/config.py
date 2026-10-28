@@ -222,6 +222,7 @@ class AppConfig(BaseModel):
     [`load_config`][tg_agent.config.load_config].
     """
 
+    plugins_disabled: list[str] = Field(default_factory=list)
     telegram: TelegramConfig = TelegramConfig()
     telegram_runtime: TelegramRuntimeConfig = TelegramRuntimeConfig()
     web: WebConfig = WebConfig()

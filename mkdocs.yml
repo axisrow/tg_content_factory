@@ -99,6 +99,7 @@ nav:
     - Scheduler: operators/scheduler.md
   - Architecture:
     - Core Architecture: architecture.md
+    - Plugins: plugins.md
     - Plugin System Design: design/plugin-system.md
   - Service Map: feature-map.md
   - Parity Matrix: parity-matrix.md

@@ -142,6 +142,8 @@ class AgentManager:
     ) -> None:
         self._db = db
         self._config = config or AppConfig()
+        self._plugin_pool = client_pool
+        self._plugin_scheduler = scheduler_manager
         self._live_runtime_pause_gate = live_runtime_pause_gate
         self._claude_backend = ClaudeSdkBackend(
             db, self._config, client_pool=client_pool, scheduler_manager=scheduler_manager,
@@ -186,6 +188,9 @@ class AgentManager:
         set_gate(None)
 
     async def refresh_settings_cache(self, *, preflight: bool = False) -> None:
+        from tg_agent.plugin_api import start_plugins
+
+        await start_plugins(self._db, self._config, self._plugin_pool, self._plugin_scheduler)
         await self._deepagents_backend.refresh_settings_cache()
         if preflight and self._deepagents_backend.configured:
             try:

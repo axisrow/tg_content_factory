@@ -258,6 +258,9 @@ class Database:
             logger.warning("Failed to seed built-in pipeline templates", exc_info=True)
 
     async def close(self) -> None:
+        plugins = getattr(self, "plugins", None)
+        if plugins is not None:
+            await plugins.close()
         if self._read_pool is not None:
             await self._read_pool.close()
         await self._connection.close()

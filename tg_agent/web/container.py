@@ -23,6 +23,7 @@ from tg_agent.database.bundles import (
     SearchQueryBundle,
 )
 from tg_agent.live_runtime_pause import LiveRuntimePauseGate
+from tg_agent.plugin_api import PluginRuntime
 from tg_agent.scheduler.service import SchedulerManager
 from tg_agent.search.ai_search import AISearchEngine
 from tg_agent.search.engine import SearchEngine
@@ -97,4 +98,5 @@ class AppContainer:
     # Dormant-DM ping monitors (#1415): needs the live pool for history reads
     # and sends — worker-only, like the listener.
     ping_monitor_service: PingMonitorService | None = None
+    plugins: PluginRuntime | None = None
     shutting_down: bool = False

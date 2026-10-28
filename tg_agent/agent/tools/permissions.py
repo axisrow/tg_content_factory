@@ -101,6 +101,15 @@ def _build_metadata() -> tuple[Mapping[str, ToolCategory], Mapping[str, tuple[st
                 if meta.phone_bound:
                     phone_bound.add(tool_name)
 
+    from tg_agent.plugin_api import permission_groups
+
+    for group_name, tools in permission_groups().items():
+        groups[group_name] = list(tools)
+        for tool_name, meta in tools.items():
+            categories[tool_name] = meta.category
+            if meta.phone_bound:
+                phone_bound.add(tool_name)
+
     for builtin in BUILTIN_TOOLS:
         categories[builtin] = ToolCategory.READ
     groups[_BUILTIN_GROUP_NAME] = list(BUILTIN_TOOLS)
