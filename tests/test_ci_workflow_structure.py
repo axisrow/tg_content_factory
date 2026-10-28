@@ -24,6 +24,11 @@ undo them:
   ratchet. ``pytest-cov`` stays a dev dependency for local, manual use only;
 - the ``pip-audit`` dependency scan stays *advisory* (``continue-on-error``)
   like the other security/dup guards (#1097 §4);
+- the ``dependency-review`` job (#1704) is the blocking counterpart: a PR
+  introducing a direct dependency with known CVE/malware advisories reds CI
+  before merge (no lockfile — the compare diff covers direct deps only;
+  transitives stay with the advisory pip-audit). It stays PR-scoped (it
+  diffs the PR) and must never be downgraded to advisory;
 - the ``doc-coverage`` step is **removed** from CI — interrogate stays a local
   script (#1072) but is no longer a CI step (#1097 §3);
 - the existing blocking gates (import contracts, complexity, warnings-as-errors)
@@ -265,3 +270,27 @@ def test_warnings_as_errors_check_preserved(ci_config: dict) -> None:
     """The filterwarnings=['error'] enforcement check must survive the split."""
     static_text = _job_steps_text(ci_config["jobs"]["static-checks"])
     assert "filterwarnings" in static_text, "warnings-as-errors enforcement check must be preserved in CI"
+
+
+def test_dependency_review_gate_is_blocking_and_pr_scoped(ci_config: dict) -> None:
+    """#1704: the dependency-review job blocks PRs introducing flagged deps.
+
+    Unlike the advisory pip-audit, this gate must be blocking (the whole
+    point): a PR whose dependency diff carries known CVE/malware advisories —
+    direct deps only (no lockfile; transitives stay with pip-audit) — reds
+    CI before merge. It must stay PR-scoped: the action diffs the PR against
+    the base and has no meaning on push-to-main.
+    """
+    job = ci_config["jobs"]["dependency-review"]
+    assert job.get("if") == "github.event_name == 'pull_request'", (
+        "dependency-review must be PR-scoped (it diffs the PR against the base)"
+    )
+    review = next(
+        (s for s in job.get("steps", []) if "dependency-review-action" in (s.get("uses") or "")),
+        None,
+    )
+    assert review is not None, "dependency-review job must run actions/dependency-review-action"
+    assert review.get("continue-on-error") is not True, "the gate must be blocking, not advisory"
+    assert review.get("with", {}).get("fail-on-severity") == "moderate", (
+        "fail-on-severity pins the blocking threshold (noise knob: raise to high, never drop the gate)"
+    )
