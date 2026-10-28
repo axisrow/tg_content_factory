@@ -69,6 +69,20 @@ def test_memory(capsys):
     assert "channels" in out
 
 
+def test_memory_without_resource(capsys):
+    db = make_debug_db()
+    config = make_cli_config()
+    with patch.dict("sys.modules", {"resource": None}), \
+         patch("tg_agent.cli.commands.debug.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(debug_action="memory"))
+    out = capsys.readouterr().out
+    assert "Max RSS: unavailable on this platform" in out
+    assert "channels: 5" in out
+    assert "messages: 100" in out
+    db.close.assert_awaited_once()
+
+
 def test_memory_with_db_file(capsys, tmp_path):
     db_file = tmp_path / "test.db"
     db_file.write_bytes(b"x" * (2 * 1024 * 1024))  # 2MB
