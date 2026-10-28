@@ -90,7 +90,6 @@ jobs:
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: moderate
-          deny-packages: fastapi
 
   # Lint is its own job (#1097 §5) so a style slip reds CI in seconds, in
   # parallel with the slower static-checks and tests jobs — no waiting on pytest
