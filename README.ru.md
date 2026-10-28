@@ -242,6 +242,15 @@ telethon-cli users get-me --output json
 
 ### Важное замечание по CI
 
+- Job `build` в `.github/workflows/ci.yml` собирает Python-пакет на
+  `ubuntu-latest`, `windows-latest` и `macos-latest` (Python 3.11).
+  На каждой ОС собираются sdist и wheel для `tg-agent` и внутреннего
+  `tg-shared`, затем оба wheel устанавливаются с
+  зависимостями и проверяется через `pip check`, `tg-agent --version` и
+  `tg-agent --help` вне каталога исходников. Пакеты доступны в разделе
+  **Actions → CI → нужный запуск → Artifacts** как `dist-<ОС>`.
+  Это Python-дистрибутивы для установки через `pip`, не standalone `.exe`/`.app`.
+  Полный набор тестов и линтеры выполняются на Ubuntu.
 - `push` workflow проверяет только head текущей ветки.
 - `pull_request` workflow проверяет результат merge с `main`.
 - Поэтому ветка может быть зелёной на `push` и красной на `pull_request`, если

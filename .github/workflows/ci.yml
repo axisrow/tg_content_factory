@@ -47,6 +47,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install build frontend
+        run: python -m pip install "build>=1.2,<2"
+
+      # Default build creates an sdist, then builds the wheel from that sdist.
+      - name: Build sdist and wheel
+        run: |
+          python -m build
+          python -m build packages/tg_shared --outdir dist
+
+      # Python handles globbing on every OS, including Windows PowerShell.
+      - name: Install built wheel
+        run: python -c "import pathlib, subprocess, sys; wheels = sorted(map(str, pathlib.Path('dist').glob('*.whl'))); assert len(wheels) == 2, wheels; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *wheels])"
+
+      - name: Check installed dependencies
+        run: python -m pip check
+
+      # Outside the checkout so local sources cannot mask a broken wheel.
+      - name: Smoke test installed CLI
+        working-directory: ${{ runner.temp }}
+        run: |
+          tg-agent --version
+          tg-agent --help
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: dist/*
+          if-no-files-found: error
+
   check-branch-name:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
