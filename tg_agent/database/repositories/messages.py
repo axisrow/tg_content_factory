@@ -659,6 +659,30 @@ class MessagesRepository:
         )
         return cur.rowcount if cur.rowcount >= 0 else len(payload)
 
+    async def iter_embedding_json_batches(
+        self, include_filtered: bool = False, *, batch_size: int = 512
+    ) -> AsyncIterator[list[tuple[int, str]]]:
+        """Read bounded keyset pages; never buffer the full JSON corpus in the pool."""
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+        last_id = -1
+        while True:
+            sql = (
+                "SELECT e.message_id, e.embedding FROM message_embeddings_json e "
+                "JOIN messages m ON m.id = e.message_id "
+                "LEFT JOIN channels c ON m.channel_id = c.channel_id "
+                "WHERE e.message_id > ? "
+            )
+            if not include_filtered:
+                sql += "AND (c.is_filtered IS NULL OR c.is_filtered = 0) "
+            sql += "ORDER BY e.message_id LIMIT ?"
+            cur = await self._db.execute(sql, (last_id, batch_size))
+            rows = await cur.fetchall()
+            if not rows:
+                return
+            last_id = int(rows[-1]["message_id"])
+            yield [(int(row["message_id"]), row["embedding"]) for row in rows]
+
     async def load_all_embeddings_json(self, include_filtered: bool = False) -> list[tuple[int, list[float]]]:
         """Load embeddings from the portable JSON table.
 
@@ -747,6 +771,15 @@ class MessagesRepository:
         )
         messages = self._rows_to_messages(await cur.fetchall())
         await self._attach_topic_titles(messages)
+        return messages
+
+    async def get_by_ids(self, message_ids: list[int]) -> list[Message]:
+        """Fetch ranked candidates in bounded batches, skipping deleted messages."""
+        messages: list[Message] = []
+        # Each ID uses two parameters in _load_messages_by_ids. Stay below
+        # SQLite's portable 999-variable limit even on deep search pages.
+        for start in range(0, len(message_ids), 400):
+            messages.extend(await self._load_messages_by_ids(message_ids[start : start + 400]))
         return messages
 
     async def _attach_topic_titles(self, messages: list[Message]) -> None:

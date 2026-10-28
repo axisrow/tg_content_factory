@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -22,9 +23,40 @@ class NumpySemanticIndex:
         self._ids: list[int] = []
         self._matrix: np.ndarray | None = None  # shape (N, dims), lazy import
         self._index: NearestNeighbors | None = None  # lazy import
+        self._chunks: list[np.ndarray] = []
+
+    def add_json_batch(self, rows: list[tuple[int, str]]) -> None:
+        """Decode only one DB page at a time, retaining compact float32 chunks."""
+        import numpy as np
+
+        ids, vectors = [], []
+        for message_id, raw in rows:
+            try:
+                vector = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            ids.append(message_id)
+            vectors.append(vector)
+        if vectors:
+            chunk = np.asarray(vectors, dtype=np.float32)
+            self._chunks.append(chunk)
+            self._ids.extend(ids)
+
+    def finish_loading(self) -> None:
+        """Publish a contiguous matrix after all compact chunks have arrived."""
+        if not self._chunks:
+            return
+        import numpy as np
+        from sklearn.neighbors import NearestNeighbors
+
+        self._matrix = self._chunks[0] if len(self._chunks) == 1 else np.concatenate(self._chunks)
+        self._chunks.clear()
+        self._index = NearestNeighbors(metric="cosine")
+        self._index.fit(self._matrix)
 
     def load(self, embeddings: list[tuple[int, list[float]]]) -> None:
         """Load pre-computed embeddings.  ``embeddings`` is a list of (message_id, vector)."""
+        self._chunks.clear()
         if not embeddings:
             self._ids = []
             self._matrix = None

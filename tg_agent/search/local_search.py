@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from typing import TypeVar
 
 from tg_agent.database.bundles import SearchBundle
 from tg_agent.models import SearchParams, SearchResult
 from tg_agent.search.numpy_semantic import NumpySemanticIndex
 from tg_agent.services.embedding_service import EmbeddingService
+
+_T = TypeVar("_T")
 
 
 def _as_aware(value: datetime) -> datetime:
@@ -25,11 +30,36 @@ class LocalSearch:
         self._numpy_index: NumpySemanticIndex | None = None
         self._numpy_index_loaded: bool = False
         self._numpy_index_include_filtered: bool = False
+        self._numpy_generation = 0
+        self._numpy_build_lock = asyncio.Lock()
+        self._numpy_compute_lock = asyncio.Lock()
 
     def invalidate_numpy_index(self) -> None:
         """Reset the cached numpy index so it is rebuilt on the next search."""
         self._numpy_index = None
         self._numpy_index_loaded = False
+        self._numpy_generation += 1
+
+    async def _compute(self, function: Callable[..., _T], *args, **kwargs) -> _T:
+        """Bound CPU work, retaining the slot until a cancelled thread exits."""
+        async with self._numpy_compute_lock:
+            task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+            cancelled = False
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    cancelled = True
+                except Exception:
+                    if cancelled:
+                        raise asyncio.CancelledError from None
+                    raise
+            if cancelled:
+                # Retrieve a possible exception before propagating cancellation.
+                if not task.cancelled():
+                    task.exception()
+                raise asyncio.CancelledError
+            return task.result()
 
     async def search(self, params: SearchParams) -> SearchResult:
         page = await self._search.search_messages(params)
@@ -44,15 +74,26 @@ class LocalSearch:
         it, otherwise include_filtered=True would silently search the
         filtered-out subset.
         """
-        if not self._numpy_index_loaded or self._numpy_index_include_filtered != include_filtered:
-            index = NumpySemanticIndex()
-            embeddings = await self._search.messages.load_all_embeddings_json(include_filtered=include_filtered)
-            index.load(embeddings)
-            self._numpy_index = index
-            self._numpy_index_loaded = True
-            self._numpy_index_include_filtered = include_filtered
-        assert self._numpy_index is not None
-        return self._numpy_index
+        async with self._numpy_build_lock:
+            while not self._numpy_index_loaded or self._numpy_index_include_filtered != include_filtered:
+                generation = self._numpy_generation
+                index = NumpySemanticIndex()
+                async for batch in self._search.messages.iter_embedding_json_batches(
+                    include_filtered=include_filtered
+                ):
+                    await self._compute(index.add_json_batch, batch)
+                    if generation != self._numpy_generation:
+                        break
+                if generation != self._numpy_generation:
+                    continue
+                await self._compute(index.finish_loading)
+                if generation != self._numpy_generation:
+                    continue
+                self._numpy_index = index
+                self._numpy_index_loaded = True
+                self._numpy_index_include_filtered = include_filtered
+            assert self._numpy_index is not None
+            return self._numpy_index
 
     async def search_semantic(
         self,
@@ -110,12 +151,10 @@ class LocalSearch:
             parsed_to += timedelta(days=1)
         # Over-fetch to allow for post-filtering
         fetch_k = min(index.size, max((limit + offset) * 4, 200))
-        top_ids = [mid for mid, _score in index.search(query_embedding, k=fetch_k, allowed_ids=allowed_ids)]
+        neighbors = await self._compute(index.search, query_embedding, k=fetch_k, allowed_ids=allowed_ids)
+        top_ids = [mid for mid, _score in neighbors]
         filtered: list = []
-        for mid in top_ids:
-            msg = await self._search.messages.get_by_id(mid)
-            if msg is None:
-                continue
+        for msg in await self._search.messages.get_by_ids(top_ids):
             if channel_id is not None and msg.channel_id != channel_id:
                 continue
             if parsed_from is not None and msg.date is not None and _as_aware(msg.date) < parsed_from:
