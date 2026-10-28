@@ -13,7 +13,7 @@ import argparse
 import asyncio
 import inspect
 import os
-import resource
+import sys
 from collections import deque
 
 import typer
@@ -53,8 +53,15 @@ async def memory_impl(config_path: str) -> None:
     """Print process RSS, DB stats and DB file size."""
     _, db = await runtime.init_db(config_path)
     try:
-        usage = resource.getrusage(resource.RUSAGE_SELF)
-        print(f"Max RSS: {usage.ru_maxrss / 1024:.1f} MB")
+        try:
+            import resource
+        except ImportError:
+            print("Max RSS: unavailable on this platform")
+        else:
+            usage = resource.getrusage(resource.RUSAGE_SELF)
+            # macOS reports bytes; Linux and other Unix platforms report KiB.
+            divisor = 1024 * 1024 if sys.platform == "darwin" else 1024
+            print(f"Max RSS: {usage.ru_maxrss / divisor:.1f} MB")
 
         stats = await db.get_stats()
         print("\nDB stats:")
