@@ -25,9 +25,10 @@ undo them:
 - the ``pip-audit`` dependency scan stays *advisory* (``continue-on-error``)
   like the other security/dup guards (#1097 §4);
 - the ``dependency-review`` job (#1704) is the blocking counterpart: a PR
-  introducing a dependency with known CVE/malware advisories (direct or
-  transitive) reds CI before merge. It stays PR-scoped (it diffs the PR) and
-  must never be downgraded to advisory;
+  introducing a direct dependency with known CVE/malware advisories reds CI
+  before merge (no lockfile — the compare diff covers direct deps only;
+  transitives stay with the advisory pip-audit). It stays PR-scoped (it
+  diffs the PR) and must never be downgraded to advisory;
 - the ``doc-coverage`` step is **removed** from CI — interrogate stays a local
   script (#1072) but is no longer a CI step (#1097 §3);
 - the existing blocking gates (import contracts, complexity, warnings-as-errors)
@@ -276,9 +277,9 @@ def test_dependency_review_gate_is_blocking_and_pr_scoped(ci_config: dict) -> No
 
     Unlike the advisory pip-audit, this gate must be blocking (the whole
     point): a PR whose dependency diff carries known CVE/malware advisories —
-    including transitive packages — reds CI before merge. It must stay
-    PR-scoped: the action diffs the PR against the base and has no meaning on
-    push-to-main.
+    direct deps only (no lockfile; transitives stay with pip-audit) — reds
+    CI before merge. It must stay PR-scoped: the action diffs the PR against
+    the base and has no meaning on push-to-main.
     """
     job = ci_config["jobs"]["dependency-review"]
     assert job.get("if") == "github.event_name == 'pull_request'", (

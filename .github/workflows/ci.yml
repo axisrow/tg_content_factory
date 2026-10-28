@@ -66,13 +66,14 @@ jobs:
             });
             core.setFailed('Branch name contains "+", which is not allowed.');
 
-  # Dependency review gate (#1704): a PR that introduces a dependency the
-  # community already flagged (CVE or malware advisories, direct or transitive)
-  # must red CI before merge. Deliberately a separate job, not part of
-  # `static-checks`: it only makes sense on pull_request (it diffs the PR
-  # against the base), and it is checkout + diff analysis with no installs —
-  # the cheapest job in the workflow. pip-audit stays advisory (siren);
-  # this is the bar (blocking).
+  # Dependency review gate (#1704): a PR that introduces a direct dependency
+  # the community already flagged (CVE or malware advisories) must red CI
+  # before merge. Without a lockfile the compare diff covers direct deps
+  # only — transitives stay with the advisory pip-audit scan of the resolved
+  # env. Deliberately a separate job, not part of `static-checks`: it only
+  # makes sense on pull_request (it diffs the PR against the base), and it
+  # is checkout + diff analysis with no installs — the cheapest job in the
+  # workflow. pip-audit stays advisory (siren); this is the bar (blocking).
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
