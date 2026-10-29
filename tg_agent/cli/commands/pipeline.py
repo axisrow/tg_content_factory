@@ -952,37 +952,33 @@ async def _pipeline_resolve_unconfirmed(args: argparse.Namespace, db, config, sv
 
 
 
-async def _pipeline_bulk_approve(args: argparse.Namespace, db, config, svc: PipelineService) -> None:
+async def _bulk_moderate(args: argparse.Namespace, db, status: str, label: str) -> None:
     # Atomic batch (#1041): resolve which ids exist (preserving the
     # skip-missing behaviour), then flip them all in one transaction
     # so a mid-batch failure rolls back instead of half-applying.
-    existing_approve_ids: list[int] = []
+    existing_ids: list[int] = []
     for run_id in args.run_ids:
         run = await db.repos.generation_runs.get(run_id)
         if run is None:
             print(f"  Run id={run_id} not found, skipping.")
             continue
-        existing_approve_ids.append(run_id)
-    await db.repos.generation_runs.set_moderation_status_bulk(
-        existing_approve_ids, "approved", origin="human", actor="cli"
+        existing_ids.append(run_id)
+    skipped = await db.repos.generation_runs.set_moderation_status_bulk(
+        existing_ids, status, origin="human", actor="cli"
     )
-    print(f"Bulk approved: {len(existing_approve_ids)}/{len(args.run_ids)}")
+    # An operator (human-origin) decision is refused only for runs already
+    # publishing/published (#1234) — report them instead of counting them.
+    for run_id in skipped:
+        print(f"  Run id={run_id} is publishing/published, skipping.")
+    print(f"Bulk {label}: {len(existing_ids) - len(skipped)}/{len(args.run_ids)}")
 
+
+async def _pipeline_bulk_approve(args: argparse.Namespace, db, config, svc: PipelineService) -> None:
+    await _bulk_moderate(args, db, "approved", "approved")
 
 
 async def _pipeline_bulk_reject(args: argparse.Namespace, db, config, svc: PipelineService) -> None:
-    # Atomic batch (#1041): see bulk-approve above for the rationale.
-    existing_reject_ids: list[int] = []
-    for run_id in args.run_ids:
-        run = await db.repos.generation_runs.get(run_id)
-        if run is None:
-            print(f"  Run id={run_id} not found, skipping.")
-            continue
-        existing_reject_ids.append(run_id)
-    await db.repos.generation_runs.set_moderation_status_bulk(
-        existing_reject_ids, "rejected", origin="human", actor="cli"
-    )
-    print(f"Bulk rejected: {len(existing_reject_ids)}/{len(args.run_ids)}")
+    await _bulk_moderate(args, db, "rejected", "rejected")
 
 
 

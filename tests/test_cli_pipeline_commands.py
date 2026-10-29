@@ -359,6 +359,15 @@ def _create_pending_run(cli_env) -> int:
         loop.close()
 
 
+def _set_run_moderation(db_path: str, run_id: int, status: str) -> None:
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("UPDATE generation_runs SET moderation_status = ? WHERE id = ?", (status, run_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 class TestPipelineBulkApprove:
     def test_not_found_run(self, cli_env, capsys):
 
@@ -376,6 +385,19 @@ class TestPipelineBulkApprove:
         db_path = cli_env._db_path
         assert _read_run_moderation(db_path, rid1) == "approved"
         assert _read_run_moderation(db_path, rid2) == "approved"
+
+    def test_reports_skipped_terminal_runs(self, cli_env, capsys):
+        """A published run the repo refuses to flip is reported, not counted (#1661 review)."""
+        rid1 = _create_pending_run(cli_env)
+        rid2 = _create_pending_run(cli_env)
+        _set_run_moderation(cli_env._db_path, rid2, "published")
+
+        run(_ns(pipeline_action="bulk-approve", run_ids=[rid1, rid2, 999]))
+        out = capsys.readouterr().out
+        assert f"Run id={rid2} is publishing/published, skipping." in out
+        assert "Bulk approved: 1/3" in out
+        assert _read_run_moderation(cli_env._db_path, rid1) == "approved"
+        assert _read_run_moderation(cli_env._db_path, rid2) == "published"
 
     def test_atomic_on_midbatch_failure(self, cli_env, capsys):
         """RED→GREEN (#1041): a mid-batch failure leaves NO run approved.
@@ -430,6 +452,19 @@ class TestPipelineBulkReject:
         db_path = cli_env._db_path
         assert _read_run_moderation(db_path, rid1) == "rejected"
         assert _read_run_moderation(db_path, rid2) == "rejected"
+
+    def test_reports_skipped_terminal_runs(self, cli_env, capsys):
+        """A published run the repo refuses to flip is reported, not counted (#1661 review)."""
+        rid1 = _create_pending_run(cli_env)
+        rid2 = _create_pending_run(cli_env)
+        _set_run_moderation(cli_env._db_path, rid2, "published")
+
+        run(_ns(pipeline_action="bulk-reject", run_ids=[rid1, rid2]))
+        out = capsys.readouterr().out
+        assert f"Run id={rid2} is publishing/published, skipping." in out
+        assert "Bulk rejected: 1/2" in out
+        assert _read_run_moderation(cli_env._db_path, rid1) == "rejected"
+        assert _read_run_moderation(cli_env._db_path, rid2) == "published"
 
 
 # ---------------------------------------------------------------------------

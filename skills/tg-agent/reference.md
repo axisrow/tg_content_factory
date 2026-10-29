@@ -268,6 +268,8 @@ inspectable via `pipeline runs` / `run-show`.
 (`moderation_origin='human'`, journaled in `decisions`): automation never overrides
 them — the AUTO pipeline and agent tools cannot re-approve a run the operator
 rejected; the suppressed attempt is journaled instead (#1315).
+`bulk-approve | bulk-reject` print a `Run id=N is publishing/published, skipping.` line
+for every run already in a terminal state and leave it out of the `Bulk …: N/M` count.
 
 ## scheduling & background
 
