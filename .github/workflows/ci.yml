@@ -143,6 +143,12 @@ jobs:
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: moderate
+          # GHSA-xcq7-p3pf-p88h (moderate, unbounded tracestate parsing):
+          # opentelemetry-api arrives transitively (langchain family) and the
+          # advisory has NO patched release yet (patched_versions: null). Waived
+          # here so the gate stays blocking for everything else — REMOVE this
+          # entry as soon as upstream ships the fix, then let the gate red.
+          allow-dependencies: opentelemetry-api
 
   # Lint is its own job (#1097 §5) so a style slip reds CI in seconds, in
   # parallel with the slower static-checks and tests jobs — no waiting on pytest
