@@ -90,7 +90,9 @@ recovery using project catch-up policy. Automatic pings require the exclusive ow
 
 Artifacts are project-scoped, capped at 128 MiB and expire after 24 hours. Upload
 identities survive retries; changed content cannot replace a prior upload identity.
-A background cleanup removes expired files and abandoned staging directories.
+A background cleanup removes expired files and abandoned staging directories. Read
+receipts are pruned after 24 hours; write receipts are kept forever so a request ID
+always keeps its fingerprint and uncertain state.
 
 ## Process control
 

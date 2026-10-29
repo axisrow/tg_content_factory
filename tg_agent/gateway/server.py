@@ -183,6 +183,7 @@ def create_app(store: GatewayStore, access: TelegramAccess) -> FastAPI:
                 try:
                     await asyncio.to_thread(artifacts.cleanup)
                     await store.expire_events(now=time.time())
+                    await store.prune_read_receipts(now=time.time())
                 except OSError as exc:
                     logger.warning("Gateway artifact cleanup delayed: %s", type(exc).__name__)
                 await asyncio.sleep(60)
