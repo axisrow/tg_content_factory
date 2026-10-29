@@ -21,6 +21,32 @@ from tg_shared.session_materializer import SessionMaterializer
 os.environ.setdefault("SESSION_ENCRYPTION_KEY", "test-session-encryption-key")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _reuse_test_session_key():
+    """Derive the shared test key once per worker; keep real Fernet encryption.
+
+    Thousands of DB/provider fixtures use this same public test password.
+    PBKDF2 is deliberately expensive in production, but repeating that pure
+    computation adds no coverage here. Other secrets and changes to the KDF
+    parameters/implementation always take the real derivation path.
+    """
+    from tg_agent.security import session_cipher
+
+    derive = session_cipher._derive_fernet_key_v2
+    secret = "test-session-encryption-key"
+    parameters = (session_cipher._PBKDF2_SALT, session_cipher._PBKDF2_ITERATIONS, session_cipher.hashlib.pbkdf2_hmac)
+    key = derive(secret)
+
+    def derive_test_key(value):
+        current = (session_cipher._PBKDF2_SALT, session_cipher._PBKDF2_ITERATIONS, session_cipher.hashlib.pbkdf2_hmac)
+        if value == secret and current == parameters:
+            return key
+        return derive(value)
+
+    with patch.object(session_cipher, "_derive_fernet_key_v2", derive_test_key):
+        yield
+
+
 @pytest.fixture(scope="session")
 def anyio_backend() -> str:
     """Force asyncio backend for the entire suite — no trio."""
