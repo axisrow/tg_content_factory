@@ -21,6 +21,32 @@ from tg_shared.session_materializer import SessionMaterializer
 os.environ.setdefault("SESSION_ENCRYPTION_KEY", "test-session-encryption-key")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _reuse_test_session_key():
+    """Derive the shared test key once per worker; keep real Fernet encryption.
+
+    Thousands of DB/provider fixtures use this same public test password.
+    PBKDF2 is deliberately expensive in production, but repeating that pure
+    computation adds no coverage here. Other secrets and changes to the KDF
+    parameters/implementation always take the real derivation path.
+    """
+    from tg_agent.security import session_cipher
+
+    derive = session_cipher._derive_fernet_key_v2
+    secret = "test-session-encryption-key"
+    parameters = (session_cipher._PBKDF2_SALT, session_cipher._PBKDF2_ITERATIONS, session_cipher.hashlib.pbkdf2_hmac)
+    key = derive(secret)
+
+    def derive_test_key(value):
+        current = (session_cipher._PBKDF2_SALT, session_cipher._PBKDF2_ITERATIONS, session_cipher.hashlib.pbkdf2_hmac)
+        if value == secret and current == parameters:
+            return key
+        return derive(value)
+
+    with patch.object(session_cipher, "_derive_fernet_key_v2", derive_test_key):
+        yield
+
+
 @pytest.fixture(scope="session")
 def anyio_backend() -> str:
     """Force asyncio backend for the entire suite — no trio."""
@@ -610,3 +636,21 @@ async def pipeline_client(tmp_path, real_pool_harness_factory):
 
     await app.state.collection_queue.shutdown()
     await built_db.close()
+
+
+@pytest.fixture(autouse=True)
+def fail_on_mock_path_leak():
+    """A MagicMock that reached filesystem code creates junk dirs in cwd (PR #1715).
+
+    ``os.fspath`` of a MagicMock yields a repo-relative ``MagicMock/...`` path,
+    so any test passing a mock where a real path is expected silently litters
+    the repository root. Fail the leaking test instead of committing its junk.
+    """
+    marker = Path("MagicMock")
+    existed = marker.exists()
+    yield
+    if marker.exists() and not existed:
+        pytest.fail(
+            "Test leaked a MagicMock-as-path directory into the repository root: "
+            "a mock object was used where a real filesystem path is expected"
+        )

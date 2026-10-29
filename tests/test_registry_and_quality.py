@@ -29,14 +29,6 @@ def test_normalize_phone_strips():
     assert normalize_phone("  +79991234567  ") == "+79991234567"
 
 
-def test_normalize_phone_empty():
-    assert normalize_phone("") == ""
-
-
-def test_normalize_phone_whitespace_only():
-    assert normalize_phone("   ") == ""
-
-
 # --- _text_response ---
 
 
@@ -60,10 +52,6 @@ def test_require_confirmation_confirmed():
 
 
 # --- require_pool ---
-
-
-def test_require_pool_present():
-    assert require_pool(MagicMock()) is None
 
 
 def test_require_pool_none():

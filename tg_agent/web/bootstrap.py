@@ -277,15 +277,23 @@ async def build_container_with_templates(
 
     api_id, api_hash = await load_telegram_credentials(db, config)
     auth = TelegramAuth(api_id, api_hash, proxy=config.telegram_runtime.proxy)
+    if isinstance(config.gateway, dict) and config.gateway:
+        from tg_agent.gateway.pool import GatewayAuth
+
+        auth = GatewayAuth()
     pool: WebClientPool
     search_pool: ClientPool | None
     if runtime_mode == "worker":
-        pool = ClientPool(
-            auth,
-            db,
-            config.scheduler.max_flood_wait_sec,
-            runtime_config=config.telegram_runtime,
-        )
+        if isinstance(config.gateway, dict) and config.gateway:
+            from tg_agent.gateway.pool import GatewayAuth, GatewayPool
+
+            auth = GatewayAuth()
+            pool = GatewayPool(config, db)
+        else:
+            pool = ClientPool(
+                auth, db, config.scheduler.max_flood_wait_sec,
+                runtime_config=config.telegram_runtime,
+            )
     else:
         pool = SnapshotClientPool(db)
         await pool.refresh()
@@ -397,11 +405,16 @@ async def build_container_with_templates(
         # Worker-only (#1426): `serve` (embedded worker) and a standalone
         # `worker` must never both listen on the same accounts, so web mode
         # gets no listener at all.
-        dm_catchup = DmCatchupService(live_pool, db)
-        dm_listener = DmListener(
-            live_pool, db, event_callback=lambda dm: _persist_incoming_dm(db, dm),
-            catchup=dm_catchup,
-        )
+        if isinstance(config.gateway, dict) and config.gateway:
+            from tg_agent.gateway.dm_consumer import GatewayDmConsumer
+
+            dm_listener = GatewayDmConsumer(live_pool, db)
+        else:
+            dm_catchup = DmCatchupService(live_pool, db)
+            dm_listener = DmListener(
+                live_pool, db, event_callback=lambda dm: _persist_incoming_dm(db, dm),
+                catchup=dm_catchup,
+            )
         agent_manager = AgentManager(
             db,
             config,
@@ -426,7 +439,11 @@ async def build_container_with_templates(
     if _is_dev:
         logger.info("startup/build: container_build %.2fs", time.monotonic() - t_build)
 
+    from tg_agent.plugin_api import start_plugins
+
+    plugins = await start_plugins(db, config, pool, scheduler)
     return AppContainer(
+        plugins=plugins,
         runtime_mode=runtime_mode,
         config=config,
         db=db,
@@ -693,6 +710,9 @@ async def stop_container(container: AppContainer) -> None:
             logger.warning("Shutdown of %s timed out after %.0fs", name, timeout)
         except Exception:
             logger.warning("Error shutting down %s", name, exc_info=True)
+
+    if container.plugins is not None:
+        await _stop_step("plugins", container.plugins.close())
 
     # Stop producers first so no new collection work is created while the
     # queue is draining the active channel collection.

@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import logging
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -48,6 +48,7 @@ from tg_agent.services.telegram_actions import (
 )
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.telegram.collector import Collector
+from tg_agent.telegram.collector_types import AllCollectionClientsFloodedError, NoActiveCollectionClientsError
 from tg_agent.telegram.notifier import Notifier
 from tg_agent.telegram.reactions import TelegramReactionInvalidError
 from tg_agent.utils.safe_logging import elapsed_ms, query_log_fields
@@ -218,7 +219,10 @@ class TelegramCommandDispatcher(
                 search_fields["query_len"],
             )
         try:
-            result = await self._dispatch(command.command_type, command.payload)
+            from tg_agent.gateway.context import gateway_intent
+
+            with gateway_intent(f"telegram-command:{command.id}"):
+                result = await self._dispatch(command.command_type, command.payload)
         except asyncio.CancelledError:
             await self._update_command_safely(
                 command.id,
@@ -228,6 +232,14 @@ class TelegramCommandDispatcher(
                 retry_busy=False,
             )
             raise
+        except (AllCollectionClientsFloodedError, NoActiveCollectionClientsError) as exc:
+            seconds = getattr(exc, "retry_after_sec", 5)
+            await self._update_command_safely(
+                command.id, status=TelegramCommandStatus.PENDING, payload=command.payload,
+                error="Gateway unavailable or shared account waiting; original intent retained",
+                run_after=datetime.now(timezone.utc) + timedelta(seconds=max(1, seconds)),
+                log_action="pending for gateway recovery",
+            )
         except TelegramCommandRetryLaterError as exc:
             logger.info(
                 "Telegram command delayed: id=%s type=%s run_after=%s reason=%s",
@@ -425,6 +437,40 @@ class TelegramCommandDispatcher(
             )
 
     async def _dispatch(self, command_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+        from tg_agent.gateway.pool import GatewayPool
+
+        if isinstance(self._pool, GatewayPool):
+            if command_type.startswith("auth."):
+                auth_payload = dict(payload)
+                for field in ("code", "password_2fa", "session_string"):
+                    if field in payload:
+                        payload[field] = ""
+                result = await self._pool.authenticate(command_type.split(".", 1)[1], auth_payload)
+                return {"result": result, "payload_update": {key: value for key, value in payload.items()
+                                                            if key not in {"code", "password_2fa"}}}
+            if command_type in {"accounts.toggle", "accounts.delete", "accounts.set_primary"}:
+                from tg_agent.gateway.catalog import ProjectAccountCatalog
+
+                catalog = ProjectAccountCatalog(self._db, self._pool.client)
+                account_id = int(payload["account_id"])
+                if command_type == "accounts.delete":
+                    await catalog.detach(account_id)
+                    result = {"account_id": account_id, "deleted": True, "client_removed": True}
+                elif command_type == "accounts.set_primary":
+                    await catalog.update(account_id, primary=True)
+                    result = {"account_id": account_id, "is_primary": True}
+                else:
+                    rows = await self._db.get_account_summaries(active_only=False)
+                    row = next(item for item in rows if item.id == account_id)
+                    await catalog.update(account_id, active=not row.is_active)
+                    result = {"account_id": account_id, "is_active": not row.is_active}
+                await self._pool.initialize()
+                return result
+            if command_type == "accounts.connect":
+                await self._pool.initialize()
+                info = await self._pool.get_users_info(include_avatar=False)
+                row = next(item for item in info if item.phone == payload["phone"])
+                return {"phone": row.phone, "is_premium": row.is_premium}
         handler_name = f"_handle_{command_type.replace('.', '_')}"
         handler = getattr(self, handler_name, None)
         if not callable(handler):

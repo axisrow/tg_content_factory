@@ -18,9 +18,10 @@ from __future__ import annotations
 import json
 import logging
 import struct
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator, cast
 
 from tg_agent.database.pool import ReadConnection
 from tg_agent.database.udf import has_cyrillic_udf
@@ -88,6 +89,23 @@ def _normalize_username(username: str | None) -> str | None:
     return cleaned or None
 
 
+class _TransactionWrites:
+    """Reuse repository write helpers inside an already owned transaction."""
+
+    def __init__(self, connection):
+        self.connection = connection
+
+    async def executemany_write(self, sql, rows):
+        return await self.connection.executemany(sql, rows)
+
+    async def execute_write(self, sql, params=()):
+        return await self.connection.execute(sql, params)
+
+    @asynccontextmanager
+    async def transaction(self):
+        yield self.connection
+
+
 class MessagesRepository:
     """Вставка, поиск и аналитика сообщений (`messages` + сайдкары реакций/эмбеддингов)."""
 
@@ -101,6 +119,23 @@ class MessagesRepository:
         self._db = db
         self._fts_available = fts_available
         self._database = database
+        self._strict_writes = False
+
+    async def save_collected_page(self, channel_id: int, messages: list[Message], last_id: int) -> int:
+        """Commit messages, derived statistics and the channel cursor together."""
+        if any(message.channel_id != channel_id or message.message_id > last_id for message in messages):
+            raise ValueError("Collection page does not match its channel/cursor")
+        assert self._database is not None
+        async with self._database.transaction() as conn:
+            repository = MessagesRepository(conn, fts_available=self._fts_available,
+                                            database=cast("Database", _TransactionWrites(conn)))
+            repository._strict_writes = True
+            count = await repository.insert_messages_batch(messages)
+            cursor = await conn.execute("UPDATE channels SET last_collected_id=MAX(last_collected_id,?) "
+                                        "WHERE channel_id=?", (last_id, channel_id))
+            if cursor.rowcount != 1:
+                raise ValueError("Collected channel was removed")
+            return count
 
     @staticmethod
     def _normalize_date_from(value: str | None) -> str | None:
@@ -344,6 +379,8 @@ class MessagesRepository:
             logger.exception(
                 "Failed to update filter text stats for %d message(s)", len(messages)
             )
+            if self._strict_writes:
+                raise
 
     async def _upsert_reactions(
         self, channel_id: int, message_id: int, reactions_json: str, message_date: str
@@ -432,6 +469,8 @@ class MessagesRepository:
                 "Could not pre-fetch existing message keys for refresh, proceeding without: %s",
                 exc,
             )
+            if self._strict_writes:
+                raise
             existing_keys = set()
 
         # Local import: facade.py imports this module at top level, so a
@@ -469,6 +508,8 @@ class MessagesRepository:
             raise
         except Exception as exc:
             logger.error("Failed to insert batch of %d messages: %s", len(messages), exc)
+            if self._strict_writes:
+                raise
             return 0
 
         if existing_keys:
@@ -510,6 +551,8 @@ class MessagesRepository:
                         )
             except Exception as exc:
                 logger.error("Failed to upsert reactions for batch: %s", exc)
+                if self._strict_writes:
+                    raise
 
         return count
 
@@ -576,6 +619,8 @@ class MessagesRepository:
             )
         except Exception as exc:
             logger.error("Failed to refresh %d existing messages: %s", len(messages), exc)
+            if self._strict_writes:
+                raise
 
     async def ensure_embeddings_table(self, dimensions: int) -> None:
         """Зафиксировать размерность индекса эмбеддингов при первом вызове; несовпадение с существующей — ошибка."""
@@ -658,6 +703,30 @@ class MessagesRepository:
             payload,
         )
         return cur.rowcount if cur.rowcount >= 0 else len(payload)
+
+    async def iter_embedding_json_batches(
+        self, include_filtered: bool = False, *, batch_size: int = 512
+    ) -> AsyncIterator[list[tuple[int, str]]]:
+        """Read bounded keyset pages; never buffer the full JSON corpus in the pool."""
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+        last_id = -1
+        while True:
+            sql = (
+                "SELECT e.message_id, e.embedding FROM message_embeddings_json e "
+                "JOIN messages m ON m.id = e.message_id "
+                "LEFT JOIN channels c ON m.channel_id = c.channel_id "
+                "WHERE e.message_id > ? "
+            )
+            if not include_filtered:
+                sql += "AND (c.is_filtered IS NULL OR c.is_filtered = 0) "
+            sql += "ORDER BY e.message_id LIMIT ?"
+            cur = await self._db.execute(sql, (last_id, batch_size))
+            rows = await cur.fetchall()
+            if not rows:
+                return
+            last_id = int(rows[-1]["message_id"])
+            yield [(int(row["message_id"]), row["embedding"]) for row in rows]
 
     async def load_all_embeddings_json(self, include_filtered: bool = False) -> list[tuple[int, list[float]]]:
         """Load embeddings from the portable JSON table.
@@ -747,6 +816,15 @@ class MessagesRepository:
         )
         messages = self._rows_to_messages(await cur.fetchall())
         await self._attach_topic_titles(messages)
+        return messages
+
+    async def get_by_ids(self, message_ids: list[int]) -> list[Message]:
+        """Fetch ranked candidates in bounded batches, skipping deleted messages."""
+        messages: list[Message] = []
+        # Each ID uses two parameters in _load_messages_by_ids. Stay below
+        # SQLite's portable 999-variable limit even on deep search pages.
+        for start in range(0, len(message_ids), 400):
+            messages.extend(await self._load_messages_by_ids(message_ids[start : start + 400]))
         return messages
 
     async def _attach_topic_titles(self, messages: list[Message]) -> None:

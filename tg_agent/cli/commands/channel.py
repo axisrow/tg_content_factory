@@ -175,13 +175,28 @@ async def _tag_impl(config_path: str, tag_action: str | None, **kwargs) -> None:
 # --------------------------------------------------------------------------- #
 
 
-async def list_impl(config_path: str) -> None:
-    """``channel list`` — table of every channel with counts and latest stats."""
+async def list_impl(
+    config_path: str, *, pending: bool = False, all_channels: bool = False
+) -> None:
+    """``channel list`` — table of every channel with counts and latest stats.
+
+    ``--pending`` shows only the approval queue (#1313), ``--all`` adds its rows
+    to the regular table marked in the Approval column (#1701) — visibility for
+    the owner's manual review, not an automatic decision.
+    """
     _, db = await runtime.init_db(config_path)
     try:
-        channels = await db.get_channels_with_counts()
+        show_approval = pending or all_channels
+        if show_approval:
+            channels = [
+                ch
+                for ch in await db.get_channels_with_counts(include_pending=True)
+                if not pending or ch.approval_state == "pending"
+            ]
+        else:
+            channels = await db.get_channels_with_counts()
         if not channels:
-            print("No channels found.")
+            print("No channels are awaiting approval." if pending else "No channels found.")
             return
         latest_stats = await db.get_latest_stats_for_all()
         fmt = (
@@ -202,6 +217,9 @@ async def list_impl(config_path: str) -> None:
             "Avg fwd.",
             "Filter",
         )
+        if show_approval:
+            fmt += " {:<10}"
+            header = (*header, "Approval")
         print(fmt.format(*header))
         print("-" * 145)
         for ch in channels:
@@ -216,22 +234,23 @@ async def list_impl(config_path: str) -> None:
                 f"{st.avg_reactions:.0f}" if st and st.avg_reactions is not None else "—"
             )
             avg_f = f"{st.avg_forwards:.0f}" if st and st.avg_forwards is not None else "—"
-            print(
-                fmt.format(
-                    ch.id or 0,
-                    ch.channel_id,
-                    (ch.title or "—")[:25],
-                    (ch.username or "—")[:12],
-                    "Yes" if ch.is_active else "No",
-                    ch.message_count,
-                    ch.last_collected_id,
-                    sub,
-                    avg_v,
-                    avg_r,
-                    avg_f,
-                    filt,
-                )
-            )
+            row = [
+                ch.id or 0,
+                ch.channel_id,
+                (ch.title or "—")[:25],
+                (ch.username or "—")[:12],
+                "Yes" if ch.is_active else "No",
+                ch.message_count,
+                ch.last_collected_id,
+                sub,
+                avg_v,
+                avg_r,
+                avg_f,
+                filt,
+            ]
+            if show_approval:
+                row.append("pending" if ch.approval_state == "pending" else "-")
+            print(fmt.format(*row))
     finally:
         await db.close()
 
@@ -263,6 +282,16 @@ async def add_impl(config_path: str, *, identifier: str) -> None:
         deactivate = info.get("deactivate", False)
         channel = channel_from_resolved_info(info, meta)
         await db.add_channel(channel)
+        was_pending = False
+        if existing is not None and existing.approval_state == "pending":
+            # The upsert keeps the discovery row's approval_state, so a manual add
+            # used to leave the channel pending-but-invisible (#1701/#1700). An
+            # explicit `channel add` IS the operator's decision: lift the gate
+            # through the guarded method (human origin, journaled).
+            was_pending = True
+            await db.repos.channels.approve_channel(
+                existing.id or 0, actor="cli", reason="channel add"
+            )
         if existing is None and channel.is_active:
             await enqueue_stats_for_new_channels(
                 db.create_stats_task,
@@ -273,6 +302,11 @@ async def add_impl(config_path: str, *, identifier: str) -> None:
         if deactivate:
             msg += f" [WARN: deactivated, type={info['channel_type']}]"
         print(msg)
+        if was_pending:
+            print(
+                "Was pending approval — approved by this add "
+                "(see `channel pending-list` for the rest of the queue)."
+            )
     finally:
         if pool:
             await pool.disconnect_all()
@@ -933,51 +967,65 @@ async def probe_impl(
         if phone is None:
             print("No connected accounts.")
             return
-        result = await pool.get_native_client_by_phone(phone)
-        if result is None:
-            print(f"Client for {phone} unavailable (flood-wait or not connected).")
-            return
-        client, _ = result
-        peer = int(identifier) if identifier.lstrip("-").isdigit() else identifier
-        entity = await pool.resolve_entity_with_warm(
-            client, phone, peer, operation="channel_probe_resolve"
-        )
-        session = adapt_transport_session(
-            client, disconnect_on_close=False, phone=phone, pool=pool
-        )
-        full = await run_with_flood_wait(
-            session.fetch_full_channel(entity),
-            operation="channel_probe_full",
-            phone=phone,
-            pool=pool,
-            timeout=30.0,
-        )
-        participants = full.full_chat.participants_count if full and full.full_chat else None
+        from tg_agent.gateway.pool import GatewayPool
 
-        collected: list = []
-
-        async def _read() -> None:
-            async for msg in client.iter_messages(entity, limit=limit):
-                collected.append(msg)
-
-        await run_with_flood_wait(
-            _read(), operation="channel_probe_read", phone=phone, pool=pool
-        )
-        snapshots = [
-            ProbeMessage(
-                text=msg.text,
-                views=msg.views,
-                is_forward=bool(msg.fwd_from),
-                urls=tuple(
-                    url
-                    for url in (getattr(e, "url", None) for e in (msg.entities or ()))
-                    if url
-                ),
+        if isinstance(pool, GatewayPool):
+            peer = int(identifier) if identifier.lstrip("-").isdigit() else identifier
+            info = await pool.inspect_peer(peer, phone=phone)
+            data = await pool.read_messages(info["channel_id"], phone=phone, limit=limit, peer_type="channel")
+            snapshots = [ProbeMessage(text=row.get("text"), views=row.get("views"),
+                is_forward=row["message_id"] in data["forward_ids"],
+                urls=tuple(data["urls"].get(str(row["message_id"]), []))) for row in data["messages"]]
+            participants = info.get("subscriber_count")
+            username, title = info.get("username"), info.get("title") or identifier
+            is_broadcast = info["channel_type"] in {"channel", "monoforum"}
+        else:
+            result = await pool.get_native_client_by_phone(phone)
+            if result is None:
+                print(f"Client for {phone} unavailable (flood-wait or not connected).")
+                return
+            client, _ = result
+            peer = int(identifier) if identifier.lstrip("-").isdigit() else identifier
+            entity = await pool.resolve_entity_with_warm(
+                client, phone, peer, operation="channel_probe_resolve"
             )
-            for msg in collected
-        ]
-        username = getattr(entity, "username", None)
-        title = getattr(entity, "title", None) or identifier
+            session = adapt_transport_session(
+                client, disconnect_on_close=False, phone=phone, pool=pool
+            )
+            full = await run_with_flood_wait(
+                session.fetch_full_channel(entity),
+                operation="channel_probe_full",
+                phone=phone,
+                pool=pool,
+                timeout=30.0,
+            )
+            participants = full.full_chat.participants_count if full and full.full_chat else None
+
+            collected: list = []
+
+            async def _read() -> None:
+                async for msg in client.iter_messages(entity, limit=limit):
+                    collected.append(msg)
+
+            await run_with_flood_wait(
+                _read(), operation="channel_probe_read", phone=phone, pool=pool
+            )
+            snapshots = [
+                ProbeMessage(
+                    text=msg.text,
+                    views=msg.views,
+                    is_forward=bool(msg.fwd_from),
+                    urls=tuple(
+                        url
+                        for url in (getattr(e, "url", None) for e in (msg.entities or ()))
+                        if url
+                    ),
+                )
+                for msg in collected
+            ]
+            username = getattr(entity, "username", None)
+            title = getattr(entity, "title", None) or identifier
+            is_broadcast = bool(getattr(entity, "broadcast", False))
         raw_min_subs = await db.get_setting("min_subscribers_filter")
         try:
             min_subscribers = int(raw_min_subs) if raw_min_subs else None
@@ -990,7 +1038,7 @@ async def probe_impl(
             username=username,
             min_subscribers=min_subscribers,
             # Chat small groups have no .broadcast attr → chat, like the analyzer.
-            is_broadcast=bool(getattr(entity, "broadcast", False)),
+            is_broadcast=is_broadcast,
         )
         if as_json:
             print(
@@ -1038,6 +1086,22 @@ _TERMINAL_TASK_STATUSES = (
 )
 
 
+async def report_pending_approval(db, identifier: str) -> bool:
+    """If *identifier* matches a pending-approval channel, explain why it can't
+    be collected and how to approve/reject it (#1701). Returns True when the
+    channel is pending and the caller should stop; call sites print their own
+    "not found" only when this returns False."""
+    pending = await db.repos.channels.list_pending_approval()
+    ch = resolve_channel(pending, identifier)
+    if not ch:
+        return False
+    print(
+        f"Channel '{identifier}' is pending approval ('{ch.title}'): approve it with "
+        f"`channel toggle {identifier}`, or remove it with `channel reject {identifier}`."
+    )
+    return True
+
+
 async def _handoff_collect_to_worker(
     db,
     *,
@@ -1055,6 +1119,8 @@ async def _handoff_collect_to_worker(
     channels = await db.get_channels()
     ch = resolve_channel(channels, identifier)
     if not ch:
+        if await report_pending_approval(db, identifier):
+            return
         print(f"Channel '{identifier}' not found")
         return
 
@@ -1164,6 +1230,8 @@ async def collect_impl(
         channels = await db.get_channels()
         ch = resolve_channel(channels, identifier)
         if not ch:
+            if await report_pending_approval(db, identifier):
+                return
             print(f"Channel '{identifier}' not found")
             return
         task_id = await db.create_collection_task(ch.channel_id, ch.title)
@@ -1247,7 +1315,11 @@ def run(args: argparse.Namespace) -> None:
     config_path = args.config
 
     if action == "list":
-        coro = list_impl(config_path)
+        coro = list_impl(
+            config_path,
+            pending=getattr(args, "pending", False),
+            all_channels=getattr(args, "all", False),
+        )
     elif action == "add":
         coro = add_impl(config_path, identifier=args.identifier)
     elif action == "delete":
@@ -1330,10 +1402,18 @@ channel_app.add_typer(channel_tag_app, name="tag")
 
 
 @channel_app.command("list")
-def channel_list(ctx: typer.Context) -> None:
-    """List channels."""
+def channel_list(
+    ctx: typer.Context,
+    pending: bool = typer.Option(
+        False, "--pending", help="Show only channels awaiting approval (the queue)"
+    ),
+    all_channels: bool = typer.Option(
+        False, "--all", help="Include pending channels, marked in the Approval column"
+    ),
+) -> None:
+    """List channels (add --pending/--all to review the approval queue)."""
     apply_startup(ctx)
-    run_async(list_impl(ctx.obj.config))
+    run_async(list_impl(ctx.obj.config, pending=pending, all_channels=all_channels))
 
 
 @channel_app.command("add", context_settings=_NEG_ID_POSITIONAL)
@@ -1361,7 +1441,13 @@ def channel_toggle(
     ctx: typer.Context,
     identifier: str = typer.Argument(..., help="Channel pk, channel_id, or @username"),
 ) -> None:
-    """Toggle channel active state."""
+    """Toggle channel active state.
+
+    Also manages the approval queue: a pending-approval channel is approved by
+    this command (instead of toggled), so `channel toggle <id>` is how a
+    discovery/search candidate enters collection. See also `channel
+    pending-list` and `channel reject`.
+    """
     apply_startup(ctx)
     run_async(toggle_impl(ctx.obj.config, identifier=identifier))
 

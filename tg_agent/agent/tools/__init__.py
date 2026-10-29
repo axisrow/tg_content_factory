@@ -111,6 +111,10 @@ def build_agent_tool_registry(
         for tool_obj in module.register(db, client_pool, embedding_service, **extras):
             all_tools.append(_wrap_with_session_gate(tool_obj) if wrap_session_gate else tool_obj)
 
+    plugins = getattr(db, "plugins", None)
+    if plugins is not None:
+        for tool_obj in plugins.tools:
+            all_tools.append(_wrap_with_session_gate(tool_obj) if wrap_session_gate else tool_obj)
     return all_tools
 
 

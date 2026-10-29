@@ -13,7 +13,9 @@ owner splits it into its own repository. These tests pin the scaffold contract:
 from __future__ import annotations
 
 import ast
+import subprocess
 import sys
+import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,12 +24,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SHARED_ROOT = REPO_ROOT / "packages" / "tg_shared"
 SHARED_SRC = SHARED_ROOT / "src"
-
-# Scaffold shim: tg-shared becomes a declared factory dependency only in #1424
-# (the "factory switches to the package" wave); until then the suite imports it
-# straight from the monorepo checkout.
-sys.path.insert(0, str(SHARED_SRC))
-
 
 # mutmut_skip: scans packages/tg_shared on disk — the tree is not part of the
 # mutants sandbox (mutmut copies only tg_agent/ + tests/).
@@ -42,13 +38,36 @@ def test_shared_package_tree_and_packaging_markers() -> None:
     assert (SHARED_ROOT / "LICENSE").is_file()
 
 
-def test_shared_package_imports_standalone() -> None:
-    import tg_shared
+@pytest.mark.mutmut_skip
+def test_shared_package_imports_standalone(tmp_path) -> None:
+    """Import with only the shared source tree available and factory imports blocked."""
+    metadata = tomllib.loads((SHARED_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    probe = """
+import importlib.abc
+import sys
 
-    assert tg_shared.__version__ == "0.2.0"
-    assert tg_shared.SharedAccount is not None
-    assert tg_shared.SharedAccountStore is not None
-    assert tg_shared.JsonFileStore is not None
+class BlockFactoryImports(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split(".")[0] in {"tg_agent", "src"}:
+            raise ImportError(f"factory dependency: {fullname}")
+
+sys.meta_path.insert(0, BlockFactoryImports())
+sys.path.insert(0, sys.argv[1])
+import tg_shared
+assert tg_shared.__version__ == sys.argv[2]
+assert tg_shared.SharedAccount is not None
+assert tg_shared.SharedAccountStore is not None
+assert tg_shared.JsonFileStore is not None
+"""
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", probe, str(SHARED_SRC), metadata["project"]["version"]],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_shared_package_never_imports_factory() -> None:

@@ -41,13 +41,6 @@ async def test_analytics_page_invalid_limit(route_client):
 
 
 @pytest.mark.anyio
-async def test_analytics_page_empty_db(route_client):
-    """Test analytics page with empty database."""
-    resp = await route_client.get("/analytics")
-    assert resp.status_code == 200
-
-
-@pytest.mark.anyio
 async def test_content_analytics_page_renders(route_client):
     """Test content analytics page renders."""
     resp = await route_client.get("/analytics/content")

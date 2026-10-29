@@ -79,7 +79,13 @@ async def _run_with_services(config_path: str, body: Callable[[_Services], Await
 
 async def _resolve_self_target(pool, phone: str | None) -> PhotoTarget:
     """Resolve "me"/"self" to the account's own Saved Messages dialog id."""
+    from tg_agent.gateway.pool import GatewayPool
     from tg_agent.telegram.backends import adapt_transport_session
+
+    if isinstance(pool, GatewayPool):
+        account = pool.select(phone)
+        return PhotoTarget(dialog_id=await pool.own_user_id(account["phone"]),
+                           title="Saved Messages", target_type="saved")
 
     if phone:
         # A specific account was requested. Its Saved Messages id is account-specific,

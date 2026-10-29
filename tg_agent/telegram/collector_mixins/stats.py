@@ -231,6 +231,19 @@ class StatsMixin:
         return views_list, reactions_list, forwards_list
 
     async def _collect_channel_stats(self: "Collector", channel: Channel) -> ChannelStats | None:
+        from tg_agent.gateway.pool import GatewayPool
+
+        if isinstance(getattr(self, "_pool", None), GatewayPool):
+            data = await self._pool.inspect_peer(channel.channel_id, channel_type=channel.channel_type,
+                                                 phone=channel.preferred_phone, statistics=True)
+            stats = ChannelStats.model_validate(data["statistics"])
+            await self._db.save_channel_stats(stats)
+            if data.get("created_at"):
+                await self._db.repos.channels.update_channel_created_at(
+                    channel.channel_id, datetime.fromisoformat(data["created_at"]))
+            if channel.channel_type is None:
+                await self._db.set_channel_type(channel.channel_id, data["channel_type"])
+            return stats
         while True:
             result = await self._pool.get_available_client()
             if result is None:

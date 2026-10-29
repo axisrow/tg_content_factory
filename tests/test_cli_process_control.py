@@ -217,13 +217,19 @@ class TestRegisterCurrentProcess:
     def test_writes_own_pid(self, _mock_ensure, tmp_path):
         p = tmp_path / "reg.pid"
         register_current_process(p)
-        assert p.read_text().strip() == str(os.getpid())
+        try:
+            assert p.read_text().strip() == str(os.getpid())
+        finally:
+            unregister_current_process(p)
 
     @patch("tg_agent.cli.process_control.ensure_server_not_running")
     def test_creates_parent_dirs(self, _mock_ensure, tmp_path):
         p = tmp_path / "deep" / "nested" / "reg.pid"
         register_current_process(p)
-        assert p.exists()
+        try:
+            assert p.exists()
+        finally:
+            unregister_current_process(p)
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +267,22 @@ class TestUnregisterCurrentProcess:
 
 
 class TestStopServer:
+    @pytest.fixture(autouse=True)
+    def managed_owner(self, monkeypatch):
+        from tg_agent.cli import process_control as control
+
+        def owner(path):
+            pid = control.read_pid(path)
+            if pid is None:
+                return None
+            return {"pid": pid, "role": "worker", "project_root": str(Path.cwd().resolve()),
+                    "store_root": str(path.resolve().parent), "executable": "/synthetic/python",
+                    "start_identity": "synthetic-start"}
+
+        monkeypatch.setattr(control, "read_process_owner", owner)
+        monkeypatch.setattr(control, "process_executable", lambda pid: "/synthetic/python")
+        monkeypatch.setattr(control, "process_start_identity", lambda pid: "synthetic-start")
+
     def test_not_running_no_pid_file(self, tmp_path):
         p = tmp_path / "no.pid"
         outcome = stop_server(p)

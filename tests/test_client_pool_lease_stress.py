@@ -9,6 +9,13 @@ from pathlib import Path
 import pytest
 
 _LEASE_OWNERSHIP_ALLOWLIST = {
+    # These account-scoped adapters return a lease to the existing action/search
+    # facade, whose finally boundary calls ScopedPool.release_client. They never
+    # create or disconnect their own native clients.
+    "tg_agent/gateway/actions.py:get_available_client",
+    "tg_agent/gateway/actions.py:get_premium_client",
+    "tg_agent/gateway/actions.py:get_client_by_phone",
+    "tg_agent/gateway/actions.py:get_native_client_by_phone",
     # These helpers deliberately return the borrowed result to a caller that
     # owns the finally/release boundary.
     "tg_agent/telegram/pool_dialogs.py:_get_client",

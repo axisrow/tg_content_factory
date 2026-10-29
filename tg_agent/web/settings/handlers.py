@@ -513,6 +513,13 @@ async def _gather_account_status(request: Request, accounts: list) -> dict[str, 
     Mutates ``accounts`` to clear expired flood waits (matching the original
     inline behavior). Split out of handle_settings_page (#922)."""
     db = deps.get_db(request)
+    from tg_agent.gateway.catalog import shared_project
+
+    gateway_status = None
+    if shared_project(getattr(request.app.state, "config", None)):
+        from tg_agent.gateway.client import TelegramGatewayClient
+
+        gateway_status = await TelegramGatewayClient.inspect_config(request.app.state.config)
     pool = deps.get_pool(request)
     now = datetime.now(UTC)
     telegram_session_warning = any(
@@ -555,6 +562,7 @@ async def _gather_account_status(request: Request, accounts: list) -> dict[str, 
     next_available_at = min(flooded_connected) if flooded_connected else None
     return {
         "telegram_session_warning": telegram_session_warning,
+        "gateway_status": gateway_status,
         "account_status": account_status,
         "connected_phones": connected_phones,
         "resolve_backoffs": resolve_backoffs,

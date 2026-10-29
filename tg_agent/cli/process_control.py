@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -8,10 +9,13 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
 from tg_agent.config import AppConfig
+from tg_agent.telegram.session_lock import SessionLock, SessionLockError
+from tg_agent.utils.process_identity import process_executable, process_start_identity
 
 
 class ProcessControlError(RuntimeError):
@@ -31,6 +35,7 @@ class StopResult(Enum):
 # process it runs the worker in-process, so its cmdline stays `... restart`
 # (#automation-first default — the managed daemon has no web panel).
 _DAEMON_COMMANDS = {"serve", "worker", "restart"}
+_WORKER_LOCKS: dict[Path, SessionLock] = {}
 
 
 @dataclass(frozen=True)
@@ -67,6 +72,31 @@ def read_pid(path: Path) -> int | None:
         return int(raw)
     except ValueError as exc:
         raise ProcessControlError(f"Invalid PID file contents: {path}") from exc
+
+
+def owner_file_path(path: Path) -> Path:
+    """Keep provenance beside the numeric PID file for older readers."""
+    return path.with_name(path.name + ".owner.json")
+
+
+def read_process_owner(path: Path) -> dict | None:
+    """Read provenance, refusing malformed records rather than losing ownership."""
+    try:
+        raw = owner_file_path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    try:
+        owner = json.loads(raw)
+        if (
+            not isinstance(owner, dict)
+            or type(owner.get("pid")) is not int
+            or not isinstance(owner.get("project_root"), str)
+            or not owner["project_root"]
+        ):
+            raise ValueError("Missing process ownership")
+    except (ValueError, TypeError) as exc:
+        raise ProcessControlError(f"Invalid process owner record: {owner_file_path(path)}") from exc
+    return owner
 
 
 def _process_command(pid: int) -> str:
@@ -177,6 +207,7 @@ def remove_pid_file(path: Path) -> None:
         path.unlink()
     except FileNotFoundError:
         pass
+    owner_file_path(path).unlink(missing_ok=True)
 
 
 def ensure_server_not_running(path: Path) -> None:
@@ -196,7 +227,42 @@ def ensure_server_not_running(path: Path) -> None:
 
 def register_current_process(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    ensure_server_not_running(path)
+    canonical = path.resolve()
+    lock = _WORKER_LOCKS.get(canonical)
+    if lock is None:
+        lock = SessionLock("project-worker", str(canonical), lock_dir=path.parent / ".worker-locks")
+        try:
+            lock.acquire(grace_seconds=0)
+        except SessionLockError as exc:
+            raise ProcessControlError(f"Another worker owns this project database: {canonical}") from exc
+        try:
+            ensure_server_not_running(path)
+        except BaseException:
+            lock.release()
+            raise
+        _WORKER_LOCKS[canonical] = lock
+    owner = {
+        "pid": os.getpid(),
+        "role": "worker",
+        "project_root": str(Path.cwd().resolve()),
+        "store_root": str(path.resolve().parent),
+        "executable": str(Path(sys.executable).resolve()),
+        # macOS may report the Python.app bundle binary for `ps comm` even when
+        # sys.executable is bin/python3.13; record the observable self-view too.
+        "executable_observed": process_executable(os.getpid()),
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "command": _process_command(os.getpid()),
+        "start_identity": process_start_identity(os.getpid()),
+    }
+    target = owner_file_path(path)
+    temporary = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8") as handle:
+            os.chmod(temporary, 0o600)
+            json.dump(owner, handle)
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
     path.write_text(f"{os.getpid()}\n", encoding="utf-8")
 
 
@@ -208,6 +274,10 @@ def unregister_current_process(path: Path) -> None:
     except Exception:
         # PID cleanup must never block shutdown; stale/unreadable files are safe to ignore.
         pass
+    finally:
+        lock = _WORKER_LOCKS.pop(path.resolve(), None)
+        if lock is not None:
+            lock.release()
 
 
 def stop_server(
@@ -235,6 +305,32 @@ def stop_server(
             f"PID {pid} is not a managed tg-agent daemon process.",
         )
 
+    owner = read_process_owner(path)
+    if owner is None:
+        return StopOutcome(StopResult.UNMANAGED,
+            f"Cannot verify provenance for legacy PID {pid}; refusing to signal it. "
+            "Stop the original worker from its owning installation or verify it manually.")
+    observed_executable = process_executable(pid)
+    if (owner.get("role") != "worker" or owner.get("store_root") != str(path.resolve().parent)
+            or not owner.get("start_identity") or not owner.get("executable")
+            or (owner["executable"] != observed_executable
+                and owner.get("executable_observed") != observed_executable)):
+        return StopOutcome(StopResult.UNMANAGED,
+                           f"Cannot verify role, storage, executable and start identity for PID {pid}; "
+                           f"recorded executable {owner.get('executable')!r}, observed {observed_executable!r}.")
+    if owner is not None:
+        if owner["pid"] != pid or owner["project_root"] != str(Path.cwd().resolve()):
+            return StopOutcome(
+                StopResult.UNMANAGED,
+                f"Refusing to stop PID {pid}: daemon belongs to project {owner['project_root']} "
+                f"(store {owner.get('store_root', path.parent)}). Run process control from that project.",
+            )
+        recorded_command = owner.get("command")
+        if recorded_command and recorded_command != _process_command(pid):
+            return StopOutcome(StopResult.UNMANAGED, f"PID {pid} no longer matches its process owner record.")
+        if owner.get("start_identity") and owner["start_identity"] != process_start_identity(pid):
+            return StopOutcome(StopResult.UNMANAGED, f"PID {pid} has been reused; refusing to signal it.")
+
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -256,6 +352,10 @@ def stop_server(
             )
         time.sleep(0.1)
 
+    identity_now = process_start_identity(pid)
+    if identity_now is not None and identity_now != (owner or {}).get("start_identity"):
+        # A vanished process reports no identity: exiting is the desired outcome.
+        return StopOutcome(StopResult.UNMANAGED, f"PID {pid} changed during shutdown; refusing force kill.")
     try:
         os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:

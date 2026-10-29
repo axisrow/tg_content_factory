@@ -311,6 +311,7 @@ class CollectionMixin:
         progress_callback: Callable[[int], Awaitable[None]] | None = None,
         force: bool = False,
         cancel_event: asyncio.Event | None = None,
+        intent_key: str | None = None,
     ) -> int:
         """Collect messages from a single channel. If full=True, reset last_collected_id to 0.
 
@@ -334,6 +335,11 @@ class CollectionMixin:
                 channel = Channel(**{**channel.model_dump(), "last_collected_id": 0})
 
             min_subs = await self._load_min_subscribers_filter()
+            from tg_agent.gateway.pool import GatewayPool
+
+            if isinstance(getattr(self, "_pool", None), GatewayPool):
+                return await self._collect_gateway_channel(channel, progress_callback=progress_callback,
+                    force=force, min_subs=min_subs, cancel_event=cancel_event, intent_key=intent_key)
             return await self._collect_channel(
                 channel,
                 progress_callback=progress_callback,
@@ -748,6 +754,11 @@ class CollectionMixin:
         cancel_event: asyncio.Event | None = None,
     ) -> int:
         """Collect new messages from a single channel. Returns count."""
+        from tg_agent.gateway.pool import GatewayPool
+
+        if isinstance(getattr(self, "_pool", None), GatewayPool):
+            return await self._collect_gateway_channel(channel, progress_callback=progress_callback,
+                force=force, min_subs=min_subs, cancel_event=cancel_event)
         total_collected = 0
         # Accounts that already failed a live resolve for this channel in this
         # pass (resolve backoff / limiter / fresh long flood). Used to rotate
@@ -1047,6 +1058,28 @@ class CollectionMixin:
 
             return total_collected + collected_count
 
+    async def _collect_gateway_channel(self: "Collector", channel, *, progress_callback=None, force=False,
+                                        min_subs=0, cancel_event=None, intent_key=None):
+        account = self._pool.select(channel.preferred_phone)
+        first = channel.last_collected_id == 0
+        if not await self._apply_pre_collection_filters(channel, channel.channel_id, None, channel.channel_id,
+                is_first_run=first, force=force, min_subs=min_subs, cancel_event=cancel_event,
+                phone=account["phone"]):
+            return 0
+        saw_topics = False
+
+        async def page_saved(messages):
+            nonlocal saw_topics
+            saw_topics = saw_topics or any(message.topic_id for message in messages)
+            if not first:
+                await self._check_notification_queries(messages)
+
+        count = await self._pool.collect_channel(channel, cancel_event=cancel_event or self._cancel_event,
+            progress_callback=progress_callback, intent_key=intent_key, page_callback=page_saved)
+        await self._post_collection_actions(channel.channel_id, is_first_run=first, force=force,
+                                             collected_count=count, saw_topic_message=saw_topics)
+        return count
+
     async def _post_collection_actions(
         self: "Collector",
         channel_id: int,
@@ -1316,6 +1349,12 @@ class CollectionMixin:
         Форварды не сэмплируются: атрибуция — не кочевание текста (решение
         владельца 16.10.26).
         """
+        from tg_agent.gateway.pool import GatewayPool
+
+        if isinstance(getattr(self, "_pool", None), GatewayPool):
+            data = await self._pool.read_messages(entity, limit=limit, peer_type="channel")
+            return [row["text"][:100] for row in data["messages"] if len(row.get("text") or "") > 10
+                    and row["message_id"] not in data["forward_ids"]]
         prefixes: list[str] = []
         async for msg in session.stream_messages(
             entity,
@@ -1429,6 +1468,13 @@ class CollectionMixin:
 
     async def sample_channel(self: "Collector", channel_id: int, limit: int = 10) -> list[dict]:
         """Fetch the last `limit` messages from a channel for preview. No DB writes."""
+        from tg_agent.gateway.pool import GatewayPool
+
+        if isinstance(getattr(self, "_pool", None), GatewayPool):
+            data = await self._pool.read_messages(channel_id, limit=limit, peer_type="channel")
+            return [{"message_id": row["message_id"], "date": row["date"],
+                     "text_preview": (row.get("text") or "")[:100] or None, "media_type": row.get("media_type")}
+                    for row in data["messages"]]
         result = await self._pool.get_available_client()
         if result is None:
             logger.error("No available clients for sample collection")

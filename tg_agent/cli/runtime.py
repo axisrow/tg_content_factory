@@ -116,6 +116,22 @@ async def init_db(config_path: str):
         mmap_size_mb=config.database.mmap_size_mb,
     )
     await db.initialize()
+    if isinstance(config.gateway, dict) and config.gateway:
+        import httpx
+
+        from tg_agent.gateway.catalog import ProjectAccountCatalog
+        from tg_agent.gateway.client import TelegramGatewayClient
+
+        client = None
+        try:
+            client = await TelegramGatewayClient.from_config(config)
+            await ProjectAccountCatalog(db, client).refresh()
+        except (OSError, RuntimeError, httpx.HTTPError) as exc:
+            logging.getLogger(__name__).warning("Gateway unavailable; using cached account metadata: %s",
+                                              type(exc).__name__)
+        finally:
+            if client is not None:
+                await client.close()
     return config, db
 
 
@@ -164,6 +180,12 @@ async def init_pool(
     unless ``allow_live_daemon`` (an explicit ``--direct``, or a long-lived
     legacy surface with its own lifecycle) or ``TGCF_CLI_DIRECT=1`` is set.
     """
+    if isinstance(config.gateway, dict) and config.gateway:
+        from tg_agent.gateway.pool import GatewayPool
+
+        pool = GatewayPool(config, db)
+        await pool.initialize()
+        return None, pool
     _refuse_if_daemon_owns_sessions(config, allow_live_daemon=allow_live_daemon)
     api_id = config.telegram.api_id
     api_hash = config.telegram.api_hash

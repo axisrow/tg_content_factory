@@ -608,15 +608,22 @@ class TestProcessControlAdditional:
 
     def test_stop_server_permission_denied_sigterm(self, tmp_path):
         """stop_server raises ProcessControlError on PermissionError during SIGTERM."""
-        from tg_agent.cli.process_control import ProcessControlError, stop_server
+        from tg_agent.cli.process_control import (
+            ProcessControlError,
+            register_current_process,
+            stop_server,
+            unregister_current_process,
+        )
 
         p = tmp_path / "perm.pid"
-        p.write_text(f"{os.getpid()}\n", encoding="utf-8")
-
-        with patch("tg_agent.cli.process_control.is_expected_server_process", return_value=True):
-            with patch("os.kill", side_effect=PermissionError("no perm")):
-                with pytest.raises(ProcessControlError, match="Permission denied"):
-                    stop_server(p)
+        register_current_process(p)
+        try:
+            with patch("tg_agent.cli.process_control.is_expected_server_process", return_value=True):
+                with patch("os.kill", side_effect=PermissionError("no perm")):
+                    with pytest.raises(ProcessControlError, match="Permission denied"):
+                        stop_server(p)
+        finally:
+            unregister_current_process(p)
 
     def test_register_creates_parent_dirs(self, tmp_path):
         """register_current_process creates parent directories if needed."""

@@ -80,6 +80,17 @@ async def _resolve_credentials(config, db, *, api_id: int | None, api_hash: str 
     return api_id, api_hash
 
 
+async def _shared_auth(config, db, action, payload):
+    from tg_agent.gateway.pool import GatewayPool
+
+    pool = GatewayPool(config, db)
+    await pool.initialize()
+    try:
+        return await pool.authenticate(action, payload)
+    finally:
+        await pool.disconnect_all()
+
+
 async def _run_export_session(args: argparse.Namespace, db: Database) -> None:
     """Print the decrypted plaintext StringSession for an account (SSO export, #828).
 
@@ -184,8 +195,20 @@ async def export_session_impl(
     config_path: str, *, account_id: int | None = None, phone: str | None = None, as_json: bool = False
 ) -> None:
     """Typer entry point for SSO export — opens a DB then delegates to the core (#828)."""
-    _, db = await runtime.init_db(config_path)
+    config, db = await runtime.init_db(config_path)
     try:
+        if isinstance(config.gateway, dict) and config.gateway:
+            from tg_agent.gateway.catalog import project_catalog
+
+            accounts = await db.get_account_summaries(active_only=False)
+            row = next((item for item in accounts if (item.id == account_id if account_id is not None
+                                                      else item.phone == phone)), None)
+            if row is None:
+                cli_error("ERROR: select a project account with --id or --phone")
+            async with project_catalog(config, db) as catalog:
+                session = await catalog.export_session(row.id)
+                print(json.dumps({"phone": row.phone, "session_string": session}) if as_json else session)
+            return
         ns = argparse.Namespace(id=account_id, phone=phone, json=as_json)
         await _run_export_session(ns, db)
     finally:
@@ -201,7 +224,7 @@ async def import_impl(
     force: bool = False,
 ) -> None:
     """Typer entry point for SSO import — opens a DB then delegates to the core (#828)."""
-    _, db = await runtime.init_db(config_path)
+    config, db = await runtime.init_db(config_path)
     try:
         ns = argparse.Namespace(
             phone=phone,
@@ -209,6 +232,10 @@ async def import_impl(
             session_string_stdin=session_string_stdin,
             force=force,
         )
+        if isinstance(config.gateway, dict) and config.gateway:
+            await _shared_auth(config, db, "import", {"phone": phone or "", "session_string": _read_session_arg(ns)})
+            print("Account imported into shared gateway and attached to this project")
+            return
         await _run_import(ns, db)
     finally:
         await db.close()
@@ -220,6 +247,12 @@ async def send_code_impl(
     """Send a Telegram auth code to *phone* and stash the pending-auth state."""
     config, db = await runtime.init_db(config_path)
     try:
+        if isinstance(config.gateway, dict) and config.gateway:
+            info = await _shared_auth(config, db, "send_code", {"phone": phone})
+            await db.set_setting(_pending_key(phone), json.dumps(info))
+            print(f"Code sent to {phone} via {info.get('code_type', 'Telegram')}.")
+            print(f"Run: account verify-code --phone {phone} --code CODE")
+            return
         _require_session_encryption_key(db)
         api_id, api_hash = await _resolve_credentials(config, db, api_id=api_id, api_hash=api_hash)
         if api_id == 0 or not api_hash:
@@ -264,6 +297,19 @@ async def verify_code_impl(
             cli_error(f"ERROR: No pending auth for {phone}. Run 'account send-code' first.")
         pending = json.loads(pending_raw)
         phone_code_hash = pending["phone_code_hash"]
+
+        if isinstance(config.gateway, dict) and config.gateway:
+            from tg_shared.auth import TwoFactorRequiredError
+
+            try:
+                await _shared_auth(config, db, "verify_code", {"phone": phone, "code": code,
+                    "phone_code_hash": phone_code_hash, "password_2fa": password_2fa or ""})
+            except TwoFactorRequiredError:
+                print("2FA required. Re-run account verify-code with --password.")
+                return
+            await db.set_setting(_pending_key(phone), "")
+            print(f"Account {phone} connected through shared gateway")
+            return
 
         # Fail before sign-in consumes the one-time code when the session could
         # not be persisted safely.
@@ -404,7 +450,7 @@ async def list_impl(config_path: str) -> None:
 
 async def toggle_impl(config_path: str, *, account_id: int) -> None:
     """Toggle an account's active state."""
-    _, db = await runtime.init_db(config_path)
+    config, db = await runtime.init_db(config_path)
     try:
         accounts = await db.get_account_summaries(active_only=False)
         acc = next((a for a in accounts if a.id == account_id), None)
@@ -412,6 +458,17 @@ async def toggle_impl(config_path: str, *, account_id: int) -> None:
             print(f"Account id={account_id} not found")
             return
         new_state = not acc.is_active
+        if isinstance(config.gateway, dict) and config.gateway:
+            from tg_agent.gateway.catalog import ProjectAccountCatalog
+            from tg_agent.gateway.client import TelegramGatewayClient
+
+            client = await TelegramGatewayClient.from_config(config)
+            try:
+                await ProjectAccountCatalog(db, client).update(account_id, active=new_state)
+            finally:
+                await client.close()
+            print(f"Project account id={account_id}: active={new_state}")
+            return
         await db.set_account_active(account_id, new_state, origin="human", actor="cli")
         print(f"Account id={account_id} ({acc.phone}): active={new_state}")
     finally:
@@ -420,8 +477,19 @@ async def toggle_impl(config_path: str, *, account_id: int) -> None:
 
 async def set_primary_impl(config_path: str, *, account_id: int) -> None:
     """Make an account the primary one."""
-    _, db = await runtime.init_db(config_path)
+    config, db = await runtime.init_db(config_path)
     try:
+        if isinstance(config.gateway, dict) and config.gateway:
+            from tg_agent.gateway.catalog import ProjectAccountCatalog
+            from tg_agent.gateway.client import TelegramGatewayClient
+
+            client = await TelegramGatewayClient.from_config(config)
+            try:
+                await ProjectAccountCatalog(db, client).update(account_id, primary=True)
+            finally:
+                await client.close()
+            print(f"Project account id={account_id} set as primary")
+            return
         changed = await db.repos.accounts.set_account_primary(account_id)
         if changed:
             print(f"Account id={account_id} set as primary")
@@ -433,8 +501,19 @@ async def set_primary_impl(config_path: str, *, account_id: int) -> None:
 
 async def delete_impl(config_path: str, *, account_id: int, notify_to: str | None = None) -> None:
     """Delete an account, reassigning the notification target if needed."""
-    _, db = await runtime.init_db(config_path)
+    config, db = await runtime.init_db(config_path)
     try:
+        if isinstance(config.gateway, dict) and config.gateway:
+            from tg_agent.gateway.catalog import ProjectAccountCatalog
+            from tg_agent.gateway.client import TelegramGatewayClient
+
+            client = await TelegramGatewayClient.from_config(config)
+            try:
+                await ProjectAccountCatalog(db, client).detach(account_id)
+            finally:
+                await client.close()
+            print(f"Detached project account id={account_id}; shared session retained")
+            return
         accounts = await db.get_account_summaries(active_only=False)
         acc = next((a for a in accounts if a.id == account_id), None)
         if not acc:
@@ -607,6 +686,44 @@ def run(args: argparse.Namespace) -> None:
 # --------------------------------------------------------------------------- #
 
 account_app = typer.Typer(no_args_is_help=True, help="Account management")
+
+
+@account_app.command("attach")
+def account_attach(ctx: typer.Context, phone: str = typer.Argument(...)) -> None:
+    """Attach a shared account to this project."""
+    from tg_agent.gateway.enrollment import enable_project
+
+    apply_startup(ctx)
+    run_async(enable_project(ctx.obj.config, [phone]))
+    print("Account attached to project")
+
+
+@account_app.command("detach")
+def account_detach(ctx: typer.Context, phone: str = typer.Argument(...)) -> None:
+    """Detach an account without deleting the shared session."""
+    apply_startup(ctx)
+
+    async def detach():
+        config, db = await runtime.init_db(ctx.obj.config)
+        try:
+            if not config.gateway:
+                cli_error("Project is not connected to a shared gateway")
+            accounts = await db.get_account_summaries()
+            account = next((row for row in accounts if row.phone == phone), None)
+            if account is None:
+                cli_error("Project account not found")
+            from tg_agent.gateway.catalog import ProjectAccountCatalog
+            from tg_agent.gateway.client import TelegramGatewayClient
+
+            client = await TelegramGatewayClient.from_config(config)
+            try:
+                await ProjectAccountCatalog(db, client).detach(account.id)
+            finally:
+                await client.close()
+        finally:
+            await db.close()
+    run_async(detach())
+    print("Account detached from project; shared session retained")
 
 
 @account_app.command("list")

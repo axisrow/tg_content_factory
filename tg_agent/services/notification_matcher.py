@@ -171,7 +171,11 @@ class NotificationMatcher:
             else:
                 text = f"Query '{qm.name}' matched {count} times. First:\n{preview}\n{link}"
 
-            sent = await self._notifier.notify(text)
+            from tg_agent.gateway.context import gateway_intent
+
+            message_keys = ",".join(f"{message.channel_id}/{message.message_id}" for message in fresh)
+            with gateway_intent(f"query-notification:{sq_id}:{message_keys}"):
+                sent = await self._notifier.notify(text)
             if sent:
                 result[sq_id] = count
                 await self._record(sq_id, fresh)

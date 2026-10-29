@@ -76,3 +76,53 @@ async def test_semantic_search_compares_datetime_bounds_chronologically(db, sema
     result = await semantic_search.search_semantic("Query", **bounds)
 
     assert [message.text for message in result.messages] == expected
+
+
+async def test_embedding_pages_preserve_scope_and_ranked_batch_skips_deleted(db, semantic_search):
+    messages = [
+        Message(channel_id=100, message_id=i + 1, text=f'Message {i}', date=MESSAGE_DATE)
+        for i in range(5)
+    ]
+    await _index_messages(db, messages, [[1.0, float(i)] for i in range(5)])
+    repo = db.repos.messages
+    pages = [page async for page in repo.iter_embedding_json_batches(batch_size=2)]
+    assert [len(page) for page in pages] == [2, 2, 1]
+    ids = [message_id for page in pages for message_id, _ in page]
+    assert ids == sorted(ids)
+    await db.execute_write('DELETE FROM messages WHERE id = ?', (ids[1],))
+    result = await repo.get_by_ids([ids[4], ids[1], ids[0]])
+    assert [message.id for message in result] == [ids[4], ids[0]]
+    await db.execute_write('UPDATE channels SET is_filtered = 1 WHERE channel_id = 100')
+    assert [page async for page in repo.iter_embedding_json_batches(batch_size=2)] == []
+    included = [page async for page in repo.iter_embedding_json_batches(True, batch_size=2)]
+    assert sum(map(len, included)) == 4
+
+
+async def test_semantic_batch_preserves_rank_filters_and_pagination(db, semantic_search):
+    messages = [
+        Message(channel_id=100, message_id=i + 1, text=text, date=MESSAGE_DATE)
+        for i, text in enumerate(['x', 'second', 'third', 'fourth'])
+    ]
+    await _index_messages(db, messages, [[1.0, float(i)] for i in range(4)])
+    result = await semantic_search.search_semantic(
+        'Query', min_length=3, max_length=6, date_from='2026-10-14', date_to='2026-10-14',
+        offset=1, limit=1,
+    )
+    assert [message.text for message in result.messages] == ['third']
+    assert result.total == 3
+
+
+async def test_ranked_batch_limits_sql_variables_and_uses_two_reads(db, monkeypatch):
+    await db.add_channel(Channel(channel_id=100, title='Batch'))
+    await db.insert_messages_batch([
+        Message(channel_id=100, message_id=i + 1, text=f'Message {i}', date=MESSAGE_DATE)
+        for i in range(405)
+    ])
+    repo = db.repos.messages
+    cursor = await repo._db.execute('SELECT id FROM messages ORDER BY id DESC')
+    ids = [row['id'] for row in await cursor.fetchall()]
+    execute = AsyncMock(wraps=repo._db.execute)
+    monkeypatch.setattr(repo, '_db', SimpleNamespace(execute=execute))
+    messages = await repo.get_by_ids(ids)
+    assert [message.id for message in messages] == ids
+    assert execute.await_count == 2

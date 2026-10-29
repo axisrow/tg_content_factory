@@ -302,6 +302,11 @@ async def chat_impl(
                 await mgr.close_all()
             except Exception:
                 logger.debug("Failed to close agent manager", exc_info=True)
+        from tg_agent.plugin_api import PluginRuntime
+
+        plugins = getattr(db, "plugins", None)
+        if isinstance(plugins, PluginRuntime):
+            await plugins.close()
         if pool is not None:
             try:
                 await pool.disconnect_all()

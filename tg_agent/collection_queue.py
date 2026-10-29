@@ -535,6 +535,8 @@ class CollectionQueue:
             accepts_cancel_event = True
         if accepts_cancel_event:
             collect_kwargs["cancel_event"] = cancel_event
+        if "signature" in locals() and "intent_key" in signature.parameters:
+            collect_kwargs["intent_key"] = f"collection-task:{task_id}"
         return collect_kwargs
 
     async def _validate_task_pre_dispatch(

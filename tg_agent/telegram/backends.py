@@ -564,11 +564,18 @@ class TelegramTransportSession:
         *,
         caption: str | None = None,
         schedule: Any = None,
+        reply_to: int | None = None,
+        force_document: bool = False,
     ) -> Any:
         peer = peer_key(entity)
+        options = {}
+        if reply_to is not None:
+            options["reply_to"] = reply_to
+        if force_document:
+            options["force_document"] = True
         return await self._run(
             "telegram_publish_files",
-            self._client.send_file(entity, files, caption=caption, schedule=schedule),
+            self._client.send_file(entity, files, caption=caption, schedule=schedule, **options),
             gate_peer=peer,
         )
 

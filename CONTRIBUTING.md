@@ -80,6 +80,13 @@ TG_API_HASH=...
 The suite runs **offline by default** — no real Telegram connection is needed
 or made.
 
+Each pytest worker derives the key for the shared public password
+`test-session-encryption-key` once and reuses the result for DB/provider
+fixtures. Fernet encryption and decryption remain real, including randomized
+tokens and wrong-key errors. Other passwords and changes to PBKDF2 parameters
+or its implementation bypass this test-only shortcut. Production key derivation
+is unchanged.
+
 | Marker | Meaning |
 |---|---|
 | `unit` / `integration` / `smoke` | auto-applied by the conftest heuristic |

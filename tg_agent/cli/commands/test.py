@@ -260,6 +260,10 @@ def _format_exception(exc: BaseException) -> str:
 
 
 async def _disable_flood_auto_sleep(pool: ClientPool) -> None:
+    from tg_agent.gateway.pool import GatewayPool
+
+    if isinstance(pool, GatewayPool):
+        return  # Telegram retry policy belongs to the shared gateway.
     clients = getattr(pool, "clients", None) or {}
     for phone, client in clients.items():
         session = adapt_transport_session(client, disconnect_on_close=False)
@@ -843,6 +847,14 @@ async def _run_search_operation(
 
 async def _run_warm_dialog_cache_step(pool: ClientPool) -> CheckResult:
     check_name = "tg_warm_dialog_cache"
+    from tg_agent.gateway.pool import GatewayPool
+
+    if isinstance(pool, GatewayPool):
+        try:
+            await pool.warm_all_dialogs()
+            return CheckResult(check_name, Status.PASS, "Shared gateway dialog cache refreshed")
+        except Exception as exc:
+            return CheckResult(check_name, Status.FAIL, _format_exception(exc))
     while True:
         client_tuple = await pool.get_available_client()
         if not client_tuple:
@@ -1037,6 +1049,16 @@ async def _run_tg_iter_messages_for_channel(
 ) -> bool:
     pool = _require_tg_pool(state)
     copy_db = _require_tg_copy_db(state)
+    from tg_agent.gateway.pool import GatewayPool
+
+    if isinstance(pool, GatewayPool):
+        try:
+            data = await pool.read_messages(ch.channel_id, limit=10, peer_type="channel")
+            count = await copy_db.insert_messages_batch([Message.model_validate(row) for row in data["messages"]])
+            state.results.append(CheckResult("tg_iter_messages", Status.PASS, f"{count} msgs via shared gateway"))
+        except Exception as exc:
+            state.results.append(CheckResult("tg_iter_messages", Status.FAIL, _format_exception(exc)))
+        return True
     while True:
         client_tuple = await pool.get_available_client()
         if not client_tuple:

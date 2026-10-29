@@ -43,6 +43,11 @@ class SearchEngine:
             pool,
             SearchPersistence(search, create_stats_task, fetch_channel_meta),
         )
+        from tg_agent.gateway.pool import GatewayPool
+        from tg_agent.gateway.search import GatewaySearch
+
+        if isinstance(pool, GatewayPool):
+            self._telegram = GatewaySearch(pool, SearchPersistence(search, create_stats_task, fetch_channel_meta))
 
     @property
     def semantic_available(self) -> bool:

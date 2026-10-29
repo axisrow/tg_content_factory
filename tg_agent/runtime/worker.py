@@ -147,6 +147,8 @@ async def _publish_accounts_status_snapshot(
                 "resolve_backoffs": resolve_backoffs,
                 "is_warming": is_warming,
                 "timestamp": now.isoformat(),
+                "gateway": (container.pool.gateway_status
+                            if isinstance(getattr(container.pool, "gateway_status", None), dict) else None),
             },
         )
     )
