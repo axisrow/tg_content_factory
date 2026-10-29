@@ -59,6 +59,27 @@ class PhotoPublishService:
         schedule_at: datetime | None = None,
         on_file_sent: Callable[[str, list[int]], Awaitable[None]] | None = None,
     ) -> list[int]:
+        from tg_agent.gateway.pool import GatewayPool
+
+        if isinstance(self._pool, GatewayPool):
+            from tg_agent.gateway.context import next_intent_key
+            from tg_agent.gateway.files import publish_files
+
+            key = next_intent_key()
+            groups = ([file_paths] if send_mode == PhotoSendMode.ALBUM and len(file_paths) > 1
+                      else [[path] for path in file_paths])
+            message_ids = []
+            for index, paths in enumerate(groups):
+                result = await publish_files(self._pool, phone=phone, peer=target_dialog_id, files=paths,
+                    intent=f"{key}:group:{index}", caption=caption, schedule=schedule_at,
+                    peer_type={"channel": "channel", "supergroup": "channel", "group": "chat",
+                               "user": "user", "bot": "user", "saved": "user"}.get(target_type, "auto"))
+                ids = result["message_ids"]
+                message_ids.extend(ids)
+                if on_file_sent is not None:
+                    for path in paths:
+                        await on_file_sent(path, ids)
+            return message_ids
         async with self._acquire_client_and_resolve(
             phone, target_dialog_id, target_type
         ) as (session, acquired_phone, entity):
@@ -114,6 +135,22 @@ class PhotoPublishService:
     ) -> None:
         """Cancel previously server-scheduled messages on Telegram (audit #835/3)."""
         if not message_ids:
+            return
+        from tg_agent.gateway.pool import GatewayPool
+
+        if isinstance(self._pool, GatewayPool):
+            from uuid import UUID
+
+            from tg_agent.gateway.context import next_intent_key
+            from tg_agent.gateway.protocol import ScheduledDelete
+
+            account = self._pool.select(phone)
+            if account["phone"] != phone:
+                raise PermissionError("Scheduling account is not granted to this project")
+            await self._pool.request(ScheduledDelete(kind="scheduled_delete", account_id=UUID(account["id"]),
+                peer=target_dialog_id, message_ids=message_ids,
+                peer_type={"group": "chat", "saved": "user", "dm": "user", "bot": "user"}.get(
+                    target_type, "channel")), next_intent_key())
             return
         async with self._acquire_client_and_resolve(
             phone, target_dialog_id, target_type

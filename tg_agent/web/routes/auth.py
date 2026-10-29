@@ -251,6 +251,16 @@ async def import_session(
         return _error(f"Невалидная Telegram session string для {phone}.")
 
     db = request.app.state.db
+    from tg_agent.gateway.catalog import project_catalog, shared_project
+
+    if shared_project(getattr(request.app.state, "config", None)):
+        try:
+            async with project_catalog(request.app.state.config, db) as catalog:
+                await catalog.import_session(phone, session_string)
+        except Exception:
+            return _error("Импорт в общий гейт не выполнен. Для замены общей сессии "
+                          "используйте gateway account --shared.")
+        return RedirectResponse(url="/settings?msg=account_connected", status_code=303)
     # Atomic insert-only (ON CONFLICT DO NOTHING): the DB — not a stale pre-read —
     # is the source of truth for "already exists", so two concurrent imports for the
     # same phone can't both pass a check-then-act guard and clobber a session (#1146

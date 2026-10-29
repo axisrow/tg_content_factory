@@ -1,44 +1,19 @@
-"""`global` CLI group: a shared account store across projects (#1683).
-
-Accounts are bound to the launch directory: the SQLite database
-(`database.path`) and the Telegram session cache (`session_cache_dir`) default
-to paths under the project's `data/`, so a fresh checkout sees an empty account
-list. The `global` commands attach a project to one machine-wide store instead:
-
-* ``global enable`` writes a marker file in the project root; while it exists,
-  ``load_config`` resolves the database and session cache into the store
-  (default ``~/.tg-agent``, ``$TG_AGENT_GLOBAL_DIR`` overrides). The first
-  enable of an empty store seeds it from the project's local accounts —
-  session rows are copied as stored ``enc:v2:*`` ciphertext through the normal
-  ``add_account`` path, so ``SESSION_ENCRYPTION_KEY`` stays required and no
-  secret is ever printed.
-* ``global disable`` removes the marker; local files are never deleted.
-* ``global status`` reports the effective store without touching any database.
-
-Local paths (logs, images, downloads) are unaffected — only accounts and
-sessions travel with the global store.
-"""
+"""Project enrollment, legacy migration, and shared gateway status."""
 
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 
 import typer
 
-from tg_agent.cli import runtime
 from tg_agent.cli.commands.common import apply_startup, cli_error, run_async
 from tg_agent.config import (
     GLOBAL_DB_NAME,
     GLOBAL_SESSIONS_SUBDIR,
     global_marker_path,
-    global_store_root,
     load_config,
     read_global_store_marker,
-    resolve_session_encryption_secret,
 )
-from tg_agent.database import Database
 
 
 def _print_paths(label: str, root: Path) -> None:
@@ -50,69 +25,17 @@ def _restart_hint() -> None:
     print("Restart any running worker/daemon in this project to apply the change.")
 
 
-async def _seed_global_store(config, local_db: Database, root: Path) -> int | None:
-    """One-time copy of local accounts into an EMPTY global store.
+async def enable_impl(config_path: str, phones: list[str] | None = None) -> None:
+    """Enroll explicitly selected accounts, keeping content in the project DB."""
+    from tg_agent.gateway.enrollment import enable_project
 
-    Returns the number of seeded accounts, 0 when seeding is a no-op, or
-    ``None`` when seeding failed (the caller aborts the enable without writing
-    the marker). Rows go through the regular ``add_account`` path: an ``enc:v2:*``
-    ciphertext is idempotent under ``encrypt()`` and is stored byte-for-byte,
-    plaintext rows are upgraded to ``enc:v2`` in the new store, and the
-    single-primary invariant holds there from the first insert. Without
-    ``SESSION_ENCRYPTION_KEY`` the repository refuses every write — the error
-    is reported and the store stays untouched.
-    """
-    raw_accounts = await local_db.repos.accounts.export_accounts_raw()
-    global_db = Database(
-        str(root / GLOBAL_DB_NAME),
-        session_encryption_secret=resolve_session_encryption_secret(config),
-    )
-    try:
-        await global_db.initialize()
-        os.chmod(root / GLOBAL_DB_NAME, 0o600)  # SQLite defaults to 0644; the store holds sessions
-        existing = await global_db.get_account_summaries(active_only=False)
-        if existing:
-            print(
-                f"Global store already has {len(existing)} account(s) — "
-                "local accounts left untouched."
-            )
-            return 0
-        if not raw_accounts:
-            print("Local database has no accounts; global store starts empty.")
-            return 0
-        for account in raw_accounts:
-            await global_db.repos.accounts.add_account(account)
-        print(f"Seeded {len(raw_accounts)} account(s) from the local database into the global store.")
-        return len(raw_accounts)
-    except RuntimeError as exc:
-        # require_session_encryption_key: refuse to half-enable a store whose
-        # sessions could not be persisted as safely as the local ones.
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return None
-    finally:
-        await global_db.close()
-
-
-async def enable_impl(config_path: str) -> None:
-    """Attach the current project (cwd) to the global account store."""
-    root = global_store_root()
-    if root == Path.cwd().resolve():
-        cli_error("ERROR: the project directory IS the global store root; refusing to enable.")
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    (root / GLOBAL_SESSIONS_SUBDIR).mkdir(parents=True, exist_ok=True, mode=0o700)
-
-    config, db = await runtime.init_db(config_path)
-    try:
-        seeded = await _seed_global_store(config, db, root)
-    finally:
-        await db.close()
-    if seeded is None:
-        cli_error("ERROR: seeding failed; project not switched (no marker written).")
-
-    global_marker_path().write_text(f"{root}\n", encoding="utf-8")
-    print(f"Global store enabled for this project ({global_marker_path()}).")
-    _print_paths("global", root)
-    _restart_hint()
+    if not phones:
+        cli_error("Select shared accounts explicitly: global enable --account PHONE (repeatable). "
+                  "Use global migrate --project-db PATH for an existing legacy marker.")
+    binding = await enable_project(config_path, phones)
+    config = load_config(config_path)
+    print(f"Shared gateway enabled: {binding.store_root}")
+    print(f"Project database: {config.database.path}")
 
 
 def disable_impl(config_path: str) -> None:
@@ -120,6 +43,15 @@ def disable_impl(config_path: str) -> None:
     marker = global_marker_path()
     if not marker.exists():
         print("Global store is not enabled for this project; nothing to do.")
+        return
+    from tg_agent.gateway.project import read_binding
+
+    if read_binding(marker) is not None:
+        from tg_agent.gateway.enrollment import disable_project
+
+        run_async(disable_project(config_path))
+        print("Shared gateway disabled for this project; project data and shared accounts retained.")
+        print(f"Project database: {load_config(config_path).database.path}")
         return
     marker.unlink()
     config = load_config(config_path)
@@ -131,6 +63,21 @@ def disable_impl(config_path: str) -> None:
 
 def status_impl(config_path: str) -> None:
     """Report which store this project resolves to, without opening any database."""
+    from tg_agent.gateway.project import read_binding
+
+    binding = read_binding(global_marker_path())
+    if binding is not None:
+        from tg_agent.gateway.client import TelegramGatewayClient
+
+        print(f"Shared gateway: {binding.store_root}")
+        print(f"Project: {binding.project_id}")
+        print(f"Project database: {load_config(config_path).database.path}")
+        status = run_async(TelegramGatewayClient.inspect_config(load_config(config_path)))
+        print(f"HTTP: {status['http_available']}; dispatcher: {status['dispatcher_running']}")
+        for account in status.get("accounts", []):
+            print(f"  {account['phone']}: connected={account.get('connected', False)}, "
+                  f"primary={bool(account.get('is_primary'))}, active={bool(account['active'])}")
+        return
     root = read_global_store_marker()
     if root is not None:
         print(f"Global store: enabled (marker {global_marker_path()})")
@@ -150,10 +97,13 @@ global_app = typer.Typer(no_args_is_help=True, help="Shared account store across
 
 
 @global_app.command("enable")
-def global_enable(ctx: typer.Context) -> None:
-    """Point this project at the global account store (~/.tg-agent)."""
+def global_enable(
+    ctx: typer.Context,
+    accounts: list[str] | None = typer.Option(None, "--account", help="Shared account to attach (repeatable)"),
+) -> None:
+    """Attach selected shared accounts without moving the project database."""
     apply_startup(ctx)
-    run_async(enable_impl(ctx.obj.config))
+    run_async(enable_impl(ctx.obj.config, phones=accounts))
 
 
 @global_app.command("disable")
@@ -161,6 +111,20 @@ def global_disable(ctx: typer.Context) -> None:
     """Return this project to its local data directory."""
     apply_startup(ctx)
     disable_impl(ctx.obj.config)
+
+
+@global_app.command("migrate")
+def global_migrate(
+    ctx: typer.Context,
+    project_db: Path = typer.Option(..., "--project-db", help="New independent project database"),
+    accounts: list[str] | None = typer.Option(None, "--account", help="Accounts to retain (default: current accounts)"),
+) -> None:
+    """Migrate legacy shared content into an independent project database."""
+    from tg_agent.gateway.enrollment import migrate_project
+
+    apply_startup(ctx)
+    run_async(migrate_project(ctx.obj.config, project_db, accounts))
+    print(f"Project migrated: {project_db}")
 
 
 @global_app.command("status")

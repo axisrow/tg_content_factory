@@ -226,6 +226,15 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
         reaction_users_limit = normalize_reaction_users_limit(args.get("reaction_users_limit"))
         if not chat_id:
             return _text_response("Ошибка: chat_id обязателен.")
+        from tg_agent.gateway.pool import GatewayPool
+
+        if isinstance(client_pool, GatewayPool):
+            from tg_agent.gateway.formatters import live_message_lines
+
+            peer = int(chat_id) if str(chat_id).lstrip("-").isdigit() else chat_id
+            data = await client_pool.read_messages(peer, phone=phone, limit=limit,
+                include_reaction_users=include_reaction_users, reaction_users_limit=reaction_users_limit)
+            return _text_response("\n".join(live_message_lines(data)))
         resolved_entity = None
         try:
             resolved_entity = await resolve_entity(client_pool, phone, chat_id)

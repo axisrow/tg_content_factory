@@ -152,6 +152,21 @@ CLI_REAL_TG_CLEANUP_COMMAND_CASES: set[tuple[str, ...]] = {
 }
 
 CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
+    ("account", "attach"): "project grant mutation; two-project gateway acceptance scenario",
+    ("account", "detach"): "project grant mutation; two-project gateway acceptance scenario",
+    ("global", "migrate"): "legacy database migration; offline snapshots and interrupted-migration acceptance",
+    ("gateway", "start"): "machine-wide daemon lifecycle; subprocess gateway acceptance",
+    ("gateway", "status"): "machine-wide daemon status; subprocess gateway acceptance",
+    ("gateway", "stop"): "machine-wide daemon lifecycle, requires --shared; subprocess gateway acceptance",
+    ("gateway", "restart"): "machine-wide daemon lifecycle, requires --shared; subprocess gateway acceptance",
+    ("gateway", "reply-owner"): "exclusive project DM ownership; gateway integration acceptance",
+    ("gateway", "account", "list"): "shared account metadata; gateway integration acceptance",
+    ("gateway", "account", "enable"): "shared account mutation requiring --shared; dedicated test accounts only",
+    ("gateway", "account", "disable"): "shared account mutation requiring --shared; dedicated test accounts only",
+    ("gateway", "account", "delete"): "shared session removal requiring --shared; dedicated test accounts only",
+    ("gateway", "account", "import"): "shared session import requiring --shared; dedicated test accounts only",
+    ("gateway", "account", "export-session"): "explicit secret export requiring --shared; offline fixture only",
+    ("gateway", "account", "replace-session"): "shared session replacement; dedicated test accounts only",
     ("mcp-server",): "stdio MCP daemon serving the tool registry; not a Telegram leaf operation",
     ("dm", "journal", "list"): "list-only local incoming_dms journal view — DB-only read (#1580)",
     ("dm", "archive", "list"): "list-only local dm_messages archive view — DB-only read (#1580)",

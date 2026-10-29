@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -94,6 +95,13 @@ class TestDaemonDetection(unittest.TestCase):
                 with (
                     patch.object(process_control, "_process_command", return_value=command),
                     patch.object(process_control, "is_process_alive", side_effect=[True, True, False]),
+                    patch.object(process_control, "read_process_owner", return_value={
+                        "pid": 1234, "role": "worker", "project_root": str(Path.cwd().resolve()),
+                        "store_root": str(pid_file.resolve().parent), "executable": "/synthetic/python",
+                        "start_identity": "synthetic-start", "command": command,
+                    }),
+                    patch.object(process_control, "process_executable", return_value="/synthetic/python"),
+                    patch.object(process_control, "process_start_identity", return_value="synthetic-start"),
                     patch.object(os, "kill") as kill,
                 ):
                     self.assertEqual(process_control.stop_server(pid_file).result, process_control.StopResult.STOPPED)
@@ -155,15 +163,23 @@ class TestDaemonDetection(unittest.TestCase):
             (package / "__init__.py").write_text("")
             # No project runtime or Telegram connections: only a harmless process
             # with the production module argv shape and real Python flags.
-            (package / "main.py").write_text("import time; time.sleep(60)")
+            (package / "main.py").write_text(
+                "from pathlib import Path; Path('ready').touch(); import time; time.sleep(60)"
+            )
+            ready = Path(directory) / "ready"
             for options in (("-Wignore",), ("-Xutf8",), ("-uB",)):
                 with self.subTest(options=options):
+                    ready.unlink(missing_ok=True)
                     process = subprocess.Popen(
                         [sys.executable, *options, "-m", "tg_agent.main", "--config", "prod.yaml", "worker"],
                         cwd=directory,
                         env={**os.environ, "PYTHONPATH": directory},
                     )
                     try:
+                        deadline = time.monotonic() + 10
+                        while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                            time.sleep(0.01)
+                        self.assertTrue(ready.exists(), "Test child failed to finish exec/startup")
                         self.assertTrue(process_control.is_expected_server_process(process.pid))
                     finally:
                         process.terminate()

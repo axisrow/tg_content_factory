@@ -967,51 +967,65 @@ async def probe_impl(
         if phone is None:
             print("No connected accounts.")
             return
-        result = await pool.get_native_client_by_phone(phone)
-        if result is None:
-            print(f"Client for {phone} unavailable (flood-wait or not connected).")
-            return
-        client, _ = result
-        peer = int(identifier) if identifier.lstrip("-").isdigit() else identifier
-        entity = await pool.resolve_entity_with_warm(
-            client, phone, peer, operation="channel_probe_resolve"
-        )
-        session = adapt_transport_session(
-            client, disconnect_on_close=False, phone=phone, pool=pool
-        )
-        full = await run_with_flood_wait(
-            session.fetch_full_channel(entity),
-            operation="channel_probe_full",
-            phone=phone,
-            pool=pool,
-            timeout=30.0,
-        )
-        participants = full.full_chat.participants_count if full and full.full_chat else None
+        from tg_agent.gateway.pool import GatewayPool
 
-        collected: list = []
-
-        async def _read() -> None:
-            async for msg in client.iter_messages(entity, limit=limit):
-                collected.append(msg)
-
-        await run_with_flood_wait(
-            _read(), operation="channel_probe_read", phone=phone, pool=pool
-        )
-        snapshots = [
-            ProbeMessage(
-                text=msg.text,
-                views=msg.views,
-                is_forward=bool(msg.fwd_from),
-                urls=tuple(
-                    url
-                    for url in (getattr(e, "url", None) for e in (msg.entities or ()))
-                    if url
-                ),
+        if isinstance(pool, GatewayPool):
+            peer = int(identifier) if identifier.lstrip("-").isdigit() else identifier
+            info = await pool.inspect_peer(peer, phone=phone)
+            data = await pool.read_messages(info["channel_id"], phone=phone, limit=limit, peer_type="channel")
+            snapshots = [ProbeMessage(text=row.get("text"), views=row.get("views"),
+                is_forward=row["message_id"] in data["forward_ids"],
+                urls=tuple(data["urls"].get(str(row["message_id"]), []))) for row in data["messages"]]
+            participants = info.get("subscriber_count")
+            username, title = info.get("username"), info.get("title") or identifier
+            is_broadcast = info["channel_type"] in {"channel", "monoforum"}
+        else:
+            result = await pool.get_native_client_by_phone(phone)
+            if result is None:
+                print(f"Client for {phone} unavailable (flood-wait or not connected).")
+                return
+            client, _ = result
+            peer = int(identifier) if identifier.lstrip("-").isdigit() else identifier
+            entity = await pool.resolve_entity_with_warm(
+                client, phone, peer, operation="channel_probe_resolve"
             )
-            for msg in collected
-        ]
-        username = getattr(entity, "username", None)
-        title = getattr(entity, "title", None) or identifier
+            session = adapt_transport_session(
+                client, disconnect_on_close=False, phone=phone, pool=pool
+            )
+            full = await run_with_flood_wait(
+                session.fetch_full_channel(entity),
+                operation="channel_probe_full",
+                phone=phone,
+                pool=pool,
+                timeout=30.0,
+            )
+            participants = full.full_chat.participants_count if full and full.full_chat else None
+
+            collected: list = []
+
+            async def _read() -> None:
+                async for msg in client.iter_messages(entity, limit=limit):
+                    collected.append(msg)
+
+            await run_with_flood_wait(
+                _read(), operation="channel_probe_read", phone=phone, pool=pool
+            )
+            snapshots = [
+                ProbeMessage(
+                    text=msg.text,
+                    views=msg.views,
+                    is_forward=bool(msg.fwd_from),
+                    urls=tuple(
+                        url
+                        for url in (getattr(e, "url", None) for e in (msg.entities or ()))
+                        if url
+                    ),
+                )
+                for msg in collected
+            ]
+            username = getattr(entity, "username", None)
+            title = getattr(entity, "title", None) or identifier
+            is_broadcast = bool(getattr(entity, "broadcast", False))
         raw_min_subs = await db.get_setting("min_subscribers_filter")
         try:
             min_subscribers = int(raw_min_subs) if raw_min_subs else None
@@ -1024,7 +1038,7 @@ async def probe_impl(
             username=username,
             min_subscribers=min_subscribers,
             # Chat small groups have no .broadcast attr → chat, like the analyzer.
-            is_broadcast=bool(getattr(entity, "broadcast", False)),
+            is_broadcast=is_broadcast,
         )
         if as_json:
             print(

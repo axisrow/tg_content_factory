@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +18,30 @@ from tg_agent.cli.process_control import (
     unregister_current_process,
 )
 from tg_agent.config import AppConfig
+
+
+@pytest.fixture(autouse=True)
+def managed_mock_process_identity(monkeypatch):
+    """PID 123 denotes a managed mock; real-process tests keep actual provenance."""
+    from tg_agent.cli import process_control as control
+
+    read_owner = control.read_process_owner
+    start_identity = control.process_start_identity
+    executable = control.process_executable
+    binary = str(Path(sys.executable).resolve())
+
+    def owner(path):
+        recorded = read_owner(path)
+        if recorded is not None or control.read_pid(path) != 123:
+            return recorded
+        return {"pid": 123, "role": "worker", "project_root": str(Path.cwd().resolve()),
+                "store_root": str(path.resolve().parent), "executable": binary,
+                "start_identity": "managed-test-process-123"}
+
+    monkeypatch.setattr(control, "read_process_owner", owner)
+    monkeypatch.setattr(control, "process_start_identity",
+                        lambda pid: "managed-test-process-123" if pid == 123 else start_identity(pid))
+    monkeypatch.setattr(control, "process_executable", lambda pid: binary if pid == 123 else executable(pid))
 
 
 def test_pid_file_path_uses_database_path_suffix():

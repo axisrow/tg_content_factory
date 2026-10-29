@@ -68,7 +68,10 @@ async def delete_account(request: Request, account_id: int):
         payload={"account_id": account_id, "phone": account.phone},
         requested_by="web:accounts.delete",
     )
-    await db.delete_account(account_id)
+    from tg_agent.gateway.catalog import shared_project
+
+    if not shared_project(getattr(request.app.state, "config", None)):
+        await db.delete_account(account_id)
     msg = {
         "reassigned": "account_deleted_notify_reassigned",
         "cleared": "account_deleted_notify_cleared",
@@ -82,6 +85,12 @@ async def delete_account(request: Request, account_id: int):
 @router.post("/{account_id}/set-primary")
 async def set_primary_account(request: Request, account_id: int):
     db = deps.get_db(request)
+    from tg_agent.gateway.catalog import shared_project
+
+    if shared_project(getattr(request.app.state, "config", None)):
+        await deps.telegram_command_service(request).enqueue(
+            "accounts.set_primary", payload={"account_id": account_id}, requested_by="web:accounts.set-primary")
+        return RedirectResponse(url="/settings?msg=account_primary_queued", status_code=303)
     changed = await db.repos.accounts.set_account_primary(account_id)
     if not changed:
         return RedirectResponse(url="/settings?error=invalid_account", status_code=303)

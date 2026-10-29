@@ -636,3 +636,21 @@ async def pipeline_client(tmp_path, real_pool_harness_factory):
 
     await app.state.collection_queue.shutdown()
     await built_db.close()
+
+
+@pytest.fixture(autouse=True)
+def fail_on_mock_path_leak():
+    """A MagicMock that reached filesystem code creates junk dirs in cwd (PR #1715).
+
+    ``os.fspath`` of a MagicMock yields a repo-relative ``MagicMock/...`` path,
+    so any test passing a mock where a real path is expected silently litters
+    the repository root. Fail the leaking test instead of committing its junk.
+    """
+    marker = Path("MagicMock")
+    existed = marker.exists()
+    yield
+    if marker.exists() and not existed:
+        pytest.fail(
+            "Test leaked a MagicMock-as-path directory into the repository root: "
+            "a mock object was used where a real filesystem path is expected"
+        )

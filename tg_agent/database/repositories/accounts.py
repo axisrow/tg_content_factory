@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import aiosqlite
@@ -194,6 +194,8 @@ class AccountsRepository:
         async with self._database.transaction() as conn:
             for row in rows:
                 raw_session = row["session_string"]
+                if not raw_session:
+                    continue
                 try:
                     migrated_value = self._session_cipher.encrypt(raw_session)
                 except ValueError as exc:
@@ -662,3 +664,35 @@ class AccountsRepository:
             cur = await conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
             if (cur.rowcount or 0) > 0:
                 await self._promote_primary_if_none(conn, active_only=False)
+
+    async def sync_gateway_catalog(self, rows: list[dict]) -> None:
+        """Mirror the authoritative project grants, keeping local IDs and no secrets.
+
+        Operator decisions belong to the gateway in enrolled mode. This is a
+        projection of those decisions, never an automatic activation policy.
+        No other project account state is available through this catalog.
+        """
+        assert self._database is not None
+        async with self._database.transaction() as conn:
+            await conn.execute("CREATE TABLE IF NOT EXISTS gateway_account_refs ("
+                               "local_id INTEGER PRIMARY KEY REFERENCES accounts(id), account_id TEXT UNIQUE NOT NULL)")
+            await conn.execute("UPDATE accounts SET is_primary=0,session_string=''")
+            phones = [row["phone"] for row in rows]
+            condition = "phone NOT IN (" + ",".join("?" for _ in phones) + ")" if phones else "1=1"
+            await conn.execute("DELETE FROM gateway_account_refs WHERE local_id IN "
+                               f"(SELECT id FROM accounts WHERE {condition})", phones)
+            await conn.execute(f"DELETE FROM accounts WHERE {condition}", phones)
+            for row in rows:
+                flood = (datetime.fromtimestamp(row["flood_until"], timezone.utc).isoformat()
+                         if row["flood_until"] else None)
+                await conn.execute("INSERT INTO accounts(phone,session_string,is_primary,is_active,flood_wait_until,"
+                                   "is_premium) VALUES (?,'',?,?,?,?) ON CONFLICT(phone) "
+                                   "DO UPDATE SET session_string='',"
+                                   "is_primary=excluded.is_primary,is_active=excluded.is_active,"
+                                   "flood_wait_until=excluded.flood_wait_until,is_premium=excluded.is_premium",
+                                   (row["phone"], int(row.get("is_primary", False)), int(row["active"]), flood,
+                                    int(row.get("is_premium", False))))
+                async with conn.execute("SELECT id FROM accounts WHERE phone=?", (row["phone"],)) as cursor:
+                    local_id = (await cursor.fetchone())[0]
+                await conn.execute("INSERT INTO gateway_account_refs VALUES (?,?) ON CONFLICT(local_id) "
+                                   "DO UPDATE SET account_id=excluded.account_id", (local_id, row["id"]))

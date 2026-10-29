@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sqlite3
-import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -162,75 +161,23 @@ def test_status_reports_enabled_with_store_paths(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- #
 
 
-def test_enable_on_empty_project_creates_store_and_marker(tmp_path, monkeypatch):
+def test_enable_requires_explicit_account_grants(tmp_path, monkeypatch):
     _chdir_project(tmp_path, monkeypatch)
-    root = global_store_root()
-    result = runner.invoke(app, ["global", "enable"])
-    assert result.exit_code == 0
-    assert "Global store enabled" in result.stdout
-    assert "global store starts empty" in result.stdout
-    assert global_marker_path().read_text(encoding="utf-8").strip() == str(root)
-    assert (root / GLOBAL_DB_NAME).exists()
-    assert (root / GLOBAL_SESSIONS_SUBDIR).is_dir()
-    # Session-bearing paths must not be group/world accessible.
-    assert stat.S_IMODE((root / GLOBAL_DB_NAME).stat().st_mode) & 0o077 == 0
-    assert stat.S_IMODE((root / GLOBAL_SESSIONS_SUBDIR).stat().st_mode) & 0o077 == 0
-
-
-def test_enable_seeds_accounts_and_list_reads_global_store(tmp_path, monkeypatch):
-    _chdir_project(tmp_path, monkeypatch)
-    asyncio.run(_make_local_db(tmp_path / "local.db", [(PHONE_A, True), (PHONE_B, False)]))
-    local_ciphertexts = [row[1] for row in _account_rows(tmp_path / "local.db")]
-    assert all(ciphertext.startswith("enc:v2:") for ciphertext in local_ciphertexts)
-
-    result = runner.invoke(app, ["global", "enable"])
-    assert result.exit_code == 0
-    assert "Seeded 2 account(s)" in result.stdout
-    _no_secrets_in_output(result.stdout, local_ciphertexts)
-
-    # Local DB is untouched by the seed.
-    assert _account_rows(tmp_path / "local.db") == [
-        (PHONE_A, local_ciphertexts[0], 1),
-        (PHONE_B, local_ciphertexts[1], 0),
-    ]
-
-    global_rows = _account_rows(global_store_root() / GLOBAL_DB_NAME)
-    assert [row[0] for row in global_rows] == [PHONE_A, PHONE_B]
-    # enc:v2 ciphertext is preserved byte-for-byte — the key stays required.
-    assert [row[1] for row in global_rows] == local_ciphertexts
-    assert [row[2] for row in global_rows] == [1, 0]
-
-    # A later account exists ONLY in the global store: `account list` must see it.
-    asyncio.run(_add_account_to_db(global_store_root() / GLOBAL_DB_NAME, PHONE_C))
-    listing = runner.invoke(app, ["account", "list"])
-    assert listing.exit_code == 0
-    assert "No accounts found" not in listing.stdout
-    assert PHONE_A in listing.stdout and PHONE_C in listing.stdout
-
-
-def test_enable_is_idempotent_and_never_duplicates(tmp_path, monkeypatch):
-    _chdir_project(tmp_path, monkeypatch)
-    asyncio.run(_make_local_db(tmp_path / "local.db", [(PHONE_A, True)]))
-    assert runner.invoke(app, ["global", "enable"]).exit_code == 0
-
-    again = runner.invoke(app, ["global", "enable"])
-    assert again.exit_code == 0
-    assert "already has 1 account(s)" in again.stdout
-    assert len(_account_rows(global_store_root() / GLOBAL_DB_NAME)) == 1
-
-
-def test_enable_without_key_aborts_and_writes_no_marker(tmp_path, monkeypatch):
-    _chdir_project(tmp_path, monkeypatch)
-    asyncio.run(_make_local_db(tmp_path / "local.db", [(PHONE_A, True)]))
-    monkeypatch.delenv("SESSION_ENCRYPTION_KEY")
-
     result = runner.invoke(app, ["global", "enable"])
     assert result.exit_code == 1
-    assert "SESSION_ENCRYPTION_KEY" in result.stderr
+    assert "--account PHONE" in result.stderr
     assert not global_marker_path().exists()
-    assert _account_rows(global_store_root() / GLOBAL_DB_NAME) == []
-    # The local store is untouched.
-    assert len(_account_rows(tmp_path / "local.db")) == 1
+    assert not (global_store_root() / GLOBAL_DB_NAME).exists()
+
+
+def test_enable_does_not_silently_replace_legacy_marker(tmp_path, monkeypatch):
+    _chdir_project(tmp_path, monkeypatch)
+    root = global_store_root()
+    global_marker_path().write_text(str(root))
+    result = runner.invoke(app, ["global", "enable", "--account", PHONE_A])
+    assert result.exit_code != 0
+    assert global_marker_path().read_text() == str(root)
+    assert load_config().database.path == str(root / GLOBAL_DB_NAME)
 
 
 # --------------------------------------------------------------------------- #
@@ -241,8 +188,9 @@ def test_enable_without_key_aborts_and_writes_no_marker(tmp_path, monkeypatch):
 def test_disable_restores_local_store_and_keeps_global_files(tmp_path, monkeypatch):
     _chdir_project(tmp_path, monkeypatch)
     asyncio.run(_make_local_db(tmp_path / "local.db", [(PHONE_A, True)]))
-    assert runner.invoke(app, ["global", "enable"]).exit_code == 0
-    asyncio.run(_add_account_to_db(global_store_root() / GLOBAL_DB_NAME, PHONE_B))
+    global_store_root().mkdir()
+    asyncio.run(_make_local_db(global_store_root() / GLOBAL_DB_NAME, [(PHONE_B, True)]))
+    global_marker_path().write_text(str(global_store_root()))
 
     result = runner.invoke(app, ["global", "disable"])
     assert result.exit_code == 0
@@ -290,20 +238,11 @@ def _run_cli(args: list[str], tmp_path: Path) -> subprocess.CompletedProcess[str
     )
 
 
-def test_subprocess_enable_status_list_end_to_end(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "config.yaml").write_text("database:\n  path: local.db\n", encoding="utf-8")
-
+def test_subprocess_refuses_implicit_shared_database_mode(tmp_path, monkeypatch):
+    _chdir_project(tmp_path, monkeypatch)
     enable = _run_cli(["global", "enable"], tmp_path)
-    assert enable.returncode == 0, enable.stderr
-    assert "Global store enabled" in enable.stdout
-    assert "enc:v2:" not in enable.stdout
-    assert (tmp_path / ".tg-agent-global").exists()
-
-    status_after = _run_cli(["global", "status"], tmp_path)
-    assert status_after.returncode == 0
-    assert "enabled" in status_after.stdout
-
-    listing = _run_cli(["account", "list"], tmp_path)
-    assert listing.returncode == 0
-    assert "No accounts found" in listing.stdout
+    assert enable.returncode == 1
+    assert "--account PHONE" in enable.stderr
+    assert not (tmp_path / ".tg-agent-global").exists()
+    status = _run_cli(["global", "status"], tmp_path)
+    assert status.returncode == 0 and "disabled" in status.stdout
