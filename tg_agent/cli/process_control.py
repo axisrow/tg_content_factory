@@ -247,6 +247,9 @@ def register_current_process(path: Path) -> None:
         "project_root": str(Path.cwd().resolve()),
         "store_root": str(path.resolve().parent),
         "executable": str(Path(sys.executable).resolve()),
+        # macOS may report the Python.app bundle binary for `ps comm` even when
+        # sys.executable is bin/python3.13; record the observable self-view too.
+        "executable_observed": process_executable(os.getpid()),
         "started_at": datetime.now(timezone.utc).isoformat(),
         "command": _process_command(os.getpid()),
         "start_identity": process_start_identity(os.getpid()),
@@ -307,11 +310,14 @@ def stop_server(
         return StopOutcome(StopResult.UNMANAGED,
             f"Cannot verify provenance for legacy PID {pid}; refusing to signal it. "
             "Stop the original worker from its owning installation or verify it manually.")
+    observed_executable = process_executable(pid)
     if (owner.get("role") != "worker" or owner.get("store_root") != str(path.resolve().parent)
             or not owner.get("start_identity") or not owner.get("executable")
-            or owner["executable"] != process_executable(pid)):
+            or (owner["executable"] != observed_executable
+                and owner.get("executable_observed") != observed_executable)):
         return StopOutcome(StopResult.UNMANAGED,
-                           f"Cannot verify role, storage, executable and start identity for PID {pid}.")
+                           f"Cannot verify role, storage, executable and start identity for PID {pid}; "
+                           f"recorded executable {owner.get('executable')!r}, observed {observed_executable!r}.")
     if owner is not None:
         if owner["pid"] != pid or owner["project_root"] != str(Path.cwd().resolve()):
             return StopOutcome(
@@ -346,7 +352,9 @@ def stop_server(
             )
         time.sleep(0.1)
 
-    if owner is not None and owner.get("start_identity") and owner["start_identity"] != process_start_identity(pid):
+    identity_now = process_start_identity(pid)
+    if identity_now is not None and identity_now != (owner or {}).get("start_identity"):
+        # A vanished process reports no identity: exiting is the desired outcome.
         return StopOutcome(StopResult.UNMANAGED, f"PID {pid} changed during shutdown; refusing force kill.")
     try:
         os.kill(pid, signal.SIGKILL)

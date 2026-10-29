@@ -88,3 +88,26 @@ def test_owner_project_can_stop_registered_process(tmp_path, monkeypatch):
     finally:
         child.terminate()
         child.wait(timeout=5)
+
+
+def test_stop_accepts_the_process_own_ps_executable_view(tmp_path, monkeypatch):
+    """macOS ps comm may show the Python.app binary; the recorded self-view must win."""
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "worker.pid"
+    bundle_view = "/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        with monkeypatch.context() as registration:
+            registration.setattr(control.os, "getpid", lambda: child.pid)
+            registration.setattr(control, "process_executable", lambda pid: bundle_view)
+            control.register_current_process(path)
+        assert control.read_process_owner(path)["executable_observed"] == bundle_view
+        monkeypatch.setattr(control, "is_expected_server_process", lambda pid: pid == child.pid)
+        monkeypatch.setattr(control, "is_process_alive", lambda pid: child.poll() is None)
+        monkeypatch.setattr(control, "process_executable", lambda pid: bundle_view)
+        outcome = control.stop_server(path, timeout_sec=1)
+        assert outcome.result == control.StopResult.STOPPED
+        assert child.poll() is not None
+    finally:
+        child.terminate()
+        child.wait(timeout=5)
