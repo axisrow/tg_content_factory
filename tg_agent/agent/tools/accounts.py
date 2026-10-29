@@ -192,6 +192,9 @@ TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
 def register(db, client_pool, embedding_service, **kwargs):
     runtime = _runtime(kwargs, db, client_pool)
     ctx = get_tool_context(kwargs, db=db, client_pool=client_pool, embedding_service=embedding_service)
+    from tg_agent.gateway.catalog import project_catalog, shared_project
+
+    config = ctx.config if shared_project(ctx.config) else getattr(client_pool, "config", None)
     tools = []
 
     @tool(
@@ -258,9 +261,16 @@ def register(db, client_pool, embedding_service, **kwargs):
                 old_value=str(int(acc.is_active)),
                 new_value=str(int(new_status)),
             )
-            changed = await db.set_account_active(
-                int(account_id), new_status, origin=origin, actor="agent"
-            )
+            if shared_project(config):
+                if origin != "human":
+                    return _text_response("Изменение доступа к общему аккаунту требует решения владельца.")
+                async with project_catalog(config, db) as catalog:
+                    await catalog.update(int(account_id), active=new_status)
+                changed = 1
+            else:
+                changed = await db.set_account_active(
+                    int(account_id), new_status, origin=origin, actor="agent"
+                )
             if changed == 0:
                 return _text_response(
                     f"Изменение статуса аккаунта {acc.phone} подавлено: "
@@ -313,7 +323,11 @@ def register(db, client_pool, embedding_service, **kwargs):
                     extra = f" Уведомления переназначены на {reassignment.new_phone}."
                 elif reassignment.action == "cleared":
                     extra = " Аккаунт уведомлений сброшен — используется Primary."
-            await db.delete_account(int(account_id))
+            if shared_project(config):
+                async with project_catalog(config, db) as catalog:
+                    await catalog.detach(int(account_id))
+            else:
+                await db.delete_account(int(account_id))
             return _text_response(f"Аккаунт '{name}' удалён.{extra}")
         except Exception as e:
             return _text_response(f"Ошибка удаления аккаунта: {e}")
@@ -345,7 +359,11 @@ def register(db, client_pool, embedding_service, **kwargs):
             )
             if gate:
                 return gate
-            session_string = await db.repos.accounts.get_decrypted_session(account_id=int(account_id))
+            if shared_project(config):
+                async with project_catalog(config, db) as catalog:
+                    session_string = await catalog.export_session(int(account_id))
+            else:
+                session_string = await db.repos.accounts.get_decrypted_session(account_id=int(account_id))
             if not session_string:
                 return _text_response(f"Аккаунт id={account_id} не найден или без сессии.")
             # The session string is the secret being requested; return it in the tool
@@ -383,6 +401,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         if not validate_session_string(session_string):
             return _text_response(f"Ошибка: невалидная Telegram session string для {phone}.")
         try:
+            if shared_project(config):
+                async with project_catalog(config, db) as catalog:
+                    await catalog.import_session(phone, session_string)
+                return _text_response(f"Аккаунт {phone} подключён к проекту через общий гейт.")
             existing = await db.get_account_summaries(active_only=False)
             if any(s.phone == phone for s in existing):
                 if not arg_bool(args, "force"):

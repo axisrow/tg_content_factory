@@ -43,6 +43,11 @@ async def resolve_photo_target(client_pool: Any, phone: str, target: str) -> Any
     """
     if target.strip().lower() not in _SELF_TARGET_ALIASES:
         return photo_task_module.PhotoTarget(dialog_id=int(target))
+    from tg_agent.gateway.pool import GatewayPool
+
+    if isinstance(client_pool, GatewayPool):
+        return photo_task_module.PhotoTarget(dialog_id=await client_pool.own_user_id(phone),
+                                            title="Saved Messages", target_type="saved")
     client_result = await client_pool.get_client_by_phone(phone)
     if not client_result:
         raise LookupError(f"Клиент для {phone} не найден.")

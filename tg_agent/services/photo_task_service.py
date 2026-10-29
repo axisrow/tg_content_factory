@@ -27,6 +27,12 @@ class PhotoTarget:
 
 
 class PhotoTaskService:
+    async def _send_item(self, item_id, **kwargs):
+        from tg_agent.gateway.context import gateway_intent
+
+        with gateway_intent(f"photo-item:{item_id}"):
+            return await self._publish.send_now(**kwargs)
+
     def __init__(self, bundle: PhotoLoaderBundle, publish: PhotoPublishService):
         self._bundle = bundle
         self._publish = publish
@@ -135,7 +141,7 @@ class PhotoTaskService:
             )
 
         try:
-            message_ids = await self._publish.send_now(
+            message_ids = await self._send_item(item_id,
                 phone=phone,
                 target_dialog_id=target.dialog_id,
                 target_type=target.target_type,
@@ -240,7 +246,7 @@ class PhotoTaskService:
             )
 
         try:
-            message_ids = await self._publish.send_now(
+            message_ids = await self._send_item(item_id,
                 phone=phone,
                 target_dialog_id=target.dialog_id,
                 target_type=target.target_type,
@@ -392,7 +398,7 @@ class PhotoTaskService:
         # If a retry/requeue-failed verb is ever added, wire on_file_sent here (mirror
         # send_now) AND add skip-already-sent logic, or partial sends will duplicate.
         try:
-            message_ids = await self._publish.send_now(
+            message_ids = await self._send_item(item.id,
                 phone=item.phone,
                 target_dialog_id=item.target_dialog_id,
                 target_type=item.target_type,

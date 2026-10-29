@@ -304,6 +304,12 @@ class PublishService:
         pool = self._client_pool
         if pool is None:
             return PublishResult(success=False, error="client_pool not configured")
+        from tg_agent.gateway.pool import GatewayPool
+
+        if isinstance(pool, GatewayPool):
+            from tg_agent.gateway.publishing import publish_target
+
+            return await publish_target(pool, run, target)
         acquired_phone: str | None = None
         session = None
         delivery_confirmed = False

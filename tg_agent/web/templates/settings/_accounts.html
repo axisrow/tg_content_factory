@@ -18,6 +18,15 @@
 {% endmacro %}
 <p><a href="/auth/login" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg me-1" aria-hidden="true"></i>Добавить аккаунт</a></p>
 
+{% if gateway_status %}
+<div class="alert {{ 'alert-info' if gateway_status.http_available and gateway_status.dispatcher_running else 'alert-warning' }}" role="status">
+    Общий Telegram-гейт:
+    {% if not gateway_status.http_available %}недоступен. Задания сохранены и ожидают подключения.
+    {% elif not gateway_status.dispatcher_running %}очередь Telegram недоступна. Задания сохранены.
+    {% else %}работает. Подключение аккаунтов показано ниже.{% endif %}
+</div>
+{% endif %}
+
 {% if all_accounts_flooded %}
 <div class="alert alert-warning" role="alert">
     Все подключённые аккаунты сейчас во Flood Wait.

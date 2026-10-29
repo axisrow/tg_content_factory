@@ -17,6 +17,11 @@ from tg_agent.security import SessionCipher
 
 SCHEMA = """
 PRAGMA foreign_keys=ON;
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS gateway_project_bots(
+ project_id TEXT NOT NULL REFERENCES projects(id),user_id INTEGER NOT NULL,payload TEXT NOT NULL,
+ PRIMARY KEY(project_id,user_id)
+);
 CREATE TABLE IF NOT EXISTS projects (
  id TEXT PRIMARY KEY, root TEXT UNIQUE NOT NULL, token_hash TEXT UNIQUE NOT NULL
 );
@@ -62,10 +67,13 @@ class EventCursorExpiredError(ValueError):
     """The client must recover history rather than silently miss old events."""
 
 
-def private_key(root: Path) -> str:
+def private_key(root: Path, name: str = "gateway.key") -> str:
     """Create once with exclusive creation, including under concurrent setup."""
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path = root / "gateway.key"
+    os.chmod(root, 0o700)
+    path = root / name
+    if name == "gateway.key" and not path.exists() and (root / "gateway.db").exists():
+        raise GatewayConflictError("Gateway key is missing; restore gateway.key before opening the existing store")
     key = secrets.token_urlsafe(48)
     temporary = root / f".gateway-key-{secrets.token_hex(16)}"
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -78,6 +86,7 @@ def private_key(root: Path) -> str:
             # Publish a complete file without replacing a concurrently created key.
             os.link(temporary, path)
         except FileExistsError:
+            os.chmod(path, 0o600)
             key = path.read_text(encoding="utf-8").strip()
             if not key:
                 raise GatewayConflictError("Gateway key is empty") from None
@@ -144,7 +153,8 @@ class GatewayStore:
                 row = await cur.fetchone()
         return row["id"] if row else None
 
-    async def import_account(self, phone: str, session: str, *, source_secret: str | None = None) -> str:
+    async def import_account(self, phone: str, session: str, *, source_secret: str | None = None,
+                             replace: bool = False) -> str:
         if SessionCipher.is_encrypted(session):
             if not source_secret:
                 raise ValueError("Source encryption key is required")
@@ -156,6 +166,14 @@ class GatewayStore:
                 row = await cur.fetchone()
             if row:
                 if self.cipher.decrypt(row["session"]) != session:
+                    if replace:
+                        async with db.execute("SELECT session FROM accounts WHERE id!=?", (row["id"],)) as cur:
+                            others = await cur.fetchall()
+                        if any(self.cipher.decrypt(other[0]) == session for other in others):
+                            raise GatewayConflictError("Session is already registered under another account")
+                        await db.execute("UPDATE accounts SET session=?,active=1 WHERE id=?",
+                                         (self.cipher.encrypt(session), row["id"]))
+                        return row["id"]
                     raise GatewayConflictError("Account already has a different shared session")
                 return row["id"]
             async with db.execute("SELECT session FROM accounts") as cur:
@@ -186,11 +204,67 @@ class GatewayStore:
     async def accounts(self, project: str) -> list[dict]:
         async with self.transaction() as db:
             async with db.execute(
-                "SELECT a.id,a.phone,a.active,a.flood_until,g.is_primary FROM accounts a "
+                "SELECT a.id,a.phone,a.active,a.flood_until,g.is_primary,"
+                "COALESCE((SELECT value='1' FROM settings WHERE key='premium:'||a.id),0) AS is_premium "
+                "FROM accounts a "
                 "JOIN grants g ON g.account_id=a.id WHERE g.project_id=? AND g.active=1 "
                 "ORDER BY g.is_primary DESC,a.id", (project,),
             ) as cur:
                 return [dict(row) for row in await cur.fetchall()]
+
+    async def catalog(self, project: str | None = None) -> list[dict]:
+        async with self.transaction() as db:
+            if project is None:
+                sql, params = "SELECT id,phone,active,flood_until FROM accounts ORDER BY phone", ()
+            else:
+                sql = ("SELECT a.id,a.phone,(a.active AND g.active) AS active,a.flood_until,g.is_primary,"
+                       "COALESCE((SELECT value='1' FROM settings WHERE key='premium:'||a.id),0) AS is_premium "
+                       "FROM accounts a JOIN grants g ON g.account_id=a.id WHERE g.project_id=? ORDER BY a.phone")
+                params = (project,)
+            async with db.execute(sql, params) as cur:
+                return [dict(row) for row in await cur.fetchall()]
+
+    async def account_for_phone(self, phone: str) -> str:
+        async with self.transaction() as db:
+            async with db.execute("SELECT id FROM accounts WHERE phone=?", (phone,)) as cur:
+                row = await cur.fetchone()
+        if row is None:
+            raise KeyError("Shared account not found")
+        return row[0]
+
+    async def update_grant(self, project: str, account: str, *, active: bool | None = None,
+                           primary: bool = False) -> None:
+        async with self.transaction() as db:
+            async with db.execute("SELECT 1 FROM grants WHERE project_id=? AND account_id=?",
+                                  (project, account)) as cur:
+                if await cur.fetchone() is None:
+                    raise KeyError("Project account not found")
+            if primary:
+                await db.execute("UPDATE grants SET is_primary=0 WHERE project_id=?", (project,))
+                await db.execute("UPDATE grants SET is_primary=1 WHERE project_id=? AND account_id=?",
+                                 (project, account))
+            if active is not None:
+                await db.execute("UPDATE grants SET active=? WHERE project_id=? AND account_id=?",
+                                 (int(active), project, account))
+
+    async def administer_account(self, phone: str, *, active: bool | None = None, delete: bool = False) -> str:
+        account = await self.account_for_phone(phone)
+        async with self.transaction() as db:
+            if delete:
+                await db.execute("DELETE FROM reply_owners WHERE account_id=?", (account,))
+                await db.execute("DELETE FROM grants WHERE account_id=?", (account,))
+                await db.execute("UPDATE accounts SET active=0,session='' WHERE id=?", (account,))
+            elif active is not None:
+                await db.execute("UPDATE accounts SET active=? WHERE id=?", (int(active), account))
+        return account
+
+    async def export_session(self, phone: str) -> str:
+        async with self.transaction() as db:
+            async with db.execute("SELECT session FROM accounts WHERE phone=?", (phone,)) as cur:
+                row = await cur.fetchone()
+        if row is None or not row[0]:
+            raise KeyError("Shared session not found")
+        return self.cipher.decrypt(row[0])
 
     async def subscriptions(self) -> list[tuple[str, str]]:
         """One authorized bootstrap context for every shared active account."""
@@ -259,7 +333,14 @@ class GatewayStore:
             async with db.execute("SELECT project_id,request_id,payload FROM operations WHERE state='running'") as cur:
                 rows = await cur.fetchall()
             for row in rows:
-                state = "pending" if json.loads(row["payload"]).get("kind") == "history" else "uncertain"
+                from tg_agent.gateway.action_protocol import READ_ACTIONS
+
+                payload = json.loads(row["payload"])
+                kind = payload.get("kind")
+                read = kind in READ_ACTIONS | {
+                    "history", "profile", "inspect_peer", "dialogs", "search", "dm_history", "message_page",
+                } or (kind == "notification" and payload.get("action") == "status")
+                state = "pending" if read else "uncertain"
                 await db.execute("UPDATE operations SET state=? WHERE project_id=? AND request_id=?",
                                  (state, row["project_id"], row["request_id"]))
 
@@ -307,6 +388,16 @@ class GatewayStore:
             if row is not None and row[0] != project:
                 raise GatewayConflictError("Dialog already has an automatic-reply owner")
             await db.execute("INSERT OR IGNORE INTO reply_owners VALUES (?,?,?)", (account, dialog, project))
+
+    async def release_reply_owner(self, project: str, account: str, dialog: int):
+        async with self.transaction() as db:
+            await db.execute("DELETE FROM reply_owners WHERE project_id=? AND account_id=? AND dialog_id=?",
+                             (project, account, dialog))
+
+    async def event_floor(self):
+        async with self.transaction() as db:
+            async with db.execute("SELECT floor FROM event_retention WHERE id=1") as cur:
+                return (await cur.fetchone())[0]
 
     async def can_auto_reply(self, project: str, account: str, dialog: int) -> bool:
         async with self.transaction() as db:

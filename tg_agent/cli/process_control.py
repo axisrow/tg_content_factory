@@ -14,6 +14,8 @@ from enum import Enum
 from pathlib import Path
 
 from tg_agent.config import AppConfig
+from tg_agent.telegram.session_lock import SessionLock, SessionLockError
+from tg_agent.utils.process_identity import process_executable, process_start_identity
 
 
 class ProcessControlError(RuntimeError):
@@ -33,6 +35,7 @@ class StopResult(Enum):
 # process it runs the worker in-process, so its cmdline stays `... restart`
 # (#automation-first default — the managed daemon has no web panel).
 _DAEMON_COMMANDS = {"serve", "worker", "restart"}
+_WORKER_LOCKS: dict[Path, SessionLock] = {}
 
 
 @dataclass(frozen=True)
@@ -224,7 +227,20 @@ def ensure_server_not_running(path: Path) -> None:
 
 def register_current_process(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    ensure_server_not_running(path)
+    canonical = path.resolve()
+    lock = _WORKER_LOCKS.get(canonical)
+    if lock is None:
+        lock = SessionLock("project-worker", str(canonical), lock_dir=path.parent / ".worker-locks")
+        try:
+            lock.acquire(grace_seconds=0)
+        except SessionLockError as exc:
+            raise ProcessControlError(f"Another worker owns this project database: {canonical}") from exc
+        try:
+            ensure_server_not_running(path)
+        except BaseException:
+            lock.release()
+            raise
+        _WORKER_LOCKS[canonical] = lock
     owner = {
         "pid": os.getpid(),
         "role": "worker",
@@ -233,6 +249,7 @@ def register_current_process(path: Path) -> None:
         "executable": str(Path(sys.executable).resolve()),
         "started_at": datetime.now(timezone.utc).isoformat(),
         "command": _process_command(os.getpid()),
+        "start_identity": process_start_identity(os.getpid()),
     }
     target = owner_file_path(path)
     temporary = target.with_name(f"{target.name}.{os.getpid()}.tmp")
@@ -254,6 +271,10 @@ def unregister_current_process(path: Path) -> None:
     except Exception:
         # PID cleanup must never block shutdown; stale/unreadable files are safe to ignore.
         pass
+    finally:
+        lock = _WORKER_LOCKS.pop(path.resolve(), None)
+        if lock is not None:
+            lock.release()
 
 
 def stop_server(
@@ -282,6 +303,15 @@ def stop_server(
         )
 
     owner = read_process_owner(path)
+    if owner is None:
+        return StopOutcome(StopResult.UNMANAGED,
+            f"Cannot verify provenance for legacy PID {pid}; refusing to signal it. "
+            "Stop the original worker from its owning installation or verify it manually.")
+    if (owner.get("role") != "worker" or owner.get("store_root") != str(path.resolve().parent)
+            or not owner.get("start_identity") or not owner.get("executable")
+            or owner["executable"] != process_executable(pid)):
+        return StopOutcome(StopResult.UNMANAGED,
+                           f"Cannot verify role, storage, executable and start identity for PID {pid}.")
     if owner is not None:
         if owner["pid"] != pid or owner["project_root"] != str(Path.cwd().resolve()):
             return StopOutcome(
@@ -292,6 +322,8 @@ def stop_server(
         recorded_command = owner.get("command")
         if recorded_command and recorded_command != _process_command(pid):
             return StopOutcome(StopResult.UNMANAGED, f"PID {pid} no longer matches its process owner record.")
+        if owner.get("start_identity") and owner["start_identity"] != process_start_identity(pid):
+            return StopOutcome(StopResult.UNMANAGED, f"PID {pid} has been reused; refusing to signal it.")
 
     try:
         os.kill(pid, signal.SIGTERM)
@@ -314,6 +346,8 @@ def stop_server(
             )
         time.sleep(0.1)
 
+    if owner is not None and owner.get("start_identity") and owner["start_identity"] != process_start_identity(pid):
+        return StopOutcome(StopResult.UNMANAGED, f"PID {pid} changed during shutdown; refusing force kill.")
     try:
         os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:

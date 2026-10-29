@@ -18,9 +18,10 @@ from __future__ import annotations
 import json
 import logging
 import struct
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator, cast
 
 from tg_agent.database.pool import ReadConnection
 from tg_agent.database.udf import has_cyrillic_udf
@@ -88,6 +89,23 @@ def _normalize_username(username: str | None) -> str | None:
     return cleaned or None
 
 
+class _TransactionWrites:
+    """Reuse repository write helpers inside an already owned transaction."""
+
+    def __init__(self, connection):
+        self.connection = connection
+
+    async def executemany_write(self, sql, rows):
+        return await self.connection.executemany(sql, rows)
+
+    async def execute_write(self, sql, params=()):
+        return await self.connection.execute(sql, params)
+
+    @asynccontextmanager
+    async def transaction(self):
+        yield self.connection
+
+
 class MessagesRepository:
     """Вставка, поиск и аналитика сообщений (`messages` + сайдкары реакций/эмбеддингов)."""
 
@@ -101,6 +119,23 @@ class MessagesRepository:
         self._db = db
         self._fts_available = fts_available
         self._database = database
+        self._strict_writes = False
+
+    async def save_collected_page(self, channel_id: int, messages: list[Message], last_id: int) -> int:
+        """Commit messages, derived statistics and the channel cursor together."""
+        if any(message.channel_id != channel_id or message.message_id > last_id for message in messages):
+            raise ValueError("Collection page does not match its channel/cursor")
+        assert self._database is not None
+        async with self._database.transaction() as conn:
+            repository = MessagesRepository(conn, fts_available=self._fts_available,
+                                            database=cast("Database", _TransactionWrites(conn)))
+            repository._strict_writes = True
+            count = await repository.insert_messages_batch(messages)
+            cursor = await conn.execute("UPDATE channels SET last_collected_id=MAX(last_collected_id,?) "
+                                        "WHERE channel_id=?", (last_id, channel_id))
+            if cursor.rowcount != 1:
+                raise ValueError("Collected channel was removed")
+            return count
 
     @staticmethod
     def _normalize_date_from(value: str | None) -> str | None:
@@ -344,6 +379,8 @@ class MessagesRepository:
             logger.exception(
                 "Failed to update filter text stats for %d message(s)", len(messages)
             )
+            if self._strict_writes:
+                raise
 
     async def _upsert_reactions(
         self, channel_id: int, message_id: int, reactions_json: str, message_date: str
@@ -432,6 +469,8 @@ class MessagesRepository:
                 "Could not pre-fetch existing message keys for refresh, proceeding without: %s",
                 exc,
             )
+            if self._strict_writes:
+                raise
             existing_keys = set()
 
         # Local import: facade.py imports this module at top level, so a
@@ -469,6 +508,8 @@ class MessagesRepository:
             raise
         except Exception as exc:
             logger.error("Failed to insert batch of %d messages: %s", len(messages), exc)
+            if self._strict_writes:
+                raise
             return 0
 
         if existing_keys:
@@ -510,6 +551,8 @@ class MessagesRepository:
                         )
             except Exception as exc:
                 logger.error("Failed to upsert reactions for batch: %s", exc)
+                if self._strict_writes:
+                    raise
 
         return count
 
@@ -576,6 +619,8 @@ class MessagesRepository:
             )
         except Exception as exc:
             logger.error("Failed to refresh %d existing messages: %s", len(messages), exc)
+            if self._strict_writes:
+                raise
 
     async def ensure_embeddings_table(self, dimensions: int) -> None:
         """Зафиксировать размерность индекса эмбеддингов при первом вызове; несовпадение с существующей — ошибка."""

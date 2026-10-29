@@ -122,9 +122,12 @@ class PingMonitorService:
         threshold = _next_threshold_days(monitor.silence_threshold_days, monitor.cycle_count)
         if anchor + timedelta(days=threshold) > now:
             return
-        await self._actions.send_message(
-            phone=monitor.phone, recipient=monitor.dialog_id, text=monitor.nudge_text
-        )
+        from tg_agent.gateway.context import gateway_intent
+
+        with gateway_intent(f"ping:{monitor_id}:{monitor.cycle_count}:{anchor.isoformat()}", automatic=True):
+            await self._actions.send_message(
+                phone=monitor.phone, recipient=monitor.dialog_id, text=monitor.nudge_text
+            )
         await self._repo.update(
             monitor_id, cycle_count=monitor.cycle_count + 1, last_nudge_sent_at=now
         )

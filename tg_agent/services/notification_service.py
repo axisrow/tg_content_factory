@@ -16,6 +16,15 @@ _DEFAULT_BOT_USERNAME_PREFIX = "leadhunter_"
 
 
 class NotificationService:
+    def __new__(cls, notifications, target_service, *args, **kwargs):
+        from tg_agent.gateway.pool import GatewayPool
+
+        if isinstance(getattr(target_service, "_pool", None), GatewayPool):
+            from tg_agent.gateway.notifications import GatewayNotificationService
+
+            return GatewayNotificationService(notifications, target_service, *args, **kwargs)
+        return super().__new__(cls)
+
     def __init__(
         self,
         notifications: NotificationBundle | Database,

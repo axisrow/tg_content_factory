@@ -45,6 +45,21 @@ def test_registration_records_owner_and_cleanup_removes_it(tmp_path):
     assert not control.owner_file_path(path).exists()
 
 
+def test_legacy_numeric_pid_without_provenance_is_not_signalled(tmp_path, monkeypatch):
+    path = tmp_path / "legacy.pid"
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        path.write_text(str(child.pid))
+        monkeypatch.setattr(control, "is_expected_server_process", lambda pid: True)
+        outcome = control.stop_server(path, timeout_sec=0.1)
+        assert outcome.result is control.StopResult.UNMANAGED
+        assert "provenance" in outcome.message
+        assert child.poll() is None
+    finally:
+        child.terminate()
+        child.wait(timeout=5)
+
+
 def test_corrupt_owner_record_refuses_stop(tmp_path, monkeypatch):
     path = tmp_path / "worker.pid"
     control.register_current_process(path)

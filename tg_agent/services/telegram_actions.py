@@ -219,6 +219,13 @@ class TelegramActionService:
     here instead of directly assembling raw Telethon requests.
     """
 
+    def __new__(cls, pool):
+        if getattr(type(pool), "_gateway_project", False):
+            from tg_agent.gateway.remote_actions import RemoteActionService
+
+            return RemoteActionService(pool)
+        return super().__new__(cls)
+
     def __init__(self, pool: ClientPool):
         self._pool = pool
 

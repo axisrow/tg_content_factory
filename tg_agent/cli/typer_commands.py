@@ -73,6 +73,7 @@ from tg_agent.cli.commands.dialogs import dialogs_app
 from tg_agent.cli.commands.dm import dm_app
 from tg_agent.cli.commands.export import export_app
 from tg_agent.cli.commands.filter import filter_app
+from tg_agent.cli.commands.gateway import gateway_app
 from tg_agent.cli.commands.global_store import global_app
 from tg_agent.cli.commands.image import image_app
 from tg_agent.cli.commands.messages import messages_app
@@ -424,6 +425,8 @@ app.add_typer(photo_loader_app, name="photo-loader")
 # --------------------------------------------------------------------------- #
 
 app.add_typer(global_app, name="global")
+
+app.add_typer(gateway_app, name="gateway")
 
 
 # --------------------------------------------------------------------------- #

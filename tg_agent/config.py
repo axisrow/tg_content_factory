@@ -232,6 +232,7 @@ class AppConfig(BaseModel):
     agent: AgentConfig = AgentConfig()
     security: SecurityConfig = SecurityConfig()
     production_limits: ProductionLimitsConfig = ProductionLimitsConfig()
+    gateway: dict[str, str] = Field(default_factory=dict)
 
 
 _ENV_PATTERN = re.compile(r"\$\{(\w+)\}")
@@ -285,6 +286,11 @@ def read_global_store_marker() -> Path | None:
         raw = global_marker_path().read_text(encoding="utf-8").strip()
     except OSError:
         return None
+    if raw.startswith("{"):
+        from tg_agent.gateway.project import ProjectBinding
+
+        ProjectBinding.model_validate_json(raw)
+        return None
     return Path(raw) if raw else None
 
 
@@ -296,6 +302,15 @@ def apply_global_store(config: AppConfig) -> None:
     остаются локальными. Явный `TG_SESSION_CACHE_DIR` сильнее маркера — это
     осознанное переопределение окружения конкретного процесса.
     """
+    from tg_agent.gateway.project import read_binding
+
+    binding = read_binding(global_marker_path())
+    if binding is not None:
+        config.gateway = {"project_id": str(binding.project_id), "root": binding.store_root,
+                          "token_file": binding.token_file}
+        if binding.database_path is not None:
+            config.database.path = binding.database_path
+        return
     root = read_global_store_marker()
     if root is None:
         return
@@ -341,7 +356,7 @@ def _walk_and_substitute(obj: object) -> object:
     return obj
 
 
-def load_config(path: str | Path = "config.yaml") -> AppConfig:
+def load_config(path: str | Path = "config.yaml", *, apply_marker: bool = True) -> AppConfig:
     """Load application config from YAML, substituting env variables."""
     path = Path(path)
     if not path.exists():
@@ -387,7 +402,8 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
             "will stay disabled until it is corrected.",
             config.agent.fallback_model,
         )
-    apply_global_store(config)
+    if apply_marker:
+        apply_global_store(config)
     return config
 
 

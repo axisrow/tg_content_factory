@@ -150,6 +150,11 @@ class ClientPool(
         max_flood_wait_sec: int = 300,
         runtime_config: TelegramRuntimeConfig | None = None,
     ):
+        from tg_agent.config import global_marker_path
+        from tg_agent.gateway.project import read_binding
+
+        if not getattr(type(db), "_gateway_owner", False) and read_binding(global_marker_path()) is not None:
+            raise RuntimeError("This project uses a shared gateway; opening a local Telegram ClientPool is forbidden")
         self._auth = auth
         self._db = db
         self._max_flood_wait_sec = max_flood_wait_sec

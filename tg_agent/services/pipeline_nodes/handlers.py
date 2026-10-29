@@ -32,6 +32,17 @@ except ImportError:  # pragma: no cover — handlers import path used without te
 
 logger = logging.getLogger(__name__)
 
+async def _perform_telegram_action(service, services, node_id, action, message, **arguments):
+    from tg_agent.gateway.context import gateway_intent
+
+    run = services.get("run_id") or f"pipeline-{services.get('pipeline_id')}"
+    target = arguments.get("to_chat", arguments.get("chat_id"))
+    key = (f"pipeline:{run}:node:{node_id}:{action}:{message.channel_id}:{message.message_id}:"
+           f"{arguments.get('phone')}:{target}")
+    with gateway_intent(key):
+        return await getattr(service, action)(**arguments)
+
+
 
 def _build_source_messages(messages: list) -> str:
     """Render the ``context_messages`` list into the ``[header] text`` block fed to LLM/agent nodes.
@@ -521,7 +532,7 @@ class ReactHandler(BaseNodeHandler):
                 continue
             try:
                 chosen_emoji = random.choice(random_emoji_list) if random_emoji_list else emoji
-                await action_service.send_reaction(
+                await _perform_telegram_action(action_service, services, node_id, "send_reaction", message,
                     phone=resolved_phone,
                     chat_id=message.channel_id,
                     message_id=message.message_id,
@@ -635,7 +646,7 @@ class ForwardHandler(BaseNodeHandler):
                     # every target still receives the message within this run.
                     if (message.channel_id, message.message_id) in processed_ids:
                         continue
-                    await action_service.forward_messages(
+                    await _perform_telegram_action(action_service, services, node_id, "forward_messages", message,
                         phone=phone,
                         from_chat=message.channel_id,
                         to_chat=dialog_id,
@@ -722,7 +733,7 @@ class DeleteMessageHandler(BaseNodeHandler):
                 skipped += 1
                 continue
             try:
-                await action_service.delete_messages(
+                await _perform_telegram_action(action_service, services, node_id, "delete_messages", message,
                     phone=resolved_phone,
                     chat_id=message.channel_id,
                     message_ids=[message.message_id],
@@ -854,7 +865,7 @@ class EditMessageHandler(BaseNodeHandler):
             else:
                 edit_text = new_text
             try:
-                await action_service.edit_message(
+                await _perform_telegram_action(action_service, services, node_id, "edit_message", message,
                     phone=resolved_phone,
                     chat_id=message.channel_id,
                     message_id=message.message_id,

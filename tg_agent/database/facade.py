@@ -540,13 +540,18 @@ class Database:
         return await self._channels.get_channel_by_channel_id(channel_id)
 
     async def get_channels_with_counts(
-        self, active_only: bool = False, include_filtered: bool = True
+        self,
+        active_only: bool = False,
+        include_filtered: bool = True,
+        include_pending: bool = False,
     ) -> list[Channel]:
         self._require()
         assert self._channels is not None, (
             "Database.get_channels_with_counts requires initialized ChannelsRepository"
         )
-        return await self._channels.get_channels_with_counts(active_only, include_filtered)
+        return await self._channels.get_channels_with_counts(
+            active_only, include_filtered, include_pending=include_pending
+        )
 
     async def update_channel_last_id(self, channel_id: int, last_id: int) -> None:
         self._require()

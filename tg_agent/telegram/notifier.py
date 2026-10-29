@@ -218,6 +218,18 @@ class Notifier:
 
     async def _attempt_send(self, text: str) -> bool:
         try:
+            from tg_agent.gateway.pool import GatewayPool, GatewayUncertainError
+
+            if isinstance(getattr(self._target_service, "_pool", None), GatewayPool):
+                from tg_agent.gateway.notifications import GatewayNotificationService
+
+                try:
+                    result = await GatewayNotificationService(None, self._target_service).execute(
+                        "send", text=text, chat_id=self._admin_chat_id)
+                    return result["delivered"]
+                except GatewayUncertainError:
+                    logger.error("Gateway notification delivery unconfirmed; verify before sending again")
+                    return True
             # Fast path: if me.id is cached and a bot is configured, skip the
             # Telegram client entirely — _send_via_bot_api is a pure HTTP call.
             if self._notification_bundle is not None and self._cached_me_id is not None:
