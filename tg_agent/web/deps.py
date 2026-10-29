@@ -116,6 +116,7 @@ def get_container(request: Request) -> AppContainer:
     if templates is None:
         templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     container = AppContainer(
+        plugins=getattr(db, "plugins", None),
         runtime_mode=getattr(request.app.state, "runtime_mode", "web"),
         config=_require_app_state_attr(request, "config"),
         db=db,

@@ -643,7 +643,11 @@ async def handle_settings_page(request: Request) -> SettingsTemplate:
     accounts = await db.get_account_summaries()
     notification_target = await deps.get_notification_target_service(request).describe_target()
 
+    from tg_agent.services.plugin_tools import PluginTools
+
+    plugin_records = PluginTools(deps.get_container(request).plugins).list_plugins()
     context = {
+        "plugin_records": plugin_records,
         "is_configured": auth.is_configured,
         "accounts": accounts,
         "account_phones": [acc.phone for acc in accounts],

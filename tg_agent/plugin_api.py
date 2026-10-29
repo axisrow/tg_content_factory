@@ -79,6 +79,15 @@ def _invalidate_permissions():
     permissions._all_allowed_tools_cache = None
 
 
+@dataclass
+class PluginRecord:
+    id: str
+    version: str | None = None
+    status: str = "failed"
+    reason: str = ""
+    tools: list[str] = field(default_factory=list)
+
+
 class PluginRuntime:
     """One activation per database/container, independent of registry rebuilds."""
 
@@ -89,6 +98,8 @@ class PluginRuntime:
         self.scheduler_manager = scheduler_manager
         self.tools: list[SdkMcpTool] = []
         self.active: list[Plugin] = []
+        self.records: list[PluginRecord] = []
+        self.tool_owners: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._started = False
         self._closed = False
@@ -111,7 +122,11 @@ class PluginRuntime:
                 return
             try:
                 for ep in entries:
+                    record = PluginRecord(ep.name)
+                    self.records.append(record)
                     if ep.name in disabled:
+                        record.status = "disabled"
+                        record.reason = "Disabled by plugins_disabled"
                         continue
                     plugin = None
                     setup_started = False
@@ -123,7 +138,10 @@ class PluginRuntime:
                         if ep.name != plugin.id or plugin.id in seen:
                             raise ValueError("Entry point must match unique plugin id")
                         seen.add(plugin.id)
+                        record.version = plugin.version
                         if plugin.requires_api != PLUGIN_API_VERSION:
+                            record.status = "incompatible"
+                            record.reason = f"Requires API {plugin.requires_api}; host API {PLUGIN_API_VERSION}"
                             logger.warning("Skipping incompatible plugin %s (API %s)", plugin.id, plugin.requires_api)
                             continue
                         from tg_agent.services.embedding_service import EmbeddingService
@@ -164,11 +182,15 @@ class PluginRuntime:
                             raise ValueError("Plugin tools must have consistent metadata across containers")
                         self.tools.extend(tools)
                         self.active.append(plugin)
+                        self.tool_owners.update(dict.fromkeys(metadata, plugin.id))
+                        record.status = "active"
+                        record.tools = list(metadata)
                         reserved.update(metadata)
                         catalogue[f"Plugin: {plugin.id}"] = metadata
                         _catalogues[self] = catalogue
                         _invalidate_permissions()
                     except BaseException as exc:
+                        record.reason = f"Activation failed ({type(exc).__name__})"
                         if setup_started and plugin is not None:
                             await self._shutdown(plugin)
                         if not isinstance(exc, Exception):
@@ -199,6 +221,7 @@ class PluginRuntime:
         finally:
             self.active.clear()
             self.tools.clear()
+            self.tool_owners.clear()
             _catalogues.pop(self, None)
             _invalidate_permissions()
 

@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 from tg_agent.web.container import AppContainer
 from tg_agent.web.panel_auth import get_cookie_user, sanitize_next, set_session_cookie
 from tg_agent.web.paths import STATIC_DIR, TEMPLATES_DIR, image_dir
+from tg_agent.web.routes.plugin_tools import router as plugin_tools_router
 from tg_agent.web.schemas.common import HealthResponse
 from tg_agent.web.session import COOKIE_NAME
 from tg_agent.web.template_globals import configure_template_globals
@@ -158,6 +159,7 @@ def register_routes(app: FastAPI) -> None:
     from tg_agent.web.routes.settings import router as settings_router
     from tg_agent.web.routes.telegram_commands import router as telegram_commands_router
 
+    app.include_router(plugin_tools_router)
     app.include_router(agent_router, prefix="/agent")
     app.include_router(calendar_router, prefix="/calendar")
     app.include_router(analytics_router, prefix="/analytics")

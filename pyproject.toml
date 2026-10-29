@@ -44,6 +44,7 @@ dependencies = [
     "aiosqlite>=0.22.1",
     "apscheduler>=3.11.3",
     "pydantic>=2.13.4",
+    "jsonschema>=4.26.0",
     "pydantic-settings>=2.14.1",
     "pyyaml>=6.0.3",
     "python-dotenv>=1.2.2",
@@ -180,6 +181,7 @@ include = ["tg_agent*"]
 [tool.setuptools.package-data]
 tg_agent = [
     "web/templates/*.html",
+    "web/templates/**/*.html",
     "web/static/*.css",
     "web/static/*.js",
     "web/static/js/*.js",

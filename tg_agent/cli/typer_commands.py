@@ -81,6 +81,7 @@ from tg_agent.cli.commands.notification import notification_app
 from tg_agent.cli.commands.photo_loader import photo_loader_app
 from tg_agent.cli.commands.ping import ping_app
 from tg_agent.cli.commands.pipeline import pipeline_app
+from tg_agent.cli.commands.plugin import plugin_app
 from tg_agent.cli.commands.provider import provider_app
 from tg_agent.cli.commands.scheduler import scheduler_app
 from tg_agent.cli.commands.search_query import search_query_app
@@ -441,3 +442,5 @@ app.add_typer(style_app, name="style")
 # --------------------------------------------------------------------------- #
 
 app.add_typer(test_app, name="test")
+
+app.add_typer(plugin_app, name="plugin")

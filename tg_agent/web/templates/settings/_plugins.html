@@ -1,0 +1,18 @@
+<p class="text-body-secondary">Установка и обновление — через pip в окружении приложения, затем перезапуск.</p>
+{% if plugin_records %}
+<div class="table-responsive">
+<table class="table align-middle">
+    <thead><tr><th>Плагин</th><th>Версия</th><th>Статус</th><th>Инструменты</th><th>Причина</th></tr></thead>
+    <tbody>
+    {% for plugin in plugin_records %}
+    <tr>
+        <td><code>{{ plugin.id }}</code></td><td>{{ plugin.version or '—' }}</td>
+        <td>{{ plugin.status }}</td><td>{{ plugin.tools|join(', ') or '—' }}</td><td>{{ plugin.reason or '—' }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="mb-0">Плагины не установлены.</p>
+{% endif %}
