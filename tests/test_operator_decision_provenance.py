@@ -179,3 +179,52 @@ async def test_unjournaled_legacy_split_state_is_still_canonicalized(db):
     assert await db.get_setting(key) == "0"
     assert "content_generate_8" in mgr._scheduler.added
     assert await db.get_setting("scheduler_pipeline_jobs_canonicalized") == "1"
+
+
+async def _drain_reconcile(db, dispatcher: TelegramCommandDispatcher) -> None:
+    """Run the queued scheduler.reconcile command through the real worker loop step."""
+    commands = await db.repos.telegram_commands.list_commands(command_type="scheduler.reconcile")
+    pending = [c for c in commands if c.status.value == "pending"]
+    assert len(pending) == 1
+    await dispatcher._run_iteration()
+    done = await db.repos.telegram_commands.get_command(pending[0].id)
+    assert done.status.value == "succeeded", done.error
+
+
+async def test_agent_toggle_with_live_manager_survives_reconcile_and_restart(db):
+    """#1696 review: toggle -> journal/command -> reconcile -> restart -> toggle back,
+    on a real DB, a real SchedulerManager and the real worker command handler."""
+    key = "scheduler_job_disabled:collect_all"
+    await db.set_setting("scheduler_autostart", "1")
+    mgr = SchedulerManager(scheduler_bundle=SchedulerBundle.from_database(db))
+    restarted: SchedulerManager | None = None
+    await mgr.start()
+    try:
+        assert mgr._scheduler.get_job("collect_all") is not None
+        handlers = _get_tool_handlers(db, scheduler_manager=mgr)
+        dispatcher = TelegramCommandDispatcher(db, MagicMock(), scheduler=mgr)
+
+        # Agent disables the job: persisted and journaled, applied by the worker.
+        assert "выключена" in _text(await handlers["toggle_scheduler_job"]({"job_id": "collect_all"}))
+        assert await db.get_setting(key) == "1"
+        assert await db.repos.settings.has_setting_decision(key)
+        await _drain_reconcile(db, dispatcher)
+        assert mgr._scheduler.get_job("collect_all") is None
+
+        # Worker restart: a fresh manager over the same DB keeps the job off.
+        await mgr.stop()
+        restarted = SchedulerManager(scheduler_bundle=SchedulerBundle.from_database(db))
+        await restarted.start()
+        assert restarted._scheduler.get_job("collect_all") is None
+
+        # A second toggle reads the persisted key and turns the job back on.
+        handlers = _get_tool_handlers(db, scheduler_manager=restarted)
+        dispatcher = TelegramCommandDispatcher(db, MagicMock(), scheduler=restarted)
+        assert "включена" in _text(await handlers["toggle_scheduler_job"]({"job_id": "collect_all"}))
+        assert await db.get_setting(key) == "0"
+        await _drain_reconcile(db, dispatcher)
+        assert restarted._scheduler.get_job("collect_all") is not None
+    finally:
+        await mgr.stop()
+        if restarted is not None:
+            await restarted.stop()

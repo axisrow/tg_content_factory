@@ -191,27 +191,51 @@ class TestToggleSchedulerJobTool:
         result = await handlers["toggle_scheduler_job"]({})
         assert "job_id обязателен" in _text(result)
 
-    @pytest.mark.anyio
-    async def test_enabled_job_becomes_disabled(self, mock_db):
-        mgr = _make_scheduler_mgr()
-        mgr.is_job_enabled = AsyncMock(return_value=True)
-        handlers = _get_tool_handlers(mock_db, scheduler_manager=mgr)
-        result = await handlers["toggle_scheduler_job"]({"job_id": "collect"})
-        text = _text(result)
-        assert "collect" in text
-        assert "выключена" in text
-        mgr.sync_job_state.assert_awaited_once_with("collect", False)
+    @staticmethod
+    def _settings_db(mock_db, current):
+        mock_db.repos = MagicMock()
+        mock_db.repos.settings.get_setting = AsyncMock(return_value=current)
+        mock_db.repos.settings.record_setting_decision = AsyncMock()
+        mock_db.repos.telegram_commands.find_active_by_type = AsyncMock(return_value=None)
+        mock_db.repos.telegram_commands.create_command = AsyncMock(return_value=21)
 
     @pytest.mark.anyio
-    async def test_disabled_job_becomes_enabled(self, mock_db):
+    async def test_live_manager_toggle_is_journaled_and_reconciled(self, mock_db):
+        """#1661 review: with a manager present the toggle used to flip only the
+        in-memory job — no scheduler_job_disabled:* key, no journal entry, lost on
+        restart. It must take the same journaled + reconcile path as web/CLI."""
+        self._settings_db(mock_db, None)
         mgr = _make_scheduler_mgr()
-        mgr.is_job_enabled = AsyncMock(return_value=False)
         handlers = _get_tool_handlers(mock_db, scheduler_manager=mgr)
-        result = await handlers["toggle_scheduler_job"]({"job_id": "notify"})
+        result = await handlers["toggle_scheduler_job"]({"job_id": "collect_all"})
         text = _text(result)
-        assert "notify" in text
-        assert "включена" in text
-        mgr.sync_job_state.assert_awaited_once_with("notify", True)
+        assert "выключена" in text
+        assert "#21" in text
+        mock_db.repos.settings.record_setting_decision.assert_awaited_once_with(
+            "scheduler_job_disabled:collect_all", "1", origin="auto", actor="agent"
+        )
+        mgr.sync_job_state.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_live_manager_toggle_reenables_disabled_job(self, mock_db):
+        """A second toggle must read the persisted key and turn the job back on."""
+        self._settings_db(mock_db, "1")
+        mgr = _make_scheduler_mgr()
+        handlers = _get_tool_handlers(mock_db, scheduler_manager=mgr)
+        result = await handlers["toggle_scheduler_job"]({"job_id": "collect_all"})
+        assert "включена" in _text(result)
+        mock_db.repos.settings.record_setting_decision.assert_awaited_once_with(
+            "scheduler_job_disabled:collect_all", "0", origin="auto", actor="agent"
+        )
+
+    @pytest.mark.anyio
+    async def test_live_manager_toggle_canonicalizes_pipeline_run_id(self, mock_db):
+        self._settings_db(mock_db, None)
+        handlers = _get_tool_handlers(mock_db, scheduler_manager=_make_scheduler_mgr())
+        await handlers["toggle_scheduler_job"]({"job_id": "pipeline_run_5"})
+        mock_db.repos.settings.record_setting_decision.assert_awaited_once_with(
+            "scheduler_job_disabled:content_generate_5", "1", origin="auto", actor="agent"
+        )
 
     @pytest.mark.anyio
     async def test_no_manager_falls_back_to_disabled_key(self, mock_db):
@@ -232,8 +256,8 @@ class TestToggleSchedulerJobTool:
 
     @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
-        mgr = _make_scheduler_mgr()
-        mgr.is_job_enabled = AsyncMock(side_effect=Exception("unknown job"))
-        handlers = _get_tool_handlers(mock_db, scheduler_manager=mgr)
+        self._settings_db(mock_db, None)
+        mock_db.repos.settings.get_setting = AsyncMock(side_effect=Exception("db down"))
+        handlers = _get_tool_handlers(mock_db, scheduler_manager=_make_scheduler_mgr())
         result = await handlers["toggle_scheduler_job"]({"job_id": "bad_job"})
         assert "Ошибка переключения задачи" in _text(result)

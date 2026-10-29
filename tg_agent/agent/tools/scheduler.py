@@ -166,14 +166,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         if not job_id:
             return _text_response("Ошибка: job_id обязателен.")
         try:
-            if scheduler_manager is not None:
-                current = await scheduler_manager.is_job_enabled(job_id)
-                new_state = not current
-                await scheduler_manager.sync_job_state(job_id, new_state)
-                status = "включена" if new_state else "выключена"
-                return _text_response(f"Задача '{job_id}' {status}.")
-            # Same canonicalization as the web route / CLI job-toggle: pipeline_run_ is
-            # no longer a registered job — toggling it must flip content_generate_<id>.
+            # Always the persisted path, even with a scheduler_manager at hand: a
+            # live-only sync_job_state left no scheduler_job_disabled:* key and no
+            # journal entry, so the toggle was lost on restart and the next toggle
+            # read stale state (#1661 review). The worker applies it on reconcile,
+            # same as the web route / CLI job-toggle.
+            # Same canonicalization too: pipeline_run_ is no longer a registered
+            # job — toggling it must flip content_generate_<id>.
             if job_id.startswith("pipeline_run_"):
                 job_id = "content_generate_" + job_id.removeprefix("pipeline_run_")
             key = f"scheduler_job_disabled:{job_id}"

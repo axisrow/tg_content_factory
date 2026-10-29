@@ -753,13 +753,21 @@ class TestDeepagentsSyncGetDailyStats:
 # ===========================================================================
 
 
+def _toggle_settings_db(mock_db, current):
+    """Persisted toggle path (#1661 review): settings key + journal + reconcile command."""
+    mock_db.repos = MagicMock()
+    mock_db.repos.settings.get_setting = AsyncMock(return_value=current)
+    mock_db.repos.settings.record_setting_decision = AsyncMock()
+    mock_db.repos.telegram_commands.find_active_by_type = AsyncMock(return_value=None)
+    mock_db.repos.telegram_commands.create_command = AsyncMock(return_value=1)
+
+
 class TestDeepagentsSyncToggleSchedulerJob:
     def test_disable_job(self, mock_db):
         from tg_agent.agent.runtime_context import AgentRuntimeContext
 
+        _toggle_settings_db(mock_db, None)
         mgr_mock = MagicMock()
-        mgr_mock.is_job_enabled = AsyncMock(return_value=True)
-        mgr_mock.sync_job_state = AsyncMock(return_value=None)
         runtime_context = AgentRuntimeContext.build(db=mock_db, scheduler_manager=mgr_mock)
         tool_map = _build_sync_tools(mock_db, runtime_context=runtime_context)
         result = tool_map["toggle_scheduler_job"](job_id="collect_all")
@@ -769,9 +777,8 @@ class TestDeepagentsSyncToggleSchedulerJob:
     def test_enable_job(self, mock_db):
         from tg_agent.agent.runtime_context import AgentRuntimeContext
 
+        _toggle_settings_db(mock_db, "1")
         mgr_mock = MagicMock()
-        mgr_mock.is_job_enabled = AsyncMock(return_value=False)
-        mgr_mock.sync_job_state = AsyncMock(return_value=None)
         runtime_context = AgentRuntimeContext.build(db=mock_db, scheduler_manager=mgr_mock)
         tool_map = _build_sync_tools(mock_db, runtime_context=runtime_context)
         result = tool_map["toggle_scheduler_job"](job_id="collect_all")
