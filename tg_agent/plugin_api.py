@@ -14,10 +14,14 @@ from claude_agent_sdk import tool as sdk_tool
 
 from tg_agent.agent.tools._categories import ToolCategory, ToolMeta
 from tg_agent.agent.tools._registry import AgentToolContext, _text_response
+from tg_agent.agent.tools._registry import require_confirmation as require_confirmation
 
 text_response = _text_response
 
 PLUGIN_API_VERSION = 1
+# Seconds granted to plugin setup and shutdown alike; a hung lifecycle callback
+# is cancelled and the plugin skipped/failed without blocking startup or exit.
+_LIFECYCLE_TIMEOUT = 10.0
 logger = logging.getLogger(__name__)
 
 
@@ -70,6 +74,9 @@ def _invalidate_permissions():
     permissions._metadata_cache = None
     permissions._permissions_cache = None
     permissions._access_policy_cache = None
+    # TOOL_CATEGORIES is dynamic once plugins exist, so the allow-list cache in
+    # get_all_allowed_tools() must be rebuilt too.
+    permissions._all_allowed_tools_cache = None
 
 
 class PluginRuntime:
@@ -134,7 +141,7 @@ class PluginRuntime:
                         )
                         setup_started = True
                         if plugin.setup:
-                            await plugin.setup(ctx)
+                            await asyncio.wait_for(plugin.setup(ctx), timeout=_LIFECYCLE_TIMEOUT)
                         tools = list(plugin.register(ctx))
                         metadata = {}
                         # Another container may have finished activation while setup awaited.
@@ -174,7 +181,7 @@ class PluginRuntime:
     async def _shutdown(self, plugin):
         if plugin.shutdown:
             try:
-                await asyncio.wait_for(plugin.shutdown(), timeout=10)
+                await asyncio.wait_for(plugin.shutdown(), timeout=_LIFECYCLE_TIMEOUT)
             except Exception:
                 logger.exception("Plugin shutdown failed: %s", plugin.id)
 

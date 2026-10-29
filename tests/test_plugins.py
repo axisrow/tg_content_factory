@@ -273,6 +273,40 @@ async def test_direct_agent_initializes_plugin_before_backend_registry(db, entri
         await manager.close_all()
 
 
+async def test_allow_list_cache_follows_plugin_lifecycle(host, entries):
+    # get_all_allowed_tools() caches once; permission invalidation on plugin
+    # register/close must reset it too (#325 review: stale allow-list otherwise).
+    assert 'plugin_example' not in permissions.get_all_allowed_tools()
+    entries.append(Entry(Plugin('example', '1', 1, lambda ctx: [operation()])))
+    runtime = await start_plugins(host, AppConfig())
+    assert 'mcp__telegram_db__plugin_example' in permissions.get_all_allowed_tools()
+    await runtime.close()
+    assert 'mcp__telegram_db__plugin_example' not in permissions.get_all_allowed_tools()
+
+
+async def test_plugin_api_exports_confirmation_gate():
+    from tg_agent.plugin_api import require_confirmation
+
+    gate = require_confirmation('удалит кэш плагина', {})
+    assert gate['content'][0]['text'] and 'confirm=true' in gate['content'][0]['text']
+    assert require_confirmation('удалит кэш плагина', {'confirm': True}) is None
+
+
+async def test_setup_timeout_skips_plugin_and_shuts_down(host, entries, monkeypatch):
+    shutdown = AsyncMock()
+    entered = asyncio.Event()
+
+    async def hung_setup(ctx):
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(plugin_api, '_LIFECYCLE_TIMEOUT', 0.05)
+    entries.append(Entry(Plugin('example', '1', 1, lambda ctx: [], hung_setup, shutdown)))
+    runtime = await start_plugins(host, AppConfig())
+    assert runtime.tools == []
+    shutdown.assert_awaited_once()
+
+
 async def test_duplicate_plugin_id_keeps_first_registration(host, entries):
     entries.extend([
         Entry(Plugin("example", "1", 1, lambda ctx: [operation("first")])),

@@ -63,6 +63,22 @@ PLUGIN = Plugin(id="my_digest", version="0.1.0", requires_api=1, register=regist
 и доступность живого runtime через `require_live_runtime`; флаг сам по себе
 не проверяет аргументы обработчика.
 
+Автоматического подтверждения по категории нет — это конвенция каждого
+обработчика. Инструменты с категорией `write`/`delete` вызывайте через гейт
+`require_confirmation` из `tg_agent.plugin_api`: без `confirm=true` в аргументах
+он возвращает предупреждение вместо выполнения, как у встроенных инструментов ядра:
+
+```python
+from tg_agent.plugin_api import require_confirmation, text_response, tool
+
+@tool("my_reset", "Сбрасывает кэш плагина", {"type": "object"}, category="delete")
+async def my_reset(args):
+    if gate := require_confirmation("очистит кэш плагина", args):
+        return gate
+    ...
+    return text_response("Кэш очищен")
+```
+
 Контекст содержит `db`, `client_pool`, `config`, `logger` с ID плагина и `extras`
 с `tool_context`, `runtime_context`, `scheduler_manager`, `embedding_service`. Пул может отсутствовать
 в MCP без пула, а в вебе он представляет snapshot, а не живой Telegram.
@@ -71,7 +87,9 @@ PLUGIN = Plugin(id="my_digest", version="0.1.0", requires_api=1, register=regist
 Создавайте свои таблицы с префиксом `plugin_<id>_`, не меняйте таблицы ядра.
 Опциональный `async shutdown()` освобождает ресурсы до закрытия БД и пула;
 он также вызывается после ошибки активации, поэтому должен переносить частичный
-`setup`. На его завершение даётся 10 секунд. Для раздельных веба и воркера
+`setup`. На `setup` и `shutdown` отводится по 10 секунд: зависший колбэк
+отменяется, плагин пропускается или фейлится с записью в лог, не блокируя
+старт или остановку приложения. Для раздельных веба и воркера
 жизненный цикл выполняется независимо: не храните их контексты в глобальных
 переменных пакета; состояние обработчика держите в замыкании `register`.
 

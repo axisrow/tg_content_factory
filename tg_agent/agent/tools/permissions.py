@@ -478,7 +478,8 @@ def get_all_allowed_tools() -> list[str]:
     """Build the full list of tool names from _tool_categories().
 
     MCP tools get the prefix; built-in tools use bare names.
-    Result is computed once and cached (_tool_categories() is static).
+    Cached until the next _invalidate_permissions() (plugin register/close
+    rebuilds _tool_categories(), so the cache cannot live forever).
     """
     global _all_allowed_tools_cache  # noqa: PLW0603
     if _all_allowed_tools_cache is not None:
