@@ -42,17 +42,21 @@ class AccountsCommandsMixin(_Base):
             logger.info("accounts.connect: %s is disabled; session saved, not connected", phone)
             return {"phone": phone, "is_premium": account.is_premium, "is_active": False}
         await self._pool.add_client(phone, account.session_string)
-        result = await self._pool.get_client_by_phone(phone)
-        is_premium = False
-        if result is not None:
-            session, acquired_phone = result
-            try:
-                me = await session.fetch_me()
-                is_premium = bool(getattr(me, "premium", False))
-            finally:
-                await self._pool.release_client(acquired_phone)
+        is_premium = bool(await self._fetch_premium(phone))
         await self._db.update_account_premium(phone, is_premium)
         return {"phone": phone, "is_premium": is_premium}
+
+    async def _fetch_premium(self, phone: str) -> bool | None:
+        """Read the Premium flag through the pooled client; None if it has no client."""
+        result = await self._pool.get_client_by_phone(phone)
+        if result is None:
+            return None
+        session, acquired_phone = result
+        try:
+            me = await session.fetch_me()
+            return bool(getattr(me, "premium", False))
+        finally:
+            await self._pool.release_client(acquired_phone)
 
     async def _handle_accounts_toggle(self, payload: dict[str, Any]) -> dict[str, Any]:
         account_id = int(payload["account_id"])
@@ -81,6 +85,7 @@ class AccountsCommandsMixin(_Base):
                     )
                 else:
                     await self._pool.add_client(live_account.phone, live_account.session_string)
+                    await self._refresh_premium_after_enable(live_account)
             except Exception as exc:
                 logger.warning("accounts.toggle: failed to add client %s: %s", account_summary.phone, exc)
         else:
@@ -89,6 +94,21 @@ class AccountsCommandsMixin(_Base):
             except Exception as exc:
                 logger.warning("accounts.toggle: failed to remove client %s: %s", account_summary.phone, exc)
         return {"account_id": account_id, "is_active": new_active}
+
+    async def _refresh_premium_after_enable(self, account: Account) -> None:
+        """Best-effort is_premium refresh once a switched-off account is back in the pool.
+
+        accounts.connect skips fetch_me for a disabled account (it must not open a
+        live session the operator turned off, #1315), while the re-auth upsert has
+        already reset is_premium to False — so the flag is refreshed here instead.
+        """
+        try:
+            is_premium = await self._fetch_premium(account.phone)
+        except Exception as exc:
+            logger.warning("accounts.toggle: failed to fetch premium status for %s: %s", account.phone, exc)
+            return
+        if is_premium is not None and is_premium != account.is_premium:
+            await self._db.update_account_premium(account.phone, is_premium)
 
     async def _handle_accounts_delete(self, payload: dict[str, Any]) -> dict[str, Any]:
         account_id = int(payload["account_id"])

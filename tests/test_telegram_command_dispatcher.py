@@ -135,6 +135,42 @@ async def test_accounts_connect_reads_session_from_db(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_reenabling_reauthed_disabled_account_restores_premium(tmp_path):
+    """#1661 review: re-auth of a disabled account resets is_premium (the upsert
+    writes the fresh Account's False) and accounts.connect returns early without
+    fetch_me. Turning the account back on must refresh the flag, or a premium
+    account stays non-premium until the next worker restart."""
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
+    await db.initialize()
+    try:
+        await db.add_account(Account(phone="+777", session_string="OLD", is_primary=True, is_premium=True))
+        account_id = (await db.get_account_summaries(active_only=False))[0].id
+        await db.set_account_active(account_id, False, origin="human", actor="test")
+        # verify_code re-auth path: fresh Account with is_premium=False upserted.
+        await db.add_account(Account(phone="+777", session_string="NEW", is_premium=False))
+
+        session = MagicMock()
+        session.fetch_me = AsyncMock(return_value=MagicMock(premium=True))
+        pool = MagicMock()
+        pool.add_client = AsyncMock()
+        pool.get_client_by_phone = AsyncMock(return_value=(session, "+777"))
+        pool.release_client = AsyncMock()
+        dispatcher = TelegramCommandDispatcher(db, pool)
+
+        connected = await dispatcher._handle_accounts_connect({"phone": "+777"})
+        assert connected["is_active"] is False
+        pool.add_client.assert_not_awaited()
+
+        toggled = await dispatcher._handle_accounts_toggle({"account_id": account_id})
+        assert toggled["is_active"] is True
+        pool.add_client.assert_awaited_once_with("+777", "NEW")
+        pool.release_client.assert_awaited_once_with("+777")
+        summary = (await db.get_account_summaries(active_only=False))[0]
+        assert summary.is_premium is True
+    finally:
+        await db.close()
+
+@pytest.mark.anyio
 async def test_accounts_connect_raises_for_unknown_phone(tmp_path):
     db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
@@ -2608,6 +2644,50 @@ async def test_accounts_toggle_activate_add_failure():
     r = await d._handle_accounts_toggle({"account_id": 2})
     assert r["is_active"] is True
 
+
+
+async def test_accounts_toggle_activate_refreshes_premium():
+    from tg_agent.models import Account
+
+    db = _mock_db()
+    pool = _mock_pool()
+    db.get_accounts.return_value = [Account(id=2, phone="+2", session_string="s", is_active=False)]
+    session = MagicMock()
+    session.fetch_me = AsyncMock(return_value=MagicMock(premium=True))
+    pool.get_client_by_phone = AsyncMock(return_value=(session, "+2"))
+    d = _dispatcher(db=db, pool=pool)
+    r = await d._handle_accounts_toggle({"account_id": 2})
+    assert r["is_active"] is True
+    db.update_account_premium.assert_awaited_once_with("+2", True)
+    pool.release_client.assert_awaited_once_with("+2")
+
+
+async def test_accounts_toggle_activate_premium_fetch_failure_is_best_effort():
+    from tg_agent.models import Account
+
+    db = _mock_db()
+    pool = _mock_pool()
+    db.get_accounts.return_value = [Account(id=2, phone="+2", session_string="s", is_active=False)]
+    session = MagicMock()
+    session.fetch_me = AsyncMock(side_effect=Exception("rpc down"))
+    pool.get_client_by_phone = AsyncMock(return_value=(session, "+2"))
+    d = _dispatcher(db=db, pool=pool)
+    r = await d._handle_accounts_toggle({"account_id": 2})
+    assert r["is_active"] is True
+    db.update_account_premium.assert_not_awaited()
+    pool.release_client.assert_awaited_once_with("+2")
+
+
+async def test_accounts_toggle_deactivate_does_not_touch_premium():
+    from tg_agent.models import Account
+
+    db = _mock_db()
+    pool = _mock_pool()
+    db.get_accounts.return_value = [Account(id=1, phone="+1", session_string="s", is_active=True)]
+    d = _dispatcher(db=db, pool=pool)
+    await d._handle_accounts_toggle({"account_id": 1})
+    pool.get_client_by_phone.assert_not_awaited()
+    db.update_account_premium.assert_not_awaited()
 
 # --- _handle_accounts_delete: remove_client failure ---
 
