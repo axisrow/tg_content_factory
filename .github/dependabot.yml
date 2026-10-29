@@ -2,14 +2,16 @@
 #
 # Closes the loop opened by the CI security scans: pip-audit (static-checks job)
 # LOCATES a vulnerable dependency, Dependabot opens the update PR that FIXES it.
-# Two ecosystems are watched — the Python deps declared in pyproject.toml and the
-# GitHub Actions pinned in .github/workflows/*. Updates run weekly and minor/patch
-# bumps are grouped into a single PR per ecosystem so the queue stays small; major
-# bumps still arrive as their own PR for individual review (supply-chain note
-# #918 — vet each major before merging).
+# Two ecosystems are watched — the Python deps declared in pyproject.toml (the
+# uv ecosystem also updates the committed uv.lock, which the #1706 freshness
+# gate requires bot PRs to carry) and the GitHub Actions pinned in
+# .github/workflows/*. Updates run weekly and minor/patch bumps are grouped
+# into a single PR per ecosystem so the queue stays small; major bumps still
+# arrive as their own PR for individual review (supply-chain note #918 — vet
+# each major before merging).
 version: 2
 updates:
-  - package-ecosystem: pip
+  - package-ecosystem: uv
     directory: "/"
     schedule:
       interval: weekly
