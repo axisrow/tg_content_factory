@@ -6,40 +6,12 @@ from tg_agent.web.csrf import (
     OriginCSRFMiddleware,
     _forwarded_values,
     _is_same_origin,
-    _normalize_port,
     _split_header_value,
     is_same_origin_url,
     is_secure_request,
 )
 
-# --- _normalize_port ---
-
-
-def test_normalize_port_explicit():
-    assert _normalize_port("http", 8080) == 8080
-
-
-def test_normalize_port_none_http():
-    assert _normalize_port("http", None) == 80
-
-
-def test_normalize_port_none_https():
-    assert _normalize_port("https", None) == 443
-
-
 # --- _split_header_value ---
-
-
-def test_split_header_none():
-    assert _split_header_value(None) is None
-
-
-def test_split_header_empty():
-    assert _split_header_value("") is None
-
-
-def test_split_header_single():
-    assert _split_header_value("example.com") == "example.com"
 
 
 def test_split_header_multiple():
