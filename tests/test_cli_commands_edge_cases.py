@@ -1277,6 +1277,7 @@ class TestCollectChannelNotFound:
 
         db = MagicMock()
         db.get_channels = AsyncMock(return_value=[])
+        db.repos.channels.list_pending_approval = AsyncMock(return_value=[])
         db.close = AsyncMock()
 
         config = MagicMock()

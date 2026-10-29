@@ -206,12 +206,17 @@ class ChannelsRepository:
         return self._map_channel(row)
 
     async def get_channels_with_counts(
-        self, active_only: bool = False, include_filtered: bool = True
+        self,
+        active_only: bool = False,
+        include_filtered: bool = True,
+        include_pending: bool = False,
     ) -> list[Channel]:
         """Каналы вместе с числом сообщений (`message_count`); фильтры как у :meth:`get_channels`.
 
         JOIN агрегата по ``channel_id`` (не по pk) — см. конвенцию ключей в docstring модуля.
-        Тот же безусловный гейт ``approval_state != 'pending'`` (#1313).
+        Тот же безусловный гейт ``approval_state != 'pending'`` (#1313); ``include_pending=True``
+        снимает его для читателя, который очередью одобрения заведует явно (CLI
+        ``channel list --pending/--all``, #1701) — все обычные читатели остаются закрытыми.
         """
         sql = """
             SELECT c.*, COALESCE(cnt.total, 0) AS message_count
@@ -220,7 +225,9 @@ class ChannelsRepository:
                 SELECT channel_id, COUNT(*) AS total FROM messages GROUP BY channel_id
             ) cnt ON c.channel_id = cnt.channel_id
         """
-        conditions = ["c.approval_state != 'pending'"]
+        conditions = []
+        if not include_pending:
+            conditions.append("c.approval_state != 'pending'")
         if active_only:
             conditions.append("c.is_active = 1")
         if not include_filtered:

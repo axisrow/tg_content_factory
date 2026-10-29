@@ -260,7 +260,29 @@ def test_channel_list():
     ):
         result = runner.invoke(app, ["channel", "list"])
     assert result.exit_code == 0
-    mock_impl.assert_called_once_with("config.yaml")
+    mock_impl.assert_called_once_with("config.yaml", pending=False, all_channels=False)
+
+
+def test_channel_list_pending_flag():
+    mock_impl = MagicMock()
+    with (
+        patch("tg_agent.cli.typer_commands.channel_cmd.list_impl", mock_impl),
+        patch("tg_agent.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["channel", "list", "--pending"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", pending=True, all_channels=False)
+
+
+def test_channel_list_all_flag():
+    mock_impl = MagicMock()
+    with (
+        patch("tg_agent.cli.typer_commands.channel_cmd.list_impl", mock_impl),
+        patch("tg_agent.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["channel", "list", "--all"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", pending=False, all_channels=True)
 
 
 def test_channel_add():
