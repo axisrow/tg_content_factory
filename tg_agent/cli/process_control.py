@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -8,6 +9,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
@@ -67,6 +69,31 @@ def read_pid(path: Path) -> int | None:
         return int(raw)
     except ValueError as exc:
         raise ProcessControlError(f"Invalid PID file contents: {path}") from exc
+
+
+def owner_file_path(path: Path) -> Path:
+    """Keep provenance beside the numeric PID file for older readers."""
+    return path.with_name(path.name + ".owner.json")
+
+
+def read_process_owner(path: Path) -> dict | None:
+    """Read provenance, refusing malformed records rather than losing ownership."""
+    try:
+        raw = owner_file_path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    try:
+        owner = json.loads(raw)
+        if (
+            not isinstance(owner, dict)
+            or type(owner.get("pid")) is not int
+            or not isinstance(owner.get("project_root"), str)
+            or not owner["project_root"]
+        ):
+            raise ValueError("Missing process ownership")
+    except (ValueError, TypeError) as exc:
+        raise ProcessControlError(f"Invalid process owner record: {owner_file_path(path)}") from exc
+    return owner
 
 
 def _process_command(pid: int) -> str:
@@ -177,6 +204,7 @@ def remove_pid_file(path: Path) -> None:
         path.unlink()
     except FileNotFoundError:
         pass
+    owner_file_path(path).unlink(missing_ok=True)
 
 
 def ensure_server_not_running(path: Path) -> None:
@@ -197,6 +225,24 @@ def ensure_server_not_running(path: Path) -> None:
 def register_current_process(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     ensure_server_not_running(path)
+    owner = {
+        "pid": os.getpid(),
+        "role": "worker",
+        "project_root": str(Path.cwd().resolve()),
+        "store_root": str(path.resolve().parent),
+        "executable": str(Path(sys.executable).resolve()),
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "command": _process_command(os.getpid()),
+    }
+    target = owner_file_path(path)
+    temporary = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8") as handle:
+            os.chmod(temporary, 0o600)
+            json.dump(owner, handle)
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
     path.write_text(f"{os.getpid()}\n", encoding="utf-8")
 
 
@@ -234,6 +280,18 @@ def stop_server(
             StopResult.UNMANAGED,
             f"PID {pid} is not a managed tg-agent daemon process.",
         )
+
+    owner = read_process_owner(path)
+    if owner is not None:
+        if owner["pid"] != pid or owner["project_root"] != str(Path.cwd().resolve()):
+            return StopOutcome(
+                StopResult.UNMANAGED,
+                f"Refusing to stop PID {pid}: daemon belongs to project {owner['project_root']} "
+                f"(store {owner.get('store_root', path.parent)}). Run process control from that project.",
+            )
+        recorded_command = owner.get("command")
+        if recorded_command and recorded_command != _process_command(pid):
+            return StopOutcome(StopResult.UNMANAGED, f"PID {pid} no longer matches its process owner record.")
 
     try:
         os.kill(pid, signal.SIGTERM)
