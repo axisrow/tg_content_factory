@@ -7,7 +7,7 @@ import logging
 import typer
 
 from tg_agent.cli import runtime, worker_handoff
-from tg_agent.cli.commands.channel import _handoff_collect_to_worker
+from tg_agent.cli.commands.channel import _handoff_collect_to_worker, report_pending_approval
 from tg_agent.cli.commands.common import (
     _NEG_ID_POSITIONAL,
     apply_startup,
@@ -75,6 +75,8 @@ async def collect_impl(
             if channel_id:
                 channels = await db.get_channels()
                 channel = next((ch for ch in channels if ch.channel_id == channel_id), None)
+                if channel is None and await report_pending_approval(db, str(channel_id)):
+                    return
                 if channel is None:
                     print(f"Channel {channel_id} not found in DB")
                 elif channel.is_filtered:
@@ -108,6 +110,8 @@ async def collect_impl(
         if channel_id:
             channels = await db.get_channels()
             channel = next((ch for ch in channels if ch.channel_id == channel_id), None)
+            if channel is None and await report_pending_approval(db, str(channel_id)):
+                return
             if not channel:
                 print(f"Channel {channel_id} not found in DB")
                 return

@@ -65,6 +65,8 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
   identifier argument is required (there is no interactive selection). One-off; exit when
   done. With a live daemon the channel is queued
   to the worker (no second MTProto client); `TGCF_CLI_DIRECT=1` forces the in-process path.
+  A pending-approval identifier is reported as such with the approve/reject commands
+  instead of the misleading "not found" (#1701).
 - `channel stats` — queue stats collection: one channel by identifier; `--all` refreshes
   channels whose stats are missing **or older than** `stats_all_skip_fresh_hours` (24h),
   oldest first, capped per run at `stats_all_max_channels_per_run` (10; `--max-channels N`
@@ -74,8 +76,14 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
   premium search (`search --mode telegram`): pending-approval rows whose cached messages carry the
   search-query tag. Pick ones worth collecting, then `channel toggle <identifier>`
   (approves with human origin) + `channel collect <identifier>` for the first fetch.
+- `channel list [--pending | --all]` — the regular table hides pending rows (#1313 gate).
+  `--pending` shows only the approval queue; `--all` appends its rows marked in the
+  Approval column (#1701).
 - `channel pending-list` — the full approval queue (#1314): every pending row, including
   ones without search-tagged messages that `candidates` skips.
+- `channel add <identifier>` — manual add of a channel that is already in the approval
+  queue approves it (human origin, journaled): the explicit add IS the operator's
+  decision (#1701). A fresh add creates the row approved, by @username or numeric ID alike.
 - `channel reject <identifier>` — refuse a pending-approval candidate: deletes the pending
   row and its cached messages; the decision stays in the `decisions` journal.
 - `filter analyze|apply` — score channels for spam/quality (flags incl. `low_engagement` —

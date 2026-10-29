@@ -121,7 +121,7 @@ class TestChannelAddPending:
         assert row.approval_state == "approved", "add left the channel pending"
         assert row.active_origin == "human", "approval by add must carry human origin"
         decisions = asyncio.run(
-            cli_env.repos.decisions.history("channel", pk, field="approval_state")
+            cli_env.repos.decisions.history("channel", 2629366839, field="approval_state")
         )
         assert decisions, "approval by add must journal the decision"
         assert decisions[0].old_value == "pending" and decisions[0].new_value == "approved"
@@ -154,7 +154,7 @@ class TestChannelAddPending:
 
 class TestChannelCollectPending:
     def test_direct_collect_on_pending_says_pending(self, cli_env, capsys):
-        pk = cli_add_channel(cli_env, channel_id=777, title="PendMe", approval_state="pending")
+        cli_add_channel(cli_env, channel_id=777, title="PendMe", approval_state="pending")
         pool = _fake_pool({})
 
         with (
