@@ -86,6 +86,7 @@ from tg_agent.cli.commands.scheduler import scheduler_app
 from tg_agent.cli.commands.search_query import search_query_app
 from tg_agent.cli.commands.settings import settings_app
 from tg_agent.cli.commands.style import style_app
+from tg_agent.cli.commands.telegraph import telegraph_app
 from tg_agent.cli.commands.test import test_app
 from tg_agent.cli.commands.translate import translate_app
 from tg_agent.cli.typer_app import app, apply_startup, run_async
@@ -434,6 +435,13 @@ app.add_typer(gateway_app, name="gateway")
 # --------------------------------------------------------------------------- #
 
 app.add_typer(style_app, name="style")
+
+
+# --------------------------------------------------------------------------- #
+# telegraph → create — telegra.ph page creation (#1703)
+# --------------------------------------------------------------------------- #
+
+app.add_typer(telegraph_app, name="telegraph")
 
 
 # --------------------------------------------------------------------------- #
