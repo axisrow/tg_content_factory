@@ -117,14 +117,16 @@ jobs:
             });
             core.setFailed('Branch name contains "+", which is not allowed.');
 
-  # Dependency review gate (#1704): a PR that introduces a direct dependency
-  # the community already flagged (CVE or malware advisories) must red CI
-  # before merge. Without a lockfile the compare diff covers direct deps
-  # only — transitives stay with the advisory pip-audit scan of the resolved
-  # env. Deliberately a separate job, not part of `static-checks`: it only
-  # makes sense on pull_request (it diffs the PR against the base), and it
-  # is checkout + diff analysis with no installs — the cheapest job in the
-  # workflow. pip-audit stays advisory (siren); this is the bar (blocking).
+  # Dependency review gate (#1704): a PR that introduces a dependency the
+  # community already flagged (CVE or malware advisories) must red CI before
+  # merge. Scope: the committed uv.lock (#1706) makes the GitHub dependency
+  # graph resolve the full closure, so the compare diff covers direct AND
+  # transitive deps; any dependency-touching PR must regenerate the lock —
+  # the `uv lock --check` gate in static-checks reds otherwise. Deliberately
+  # a separate job, not part of `static-checks`: it only makes sense on
+  # pull_request (it diffs the PR against the base), and it is checkout +
+  # diff analysis with no installs — the cheapest job in the workflow.
+  # pip-audit stays advisory (siren); this is the bar (blocking).
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -182,6 +184,16 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      # The committed uv.lock is the full-closure dependency graph that the
+      # dependency-review gate diffs against (#1706): a PR that changes
+      # dependencies without regenerating it would silently drop the gate's
+      # transitive visibility back to direct-only. Blocking for the same
+      # reason the gate itself is blocking (#1704).
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+      - name: uv lock is fresh (#1706)
+        run: uv lock --check
 
       - name: Set up Python
         uses: actions/setup-python@v6
