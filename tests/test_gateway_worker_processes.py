@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -44,7 +45,7 @@ def spawn(command, cwd, env, log):
 
 
 def rows(path, sql):
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         return db.execute(sql).fetchall()
 
 

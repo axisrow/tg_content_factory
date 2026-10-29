@@ -6,9 +6,18 @@ import signal
 import time
 
 import httpx
+import pytest
 
 from tg_agent.gateway.runtime import configure, endpoint, ensure_gateway
 from tg_agent.gateway.store import private_key
+
+
+def test_unenrolled_gateway_root_fails_before_creating_anything(tmp_path):
+    """No lock or log side effects on an unconfigured root — including mock paths."""
+    fresh = tmp_path / "never-created"
+    with pytest.raises(RuntimeError, match="not enrolled"):
+        ensure_gateway(fresh)
+    assert not fresh.exists()
 
 
 def test_concurrent_key_setup_publishes_one_complete_key(tmp_path):

@@ -110,19 +110,32 @@ def endpoint(root: Path) -> dict | None:
     return None
 
 
+def _enrolled_profile(root: Path) -> dict:
+    """Read the pinned launcher profile without creating anything on disk.
+
+    Validating before any lock or directory is created keeps a misconfigured or
+    mock-config caller from leaving junk paths behind (PR #1715 review).
+    """
+    path = root / "gateway.json"
+    if not path.exists():
+        raise RuntimeError(f"Gateway store is not enrolled; expected {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def ensure_gateway(root: Path, *, timeout: float = 30) -> str:
     """All callers launch the enrolled binary; the project cwd is irrelevant."""
     root = root.resolve()
     current = endpoint(root)
     if current:
         return f"http://127.0.0.1:{current['port']}"
+    _enrolled_profile(root)
     launcher = SessionLock("gateway launcher", str(root / "launcher"), lock_dir=root / "locks")
     launcher.acquire(grace_seconds=timeout)
     try:
         current = endpoint(root)
         if current:
             return f"http://127.0.0.1:{current['port']}"
-        profile = json.loads((root / "gateway.json").read_text(encoding="utf-8"))
+        profile = _enrolled_profile(root)
         # Probe imports/config BEFORE starting; never stop an existing process here.
         with (root / "gateway.log").open("ab") as log:
             os.chmod(root / "gateway.log", 0o600)
@@ -149,6 +162,7 @@ def ensure_gateway(root: Path, *, timeout: float = 30) -> str:
 
 async def serve(root: Path, *, access_factory=None) -> None:
     root = await asyncio.to_thread(root.resolve)
+    profile = _enrolled_profile(root)
     owner = SessionLock("gateway", str(root / "gateway owner"), lock_dir=root / "locks")
     owner.acquire(grace_seconds=0)
     store = GatewayStore(root)
@@ -156,7 +170,6 @@ async def serve(root: Path, *, access_factory=None) -> None:
     instance = secrets.token_urlsafe(32)
     path = root / "gateway.endpoint.json"
     try:
-        profile = json.loads(await asyncio.to_thread((root / "gateway.json").read_text, encoding="utf-8"))
         await store.open()
         access = (access_factory(store) if access_factory is not None
                   else LiveTelegramAccess(store, TelegramAuth(profile["api_id"], profile["api_hash"],

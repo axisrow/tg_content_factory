@@ -3,6 +3,7 @@
 import json
 import os
 import sqlite3
+from contextlib import closing
 
 import httpx
 import pytest
@@ -80,12 +81,12 @@ async def test_migration_reencrypts_and_retains_complete_project_content(migrati
 
     bot = await BotStorage(store, str(binding.project_id)).get_bot(10)
     assert bot.bot_token == "legacy-test-token"
-    with sqlite3.connect(destination) as db:
+    with closing(sqlite3.connect(destination)) as db, db:
         assert db.execute("SELECT title FROM channels WHERE channel_id=123").fetchone()[0] == "all historical content"
         assert db.execute("SELECT session_string FROM accounts").fetchone()[0] == ""
         assert db.execute("SELECT account_id FROM gateway_account_refs").fetchone()[0] == account
         assert db.execute("SELECT bot_token FROM notification_bots").fetchone()[0] == ""
-    with sqlite3.connect(source) as db:
+    with closing(sqlite3.connect(source)) as db, db:
         assert db.execute("SELECT session_string FROM accounts").fetchone()[0].startswith("enc:v2:")
     assert await enrollment.migrate_project("config.yaml", destination) == binding
     assert list((project / "data").glob("gateway-source-*.db"))
@@ -142,7 +143,7 @@ async def test_wrong_source_key_does_not_switch_marker_or_scrub_session(migratio
         await enrollment.migrate_project("config.yaml", destination)
     assert marker.read_text() == str(root)
     assert await store.catalog() == []
-    with sqlite3.connect(destination) as db:
+    with closing(sqlite3.connect(destination)) as db, db:
         assert db.execute("SELECT session_string FROM accounts").fetchone()[0].startswith("enc:v2:")
 
 
@@ -161,6 +162,6 @@ async def test_disable_preserves_migrated_content_and_other_project_access(migra
     assert load_config().database.path == str(destination)
     assert await store.catalog(str(binding.project_id)) == []
     assert await store.session(other, account) == "original-session"
-    with sqlite3.connect(destination) as db:
+    with closing(sqlite3.connect(destination)) as db, db:
         assert db.execute("SELECT COUNT(*) FROM channels").fetchone()[0] == 1
         assert db.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0
