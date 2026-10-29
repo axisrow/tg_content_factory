@@ -3,8 +3,9 @@
 No network: every test drives the production Typer app through ``CliRunner``
 and swaps the service's ``aiohttp.ClientSession`` for a fake transport. The
 account round-trip goes through a real file-backed SQLite in ``tmp_path`` —
-``login`` stores the token via ``set_secret`` (config carries a test
-``session_encryption_key``), ``create`` reads it back with ``get_secret``.
+``login`` stores the token via ``set_secret`` (the test config carries
+``security.session_encryption_key``, so the cipher does not depend on the
+conftest env default), ``create`` reads it back with ``get_secret``.
 """
 
 from __future__ import annotations
@@ -64,7 +65,8 @@ def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "config.yaml").write_text(
         "database:\n"
         f"  path: {tmp_path / 'local.db'}\n"
-        "session_encryption_key: test-key\n",
+        "security:\n"
+        "  session_encryption_key: test-key\n",
         encoding="utf-8",
     )
 
