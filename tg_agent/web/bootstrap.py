@@ -426,7 +426,11 @@ async def build_container_with_templates(
     if _is_dev:
         logger.info("startup/build: container_build %.2fs", time.monotonic() - t_build)
 
+    from tg_agent.plugin_api import start_plugins
+
+    plugins = await start_plugins(db, config, pool, scheduler)
     return AppContainer(
+        plugins=plugins,
         runtime_mode=runtime_mode,
         config=config,
         db=db,
@@ -693,6 +697,9 @@ async def stop_container(container: AppContainer) -> None:
             logger.warning("Shutdown of %s timed out after %.0fs", name, timeout)
         except Exception:
             logger.warning("Error shutting down %s", name, exc_info=True)
+
+    if container.plugins is not None:
+        await _stop_step("plugins", container.plugins.close())
 
     # Stop producers first so no new collection work is created while the
     # queue is draining the active channel collection.

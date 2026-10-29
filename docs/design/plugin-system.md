@@ -3,6 +3,9 @@
 **Статус:** утверждён владельцем 2026-08-28, подзадача 325.0
 **Дата:** 2026-08-28
 
+Реализация 325.1 и инструкция 325.3: [Плагины](../plugins.md).
+325.2 остаётся отложенной.
+
 ## 1. Для чего это и на что рассчитано
 
 TG Agent — личный инструмент: один пользователь, один процесс (`serve` с
@@ -58,7 +61,8 @@ my_digest = "tg_plugin_digest:PLUGIN"
 обёртка принимает их, создаёт `ToolMeta` (`tg_agent/agent/tools/_categories.py`)
 и вызывает SDK-декоратор.
 
-`id` плагина — только `[a-z][a-z0-9_]*`: он идёт в имена таблиц без
+Имя entry point совпадает с `Plugin.id`. `id` плагина — только
+`[a-z][a-z0-9_]*`: он идёт в имена таблиц без
 экранирования, и `my-digest` превратился бы в вычитание в SQL.
 
 ```python
@@ -75,7 +79,7 @@ async def setup(ctx: PluginContext) -> None:
 def register(ctx: PluginContext) -> list:
     @tool("digest_today", "Сводка постов за сегодня", {"limit": int}, category="read")
     async def digest_today(args):
-        since = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        since = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
         rows = await ctx.db.repos.messages.get_messages_collected_since(
             since, limit=args.get("limit", 20)
         )
@@ -102,11 +106,12 @@ PLUGIN = Plugin(
 | Хук | Кто и когда вызывает |
 |---|---|
 | `setup(ctx)` | хост, `await`, один раз на контейнер **до** сборки реестра: в `build_container_with_templates` (веб/воркер) и в `_serve` MCP-сервера до `make_mcp_server` |
-| `register(ctx)` | `build_agent_tool_registry`, sync, сразу после цикла по `TOOL_MODULE_ORDER` — так плагины попадают и в агента, и в standalone MCP-сервер, которые оба строят реестр этой функцией |
+| `register(ctx)` | `PluginRuntime.start`, sync, после `setup`; готовые инструменты `build_agent_tool_registry` добавляет после встроенных — одинаково для агента и standalone MCP, без повторной регистрации при пересборке реестра |
 | `shutdown()` | хост, `await`: первым шагом `stop_container` — до закрытия пула и БД, которые плагин получил в `ctx`; в MCP-сервере — в `finally` до `db.close()` |
 
 Экземпляры активированных плагинов хранит `PluginRuntime` (поле
-`AppContainer.plugins`; в MCP-сервере — локальная переменная `_serve`),
+`AppContainer.plugins`, также принадлежит БД для очистки при ошибках;
+в MCP-сервере — локальная переменная `_serve`),
 чтобы было у кого звать `shutdown`.
 
 Инструмент обязан указать `category` — `read` / `write` / `delete`;
@@ -116,7 +121,11 @@ PLUGIN = Plugin(
 получает тот же per-phone ACL и session gate, что встроенные. `ToolMeta`
 плагинных инструментов добавляются в ту же таблицу, из которой
 `permissions.py` строит `TOOL_CATEGORIES` и ACL, до загрузки access
-policy — иначе агент их не увидит.
+policy — иначе агент их не увидит. Все три ACL-каталога включают группу
+`Plugin: <id>`; конфликт имени отклоняет регистрацию целого плагина.
+Каталог метаданных общий для процесса, обработчики и контекст отдельные
+для каждого runtime. Прямые CLI-команды агента активируют плагины в
+`AgentManager.refresh_settings_cache`; закрытие БД служит страховкой очистки.
 
 `PluginContext` — это те же объекты, что получают встроенные модули:
 `db`, `client_pool` (живой в воркере, snapshot в вебе, `None` в MCP без
@@ -155,12 +164,12 @@ policy — иначе агент их не увидит.
 
 ## 6. Установка, обновление, откат, данные
 
-- **Установка:** `pip install "git+ssh://git@github.com/me/tg-plugin-digest@<sha>"`.
-  Приватный репозиторий — через SSH-ключ или credential helper, как любой
-  pip-пакет. Своего инсталлятора нет.
-- **Обновление:** тот же `pip install` с новым sha + перезапуск. Hot reload
+- **Установка:** `pip install <имя-пакета>`, локальный каталог или wheel.
+  Отдельный репозиторий не нужен; Git URL — необязательная возможность pip.
+  Своего инсталлятора нет.
+- **Обновление:** `pip install --upgrade <имя-пакета>` + перезапуск. Hot reload
   не поддерживается.
-- **Откат:** `pip install` предыдущего sha + перезапуск.
+- **Откат:** `pip install <имя-пакета>==<предыдущая-версия>` + перезапуск.
 - **Данные плагина:** свои таблицы с префиксом `plugin_<id>_`, создаются
   в `setup` через `CREATE TABLE IF NOT EXISTS`. Таблицы ядра плагин не
   меняет. Откат данных при откате версии не обещается — механизм тот же,
@@ -183,7 +192,7 @@ policy — иначе агент их не увидит.
 
 | # | Что | ~строк |
 |---|---|---|
-| 325.1 | `tg_agent/plugin_api.py` (`Plugin`, `PluginContext`, `PluginRuntime`, `PLUGIN_API_VERSION = 1`, обёртка `tool(category=, phone_bound=)` → `ToolMeta`, реэкспорт `text_response`, валидация `id`); discovery через entry points с проверкой `requires_api` и `plugins_disabled`; `await setup` в `build_container_with_templates` и в `_serve` MCP-сервера; `register` в `build_agent_tool_registry` после `TOOL_MODULE_ORDER`; категории плагинов в `permissions.py`; `shutdown` в `stop_container` и в `finally` `_serve`; пример `examples/plugin_digest/` (код из §3, должен реально запускаться); тест на контракт + правка golden-снапшота `TOOL_CATEGORIES` | ~250 |
+| 325.1 | `tg_agent/plugin_api.py` (`Plugin`, `PluginContext`, `PluginRuntime`, `PLUGIN_API_VERSION = 1`, обёртка `tool(category=, phone_bound=)` → `ToolMeta`, реэкспорт `text_response`, валидация `id`); discovery через entry points с проверкой `requires_api` и `plugins_disabled`; `await setup` в `build_container_with_templates` и в `_serve` MCP-сервера; `register` в `PluginRuntime.start`, готовые инструменты в `build_agent_tool_registry` после `TOOL_MODULE_ORDER`; категории плагинов в `permissions.py`; `shutdown` в `stop_container` и в `finally` `_serve`; пример `examples/plugin_digest/` (код из §3, должен реально запускаться); тест на контракт + правка golden-снапшота `TOOL_CATEGORIES` | ~250 |
 | 325.2 | Генератор CLI-команды и JSON endpoint из схемы `tool`; `plugin list` в CLI и на веб-странице настроек | ~200 |
 | 325.3 | Страница в mkdocs: как написать, поставить, обновить плагин | ~100 |
 

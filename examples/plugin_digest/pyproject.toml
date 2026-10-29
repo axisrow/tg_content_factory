@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tg-agent-plugin-digest"
+version = "0.1.0"
+description = "Example TG Agent plugin: recent collected messages"
+requires-python = ">=3.11"
+dependencies = ["tg-agent>=0.2.4.2"]
+
+[project.entry-points."tg_agent.plugins"]
+my_digest = "tg_plugin_digest:PLUGIN"
+
+[tool.setuptools.packages.find]
+include = ["tg_plugin_digest*"]
