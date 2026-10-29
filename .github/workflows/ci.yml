@@ -144,11 +144,15 @@ jobs:
         with:
           fail-on-severity: moderate
           # GHSA-xcq7-p3pf-p88h (moderate, unbounded tracestate parsing):
-          # opentelemetry-api arrives transitively (langchain family) and the
-          # advisory has NO patched release yet (patched_versions: null). Waived
-          # by GHSA id (v4 has no package-level allow) so the gate stays
-          # blocking for everything else — REMOVE this entry as soon as
-          # upstream ships the fix, then let the gate red.
+          # opentelemetry-api arrives transitively (langchain family) at
+          # 1.44.0. A patched release exists (first_patched_version 1.45.1)
+          # but is unreachable: google-adk 2.13.0 — the newest PyPI release —
+          # caps opentelemetry-api/opentelemetry-sdk at <=1.44, so the lock
+          # cannot take 1.45.1 (`uv lock --upgrade-package opentelemetry-api`
+          # resolves back to 1.44.0). Waived by GHSA id (v4 has no
+          # package-level allow) so the gate stays blocking for everything
+          # else — REMOVE this entry once google-adk lifts the cap: then
+          # upgrade the lock to >=1.45.1 and let the gate red again.
           allow-ghsas: GHSA-xcq7-p3pf-p88h
 
   # Lint is its own job (#1097 §5) so a style slip reds CI in seconds, in
@@ -199,6 +203,11 @@ jobs:
       # reason the gate itself is blocking (#1704).
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+        with:
+          # Pinned to the uv that generated the committed lock (revision 3):
+          # a newer uv with a lock-revision bump would red `uv lock --check`
+          # repo-wide and churn unrelated PRs until everyone regenerates.
+          version: "0.10.6"
       - name: uv lock is fresh (#1706)
         run: uv lock --check
 
