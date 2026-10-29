@@ -25,10 +25,12 @@ undo them:
 - the ``pip-audit`` dependency scan stays *advisory* (``continue-on-error``)
   like the other security/dup guards (#1097 §4);
 - the ``dependency-review`` job (#1704) is the blocking counterpart: a PR
-  introducing a direct dependency with known CVE/malware advisories reds CI
-  before merge (no lockfile — the compare diff covers direct deps only;
-  transitives stay with the advisory pip-audit). It stays PR-scoped (it
-  diffs the PR) and must never be downgraded to advisory;
+  introducing a dependency with known CVE/malware advisories — direct or
+  transitive (#1706: the committed uv.lock resolves the full closure) — reds
+  CI before merge. It stays PR-scoped (it diffs the PR) and must never be
+  downgraded to advisory. The ``static-checks`` job pins lock freshness
+  (``uv lock --check``): a dependency-touching PR that skips ``uv lock``
+  loses the transitive visibility and reds CI;
 - the ``doc-coverage`` step is **removed** from CI — interrogate stays a local
   script (#1072) but is no longer a CI step (#1097 §3);
 - the existing blocking gates (import contracts, complexity, warnings-as-errors)
@@ -277,9 +279,9 @@ def test_dependency_review_gate_is_blocking_and_pr_scoped(ci_config: dict) -> No
 
     Unlike the advisory pip-audit, this gate must be blocking (the whole
     point): a PR whose dependency diff carries known CVE/malware advisories —
-    direct deps only (no lockfile; transitives stay with pip-audit) — reds
-    CI before merge. It must stay PR-scoped: the action diffs the PR against
-    the base and has no meaning on push-to-main.
+    direct or transitive (#1706's committed uv.lock gives the graph the full
+    closure) — reds CI before merge. It must stay PR-scoped: the action diffs
+    the PR against the base and has no meaning on push-to-main.
     """
     job = ci_config["jobs"]["dependency-review"]
     assert job.get("if") == "github.event_name == 'pull_request'", (
@@ -294,3 +296,20 @@ def test_dependency_review_gate_is_blocking_and_pr_scoped(ci_config: dict) -> No
     assert review.get("with", {}).get("fail-on-severity") == "moderate", (
         "fail-on-severity pins the blocking threshold (noise knob: raise to high, never drop the gate)"
     )
+    assert review.get("with", {}).get("allow-ghsas") == "GHSA-xcq7-p3pf-p88h", (
+        "the single allowed waiver is the otel advisory that google-adk 2.13.0 caps "
+        "below the patched 1.45.1; when google-adk lifts the cap, upgrade the lock and drop the waiver"
+    )
+
+
+def test_uv_lock_gate_is_blocking(ci_config: dict) -> None:
+    """#1706: a stale uv.lock reds CI — it is the graph the review gate diffs.
+
+    The committed lock is what gives dependency-review its transitive
+    visibility: a PR that changes dependencies without regenerating the lock
+    would silently drop the gate back to direct-only resolution.
+    """
+    steps = ci_config["jobs"]["static-checks"]["steps"]
+    check = next((s for s in steps if "uv lock --check" in (s.get("run") or "")), None)
+    assert check is not None, "static-checks must run `uv lock --check`"
+    assert check.get("continue-on-error") is not True, "the lock gate must be blocking"

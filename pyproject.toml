@@ -160,6 +160,16 @@ Issues = "https://github.com/axisrow/tg_content_factory/issues"
 [project.scripts]
 tg-agent = "tg_agent.main:main"
 
+# uv workspace (#1706): one committed uv.lock covers the root package and every
+# member under packages/, so the GitHub dependency graph — and the blocking
+# dependency-review CI gate — resolves the FULL closure, direct and transitive.
+# Installs stay on pip (`pip install -e ".[dev]"`); whenever a PR touches
+# dependencies it must regenerate the lock (`uv lock`) — CI reds on a stale
+# lock (`uv lock --check`), so the lock diff shows transitive movements to the
+# reviewer.
+[tool.uv.workspace]
+members = ["packages/*"]
+
 [tool.setuptools]
 include-package-data = true
 

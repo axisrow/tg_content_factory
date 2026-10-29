@@ -36,6 +36,11 @@ pip install -e ".[dev]"
 # tg-shared is published (#1424 wave).
 pip install -e packages/tg_shared
 
+# Dependency-touching PRs must regenerate the lockfile: the committed uv.lock
+# is the full-closure graph the CI dependency-review gate diffs against
+# (#1706); a stale lock reds static-checks. Installs stay on pip.
+uv lock
+
 # Verify that the project is installed (required by isolated tooling such as
 # mutmut; the distribution name is tg-agent, not the repository name).
 python -m pip show tg-agent
@@ -225,7 +230,8 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 ## CI
 
 - GitHub Actions: `.github/workflows/ci.yml` — runs on push to `main` and on all PRs; branch names containing `+` are rejected. Split into **parallel jobs** (#1090, #1097 §5) that fan out for speed: `check-branch-name` (PR only), `lint` (ruff), `static-checks` (gates below), `tests`. This parallel split is the CI speedup that landed. Structure is regression-guarded by `tests/test_ci_workflow_structure.py`.
-- **Dependency review gate (#1704)**: a `dependency-review` job (PR only) blocks PRs introducing a **direct** dependency with known CVE/malware advisories (`fail-on-severity: moderate`, blocking, unlike the advisory pip-audit; no lockfile, so transitives are covered only by pip-audit's resolved-env scan). Raise the threshold to `high` if it gets noisy; never make it advisory.
+- **Dependency review gate (#1704)**: a `dependency-review` job (PR only) blocks PRs introducing a dependency — **direct or transitive** — with known CVE/malware advisories (`fail-on-severity: moderate`, blocking, unlike the advisory pip-audit). Raise the threshold to `high` if it gets noisy; never make it advisory.
+- **Lockfile (#1706)**: the committed `uv.lock` (uv workspace, root + `packages/*`) is the full-closure dependency graph the review gate diffs against. Installs stay on pip; any PR touching dependencies must regenerate it (`uv lock`) — a stale lock reds `static-checks` (`uv lock --check`).
 - **Test gate (#1090)**: the `tests` job runs the **full** suite on both PR and main — smoke first, then parallel (`-n auto -m "not aiosqlite_serial"`), then the serial lane (`-m aiosqlite_serial -n auto --dist=loadfile`), with coverage. (pytest-testmon selective runs were evaluated and dropped: testmon only deselects single-process and crashes under xdist+coverage, so a testmon PR gate would run single-process without coverage — often *slower* than the full `-n auto` sweep on this large suite, not faster. The parallel-job split is the real win.)
 - Import architecture contracts: `lint-imports --config .importlinter` — CLI/web/agent-tools entrypoints must not import `telethon` directly (raw Telethon stays behind the telegram layer)
 - CI enforces `filterwarnings = ["error"]` in `pyproject.toml` (dedicated check step in `static-checks`)

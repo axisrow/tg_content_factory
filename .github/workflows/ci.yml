@@ -117,14 +117,16 @@ jobs:
             });
             core.setFailed('Branch name contains "+", which is not allowed.');
 
-  # Dependency review gate (#1704): a PR that introduces a direct dependency
-  # the community already flagged (CVE or malware advisories) must red CI
-  # before merge. Without a lockfile the compare diff covers direct deps
-  # only — transitives stay with the advisory pip-audit scan of the resolved
-  # env. Deliberately a separate job, not part of `static-checks`: it only
-  # makes sense on pull_request (it diffs the PR against the base), and it
-  # is checkout + diff analysis with no installs — the cheapest job in the
-  # workflow. pip-audit stays advisory (siren); this is the bar (blocking).
+  # Dependency review gate (#1704): a PR that introduces a dependency the
+  # community already flagged (CVE or malware advisories) must red CI before
+  # merge. Scope: the committed uv.lock (#1706) makes the GitHub dependency
+  # graph resolve the full closure, so the compare diff covers direct AND
+  # transitive deps; any dependency-touching PR must regenerate the lock —
+  # the `uv lock --check` gate in static-checks reds otherwise. Deliberately
+  # a separate job, not part of `static-checks`: it only makes sense on
+  # pull_request (it diffs the PR against the base), and it is checkout +
+  # diff analysis with no installs — the cheapest job in the workflow.
+  # pip-audit stays advisory (siren); this is the bar (blocking).
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -141,6 +143,17 @@ jobs:
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: moderate
+          # GHSA-xcq7-p3pf-p88h (moderate, unbounded tracestate parsing):
+          # opentelemetry-api arrives transitively (langchain family) at
+          # 1.44.0. A patched release exists (first_patched_version 1.45.1)
+          # but is unreachable: google-adk 2.13.0 — the newest PyPI release —
+          # caps opentelemetry-api/opentelemetry-sdk at <=1.44, so the lock
+          # cannot take 1.45.1 (`uv lock --upgrade-package opentelemetry-api`
+          # resolves back to 1.44.0). Waived by GHSA id (v4 has no
+          # package-level allow) so the gate stays blocking for everything
+          # else — REMOVE this entry once google-adk lifts the cap: then
+          # upgrade the lock to >=1.45.1 and let the gate red again.
+          allow-ghsas: GHSA-xcq7-p3pf-p88h
 
   # Lint is its own job (#1097 §5) so a style slip reds CI in seconds, in
   # parallel with the slower static-checks and tests jobs — no waiting on pytest
@@ -182,6 +195,21 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      # The committed uv.lock is the full-closure dependency graph that the
+      # dependency-review gate diffs against (#1706): a PR that changes
+      # dependencies without regenerating it would silently drop the gate's
+      # transitive visibility back to direct-only. Blocking for the same
+      # reason the gate itself is blocking (#1704).
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          # Pinned to the uv that generated the committed lock (revision 3):
+          # a newer uv with a lock-revision bump would red `uv lock --check`
+          # repo-wide and churn unrelated PRs until everyone regenerates.
+          version: "0.10.6"
+      - name: uv lock is fresh (#1706)
+        run: uv lock --check
 
       - name: Set up Python
         uses: actions/setup-python@v6
