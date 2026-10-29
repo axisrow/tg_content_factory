@@ -13,6 +13,7 @@ from tg_agent.agent.runtime_context import AgentToolRuntimeError, detect_runtime
 from tg_agent.agent.tools._registry import resolve_phone
 from tg_agent.agent.tools.permissions import ToolAccessState, get_tool_access_state
 from tg_agent.plugin_api import PluginRuntime
+from tg_agent.services.plugin_schema import PluginSchema, PluginSchemaError
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +98,11 @@ class PluginTools:
         if not isinstance(arguments, dict):
             raise PluginToolError(422, 'Tool arguments must be a JSON object')
         try:
-            jsonschema.validators.validator_for(descriptor.input_schema)(descriptor.input_schema).validate(arguments)
+            PluginSchema(descriptor.input_schema).validate(arguments)
         except jsonschema.ValidationError as exc:
             raise PluginToolError(422, f'Invalid tool arguments: {exc.message}') from exc
+        except PluginSchemaError as exc:
+            raise PluginToolError(422, str(exc)) from exc
         args = copy.deepcopy(arguments)
         phone = ''
         if descriptor.phone_bound:

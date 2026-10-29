@@ -219,3 +219,39 @@ def test_nullable_json_schema_and_flag_collisions():
         descriptor = PluginToolDescriptor('example', 'example', 'Example', {'properties': properties}, 'read', False)
         with pytest.raises(click.UsageError):
             cli.parse_tool_flags(descriptor, [])
+
+
+@pytest.mark.parametrize(('schema', 'flags', 'expected'), [
+    ({'type': 'object', 'properties': {'title': {'$ref': '#/$defs/Text'}},
+      '$defs': {'Text': {'type': 'string'}}}, ['--title', 'hello'], {'title': 'hello'}),
+    ({'type': 'object', 'properties': {'enabled': {'$ref': '#/$defs/Flag'}},
+      '$defs': {'Flag': {'type': 'boolean'}}}, ['--no-enabled'], {'enabled': False}),
+    ({'$ref': '#/$defs/Args', '$defs': {'Args': {'type': 'object', 'properties': {
+        'limit': {'type': 'integer'}}}}}, ['--limit', '5'], {'limit': 5}),
+    ({'type': 'object', 'properties': {}, 'allOf': [{'properties': {
+        'limit': {'type': 'integer'}}, 'required': ['limit']}]}, ['--limit', '5'], {'limit': 5}),
+])
+def test_referenced_and_composed_cli_arguments(schema, flags, expected):
+    from tg_agent.services.plugin_tools import PluginToolDescriptor
+
+    descriptor = PluginToolDescriptor('example', 'example', 'Example', normalize_schema(schema), 'read', False)
+    assert cli.parse_tool_flags(descriptor, flags) == expected
+
+
+async def test_invalid_references_reject_before_handler(host):
+    calls = []
+
+    def register(ctx):
+        @tool('bad_schema', 'Bad schema', {'properties': {'value': {'$ref': '#/$defs/Missing'}}}, category='read')
+        async def run(args):
+            calls.append(args)
+            return text_response('unexpected')
+        return [run]
+
+    service = await service_for(host, register)
+    with pytest.raises(PluginToolError, match='Unresolvable plugin schema reference') as error:
+        await service.invoke('bad_schema', {})
+    assert error.value.status == 422
+    with pytest.raises(click.UsageError, match='Unresolvable plugin schema reference'):
+        cli.parse_tool_flags(service.describe('bad_schema'), [])
+    assert calls == []

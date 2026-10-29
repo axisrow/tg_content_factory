@@ -12,6 +12,7 @@ from click.core import ParameterSource
 from tg_agent.cli import runtime
 from tg_agent.cli.typer_app import apply_startup, run_async
 from tg_agent.plugin_api import start_plugins
+from tg_agent.services.plugin_schema import PluginSchema, PluginSchemaError
 from tg_agent.services.plugin_tools import PluginToolError, PluginTools
 
 plugin_app = typer.Typer(no_args_is_help=True, help='Installed plugin tools')
@@ -37,17 +38,19 @@ def parse_tool_flags(descriptor, flags):
     parameters = []
     names = set()
     source_names = {}
-    for index, (name, schema) in enumerate(descriptor.input_schema.get('properties', {}).items()):
+    try:
+        arguments = PluginSchema(descriptor.input_schema).arguments()
+    except PluginSchemaError as exc:
+        raise click.UsageError(str(exc)) from exc
+    for index, (name, argument) in enumerate(arguments.items()):
         option = name.replace('_', '-')
         if not re.fullmatch(r'[A-Za-z][A-Za-z0-9-]*', option) or option in names or option in ('help', 'with-pool'):
             raise click.UsageError(f'Unsupported or conflicting tool option: {name}')
         names.add(option)
-        kind = schema.get('type') if isinstance(schema, dict) else None
-        if not isinstance(kind, str):
-            kind = None
+        kind = argument.kind
         internal_name = f'arg_{index}'
         source_names[internal_name] = name
-        kwargs = {'default': None, 'help': schema.get('description', '') if isinstance(schema, dict) else ''}
+        kwargs = {'default': None, 'help': argument.description}
         declarations = [f'--{option}', internal_name]
         if kind == 'boolean':
             if f'no-{option}' in names:

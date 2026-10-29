@@ -111,3 +111,76 @@ async def test_errors_confirmation_and_runtime_mapping(base_app, route_client, m
     assert (await route_client.post('/api/tools/live_example', json={'phone': '+1234567890'})).status_code == 503
     await db.set_setting('agent_tool_permissions', json.dumps({'write_example': None}))
     assert (await route_client.post('/api/tools/write_example', json={'confirm': True})).status_code == 403
+
+
+async def test_composed_schema_cli_http_parity_and_rejected_inputs(base_app, route_client, monkeypatch, tmp_path):
+    app, db, _pool = base_app
+    calls = []
+    schema = {'$ref': '#/$defs/Args', '$defs': {
+        'Text': {'type': 'string', 'minLength': 2},
+        'Flag': {'type': 'boolean'},
+        'Args': {'type': 'object', 'allOf': [
+            {'properties': {'title': {'$ref': '#/$defs/Text'}, 'enabled': {'$ref': '#/$defs/Flag'},
+                            'limit': {'type': 'integer', 'minimum': 1}}},
+            {'properties': {'limit': {'maximum': 5}}},
+        ], 'required': ['title', 'enabled', 'limit']},
+    }}
+
+    def register(ctx):
+        @tool('composed_echo', 'Echo', schema, category='read')
+        async def echo(args):
+            calls.append(args)
+            return text_response(json.dumps(args, sort_keys=True))
+        return [echo]
+
+    monkeypatch.setattr(plugin_api, 'entry_points', lambda **kw: [Entry(Plugin('example', '1', 1, register))])
+    await start_plugins(db, app.state.config)
+    config_path = tmp_path / 'config.json'
+    config_path.write_text(app.state.config.model_dump_json())
+
+    def invoke(*flags):
+        return CliRunner().invoke(cli_app, ['--config', str(config_path), 'plugin', 'run', 'composed_echo', *flags])
+
+    expected = {'title': 'hello', 'enabled': False, 'limit': 5}
+    cli = await asyncio.to_thread(invoke, '--title', 'hello', '--no-enabled', '--limit', '5')
+    response = await route_client.post('/api/tools/composed_echo', json=expected)
+    assert cli.exit_code == 0, cli.output
+    assert response.status_code == 200, response.text
+    assert json.loads(cli.stdout) == response.json() == text_response(json.dumps(expected, sort_keys=True))
+    assert calls == [expected, expected]
+    for title, limit in [('x', 5), ('hello', 0), ('hello', 6)]:
+        rejected = await asyncio.to_thread(invoke, '--title', title, '--enabled', '--limit', str(limit))
+        assert rejected.exit_code != 0 and not rejected.stdout
+        response = await route_client.post('/api/tools/composed_echo', json={
+            'title': title, 'enabled': True, 'limit': limit,
+        })
+        assert response.status_code == 422
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize('reference', ['#/$defs/Missing', 'https://example.invalid/schema'])
+async def test_unresolvable_schema_http_and_cli_errors_before_handler(
+    base_app, route_client, monkeypatch, tmp_path, reference,
+):
+    app, db, _pool = base_app
+    calls = []
+
+    def register(ctx):
+        @tool('unresolvable', 'Bad schema', {'properties': {'value': {'$ref': reference}}}, category='read')
+        async def echo(args):
+            calls.append(args)
+            return text_response('unexpected')
+        return [echo]
+
+    monkeypatch.setattr(plugin_api, 'entry_points', lambda **kw: [Entry(Plugin('example', '1', 1, register))])
+    await start_plugins(db, app.state.config)
+    response = await route_client.post('/api/tools/unresolvable', json={})
+    assert response.status_code == 422 and 'Unresolvable plugin schema reference' in response.text
+    config_path = tmp_path / 'config.json'
+    config_path.write_text(app.state.config.model_dump_json())
+    result = await asyncio.to_thread(CliRunner().invoke, cli_app, [
+        '--config', str(config_path), 'plugin', 'run', 'unresolvable',
+    ])
+    assert result.exit_code != 0 and not result.stdout
+    assert 'Unresolvable plugin schema reference' in result.stderr
+    assert calls == []
