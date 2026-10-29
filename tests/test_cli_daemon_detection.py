@@ -94,6 +94,13 @@ class TestDaemonDetection(unittest.TestCase):
                 with (
                     patch.object(process_control, "_process_command", return_value=command),
                     patch.object(process_control, "is_process_alive", side_effect=[True, True, False]),
+                    patch.object(process_control, "read_process_owner", return_value={
+                        "pid": 1234, "role": "worker", "project_root": str(Path.cwd().resolve()),
+                        "store_root": str(pid_file.resolve().parent), "executable": "/synthetic/python",
+                        "start_identity": "synthetic-start", "command": command,
+                    }),
+                    patch.object(process_control, "process_executable", return_value="/synthetic/python"),
+                    patch.object(process_control, "process_start_identity", return_value="synthetic-start"),
                     patch.object(os, "kill") as kill,
                 ):
                     self.assertEqual(process_control.stop_server(pid_file).result, process_control.StopResult.STOPPED)
