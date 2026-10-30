@@ -48,6 +48,28 @@ session (up to `TGCF_SESSION_LOCK_GRACE_SECONDS`, default 20) and then fails wit
 .../session-<hash>.lock held by PID 12345)` — useful only while a daemon is shutting down.
 When the holder exits, the lock clears on its own.
 
+## Daemon lifecycle — check before you touch (#1714)
+
+The managed daemon is project-scoped but its PID file can sit on any store path the
+project used since launch (#1698). Before `stop`/`restart`, run:
+
+```
+daemon status          # read-only: daemon up/down, PID, PID file, project/store roots,
+                       # executable (recorded + observed), started_at; exit 0 even when down
+```
+
+- `stop`/`restart` probe every candidate PID file (current store, pre-switch store,
+  legacy marker store) and terminate whichever daemon is alive — the documented
+  `global enable` → `restart` flow no longer orphans the previous daemon (#1698).
+- A `stop`/`restart` from a directory that does not own the running daemon is REFUSED
+  with provenance output (exit 1); the daemon survives. `worker`/`serve` refuse to
+  double-spawn next to a daemon registered on a previous store path.
+- A `restart` whose start phase fails prints a loud `RESTART FAILED … NO daemon is
+  running now` banner — never assume a restart succeeded; verify with `daemon status`.
+- `stop --force` is the human-operator escape hatch (#1714): it overrides the
+  provenance refusal but still only signals a live managed tg-agent daemon. Agents do
+  not use `--force` without explicit operator instruction.
+
 ## channels / collection
 
 ```
@@ -405,7 +427,8 @@ image generate | models | providers | generated
 provider list | add | delete | probe | refresh | test-all
 debug logs | memory | timing
 test all | read | write | telegram | benchmark
-stop | restart
+stop | restart [--force]
+daemon status                            # read-only: is the project daemon up, whose is it (#1714)
 serve [--web-pass PASS] [--no-worker]   # legacy web panel (deprecated)
 worker                                  # default daemon: worker runtime, no web panel
 restart                                 # stop + start the worker daemon (managed PID file)

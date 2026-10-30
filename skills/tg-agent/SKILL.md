@@ -94,7 +94,10 @@ One-off: `tg-agent channel collect <id>` runs a collection synchronously and
 exits. Continuous/scheduled collection needs the long-lived daemon: `tg-agent restart`
 stops any previous daemon and starts the worker runtime — no web panel, no WEB_PASS
 required, managed via a PID file (`tg-agent stop` halts it). Check scheduler state with
-`tg-agent scheduler status`.
+`tg-agent scheduler status`. Check the daemon itself with `tg-agent daemon status`
+(read-only: up/down + provenance — do this before any stop/restart; a stop from a
+directory that does not own the daemon is refused, and a failed restart says so loudly).
+See [reference.md](reference.md) → "Daemon lifecycle".
 
 While the daemon runs, most `dialogs` actions (`send`, `forward`, `react`, `refresh`, …),
 `channel collect`, `collect --channel-id`, `channel stats` and the scheduler mutations

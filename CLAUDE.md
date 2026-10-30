@@ -108,7 +108,8 @@ python -m tg_agent.main scheduler start|trigger|status|stop|job-toggle|set-inter
 python -m tg_agent.main notification setup|status|delete|test|dry-run|set-account
 python -m tg_agent.main test all|read|write|telegram|benchmark
 
-python -m tg_agent.main stop|restart   # restart = worker daemon, no web panel
+python -m tg_agent.main stop|restart   # restart = worker daemon, no web panel; --force = provenance escape hatch
+python -m tg_agent.main daemon status  # read-only daemon provenance check (up/down, PID, store, executable; #1714)
 python -m tg_agent.main search-query list|get|add|edit|delete|toggle|run|stats
 python -m tg_agent.main pipeline list|show|add|dry-run-count|edit|delete|toggle|run|generate|generate-stream|runs|run-show|queue|moderation-list|moderation-view|publish|approve|reject|bulk-approve|bulk-reject|refinement-steps|export|import|templates|from-template|ai-edit|filter|node|edge|graph
 python -m tg_agent.main photo-loader dialogs|refresh|send|schedule-send|batch-create|batch-list|items|batch-cancel|auto-create|auto-list|auto-update|auto-toggle|auto-delete|run-due

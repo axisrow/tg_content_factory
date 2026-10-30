@@ -68,6 +68,7 @@ from tg_agent.cli.commands.common import (
     TriBool,
     resolve_date_bounds,
 )
+from tg_agent.cli.commands.daemon_control import daemon_app
 from tg_agent.cli.commands.debug import debug_app
 from tg_agent.cli.commands.dialogs import dialogs_app
 from tg_agent.cli.commands.dm import dm_app
@@ -171,10 +172,22 @@ def worker(ctx: typer.Context) -> None:
 
 
 @app.command()
-def stop(ctx: typer.Context) -> None:
+def stop(
+    ctx: typer.Context,
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help=(
+            "Operator escape hatch (#1714): stop even when provenance "
+            "verification refuses (daemon owned by another project or a legacy "
+            "PID file without an owner record). The PID must still be a live "
+            "managed tg-agent daemon process."
+        ),
+    ),
+) -> None:
     """Stop the managed daemon (worker or legacy serve) started by this app."""
     apply_startup(ctx)
-    server_control_cmd.stop_web(ctx.obj.config)
+    server_control_cmd.stop_web(ctx.obj.config, force=force)
 
 
 @app.command()
@@ -429,6 +442,8 @@ app.add_typer(photo_loader_app, name="photo-loader")
 app.add_typer(global_app, name="global")
 
 app.add_typer(gateway_app, name="gateway")
+
+app.add_typer(daemon_app, name="daemon")
 
 
 # --------------------------------------------------------------------------- #
