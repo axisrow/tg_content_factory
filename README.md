@@ -52,6 +52,11 @@ TG_API_HASH=your_api_hash
 SESSION_ENCRYPTION_KEY=your_random_secret    # required before adding/importing accounts
 ```
 
+For several projects on one machine you can skip the per-project key copies:
+store it once in the OS secret store with `tg-agent key set` (macOS Keychain /
+Windows Credential Manager / secret-tool). An explicit `SESSION_ENCRYPTION_KEY`
+still wins over the stored secret.
+
 ### 3. Authorize an account (interactive, once)
 
 ```bash
@@ -136,7 +141,7 @@ note, migration story, and rationale for de-emphasizing mandatory `sqlite-vec`.
 |---|---|---|
 | `TG_API_ID` | Yes | Telegram API ID |
 | `TG_API_HASH` | Yes | Telegram API Hash |
-| `SESSION_ENCRYPTION_KEY` | Yes* | Key for encrypting Telegram session strings in DB |
+| `SESSION_ENCRYPTION_KEY` | Yes* | Key for encrypting Telegram session strings in DB; may instead live in the OS secret store (`tg-agent key set`) |
 | `WEB_PASS` | —† | Web panel password (legacy web dashboard only) |
 | `LLM_API_KEY` | No | API key for AI-powered search |
 | `ANTHROPIC_API_KEY` | —† | `claude-agent-sdk` only (legacy embedded agent chat) |

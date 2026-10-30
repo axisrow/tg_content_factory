@@ -73,6 +73,14 @@ web:
     Установите `SESSION_ENCRYPTION_KEY` перед добавлением аккаунтов, чтобы сессии
     сразу легли в БД зашифрованными.
 
+!!! tip "Один ключ на машину (#1699)"
+    Вместо копии `.env` в каждом проекте ключ можно один раз сохранить в
+    ОС-хранилище секретов: `tg-agent key set` (macOS Keychain, Windows
+    Credential Manager, Linux secret-tool; на headless-машинах — 0600-файл в
+    корне глобального хранилища). Порядок резолва: config.yaml/env → ОС-хранилище
+    → прежнее предупреждение. `tg-agent key status` показывает источник,
+    `tg-agent key clear` удаляет ключ. Слой отключается `TG_AGENT_SECRET_STORE=off`.
+
 !!! danger "Session string = полный доступ к аккаунту"
     Расшифрованная StringSession эквивалентна паролю аккаунта. Перенос сессий
     между инстансами и правила безопасности (export/import, HTTPS, audit) описаны

@@ -20,6 +20,11 @@ from tg_shared.session_materializer import SessionMaterializer
 
 os.environ.setdefault("SESSION_ENCRYPTION_KEY", "test-session-encryption-key")
 
+# #1699 hermeticity: the real machine OS secret store (a dev Mac's login
+# keychain may legitimately hold the owner's key) must never be consulted by
+# tests. Store-layer tests opt back in and fake the backend subprocess.
+os.environ.setdefault("TG_AGENT_SECRET_STORE", "off")
+
 # The host checkout may legitimately carry a live .tg-agent-global binding
 # (post-#1724 the factory's own marker IS a binding). Tests must see an
 # UNenrolled project unless they enroll their own tmp cwd: whenever the repo

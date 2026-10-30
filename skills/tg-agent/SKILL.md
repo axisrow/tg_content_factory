@@ -22,6 +22,10 @@ tg-agent --version
   Set a private `SESSION_ENCRYPTION_KEY` there before adding/importing accounts; retain it
   to decrypt stored sessions. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
   The key is required for account writes; sessions are never stored in plaintext.
+  Multi-project machines: the key may live ONCE in the OS secret store instead of per-project
+  `.env` copies — `tg-agent key set` (macOS Keychain / Windows Credential Manager / secret-tool;
+  `key status` / `key clear` manage it). An explicit env/config key still wins; nothing is
+  stored unless the owner runs `key set`.
 - Check an account is authorized: `tg-agent account list`. If none, first authorization is
   **interactive** — the user must run `tg-agent account add` themselves (they receive a
   Telegram login code). Never try to automate the code entry.

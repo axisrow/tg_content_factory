@@ -171,6 +171,18 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("gateway", "account", "import"): "shared session import requiring --shared; dedicated test accounts only",
     ("gateway", "account", "export-session"): "explicit secret export requiring --shared; offline fixture only",
     ("gateway", "account", "replace-session"): "shared session replacement; dedicated test accounts only",
+    ("key", "clear"): (
+        "local OS secret-store delete (Keychain/Credential Manager/secret-tool); "
+        "no live Telegram, covered by offline CLI tests with a faked backend (#1699)"
+    ),
+    ("key", "set"): (
+        "local OS secret-store write (Keychain/Credential Manager/secret-tool); "
+        "no live Telegram, covered by offline CLI tests with a faked backend (#1699)"
+    ),
+    ("key", "status"): (
+        "list-only local OS secret-store read; no live Telegram, "
+        "covered by offline CLI tests with a faked backend (#1699)"
+    ),
     ("mcp-server",): "stdio MCP daemon serving the tool registry; not a Telegram leaf operation",
     ("dm", "journal", "list"): "list-only local incoming_dms journal view — DB-only read (#1580)",
     ("dm", "archive", "list"): "list-only local dm_messages archive view — DB-only read (#1580)",
