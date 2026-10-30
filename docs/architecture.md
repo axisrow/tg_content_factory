@@ -76,7 +76,10 @@ db.repos.settings.get_setting("key")
 pass-through-методов (ratchet «только вниз») — добавление новых pass-through падает в CI,
 вынуждая использовать `db.repos`.
 
-## Web App Wiring
+## Runtime and Web App Wiring
+
+- `tg_agent/runtime/bootstrap.py` — общая сборка сервисов и lifecycle worker; `RuntimeContainer` не содержит шаблонов или web timing state.
+- `tg_agent/web/bootstrap.py` — совместимые входные точки и сборка web-представления поверх runtime; `AppContainer` добавляет Jinja-шаблоны и timing buffer.
 
 - `tg_agent/web/assembly.py` — `register_routes()` монтирует все роутеры; `configure_app()` привязывает `AppContainer` к `app.state.*`
 - `tg_agent/web/container.py` — `AppContainer` агрегирует все сервисы
