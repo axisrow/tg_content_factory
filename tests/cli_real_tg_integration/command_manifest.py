@@ -343,6 +343,8 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
         "bootstraps a local-only style spec under ~/.tg-agent/designs (file-only, "
         "never committed, #1687); covered by offline CLI tests"
     ),
+    ("plugin", "list"): "local installed-package catalogue; no live Telegram (#1710)",
+    ("plugin", "run"): "operator-installed tools have arbitrary effects; schema/ACL and digest covered offline (#1710)",
     ("style", "list"): "list-only local style spec view; file-only, no live Telegram (#1687)",
     ("style", "show"): "list-only local style spec view; file-only, no live Telegram (#1687)",
     ("telegraph", "create"): (

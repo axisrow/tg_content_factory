@@ -326,6 +326,34 @@ blocks (no is_filtered effect).
 useful/genre). CALIBRATION ONLY: costs provider spend; its verdicts are the
 ground truth that calibrates `usefulness` thresholds, never a production path.
 
+## plugins — installed plugin tools
+
+```
+plugin list [--json]
+plugin run TOOL [OPTIONS...] [--with-pool]
+```
+
+Plugins install via the `tg_agent.plugins` entry-point group and register agent tools.
+`plugin list` prints one tab-separated line per plugin —
+`id <TAB> version <TAB> status <TAB> tools <TAB> reason` (`-` = missing version/tools,
+tools comma-joined) or `No plugins installed`; `--json` prints a JSON array of
+`{id, version, status, reason, tools}` records. Statuses: `active`, `disabled`
+(via `plugins_disabled` config), `incompatible` (plugin API mismatch), `failed`
+(load/setup error — `reason` says why). DB + entry-points only — safe to run while
+the daemon is up.
+
+`plugin run` generates flags from the tool's JSON Schema at runtime: every schema
+property becomes `--name` (underscores → dashes); `boolean` → `--name/--no-name`,
+`integer`/`number`/`string` take typed values, any other shape (`object`, `array`,
+multi-type) takes a JSON value (`--opts '{"limit": 5}'`). Only flags actually passed
+on the command line are forwarded; `help` and `with-pool` are reserved, an unknown
+flag is a usage error. The tool result prints as one JSON line on stdout; errors go
+to stderr as `Error: <detail>` — exit 1 (unknown tool, invalid arguments, access
+denied, no live runtime), exit 2 (flag/usage errors). Phone-bound tools need a live
+Telegram connection: pass `--with-pool` (refused by the session lock while the daemon
+runs — `tg-agent stop` first); without `--with-pool` they fail with
+"Live Telegram runtime is unavailable".
+
 ## accounts, notifications, settings, misc
 
 ```

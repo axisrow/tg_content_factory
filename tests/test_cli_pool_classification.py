@@ -46,6 +46,9 @@ HANDS_OFF = {
 # per-session lock (#1548) the daemon holds every session for its lifetime: the
 # CLI pool only waited out the lock grace per account and came up empty.
 REFUSED_WHILE_DAEMON = {
+    # plugin run --with-pool: generic tools have no worker-queue handoff.
+    # Use the normal guard (or configured gateway), never allow_live_daemon.
+    ("plugin.py", "plugin_host"),
     # verify-code (#1521): the account is persisted first; the pool is only a
     # best-effort premium warm-up whose failure the command already reports.
     ("account.py", "verify_code_impl"),
