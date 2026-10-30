@@ -23,7 +23,6 @@ from typer.testing import CliRunner
 from tg_agent.cli.typer_app import app
 from tg_agent.config import (
     GLOBAL_DB_NAME,
-    GLOBAL_SESSIONS_SUBDIR,
     apply_global_store,
     global_marker_path,
     global_store_root,
@@ -108,21 +107,30 @@ def test_load_config_without_marker_keeps_local_paths(tmp_path, monkeypatch):
     assert config.telegram_runtime.session_cache_dir == "data/telegram_sessions"
 
 
-def test_load_config_with_marker_redirects_db_and_sessions(tmp_path, monkeypatch):
+def test_load_config_with_legacy_marker_keeps_local_db_and_warns(tmp_path, monkeypatch, caplog):
+    """#1724: global auth never implies a global database.
+
+    The legacy plain-path marker used to silently rewrite database.path and
+    session_cache_dir to the shared store; since the redirect removal it must
+    leave both project-local and say so out loud (WARNING on every load).
+    """
+    import logging
+
     _chdir_project(tmp_path, monkeypatch)
-    root = global_store_root()
-    global_marker_path().write_text(f"{root}\n", encoding="utf-8")
-    config = load_config("config.yaml")
-    assert config.database.path == str(root / GLOBAL_DB_NAME)
-    assert config.telegram_runtime.session_cache_dir == str(root / GLOBAL_SESSIONS_SUBDIR)
+    global_marker_path().write_text(f"{global_store_root()}\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="tg_agent.config"):
+        config = load_config("config.yaml")
+    assert config.database.path == "local.db"
+    assert config.telegram_runtime.session_cache_dir == "data/telegram_sessions"
+    assert any("no longer redirects" in r.message for r in caplog.records)
 
 
-def test_explicit_session_env_wins_over_marker(tmp_path, monkeypatch):
+def test_legacy_marker_leaves_explicit_session_env_alone(tmp_path, monkeypatch):
     _chdir_project(tmp_path, monkeypatch)
     global_marker_path().write_text(f"{global_store_root()}\n", encoding="utf-8")
     monkeypatch.setenv("TG_SESSION_CACHE_DIR", str(tmp_path / "env-sessions"))
     config = load_config("config.yaml")
-    assert config.database.path == str(global_store_root() / GLOBAL_DB_NAME)
+    assert config.database.path == "local.db"
     assert config.telegram_runtime.session_cache_dir == str(tmp_path / "env-sessions")
 
 
@@ -147,13 +155,17 @@ def test_status_reports_disabled_by_default(tmp_path, monkeypatch):
     assert ".tg-agent-global" in result.stdout
 
 
-def test_status_reports_enabled_with_store_paths(tmp_path, monkeypatch):
+def test_status_reports_legacy_marker_as_inert(tmp_path, monkeypatch):
+    """#1724: a legacy marker no longer means "enabled" — status must say so."""
     _chdir_project(tmp_path, monkeypatch)
     global_marker_path().write_text(f"{global_store_root()}\n", encoding="utf-8")
     result = runner.invoke(app, ["global", "status"])
     assert result.exit_code == 0
-    assert "enabled" in result.stdout
-    assert str(global_store_root() / GLOBAL_DB_NAME) in result.stdout
+    assert "Legacy marker detected" in result.stdout
+    assert "no longer redirects" in result.stdout
+    assert "project database : local.db" in result.stdout
+    assert "global enable --account PHONE" in result.stdout
+    assert str(global_store_root() / GLOBAL_DB_NAME) not in result.stdout
 
 
 # --------------------------------------------------------------------------- #
@@ -170,14 +182,42 @@ def test_enable_requires_explicit_account_grants(tmp_path, monkeypatch):
     assert not (global_store_root() / GLOBAL_DB_NAME).exists()
 
 
-def test_enable_does_not_silently_replace_legacy_marker(tmp_path, monkeypatch):
+def test_enable_over_legacy_marker_no_longer_refuses(tmp_path, monkeypatch):
+    """#1724: a legacy marker no longer blocks enable — it is an inert pointer.
+
+    The store root is pre-configured and the gateway admin call is stubbed to
+    fail with a canned error, so the test proves only the guard removal: the
+    failure must be the stub's, not the old "Legacy global store requires
+    `global migrate`" refusal.
+    """
     _chdir_project(tmp_path, monkeypatch)
-    root = global_store_root()
-    global_marker_path().write_text(str(root))
+    global_marker_path().write_text(str(global_store_root()))
+    from tg_agent.gateway.runtime import configure
+
+    configure(global_store_root(), api_id=12345, api_hash="offline-test-api-hash")
+
+    from tg_agent.gateway import enrollment
+
+    class _DownAdministrator:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        @classmethod
+        async def connect(cls, root):
+            return cls()
+
+        async def call(self, *args, **kwargs):
+            raise RuntimeError("stub-gateway-down")
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(enrollment, "GatewayAdministrator", _DownAdministrator)
     result = runner.invoke(app, ["global", "enable", "--account", PHONE_A])
     assert result.exit_code != 0
-    assert global_marker_path().read_text() == str(root)
-    assert load_config().database.path == str(root / GLOBAL_DB_NAME)
+    assert "Legacy global store requires" not in (result.stderr or "")
+    assert isinstance(result.exception, RuntimeError)
+    assert "stub-gateway-down" in str(result.exception)
 
 
 # --------------------------------------------------------------------------- #

@@ -333,14 +333,15 @@ account list | info | toggle | set-primary | delete | add
 account send-code | verify-code        # interactive first-time auth — user does this themselves
 account flood-status | flood-clear
 global enable | disable | status       # shared account store across projects (#1683)
-# global: `enable` attaches the current project to the machine-wide store
-# (~/.tg-agent, TG_AGENT_GLOBAL_DIR overrides) via a .tg-agent-global marker in the
-# project root; accounts and Telegram sessions then resolve to the shared store in
-# every attached project, logs/images/downloads stay project-local. First enable of
-# an empty store seeds it from the project's local accounts (enc:v2 ciphertext
-# copied as-is — SESSION_ENCRYPTION_KEY stays required, never printed). `disable`
-# removes the marker (local files untouched); `status` prints the effective store.
-# Restart any running worker/daemon in the project after enable/disable.
+# global: `enable` attaches the current project to the machine-wide account
+# gateway (~/.tg-agent, TG_AGENT_GLOBAL_DIR overrides) via a .tg-agent-global
+# marker (JSON binding) in the project root. Accounts are shared through the
+# gateway; the project DATABASE ALWAYS STAYS PROJECT-LOCAL — global auth never
+# implies a global database (#1724). Requires explicit --account PHONE grants
+# (repeatable). Legacy plain-path markers no longer redirect anything (status
+# flags them as inert; replace with `enable`). `disable` detaches the project
+# (local files untouched); `status` prints the marker format and the effective
+# database path. Restart any running worker/daemon after enable/disable.
 style init | list | show --channel <id>  # local-only per-channel style specs (#1687)
 # style: per-channel posting-voice specs (skeleton, nicknames, emoji policy, digest
 # rules) stored OUTSIDE the repository in ~/.tg-agent/designs/<key>.md

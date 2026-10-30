@@ -22,12 +22,12 @@ async def _list_tool_names(config_path: Path) -> list[str]:
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "tg_agent.main", "--config", str(config_path), "mcp-server", "--no-pool"],
-        # The subprocess must NOT run with cwd at the repo root: this checkout
-        # carries the `.tg-agent-global` marker, and `apply_global_store` would
-        # silently rewrite the throwaway --config database.path to the real
-        # global store — the seeded ACL never gets read and DENIED tools leak
-        # into tools/list (env-dependent red on the dev machine, green in CI).
-        # tg_agent is installed editable, so the import works from tmp cwd too.
+        # Run the server from the config's own directory, never the repo root:
+        # repo-root cwd makes the server depend on this checkout's state (the
+        # `.tg-agent-global` marker once silently rewrote the throwaway
+        # --config database.path to the real global store, #1721) and on the
+        # repo's .env. tg_agent is installed editable, so the import works
+        # from tmp cwd too.
         cwd=str(config_path.parent),
     )
     async with stdio_client(params) as (read, write):
