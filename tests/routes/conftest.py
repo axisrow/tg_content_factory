@@ -166,7 +166,7 @@ def agent_manager_mock():
 # `SnapshotSchedulerManager` shims.
 #
 # This fixture goes through the real `build_container_with_templates`
-# bootstrap with `runtime_mode="web"` — the exact same wiring that
+# bootstrap — the exact same wiring that
 # `python -m tg_agent.main serve` uses in production. Tests that want to exercise
 # the web-mode code path should take this fixture instead of `base_app`.
 
@@ -186,7 +186,6 @@ async def web_mode_app(tmp_path):
         config,
         log_buffer=LogBuffer(),
         templates=None,
-        runtime_mode="web",
     )
 
     # Seed one account + one channel so scheduler/channels pages render cleanly.
