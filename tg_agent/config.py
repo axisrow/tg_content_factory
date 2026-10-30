@@ -251,7 +251,6 @@ _ENV_PATTERN = re.compile(r"\$\{(\w+)\}")
 GLOBAL_STORE_DIR_ENV = "TG_AGENT_GLOBAL_DIR"
 GLOBAL_STORE_MARKER = ".tg-agent-global"
 GLOBAL_DB_NAME = "tg_search.db"
-GLOBAL_SESSIONS_SUBDIR = "telegram_sessions"
 GLOBAL_DESIGNS_SUBDIR = "designs"
 
 
