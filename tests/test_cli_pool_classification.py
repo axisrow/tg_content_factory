@@ -22,22 +22,22 @@ from pathlib import Path
 
 import pytest
 
-COMMANDS_DIR = Path(__file__).resolve().parent.parent / "tg_agent" / "cli" / "commands"
+CLI_DIR = Path(__file__).resolve().parent.parent / "tg_agent" / "cli"
 
 # Consult the daemon before opening a pool: hand work to the running worker
 # through a queue, or (generation) run without Telegram access.
 HANDS_OFF = {
-    ("channel.py", "collect_impl"),
-    ("collect.py", "collect_impl"),
-    ("dialogs.py", "_dispatch"),
+    ("commands/channel.py", "collect_impl"),
+    ("commands/collect.py", "collect_impl"),
+    ("commands/dialogs.py", "_dispatch"),
     # pipeline run / generate (#1521): next to a live daemon generation runs
     # without a pool — Telegram-side nodes fail without one, so pipelines
     # containing them need the daemon stopped.
-    ("pipeline.py", "_generation_pool"),
+    ("pipeline/generation.py", "_generation_pool"),
     # ping run-due (#1415): the worker already runs ping_due hourly; a parallel
     # local run would pass the same threshold rule and double-send the nudge —
     # hand off via the PING_DUE task whose has_active_task dedup blocks overlap.
-    ("ping.py", "run_due_impl"),
+    ("commands/ping.py", "run_due_impl"),
 }
 
 # Refused while a daemon is live (#1521): no queue equivalent, so
@@ -48,36 +48,36 @@ HANDS_OFF = {
 REFUSED_WHILE_DAEMON = {
     # verify-code (#1521): the account is persisted first; the pool is only a
     # best-effort premium warm-up whose failure the command already reports.
-    ("account.py", "verify_code_impl"),
-    ("account.py", "info_impl"),
-    ("search.py", "search_impl"),
-    ("messages.py", "messages_read_impl"),
-    ("photo_loader.py", "_run_with_services"),
-    ("test.py", "_run_tg_pool_init_step"),
-    ("channel.py", "refresh_types_impl"),
-    ("channel.py", "refresh_meta_impl"),
-    ("channel.py", "add_impl"),
-    ("channel.py", "import_impl"),
-    ("channel.py", "add_bulk_impl"),
-    ("channel.py", "list_for_import_impl"),
-    ("collect.py", "collect_sample_impl"),
-    ("notification.py", "_build"),
-    ("pipeline.py", "_pipeline_publish"),
+    ("commands/account.py", "verify_code_impl"),
+    ("commands/account.py", "info_impl"),
+    ("commands/search.py", "search_impl"),
+    ("commands/messages.py", "messages_read_impl"),
+    ("commands/photo_loader.py", "_run_with_services"),
+    ("commands/test.py", "_run_tg_pool_init_step"),
+    ("commands/channel.py", "refresh_types_impl"),
+    ("commands/channel.py", "refresh_meta_impl"),
+    ("commands/channel.py", "add_impl"),
+    ("commands/channel.py", "import_impl"),
+    ("commands/channel.py", "add_bulk_impl"),
+    ("commands/channel.py", "list_for_import_impl"),
+    ("commands/collect.py", "collect_sample_impl"),
+    ("commands/notification.py", "_build"),
+    ("pipeline/moderation.py", "_pipeline_publish"),
     # ping create (#1415): --username resolve is a read-only RPC, one RPC per
     # operator-invoked create — same shape as the diagnostics above.
-    ("ping.py", "create_impl"),
+    ("commands/ping.py", "create_impl"),
     # probe (#1622): read-only live quality card for a channel that is not in
     # the DB yet — the worker queue has no equivalent (it only touches
     # collected channels).
-    ("channel.py", "probe_impl"),
+    ("commands/channel.py", "probe_impl"),
 }
 
 # Intentionally untouched: frozen long-lived legacy surfaces with their own
 # lifecycle. They pass ``allow_live_daemon=True`` and keep the pre-#1521
 # behaviour (the session lock still keeps them off the daemon's sessions).
 EXEMPT = {
-    ("agent.py", "chat_impl"),
-    ("mcp_server.py", "_serve"),
+    ("commands/agent.py", "chat_impl"),
+    ("commands/mcp_server.py", "_serve"),
 }
 
 CLASSIFIED = HANDS_OFF | REFUSED_WHILE_DAEMON | EXEMPT
@@ -85,8 +85,8 @@ CLASSIFIED = HANDS_OFF | REFUSED_WHILE_DAEMON | EXEMPT
 # The only sites allowed to pass ``allow_live_daemon``: the exempt surfaces, and
 # hand-off sites forwarding an explicit operator ``--direct``.
 BYPASSES_GUARD = EXEMPT | {
-    ("channel.py", "collect_impl"),
-    ("dialogs.py", "_dispatch"),
+    ("commands/channel.py", "collect_impl"),
+    ("commands/dialogs.py", "_dispatch"),
 }
 
 
@@ -103,14 +103,14 @@ def _is_init_pool_call(node: ast.AST) -> bool:
 def _pool_calls() -> list[tuple[str, str, ast.Call]]:
     """Every ``init_pool`` call with its file and enclosing function."""
     found: list[tuple[str, str, ast.Call]] = []
-    for path in sorted(COMMANDS_DIR.glob("*.py")):
+    for path in sorted(CLI_DIR.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for inner in ast.walk(node):
                 if _is_init_pool_call(inner):
-                    found.append((path.name, node.name, inner))
+                    found.append((path.relative_to(CLI_DIR).as_posix(), node.name, inner))
     return found
 
 
@@ -158,7 +158,7 @@ def test_hands_off_sites_consult_the_detector(file_name: str, func_name: str):
     Without this the entry is just a comment: the function could keep connecting
     unconditionally while the list claims otherwise.
     """
-    source = (COMMANDS_DIR / file_name).read_text(encoding="utf-8")
+    source = (CLI_DIR / file_name).read_text(encoding="utf-8")
     tree = ast.parse(source)
 
     target = next(
