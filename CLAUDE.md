@@ -121,6 +121,8 @@ python -m tg_agent.main export json|csv|rss
 python -m tg_agent.main translate stats|detect|run|message
 python -m tg_agent.main settings get|set|info|server-time|agent|filter-criteria|reactions|semantic
 python -m tg_agent.main style init|list|show --channel <id>   # local-only per-channel style specs (~/.tg-agent/designs, never committed)
+python -m tg_agent.main telegraph login --short-name "..."   # one-time: createAccount, token → settings (enc:v2, masked)
+python -m tg_agent.main telegraph create --title "..." --file article.md [--author-name N] [--author-url U] [--format text|json]   # telegra.ph page from markdown (#1703)
 python -m tg_agent.main debug logs|memory|timing
 python -m tg_agent.main image generate|models|providers|generated
 python -m tg_agent.main mcp-server [--no-pool]   # LEGACY: stdio MCP bridge over the agent tool registry (frozen)

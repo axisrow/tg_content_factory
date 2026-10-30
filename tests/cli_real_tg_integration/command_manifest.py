@@ -345,6 +345,14 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ),
     ("style", "list"): "list-only local style spec view; file-only, no live Telegram (#1687)",
     ("style", "show"): "list-only local style spec view; file-only, no live Telegram (#1687)",
+    ("telegraph", "create"): (
+        "external telegra.ph HTTP POST — no Telegram; covered by offline "
+        "unit/integration tests with a fake HTTP session (#1703)"
+    ),
+    ("telegraph", "login"): (
+        "external telegra.ph createAccount + local encrypted settings write; "
+        "no Telegram, covered by offline CLI tests with a fake HTTP session (#1703)"
+    ),
     ("test", "write"): "diagnostic aggregate with local DB writes",
     ("translate", "detect"): "local message backfill mutation",
     ("translate", "message"): "provider/network translation",

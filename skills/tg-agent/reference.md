@@ -350,6 +350,19 @@ style init | list | show --channel <id>  # local-only per-channel style specs (#
 # prints the spec — read it to render content in the channel's voice, and fill a
 # fresh template in together with the user.
 notification setup | status | delete | test | dry-run | set-account
+telegraph login --short-name N [--author-name A] [--author-url U]
+telegraph create --title T --file f.md [--author-name A] [--author-url U] [--format json]
+# telegraph: publishes a public telegra.ph page from markdown (#1703). `login`
+# runs once per project: it creates a (disposable) Telegraph account via
+# createAccount and stores its access token in settings as
+# telegraph_access_token — a secret (enc:v2 via set_secret, masked in every
+# settings surface; needs SESSION_ENCRYPTION_KEY). A live probe showed
+# createPage rejects anonymous calls (ACCESS_TOKEN_INVALID), so the token is
+# required. `create` converts a markdown subset (h1–h4, lists,
+# bold/italic/links, bare URLs, `code`, quotes, hr) to Telegraph nodes — body
+# from --file or stdin — prints the page URL (--format json = full API
+# response). telegra.ph has no tables — lay them out as lists/paragraphs
+# yourself. Pair with `dialogs send` for title+link posts.
 settings get | set | info | server-time | agent | filter-criteria | reactions | semantic
 # settings: secret-looking keys (*_api_key, *_token, *_secret, session_secret_key) are
 # masked in get/set output; settings semantic --api-key and `set semantic_embeddings_api_key`
