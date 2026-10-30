@@ -26,9 +26,11 @@ tg-agent --version
   **interactive** — the user must run `tg-agent account add` themselves (they receive a
   Telegram login code). Never try to automate the code entry.
 - Fresh project shows `No accounts found`? Accounts are per-project by default. Attach the
-  project to the machine-wide store once with `tg-agent global enable` (shared DB at
-  `~/.tg-agent`, seeded from local accounts on first enable; `global status` shows the
-  effective store) — the shared accounts become visible without re-logging in.
+  project to the machine-wide account gateway once with `tg-agent global enable --account
+  <PHONE>` (repeatable; requires explicit grants) — shared accounts become visible without
+  re-logging in. Only accounts are shared: the project database stays project-local (#1724,
+  global auth never implies a global DB). Legacy plain-path `.tg-agent-global` markers are
+  inert; replace one with `enable`, check with `global status`.
 - `.env` from the current directory is picked up automatically.
 - If Telegram connections time out (MTProto IPs blocked on this network), set
   `TG_PROXY=socks5://user:pass@host:port` (no-auth `socks5://host:port`, or
