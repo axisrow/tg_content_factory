@@ -399,6 +399,12 @@ def stop_server(
             if owner.get("start_identity") and owner["start_identity"] != process_start_identity(pid):
                 return StopOutcome(StopResult.UNMANAGED, f"PID {pid} has been reused; refusing to signal it.")
 
+    # Snapshot the live process identity before signalling: the post-timeout
+    # force-kill guard must compare against who we actually signalled, not
+    # against the owner record — which stop --force deliberately never read
+    # (PR #1741 review).
+    signalled_identity = process_start_identity(pid)
+
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -421,7 +427,7 @@ def stop_server(
         time.sleep(0.1)
 
     identity_now = process_start_identity(pid)
-    if identity_now is not None and identity_now != (owner or {}).get("start_identity"):
+    if identity_now is not None and identity_now != signalled_identity:
         # A vanished process reports no identity: exiting is the desired outcome.
         return StopOutcome(StopResult.UNMANAGED, f"PID {pid} changed during shutdown; refusing force kill.")
     try:

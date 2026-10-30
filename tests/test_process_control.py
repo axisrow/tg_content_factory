@@ -362,3 +362,29 @@ def test_stop_server_force_still_refuses_unmanaged_process(tmp_path):
     assert outcome.result is StopResult.UNMANAGED
     mock_kill.assert_not_called()
     assert path.exists()
+
+
+def test_stop_server_force_kills_wedged_daemon_without_owner_record(tmp_path):
+    """--force must reach SIGKILL for the wedged daemon it exists for.
+
+    Regression guard (PR #1741 review): the post-timeout force-kill guard used
+    to compare against the owner record — which --force deliberately never
+    read — so SIGKILL was always refused with "changed during shutdown".
+    """
+    path = tmp_path / "wedged.pid"
+    path.write_text("123\n", encoding="utf-8")
+    alive_states = iter([True, True, False])
+
+    with patch("tg_agent.cli.process_control.is_process_alive",
+               side_effect=lambda pid: next(alive_states)):
+        with patch("tg_agent.cli.process_control.is_expected_server_process", return_value=True):
+            with patch("tg_agent.cli.process_control.process_start_identity",
+                       return_value="wedged-start-identity"):
+                with patch("tg_agent.cli.process_control.os.kill") as mock_kill:
+                    outcome = stop_server(path, timeout_sec=0.05, kill_timeout_sec=0.05,
+                                          force=True)
+
+    assert outcome.result is StopResult.STOPPED
+    assert "force kill" in outcome.message
+    assert mock_kill.call_count == 2  # SIGTERM, then the force SIGKILL
+    assert not path.exists()
