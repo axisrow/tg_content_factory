@@ -117,9 +117,16 @@ class FakeBackend:
 
 @pytest.fixture()
 def store_on(monkeypatch: pytest.MonkeyPatch):
-    """Opt back into the store layer with every backend faked; reset caches."""
+    """Opt back into the store layer with every backend faked; reset caches.
+
+    Pins the keychain dialect: the macOS-targeting tests must not drift with
+    the host OS (CI runs Linux, where dispatch would pick the file backend
+    and never consult the fake ``_run``).
+    """
     monkeypatch.setenv("TG_AGENT_SECRET_STORE", "")
     monkeypatch.setattr(secret_store, "_backend_error", None, raising=False)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", lambda _n: None)
     read_stored_key.cache_clear()
     yield
     read_stored_key.cache_clear()
@@ -162,6 +169,13 @@ def test_backend_off_switch(monkeypatch: pytest.MonkeyPatch):
 def test_store_key_refuses_when_off():
     with pytest.raises(SecretStoreError, match="disabled"):
         store_key(KEY)
+
+
+def test_store_on_fixture_pins_keychain_dialect(store_on):
+    """Regression (#1742 CI): on a Linux host dispatch must still pick the
+    faked keychain backend, not the file fallback — the macOS-targeting tests
+    depend on the fixture's platform pin beating the host OS."""
+    assert backend_name() == "keychain"
 
 
 # --------------------------------------------------------------------------- #

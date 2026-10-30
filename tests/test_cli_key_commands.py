@@ -34,6 +34,10 @@ class _FakeTty:
 def store_on(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("TG_AGENT_SECRET_STORE", "")
     monkeypatch.setattr("tg_agent.security.secret_store._backend_error", None, raising=False)
+    # Pin the keychain dialect — CI runs Linux; without the pin dispatch would
+    # pick the file backend and never consult the faked backend.
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr("shutil.which", lambda _n: None)
     from tg_agent.security import secret_store
 
     secret_store.read_stored_key.cache_clear()
