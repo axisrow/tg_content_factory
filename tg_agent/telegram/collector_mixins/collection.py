@@ -7,6 +7,7 @@ import logging
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from inspect import isawaitable
 from typing import TYPE_CHECKING, cast
 
@@ -52,9 +53,9 @@ from tg_agent.telegram.collector_resolve import (
 from tg_agent.telegram.collector_types import (
     _ACQUIRE_RETRY,
     AllCollectionClientsFloodedError,
+    CollectionPassState,
     NoActiveCollectionClientsError,
     _format_channel_log_name,
-    _StreamOutcome,
     unknown_tl_type_note,
 )
 from tg_agent.utils.safe_logging import mask_phone
@@ -685,65 +686,115 @@ class CollectionMixin:
             persisted_ids.update(row["message_id"] for row in rows)
         return persisted_ids
 
-    async def _finalize_collection_pass(
-        self: "Collector",
-        *,
-        channel_id: int,
-        messages_batch: list[Message],
-        flush_batch: Callable[[list[Message]], Awaitable[bool]],
-        get_persisted_max_msg_id: Callable[[], int],
-        min_id: int,
-        phone: str,
-        session,
-        stream_outcome: _StreamOutcome,
+    async def _flush_collection_batch(
+        self: "Collector", state: CollectionPassState, batch: list[Message]
     ) -> bool:
-        """Run the per-pass cleanup that used to live in ``_collect_channel``'s
-        ``finally`` (#1045): flush any leftover batch, advance
-        ``last_collected_id``, and release/retire the client. Each step is guarded
-        independently so a failure in one still runs the others — behavior is
-        unchanged. Returns the resulting ``stop_due_to_persistence_error`` flag,
-        seeded from a mid-stream failure recorded on ``stream_outcome``.
+        """Persist and verify one batch before recording any progress."""
+        if not batch:
+            return True
 
-        ``get_persisted_max_msg_id`` is read **after** the leftover flush so it
-        reflects the id the flush just advanced (the value lives in the caller's
-        closure that ``flush_batch`` mutates), exactly as the old inline
-        ``finally`` observed the ``nonlocal``.
+        expected_ids = {message.message_id for message in batch}
+        try:
+            await self._db.insert_messages_batch(batch)
+        except DatabaseBusyError:
+            # Transient lock — not a real persistence failure. Stop this
+            # cycle cleanly; last_collected_id is untouched so the batch
+            # is re-collected next time. Avoids the misleading
+            # "Failed to persist N/N messages" error.
+            logger.warning(
+                "Channel %d (%s): DB busy during flush; will retry next cycle",
+                state.channel_id,
+                state.channel_log_name,
+            )
+            return False
+        persisted_ids = await self._verify_persisted_ids(state.channel_id, expected_ids)
+        missing_ids = expected_ids - persisted_ids
+        if missing_ids:
+            logger.error(
+                "Failed to persist %d/%d messages for channel %d (%s); "
+                "last persisted id remains %d",
+                len(missing_ids),
+                len(expected_ids),
+                state.channel_id,
+                state.channel_log_name,
+                state.persisted_max_msg_id,
+            )
+            return False
+
+        state.persisted_max_msg_id = max(state.persisted_max_msg_id, max(expected_ids))
+        state.collected_count += len(batch)
+        if not state.saw_topic_message and any(m.topic_id is not None for m in batch):
+            state.saw_topic_message = True
+        # Only retain objects when they are needed downstream (notifications).
+        if state.should_notify:
+            state.notification_messages.extend(batch)
+        logger.info(
+            "Channel %d (%s): persisted %d messages, total %d, account=%s",
+            state.channel_id,
+            state.channel_log_name,
+            len(batch),
+            state.collected_count,
+            mask_phone(state.phone),
+        )
+        if state.progress_callback:
+            await state.progress_callback(state.total_before + state.collected_count)
+        if not await self._wait_if_live_runtime_paused(stop_event=state.cancel_event):
+            return False
+        return True
+
+    async def _notify_collection_pass(
+        self: "Collector", state: CollectionPassState, channel_username: str | None
+    ) -> None:
+        """Check persisted notifications after finalization; translate on every pass."""
+        await self._maybe_enqueue_auto_translate()
+        if not state.should_notify or not state.notification_messages:
+            return
+        for message in state.notification_messages:
+            message.channel_username = channel_username
+        await self._check_notification_queries(state.notification_messages)
+        state.notification_messages = []
+
+    async def _finalize_collection_pass(
+        self: "Collector", *, state: CollectionPassState,
+        flush_batch: Callable[[list[Message]], Awaitable[bool]], session,
+    ) -> bool:
+        """Flush the tail, advance the verified cursor and release the client.
+
+        Read state after the flush, so a final partial batch contributes its
+        cursor. Each cleanup operation retains its independent error handling.
         """
-        # Carry over a mid-stream persistence failure (the streamer set it on
-        # `stream_outcome`); the leftover-flush below may overwrite it.
-        stop_due_to_persistence_error = stream_outcome.stop_due_to_persistence_error
+        state.stop_due_to_persistence_error = state.stream_outcome.stop_due_to_persistence_error
         # Flush remaining messages — each operation is protected independently so
         # a failure in one doesn't prevent the other from executing.
         try:
-            if messages_batch:
-                if not await self._channel_still_exists(channel_id):
-                    messages_batch = []
+            if state.messages_batch:
+                if not await self._channel_still_exists(state.channel_id):
+                    state.messages_batch = []
                 else:
-                    stop_due_to_persistence_error = not await flush_batch(messages_batch)
+                    state.stop_due_to_persistence_error = not await flush_batch(state.messages_batch)
         except Exception as flush_err:
             logger.error(
                 "Failed to flush %d messages for channel %d: %s",
-                len(messages_batch),
-                channel_id,
+                len(state.messages_batch),
+                state.channel_id,
                 flush_err,
             )
-            stop_due_to_persistence_error = True
-        persisted_max_msg_id = get_persisted_max_msg_id()
+            state.stop_due_to_persistence_error = True
         try:
-            if persisted_max_msg_id > min_id and await self._channel_still_exists(channel_id):
-                await self._db.update_channel_last_id(channel_id, persisted_max_msg_id)
+            if state.persisted_max_msg_id > state.min_id and await self._channel_still_exists(state.channel_id):
+                await self._db.update_channel_last_id(state.channel_id, state.persisted_max_msg_id)
         except Exception as update_err:
             logger.error(
                 "Failed to update last_collected_id for " "channel %d: %s",
-                channel_id,
+                state.channel_id,
                 update_err,
             )
         await self._release_collection_client(
-            phone,
+            state.phone,
             session,
-            retire=stream_outcome.retire_client,
+            retire=state.stream_outcome.retire_client,
         )
-        return stop_due_to_persistence_error
+        return state.stop_due_to_persistence_error
 
     async def _collect_channel(
         self: "Collector",
@@ -781,113 +832,20 @@ class CollectionMixin:
                 continue
             session, phone, resolve_cache_only = acquired
 
-            messages_batch: list[Message] = []
-            # `all_messages` only retains message objects when notifications are
-            # enabled (incremental runs, bounded by min_id). On first-run for huge
-            # channels we keep just a count to avoid unbounded growth / OOM (#633).
-            all_messages: list[Message] = []
-            collected_count = 0
-            saw_topic_message = False
-            persisted_max_msg_id = min_id
-            flood_wait_sec: int | None = None
-            flood_wait_operation: str | None = None
-            schema_drift_exc: TypeNotFoundError | None = None
-            stop_due_to_persistence_error = False
-            stream_idle_timeout = False
-            stream_outcome = _StreamOutcome()
-
             is_first_run = channel.last_collected_id == 0
-            should_notify = self._notifier is not None and not is_first_run
-
-            async def _check_collected_notification_queries(
-                channel_username: str | None,
-                *,
-                should_notify: bool = should_notify,
-            ) -> None:
-                nonlocal all_messages
-                # Auto-translate runs regardless of notifications (audit #836/6).
-                await self._maybe_enqueue_auto_translate()
-                if not should_notify or not all_messages:
-                    return
-                for message in all_messages:
-                    message.channel_username = channel_username
-                await self._check_notification_queries(all_messages)
-                all_messages = []
-
+            state = CollectionPassState(
+                channel_id=channel_id, min_id=min_id, phone=phone,
+                channel_log_name=_format_channel_log_name(channel),
+                total_before=total_collected, is_first_run=is_first_run,
+                should_notify=self._notifier is not None and not is_first_run,
+                progress_callback=progress_callback, cancel_event=cancel_event,
+            )
+            flush_batch = partial(self._flush_collection_batch, state)
             limit = None
-            channel_log_name = _format_channel_log_name(channel)
             logger.info(
                 "Collecting channel %d (%s), first_run=%s, min_id=%d, limit=%s, account=%s",
-                channel_id,
-                channel_log_name,
-                is_first_run,
-                min_id,
-                limit,
-                mask_phone(phone),
+                channel_id, state.channel_log_name, is_first_run, min_id, limit, mask_phone(phone),
             )
-
-            async def _flush_batch(
-                batch: list[Message],
-                *,
-                channel_id: int = channel_id,
-                channel_log_name: str = channel_log_name,
-                should_notify: bool = should_notify,
-                all_messages: list[Message] = all_messages,
-                phone: str = phone,
-                total_collected: int = total_collected,
-            ) -> bool:
-                nonlocal persisted_max_msg_id, collected_count, saw_topic_message
-                if not batch:
-                    return True
-
-                expected_ids = {message.message_id for message in batch}
-                try:
-                    await self._db.insert_messages_batch(batch)
-                except DatabaseBusyError:
-                    # Transient lock — not a real persistence failure. Stop this
-                    # cycle cleanly; last_collected_id is untouched so the batch
-                    # is re-collected next time. Avoids the misleading
-                    # "Failed to persist N/N messages" error.
-                    logger.warning(
-                        "Channel %d (%s): DB busy during flush; will retry next cycle",
-                        channel_id,
-                        channel_log_name,
-                    )
-                    return False
-                persisted_ids = await self._verify_persisted_ids(channel_id, expected_ids)
-                missing_ids = expected_ids - persisted_ids
-                if missing_ids:
-                    logger.error(
-                        "Failed to persist %d/%d messages for channel %d (%s); "
-                        "last persisted id remains %d",
-                        len(missing_ids),
-                        len(expected_ids),
-                        channel_id,
-                        channel_log_name,
-                        persisted_max_msg_id,
-                    )
-                    return False
-
-                persisted_max_msg_id = max(persisted_max_msg_id, max(expected_ids))
-                collected_count += len(batch)
-                if not saw_topic_message and any(m.topic_id is not None for m in batch):
-                    saw_topic_message = True
-                # Only retain objects when they are needed downstream (notifications).
-                if should_notify:
-                    all_messages.extend(batch)
-                logger.info(
-                    "Channel %d (%s): persisted %d messages, total %d, account=%s",
-                    channel_id,
-                    channel_log_name,
-                    len(batch),
-                    collected_count,
-                    mask_phone(phone),
-                )
-                if progress_callback:
-                    await progress_callback(total_collected + collected_count)
-                if not await self._wait_if_live_runtime_paused(stop_event=cancel_event):
-                    return False
-                return True
 
             try:
                 outcome = await self._resolve_channel_entity(
@@ -907,8 +865,8 @@ class CollectionMixin:
                 if outcome.flood_wait_sec is not None:
                     # FloodWait during resolve: record it and fall through to the
                     # finally + post-collection flood handler (skip pre-filters/stream).
-                    flood_wait_sec = outcome.flood_wait_sec
-                    flood_wait_operation = outcome.flood_wait_operation
+                    state.flood_wait_sec = outcome.flood_wait_sec
+                    state.flood_wait_operation = outcome.flood_wait_operation
                 else:
                     entity = outcome.entity
                     if not await self._apply_pre_collection_filters(
@@ -916,7 +874,7 @@ class CollectionMixin:
                         channel_id,
                         session,
                         entity,
-                        is_first_run=is_first_run,
+                        is_first_run=state.is_first_run,
                         force=force,
                         min_subs=min_subs,
                         cancel_event=cancel_event,
@@ -928,14 +886,14 @@ class CollectionMixin:
                         self._stream_channel_messages(
                             session=session,
                             entity=entity,
-                            min_id=min_id,
+                            min_id=state.min_id,
                             limit=limit,
                             channel=channel,
                             channel_id=channel_id,
                             cancel_event=cancel_event,
-                            messages_batch=messages_batch,
-                            flush_batch=_flush_batch,
-                            outcome=stream_outcome,
+                            messages_batch=state.messages_batch,
+                            flush_batch=flush_batch,
+                            outcome=state.stream_outcome,
                         ),
                         operation="collect_channel_stream_messages",
                         phone=phone,
@@ -967,18 +925,18 @@ class CollectionMixin:
                 attempted_resolve_phones.add(phone)
                 if not await self._can_rotate_resolve(attempted_resolve_phones):
                     raise
-                schema_drift_exc = exc
+                state.schema_drift_exc = exc
                 logger.warning(
                     "Channel %d (%s): Telegram schema newer than Telethon on %s (%s) "
                     "— rotating to another account",
                     channel_id,
-                    channel_log_name,
+                    state.channel_log_name,
                     mask_phone(phone),
                     unknown_tl_type_note(exc) or "unknown TL type",
                 )
             except HandledFloodWaitError as exc:
-                flood_wait_sec = exc.info.wait_seconds
-                flood_wait_operation = flood_wait_operation or exc.info.operation
+                state.flood_wait_sec = exc.info.wait_seconds
+                state.flood_wait_operation = state.flood_wait_operation or exc.info.operation
             except asyncio.TimeoutError:
                 logger.warning(
                     "Channel %d (%s): no new message for %.1fs (stream idle); "
@@ -987,17 +945,10 @@ class CollectionMixin:
                     channel.username or channel.title or "",
                     self._config.collection_stream_timeout_sec,
                 )
-                stream_idle_timeout = True
+                state.stream_idle_timeout = True
             finally:
-                stop_due_to_persistence_error = await self._finalize_collection_pass(
-                    channel_id=channel_id,
-                    messages_batch=messages_batch,
-                    flush_batch=_flush_batch,
-                    get_persisted_max_msg_id=lambda: persisted_max_msg_id,  # noqa: B023 - must read post-flush value.
-                    min_id=min_id,
-                    phone=phone,
-                    session=session,
-                    stream_outcome=stream_outcome,
+                state.stop_due_to_persistence_error = await self._finalize_collection_pass(
+                    state=state, flush_batch=flush_batch, session=session,
                 )
 
             # The finally block above already flushed any pending batch and
@@ -1005,25 +956,25 @@ class CollectionMixin:
             # pass. Run the notification check ONCE for them before any exit
             # branch — the next pass's min_id filter will never re-stream them,
             # so without this their search-query matches would be lost forever.
-            # The closure drains its buffer on success, so this is idempotent
+            # The pass drains its notification buffer on success, so this is idempotent
             # and exactly-once across every exit path below: stop/idle return
             # (#1127/#1168), FloodWait rotation/return (#1169), normal completion.
-            await _check_collected_notification_queries(channel.username)
+            await self._notify_collection_pass(state, channel.username)
 
-            if stop_due_to_persistence_error or stream_idle_timeout:
+            if state.stop_due_to_persistence_error or state.stream_idle_timeout:
                 # Idle timeout and persistence errors both stop this pass;
                 # message data is never lost (the finally flushed + advanced).
-                return total_collected + collected_count
+                return total_collected + state.collected_count
 
-            if schema_drift_exc is not None:
+            if state.schema_drift_exc is not None:
                 # Rotate AFTER the finally: the leftover flush just advanced
                 # last_collected_id past everything persisted this pass, so
                 # re-reading the channel keeps the retry min_id exact (same
                 # pattern as the FloodWait rotation below).
-                total_collected += collected_count
+                total_collected += state.collected_count
                 drifted = await self._db.get_channel_by_channel_id(channel_id)
                 if drifted is None:
-                    raise schema_drift_exc
+                    raise state.schema_drift_exc
                 channel = drifted
                 continue
 
@@ -1034,29 +985,29 @@ class CollectionMixin:
             # the flooded account. Username-resolve FloodWaits are handled
             # below with a process-local backoff instead.
             # Only skip the channel if the channel no longer exists in DB.
-            if flood_wait_sec is not None:
+            if state.flood_wait_sec is not None:
                 kind, total_collected, channel = await self._handle_post_collection_flood(
                     channel,
                     phone,
-                    flood_wait_sec,
-                    flood_wait_operation,
+                    state.flood_wait_sec,
+                    state.flood_wait_operation,
                     attempted_resolve_phones,
                     total_collected,
-                    collected_count,
+                    state.collected_count,
                 )
                 if kind == "continue":
                     continue
-                return total_collected + collected_count
+                return total_collected + state.collected_count
 
             await self._post_collection_actions(
                 channel_id,
-                is_first_run=is_first_run,
+                is_first_run=state.is_first_run,
                 force=force,
-                collected_count=collected_count,
-                saw_topic_message=saw_topic_message,
+                collected_count=state.collected_count,
+                saw_topic_message=state.saw_topic_message,
             )
 
-            return total_collected + collected_count
+            return total_collected + state.collected_count
 
     async def _collect_gateway_channel(self: "Collector", channel, *, progress_callback=None, force=False,
                                         min_subs=0, cancel_event=None, intent_key=None):

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from telethon.errors import TypeNotFoundError
 
-from tg_agent.models import Channel
+from tg_agent.models import Channel, Message
 
 _UNKNOWN_TL_TYPE_NOTE = "unknown Telegram TL type, waiting for Telethon update"
 
@@ -46,6 +49,36 @@ class _StreamOutcome:
     def __init__(self) -> None:
         self.retire_client = False
         self.stop_due_to_persistence_error = False
+
+
+
+@dataclass(slots=True)
+class CollectionPassState:
+    """Mutable progress owned by exactly one account's collection pass."""
+
+    channel_id: int
+    min_id: int
+    phone: str
+    channel_log_name: str
+    total_before: int
+    is_first_run: bool
+    should_notify: bool
+    progress_callback: Callable[[int], Awaitable[None]] | None = None
+    cancel_event: asyncio.Event | None = None
+    messages_batch: list[Message] = field(default_factory=list)
+    notification_messages: list[Message] = field(default_factory=list)
+    collected_count: int = 0
+    saw_topic_message: bool = False
+    persisted_max_msg_id: int = field(init=False)
+    flood_wait_sec: int | None = None
+    flood_wait_operation: str | None = None
+    schema_drift_exc: TypeNotFoundError | None = None
+    stop_due_to_persistence_error: bool = False
+    stream_idle_timeout: bool = False
+    stream_outcome: _StreamOutcome = field(default_factory=_StreamOutcome)
+
+    def __post_init__(self) -> None:
+        self.persisted_max_msg_id = self.min_id
 
 
 def _format_channel_log_name(channel: Channel) -> str:
