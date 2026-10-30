@@ -75,11 +75,19 @@ def test_pipeline_add_and_list(tmp_path, cli_init_patch, capsys):
                 inactive=False,
             )
         )
+        added = capsys.readouterr().out
+        assert "Added pipeline id=" in added
         run(_ns(pipeline_action="list"))
+        legacy_output = capsys.readouterr().out
 
-    out = capsys.readouterr().out
-    assert "Added pipeline id=" in out
-    assert "Digest" in out
+        from typer.testing import CliRunner
+
+        from tg_agent.cli.typer_app import app
+
+        result = CliRunner().invoke(app, ["pipeline", "list"])
+        assert result.exit_code == 0, result.output
+        assert result.stdout == legacy_output
+        assert "Digest" in result.stdout
 
 
 def test_pipeline_show_not_found(tmp_path, cli_init_patch, capsys):

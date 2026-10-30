@@ -22,6 +22,7 @@ nested paths*.
 
 from __future__ import annotations
 
+from dataclasses import is_dataclass
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -587,14 +588,15 @@ def test_dialogs_bare_shows_help_exit0():
 # --------------------------------------------------------------------------- #
 # pipeline — leaves + three depth-2 nested groups (filter / node / edge)
 #
-# Each pipeline leaf builds an argparse Namespace and runs the shared
-# ``_dispatch`` body, so the tests patch ``_dispatch`` and assert the Namespace
-# it received (the CLI-token → Namespace wiring under test).
+# Each pipeline leaf builds a typed request and runs the shared dispatcher.
+# Keep verifying the same CLI tokens and flags at that execution boundary.
 # --------------------------------------------------------------------------- #
 
 
-def _pipeline_ns_of(mock_dispatch):
-    return mock_dispatch.call_args[0][0]
+def _pipeline_request_of(mock_dispatch):
+    request = mock_dispatch.call_args[0][0]
+    assert is_dataclass(request)
+    return request
 
 
 def test_pipeline_list():
@@ -605,7 +607,7 @@ def test_pipeline_list():
     ):
         result = runner.invoke(app, ["pipeline", "list"])
     assert result.exit_code == 0
-    assert _pipeline_ns_of(mock).pipeline_action == "list"
+    assert _pipeline_request_of(mock).pipeline_action == "list"
 
 
 def test_pipeline_show():
@@ -616,7 +618,7 @@ def test_pipeline_show():
     ):
         result = runner.invoke(app, ["pipeline", "show", "5"])
     assert result.exit_code == 0
-    ns = _pipeline_ns_of(mock)
+    ns = _pipeline_request_of(mock)
     assert (ns.pipeline_action, ns.id) == ("show", 5)
 
 
@@ -632,7 +634,7 @@ def test_pipeline_add_variadic_source():
              "--source", "100", "--source", "200", "--target", "+1|99"],
         )
     assert result.exit_code == 0
-    ns = _pipeline_ns_of(mock)
+    ns = _pipeline_request_of(mock)
     assert ns.name == "MyPipe" and ns.source == [100, 200] and ns.target == ["+1|99"]
     assert ns.publish_mode == "moderated"  # enum → plain str
 
@@ -652,7 +654,7 @@ def test_pipeline_edit_active_tristate():
     ):
         result = runner.invoke(app, ["pipeline", "edit", "5", "--inactive"])
     assert result.exit_code == 0
-    assert _pipeline_ns_of(mock).active is False
+    assert _pipeline_request_of(mock).active is False
 
 
 def test_pipeline_generate_stream():
@@ -663,7 +665,7 @@ def test_pipeline_generate_stream():
     ):
         result = runner.invoke(app, ["pipeline", "generate-stream", "7", "--model", "gpt-4"])
     assert result.exit_code == 0
-    ns = _pipeline_ns_of(mock)
+    ns = _pipeline_request_of(mock)
     assert (ns.pipeline_action, ns.id, ns.model) == ("generate-stream", 7, "gpt-4")
 
 
@@ -675,7 +677,7 @@ def test_pipeline_bulk_approve_variadic_positional():
     ):
         result = runner.invoke(app, ["pipeline", "bulk-approve", "1", "2", "3"])
     assert result.exit_code == 0
-    assert _pipeline_ns_of(mock).run_ids == [1, 2, 3]
+    assert _pipeline_request_of(mock).run_ids == [1, 2, 3]
 
 
 def test_pipeline_export_force():
@@ -686,7 +688,7 @@ def test_pipeline_export_force():
     ):
         result = runner.invoke(app, ["pipeline", "export", "5", "--force", "-o", "out.json"])
     assert result.exit_code == 0
-    ns = _pipeline_ns_of(mock)
+    ns = _pipeline_request_of(mock)
     assert ns.force is True and ns.output == "out.json"
 
 
@@ -703,7 +705,7 @@ def test_pipeline_filter_set_nested():
             app, ["pipeline", "filter", "set", "3", "--keyword", "a", "--keyword", "b", "--forwarded", "true"]
         )
     assert result.exit_code == 0
-    ns = _pipeline_ns_of(mock)
+    ns = _pipeline_request_of(mock)
     assert (ns.pipeline_action, ns.filter_action, ns.id) == ("filter", "set", 3)
     assert ns.keywords == ["a", "b"] and ns.forwarded == "true"
 
@@ -716,7 +718,7 @@ def test_pipeline_filter_show_nested():
     ):
         result = runner.invoke(app, ["pipeline", "filter", "show", "3"])
     assert result.exit_code == 0
-    ns = _pipeline_ns_of(mock)
+    ns = _pipeline_request_of(mock)
     assert (ns.filter_action, ns.id) == ("show", 3)
 
 
@@ -728,7 +730,7 @@ def test_pipeline_node_add_nested():
     ):
         result = runner.invoke(app, ["pipeline", "node", "add", "5", "fetch:limit=10"])
     assert result.exit_code == 0
-    ns = _pipeline_ns_of(mock)
+    ns = _pipeline_request_of(mock)
     assert (ns.pipeline_action, ns.node_action, ns.pipeline_id, ns.node_spec) == (
         "node", "add", 5, "fetch:limit=10",
     )
@@ -742,7 +744,7 @@ def test_pipeline_node_replace_three_positionals_nested():
     ):
         result = runner.invoke(app, ["pipeline", "node", "replace", "5", "n1", "llm:model=gpt"])
     assert result.exit_code == 0
-    ns = _pipeline_ns_of(mock)
+    ns = _pipeline_request_of(mock)
     assert (ns.node_action, ns.pipeline_id, ns.node_id, ns.node_spec) == (
         "replace", 5, "n1", "llm:model=gpt",
     )
@@ -756,7 +758,7 @@ def test_pipeline_edge_add_nested():
     ):
         result = runner.invoke(app, ["pipeline", "edge", "add", "5", "n1", "n2"])
     assert result.exit_code == 0
-    ns = _pipeline_ns_of(mock)
+    ns = _pipeline_request_of(mock)
     assert (ns.pipeline_action, ns.edge_action, ns.pipeline_id, ns.from_node, ns.to_node) == (
         "edge", "add", 5, "n1", "n2",
     )
@@ -770,7 +772,7 @@ def test_pipeline_graph_flat():
     ):
         result = runner.invoke(app, ["pipeline", "graph", "5"])
     assert result.exit_code == 0
-    ns = _pipeline_ns_of(mock)
+    ns = _pipeline_request_of(mock)
     assert (ns.pipeline_action, ns.id) == ("graph", 5)
 
 
