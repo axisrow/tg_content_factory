@@ -8,17 +8,10 @@ import typer
 
 from tg_agent.cli.commands.common import apply_startup, cli_error, run_async
 from tg_agent.config import (
-    GLOBAL_DB_NAME,
-    GLOBAL_SESSIONS_SUBDIR,
     global_marker_path,
     load_config,
     read_global_store_marker,
 )
-
-
-def _print_paths(label: str, root: Path) -> None:
-    print(f"{label} database : {root / GLOBAL_DB_NAME}")
-    print(f"{label} sessions : {root / GLOBAL_SESSIONS_SUBDIR}")
 
 
 def _restart_hint() -> None:
@@ -30,8 +23,7 @@ async def enable_impl(config_path: str, phones: list[str] | None = None) -> None
     from tg_agent.gateway.enrollment import enable_project
 
     if not phones:
-        cli_error("Select shared accounts explicitly: global enable --account PHONE (repeatable). "
-                  "Use global migrate --project-db PATH for an existing legacy marker.")
+        cli_error("Select shared accounts explicitly: global enable --account PHONE (repeatable).")
     binding = await enable_project(config_path, phones)
     config = load_config(config_path)
     print(f"Shared gateway enabled: {binding.store_root}")
@@ -80,8 +72,16 @@ def status_impl(config_path: str) -> None:
         return
     root = read_global_store_marker()
     if root is not None:
-        print(f"Global store: enabled (marker {global_marker_path()})")
-        _print_paths("global", root)
+        # Legacy plain-path marker (#1724): inert since the redirect removal —
+        # it no longer points this project's database anywhere.
+        print(f"Legacy marker detected ({global_marker_path().name}) — it no longer "
+              f"redirects the database (owner decision #1724: global auth never "
+              f"implies a global database).")
+        config = load_config(config_path)
+        print(f"project database : {config.database.path}")
+        print(f"project sessions : {config.telegram_runtime.session_cache_dir}")
+        print("Replace it with a binding to share accounts: global enable --account PHONE "
+              f"(store root would be {root}).")
         return
     config = load_config(config_path)
     print(f"Global store: disabled (no {global_marker_path().name} in the project directory)")

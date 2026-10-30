@@ -20,6 +20,30 @@ from tg_shared.session_materializer import SessionMaterializer
 
 os.environ.setdefault("SESSION_ENCRYPTION_KEY", "test-session-encryption-key")
 
+# The host checkout may legitimately carry a live .tg-agent-global binding
+# (post-#1724 the factory's own marker IS a binding). Tests must see an
+# UNenrolled project unless they enroll their own tmp cwd: whenever the repo
+# root carries the host marker, binding lookups that resolve to it report
+# "no binding". Tests that enroll themselves write their marker into their
+# tmp cwd, which this never touches. Legacy plain-path markers were already
+# invisible to read_binding, so this only changes JSON bindings.
+_REPO_HOST_MARKER = Path(__file__).resolve().parent.parent / ".tg-agent-global"
+
+
+@pytest.fixture(autouse=True)
+def _hide_host_gateway_binding(monkeypatch):
+    from tg_agent.gateway.project import read_binding as _real_read_binding
+
+    def _host_blind_read_binding(marker_path):
+        if marker_path == _REPO_HOST_MARKER:
+            return None
+        return _real_read_binding(marker_path)
+
+    monkeypatch.setattr(
+        "tg_agent.gateway.project.read_binding", _host_blind_read_binding
+    )
+    yield
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _reuse_test_session_key():

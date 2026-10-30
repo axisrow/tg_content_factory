@@ -109,11 +109,12 @@ async def disable_project(config_path: str):
 
 
 async def enable_project(config_path: str, phones: list[str], *, database_path: Path | None = None,
-                         migration: bool = False, store_root: Path | None = None) -> ProjectBinding:
+                         store_root: Path | None = None) -> ProjectBinding:
     marker = global_marker_path()
     existing = read_binding(marker)
-    if existing is None and await asyncio.to_thread(marker.exists) and not migration:
-        raise ValueError("Legacy global store requires `global migrate --project-db PATH` first")
+    # A legacy plain-path marker no longer blocks enable (#1724): it is an
+    # inert pointer since the redirect removal — enable simply replaces it
+    # with a binding. The project database stays local either way.
     config = load_config(config_path, apply_marker=False)
     target = database_path or (Path(existing.database_path) if existing and existing.database_path else None)
     db_path = await asyncio.to_thread(lambda: (target or Path(config.database.path)).expanduser().absolute())
@@ -258,7 +259,7 @@ async def migrate_project(config_path: str, destination: Path, phones: list[str]
         journal["phase"] = "copied"
         await asyncio.to_thread(write_private_json, journal_path, journal)
     await asyncio.to_thread(write_project_database_config, config_path, str(destination))
-    binding = await enable_project(config_path, selected, database_path=destination, migration=True, store_root=root)
+    binding = await enable_project(config_path, selected, database_path=destination, store_root=root)
     journal["phase"] = "committed"
     await asyncio.to_thread(write_private_json, journal_path, journal)
     return binding
