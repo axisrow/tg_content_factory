@@ -48,7 +48,7 @@ HANDS_OFF = {
 REFUSED_WHILE_DAEMON = {
     # plugin run --with-pool: generic tools have no worker-queue handoff.
     # Use the normal guard (or configured gateway), never allow_live_daemon.
-    ("plugin.py", "plugin_host"),
+    ("commands/plugin.py", "plugin_host"),
     # verify-code (#1521): the account is persisted first; the pool is only a
     # best-effort premium warm-up whose failure the command already reports.
     ("commands/account.py", "verify_code_impl"),
