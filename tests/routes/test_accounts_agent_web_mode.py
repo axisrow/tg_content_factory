@@ -19,10 +19,10 @@ from httpx import ASGITransport, AsyncClient
 
 from tg_agent.config import AppConfig, DatabaseConfig
 from tg_agent.models import Account
+from tg_agent.runtime.log_buffer import LogBuffer
+from tg_agent.runtime.snapshot_shims import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
 from tg_agent.web.app import create_app
 from tg_agent.web.bootstrap import build_container_with_templates
-from tg_agent.web.log_handler import LogBuffer
-from tg_agent.web.runtime_shims import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
 
 
 @asynccontextmanager

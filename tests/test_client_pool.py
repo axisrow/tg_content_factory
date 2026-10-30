@@ -719,8 +719,8 @@ def test_startup_opts_into_the_skip_but_the_scheduler_does_not():
     """
     import inspect
 
+    from tg_agent.runtime import bootstrap
     from tg_agent.scheduler import service as scheduler_service
-    from tg_agent.web import bootstrap
 
     bootstrap_src = inspect.getsource(bootstrap)
     assert "warm_all_dialogs(skip_already_swept=True)" in bootstrap_src

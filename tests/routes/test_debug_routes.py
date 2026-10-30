@@ -7,7 +7,7 @@ import base64
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from tg_agent.web.log_handler import LogBuffer
+from tg_agent.runtime.log_buffer import LogBuffer
 from tg_agent.web.routes.debug import _read_log_tail
 
 

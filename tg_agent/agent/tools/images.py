@@ -11,7 +11,7 @@ from claude_agent_sdk import tool
 
 from tg_agent.agent.tools._categories import ToolCategory, ToolMeta
 from tg_agent.agent.tools._registry import _text_response
-from tg_agent.web.paths import image_dir
+from tg_agent.paths import image_dir
 
 logger = logging.getLogger(__name__)
 

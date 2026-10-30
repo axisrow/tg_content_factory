@@ -8,9 +8,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from tg_agent.web.container import AppContainer
+from tg_agent.paths import image_dir
+from tg_agent.runtime.container import AppContainer
 from tg_agent.web.panel_auth import get_cookie_user, sanitize_next, set_session_cookie
-from tg_agent.web.paths import STATIC_DIR, TEMPLATES_DIR, image_dir
+from tg_agent.web.paths import STATIC_DIR, TEMPLATES_DIR
 from tg_agent.web.schemas.common import HealthResponse
 from tg_agent.web.session import COOKIE_NAME
 from tg_agent.web.template_globals import configure_template_globals
@@ -187,14 +188,14 @@ def register_routes(app: FastAPI) -> None:
 
 
 def build_timing_buffer():
-    from tg_agent.web.timing import TimingBuffer
+    from tg_agent.utils.timing import TimingBuffer
 
     return TimingBuffer(maxlen=200)
 
 
 def build_log_buffer() -> logging.Handler:
     from tg_agent.cli.runtime import install_log_redaction
-    from tg_agent.web.log_handler import LogBuffer
+    from tg_agent.runtime.log_buffer import LogBuffer
 
     log_buffer = LogBuffer(maxlen=500)
     log_buffer.setFormatter(logging.Formatter("%(message)s"))

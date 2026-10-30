@@ -79,7 +79,7 @@ pass-through-методов (ratchet «только вниз») — добавл
 ## Web App Wiring
 
 - `tg_agent/web/assembly.py` — `register_routes()` монтирует все роутеры; `configure_app()` привязывает `AppContainer` к `app.state.*`
-- `tg_agent/web/container.py` — `AppContainer` агрегирует все сервисы
+- `tg_agent/runtime/container.py` — `AppContainer` агрегирует все сервисы
 - `tg_agent/web/deps.py` — хелперы `deps.get_db()`, `deps.get_pool()` и др.
 
 ## Web Route Layering

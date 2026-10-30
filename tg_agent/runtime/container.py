@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TypeAlias
-
-from fastapi.templating import Jinja2Templates
+from typing import TYPE_CHECKING, TypeAlias
 
 from tg_agent.agent.manager import AgentManager
 from tg_agent.collection_queue import CollectionQueue
@@ -24,6 +22,8 @@ from tg_agent.database.bundles import (
 )
 from tg_agent.live_runtime_pause import LiveRuntimePauseGate
 from tg_agent.plugin_api import PluginRuntime
+from tg_agent.runtime.log_buffer import LogBuffer
+from tg_agent.runtime.snapshot_shims import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
 from tg_agent.scheduler.service import SchedulerManager
 from tg_agent.search.ai_search import AISearchEngine
 from tg_agent.search.engine import SearchEngine
@@ -42,10 +42,11 @@ from tg_agent.telegram.collector import Collector
 from tg_agent.telegram.dm_catchup import DmCatchupService
 from tg_agent.telegram.dm_listener import DmListener
 from tg_agent.telegram.notifier import Notifier
-from tg_agent.web.log_handler import LogBuffer
-from tg_agent.web.runtime_shims import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
-from tg_agent.web.timing import TimingBuffer
+from tg_agent.utils.timing import TimingBuffer
 from tg_shared.auth import TelegramAuth
+
+if TYPE_CHECKING:
+    from fastapi.templating import Jinja2Templates
 
 WebClientPool: TypeAlias = ClientPool | SnapshotClientPool
 WebCollector: TypeAlias = Collector | SnapshotCollector
@@ -82,7 +83,6 @@ class AppContainer:
     search_engine: SearchEngine
     ai_search: AISearchEngine
     scheduler: WebScheduler
-    templates: Jinja2Templates
     log_buffer: LogBuffer | None
     timing_buffer: TimingBuffer | None
     session_secret: str
@@ -99,4 +99,7 @@ class AppContainer:
     # and sends — worker-only, like the listener.
     ping_monitor_service: PingMonitorService | None = None
     plugins: PluginRuntime | None = None
+    # Jinja2 templates of the legacy web panel: the core runtime never builds
+    # them (worker mode needs none); the web surface attaches them after build.
+    templates: Jinja2Templates | None = None
     shutting_down: bool = False

@@ -4,17 +4,17 @@ Mirror of `tg_agent/web/embedded_worker.py` from the *reader* side. The worker (
 embedded inside `serve` or a separate `python -m tg_agent.main worker` process)
 publishes `accounts_status` / `collector_status` / `scheduler_status` snapshots
 every ~5s; this task re-hydrates the read-only shims in
-`tg_agent/web/runtime_shims.py` every `REFRESH_INTERVAL_SEC` seconds so pages like
+`tg_agent/runtime/snapshot_shims.py` every `REFRESH_INTERVAL_SEC` seconds so pages like
 `/scheduler/`, `/dashboard/` and `/health` reflect live state instead of the
-single startup snapshot from `tg_agent/web/bootstrap.py`.
+single startup snapshot from `tg_agent/runtime/bootstrap.py`.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 
-from tg_agent.web.container import AppContainer
-from tg_agent.web.runtime_shims import (
+from tg_agent.runtime.container import AppContainer
+from tg_agent.runtime.snapshot_shims import (
     SnapshotClientPool,
     SnapshotCollector,
     SnapshotSchedulerManager,

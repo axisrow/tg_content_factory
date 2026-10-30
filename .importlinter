@@ -17,3 +17,38 @@ allow_indirect_imports = True
 ignore_imports =
     tg_agent.services.pipeline_nodes.handlers -> telethon
     tg_agent.services.telegram_command_dispatcher -> telethon
+
+# #1720 wave 1: the core runtime (worker, services, gateway, ...) must not
+# depend on the legacy web panel — the web surface is moving to its own package.
+# Only the `serve` entry point may reach it. Direct edges are checked from every
+# core module, so indirect chains through `serve` (main -> cli -> serve) are fine.
+[importlinter:contract:core_does_not_import_web]
+name = Core does not import the web surface (only the serve entry point may)
+type = forbidden
+source_modules =
+    tg_agent.agent
+    tg_agent.cli
+    tg_agent.collection_queue
+    tg_agent.config
+    tg_agent.database
+    tg_agent.filters
+    tg_agent.gateway
+    tg_agent.live_runtime_pause
+    tg_agent.main
+    tg_agent.models
+    tg_agent.parsers
+    tg_agent.paths
+    tg_agent.plugin_api
+    tg_agent.runtime
+    tg_agent.scheduler
+    tg_agent.search
+    tg_agent.security
+    tg_agent.services
+    tg_agent.settings_utils
+    tg_agent.telegram
+    tg_agent.utils
+forbidden_modules =
+    tg_agent.web
+allow_indirect_imports = True
+ignore_imports =
+    tg_agent.cli.commands.serve -> tg_agent.web.**

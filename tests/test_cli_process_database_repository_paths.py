@@ -744,7 +744,7 @@ class TestDBConnectionAdditional:
             raw.row_factory = aiosqlite.Row
             pc = ProfilingConnection(raw)
             with patch(
-                "tg_agent.web.timing.get_current_profiler",
+                "tg_agent.utils.timing.get_current_profiler",
                 return_value=profiler,
             ):
                 cur = await pc.execute("SELECT 99 AS n")

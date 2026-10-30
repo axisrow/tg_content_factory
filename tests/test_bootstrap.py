@@ -12,10 +12,11 @@ from tg_agent.config import AppConfig, DatabaseConfig
 from tg_agent.database import Database
 from tg_agent.database.repositories.accounts import AccountSessionDecryptError
 from tg_agent.models import TelegramCommand, TelegramCommandStatus
+from tg_agent.runtime.bootstrap import _log_task_exception, start_container, stop_container
+from tg_agent.runtime.log_buffer import LogBuffer
+from tg_agent.runtime.snapshot_shims import SnapshotClientPool
 from tg_agent.search.engine import SearchEngine
-from tg_agent.web.bootstrap import _log_task_exception, build_web_container, start_container, stop_container
-from tg_agent.web.log_handler import LogBuffer
-from tg_agent.web.runtime_shims import SnapshotClientPool
+from tg_agent.web.bootstrap import build_web_container
 
 
 def _make_container(db: Database) -> MagicMock:
@@ -554,7 +555,7 @@ async def test_log_task_exception_logs_failed_task(caplog):
     with pytest.raises(RuntimeError):
         await task
 
-    with caplog.at_level("WARNING", logger="tg_agent.web.bootstrap"):
+    with caplog.at_level("WARNING", logger="tg_agent.runtime.bootstrap"):
         _log_task_exception(task)
 
     assert any(
@@ -573,7 +574,7 @@ async def test_log_task_exception_silent_on_success(caplog):
     task = asyncio.create_task(_ok())
     await task
 
-    with caplog.at_level("WARNING", logger="tg_agent.web.bootstrap"):
+    with caplog.at_level("WARNING", logger="tg_agent.runtime.bootstrap"):
         _log_task_exception(task)
 
     assert caplog.records == []
@@ -591,7 +592,7 @@ async def test_log_task_exception_silent_on_cancel(caplog):
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    with caplog.at_level("WARNING", logger="tg_agent.web.bootstrap"):
+    with caplog.at_level("WARNING", logger="tg_agent.runtime.bootstrap"):
         _log_task_exception(task)
 
     assert caplog.records == []
@@ -602,8 +603,8 @@ async def test_persist_incoming_dm_records_journal_entry(db):
     """#1427: персист-колбэк слушателя пишет DM в журнал."""
     from datetime import datetime, timezone
 
+    from tg_agent.runtime.bootstrap import _persist_incoming_dm
     from tg_agent.telegram.dm_listener import IncomingDmEvent
-    from tg_agent.web.bootstrap import _persist_incoming_dm
 
     received = datetime.now(timezone.utc)
     await _persist_incoming_dm(
@@ -628,8 +629,8 @@ async def test_persist_outgoing_dm_writes_archive_not_journal(db):
     у исходящих нет черновика, processed=0 им не положен по смыслу."""
     from datetime import datetime, timezone
 
+    from tg_agent.runtime.bootstrap import _persist_incoming_dm
     from tg_agent.telegram.dm_listener import IncomingDmEvent
-    from tg_agent.web.bootstrap import _persist_incoming_dm
 
     received = datetime.now(timezone.utc)
     await _persist_incoming_dm(
@@ -658,10 +659,10 @@ async def test_persist_incoming_dm_skips_event_without_ids(db, caplog):
     """Без (chat_id, message_id) запись неидемпотентна — пропуск с предупреждением."""
     from datetime import datetime, timezone
 
+    from tg_agent.runtime.bootstrap import _persist_incoming_dm
     from tg_agent.telegram.dm_listener import IncomingDmEvent
-    from tg_agent.web.bootstrap import _persist_incoming_dm
 
-    with caplog.at_level("WARNING", logger="tg_agent.web.bootstrap"):
+    with caplog.at_level("WARNING", logger="tg_agent.runtime.bootstrap"):
         await _persist_incoming_dm(
             db,
             IncomingDmEvent(
@@ -698,7 +699,7 @@ async def test_start_container_logs_nonempty_approval_queue(tmp_path, caplog):
     container = _make_container(db)
     container.scheduler = AsyncMock()
     try:
-        with caplog.at_level(logging.INFO, logger="tg_agent.web.bootstrap"):
+        with caplog.at_level(logging.INFO, logger="tg_agent.runtime.bootstrap"):
             await start_container(container)
         assert any("await approval" in r.message for r in caplog.records)
     finally:
@@ -715,7 +716,7 @@ async def test_start_container_silent_on_empty_approval_queue(tmp_path, caplog):
     container = _make_container(db)
     container.scheduler = AsyncMock()
     try:
-        with caplog.at_level(logging.INFO, logger="tg_agent.web.bootstrap"):
+        with caplog.at_level(logging.INFO, logger="tg_agent.runtime.bootstrap"):
             await start_container(container)
         assert not any("await approval" in r.message for r in caplog.records)
     finally:

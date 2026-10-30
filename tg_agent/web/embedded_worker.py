@@ -30,15 +30,15 @@ import logging
 from tg_agent.config import AppConfig
 from tg_agent.database import DatabaseBusyError
 from tg_agent.database.repositories.accounts import AccountSessionDecryptError
+from tg_agent.runtime.bootstrap import build_worker_container, start_container, stop_container
+from tg_agent.runtime.container import AppContainer
+from tg_agent.runtime.log_buffer import LogBuffer
 from tg_agent.runtime.worker import (
     _current_task_is_cancelling,
     _publish_snapshots,
     _publish_worker_down_snapshot,
 )
 from tg_agent.services.runtime_diagnostics import HEARTBEAT_INTERVAL_SEC, resolve_snapshot_publish_timeout
-from tg_agent.web.bootstrap import build_worker_container, start_container, stop_container
-from tg_agent.web.container import AppContainer
-from tg_agent.web.log_handler import LogBuffer
 
 logger = logging.getLogger(__name__)
 

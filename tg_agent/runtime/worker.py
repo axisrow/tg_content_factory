@@ -12,11 +12,11 @@ from tg_agent.config import AppConfig
 from tg_agent.database import DatabaseBusyError
 from tg_agent.database.repositories.accounts import AccountSessionDecryptError
 from tg_agent.models import RuntimeSnapshot
+from tg_agent.runtime.bootstrap import build_worker_container, start_container, stop_container
+from tg_agent.runtime.log_buffer import LogBuffer
 from tg_agent.services.notification_service import NotificationService
 from tg_agent.services.runtime_diagnostics import HEARTBEAT_INTERVAL_SEC, resolve_snapshot_publish_timeout
 from tg_agent.telegram.utils import normalize_utc
-from tg_agent.web.bootstrap import build_worker_container, start_container, stop_container
-from tg_agent.web.log_handler import LogBuffer
 
 logger = logging.getLogger(__name__)
 # HEARTBEAT_INTERVAL_SEC is the single source of truth in runtime_diagnostics.
