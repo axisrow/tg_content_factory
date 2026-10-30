@@ -1,25 +1,3 @@
-from __future__ import annotations
+"""Compatibility import for the shared runtime log buffer."""
 
-import logging
-from collections import deque
-
-_FORMATTER = logging.Formatter()
-
-
-class LogBuffer(logging.Handler):
-    def __init__(self, maxlen: int = 500):
-        super().__init__()
-        self._records: deque[dict] = deque(maxlen=maxlen)
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self._records.append(
-            {
-                "time": _FORMATTER.formatTime(record, "%Y-%m-%d %H:%M:%S"),
-                "level": record.levelname,
-                "logger": record.name,
-                "message": self.format(record),
-            }
-        )
-
-    def get_records(self) -> list[dict]:
-        return list(self._records)
+from tg_agent.runtime.log_handler import LogBuffer as LogBuffer
