@@ -61,6 +61,7 @@ Task → group (details in [reference.md](reference.md)):
 | Content factory (LLM pipelines, images) | `pipeline`, `photo-loader` |
 | Analytics, notifications, scheduling, accounts, settings | `analytics`, `notification`, `scheduler`, `account`, `settings` |
 | Shared account store across projects (attach/detach/status) | `global` |
+| Installed plugin tools: activation status, run a tool | `plugin` — `plugin list [--json]`, `plugin run TOOL [flags from schema] [--with-pool]`; output is JSON, details in [reference.md](reference.md) |
 
 ## Safety — this is the user's real Telegram
 
