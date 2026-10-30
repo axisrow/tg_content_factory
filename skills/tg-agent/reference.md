@@ -370,6 +370,15 @@ global enable | disable | status       # shared account store across projects (#
 # flags them as inert; replace with `enable`). `disable` detaches the project
 # (local files untouched); `status` prints the marker format and the effective
 # database path. Restart any running worker/daemon after enable/disable.
+key set | clear | status                # machine-level SESSION_ENCRYPTION_KEY in the OS secret store (#1699)
+# key: opt-in storage of the session-encryption key outside per-project .env copies.
+# `set` prompts (or reads piped stdin: printf '%s' "$KEY" | tg-agent key set; the key is
+# never echoed) and stores into macOS Keychain / Windows Credential Manager / secret-tool
+# (0600-file fallback under ~/.tg-agent on headless Linux). `status` prints the backend,
+# whether a key is stored, and which source currently wins. Resolution: config.yaml/env
+# SESSION_ENCRYPTION_KEY wins, then the store; with nothing stored behavior is unchanged
+# (warning + degraded pool). Nothing is ever stored silently; `clear` removes it. Restart
+# any running worker/daemon after set/clear. TG_AGENT_SECRET_STORE=off disables the layer.
 style init | list | show --channel <id>  # local-only per-channel style specs (#1687)
 # style: per-channel posting-voice specs (skeleton, nicknames, emoji policy, digest
 # rules) stored OUTSIDE the repository in ~/.tg-agent/designs/<key>.md

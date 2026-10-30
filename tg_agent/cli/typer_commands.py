@@ -76,6 +76,7 @@ from tg_agent.cli.commands.filter import filter_app
 from tg_agent.cli.commands.gateway import gateway_app
 from tg_agent.cli.commands.global_store import global_app
 from tg_agent.cli.commands.image import image_app
+from tg_agent.cli.commands.key import key_app
 from tg_agent.cli.commands.messages import messages_app
 from tg_agent.cli.commands.notification import notification_app
 from tg_agent.cli.commands.photo_loader import photo_loader_app
@@ -429,6 +430,13 @@ app.add_typer(photo_loader_app, name="photo-loader")
 app.add_typer(global_app, name="global")
 
 app.add_typer(gateway_app, name="gateway")
+
+
+# --------------------------------------------------------------------------- #
+# key → set / clear / status — machine-level session key in the OS store (#1699)
+# --------------------------------------------------------------------------- #
+
+app.add_typer(key_app, name="key")
 
 
 # --------------------------------------------------------------------------- #

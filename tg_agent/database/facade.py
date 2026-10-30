@@ -59,6 +59,7 @@ from tg_agent.models import (
     StatsAllTaskPayload,
 )
 from tg_agent.security import SessionCipher
+from tg_agent.security.secret_store import resolve_session_secret_from_env_or_store
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +112,11 @@ class Database:
         mmap_size_mb: int = 256,
     ):
         self._db_path = db_path
+        # Unified env→store chain (#1699): the raw os.getenv default is gone —
+        # the opt-in OS secret store fallback lives in one resolver shared
+        # with config.resolve_session_encryption_secret.
         self._session_encryption_secret = (
-            os.getenv("SESSION_ENCRYPTION_KEY")
+            resolve_session_secret_from_env_or_store()
             if session_encryption_secret is _SESSION_ENCRYPTION_SECRET_UNSET
             else session_encryption_secret
         )

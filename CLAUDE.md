@@ -104,6 +104,7 @@ python -m tg_agent.main channel list|add|delete|toggle|collect|stats|refresh-typ
 python -m tg_agent.main filter analyze|apply|reset|precheck|toggle|purge|purge-messages|hard-delete
 python -m tg_agent.main account list|info|toggle|set-primary|delete|send-code|verify-code|add|flood-status|flood-clear
 python -m tg_agent.main global enable|disable|status   # shared account store (~/.tg-agent, TG_AGENT_GLOBAL_DIR); per-project .tg-agent-global marker (#1683)
+python -m tg_agent.main key set|clear|status   # machine-level SESSION_ENCRYPTION_KEY in the OS secret store (opt-in; env/config wins) (#1699)
 python -m tg_agent.main scheduler start|trigger|status|stop|job-toggle|set-interval|task-cancel|clear-pending|queue-pause|queue-resume
 python -m tg_agent.main notification setup|status|delete|test|dry-run|set-account
 python -m tg_agent.main test all|read|write|telegram|benchmark
@@ -228,6 +229,7 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 - ruff for linting: line-length=120, target py311, rules E/F/I/N/W
 - Tests: pytest-asyncio with `asyncio_mode="auto"`
 - Session strings stored as `enc:v2:*` when `SESSION_ENCRYPTION_KEY` is set; startup fails fast if encrypted rows exist without key
+- `SESSION_ENCRYPTION_KEY` resolution (#1699): config.yaml/env → opt-in OS secret store (`tg-agent key set`; macOS Keychain / Windows Credential Manager / secret-tool, 0600-file fallback in the global store root) → warning + degraded pool. Both former raw env read sites (config loader and `Database.__init__` default) route through the shared resolvers (`resolve_session_encryption_secret` / `resolve_session_secret_from_env_or_store`); `TG_AGENT_SECRET_STORE=off` disables the store layer (tests set it for hermeticity)
 
 ## CI
 

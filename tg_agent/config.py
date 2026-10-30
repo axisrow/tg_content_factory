@@ -17,6 +17,8 @@ from urllib.parse import unquote, urlparse
 import yaml
 from pydantic import BaseModel, Field
 
+from tg_agent.security.secret_store import backend_name, read_stored_key
+
 logger = logging.getLogger(__name__)
 
 
@@ -421,11 +423,18 @@ def load_config(path: str | Path = "config.yaml", *, apply_marker: bool = True) 
 def resolve_session_encryption_secret(config: AppConfig) -> str | None:
     """Resolve a stable secret for account session encryption.
 
-    Returns ``None`` when no suitable secret is available. Account writes must
-    refuse to persist sessions without a key; never use a well-known default.
+    Resolution order (#1699): config.yaml/env (the escape hatch, merged into
+    ``config.security`` by :func:`load_config`), then the opt-in machine-level
+    OS secret store (``tg-agent key set``), then ``None``. Returns ``None``
+    when no suitable secret is available. Account writes must refuse to
+    persist sessions without a key; never use a well-known default.
     """
     if config.security.session_encryption_key:
         return config.security.session_encryption_key
+    stored = read_stored_key()
+    if stored:
+        logger.info("Using SESSION_ENCRYPTION_KEY from the machine secret store (%s).", backend_name())
+        return stored
     logger.warning(
         "No SESSION_ENCRYPTION_KEY configured. "
         "Adding or importing Telegram accounts requires a key; encrypted sessions cannot be read without it. "

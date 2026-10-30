@@ -18,6 +18,17 @@ def _restart_hint() -> None:
     print("Restart any running worker/daemon in this project to apply the change.")
 
 
+def _maybe_suggest_key(config) -> None:
+    """Suggest the machine-level key store once; never store anything itself (#1699)."""
+    if config.security.session_encryption_key:
+        return
+    from tg_agent.security.secret_store import read_stored_key
+
+    if read_stored_key() is not None:
+        return
+    print("Tip: store the session key machine-wide once instead of per-project .env copies: tg-agent key set")
+
+
 async def enable_impl(config_path: str, phones: list[str] | None = None) -> None:
     """Enroll explicitly selected accounts, keeping content in the project DB."""
     from tg_agent.gateway.enrollment import enable_project
@@ -28,6 +39,7 @@ async def enable_impl(config_path: str, phones: list[str] | None = None) -> None
     config = load_config(config_path)
     print(f"Shared gateway enabled: {binding.store_root}")
     print(f"Project database: {config.database.path}")
+    _maybe_suggest_key(config)
 
 
 def disable_impl(config_path: str) -> None:
