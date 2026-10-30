@@ -12,7 +12,7 @@ from tg_agent.database.repositories.messages import (
     _normalize_date_to,
     _normalize_username,
 )
-from tg_agent.models import Message, SearchParams, SearchQuery
+from tg_agent.models import Channel, Message, SearchParams, SearchQuery
 from tg_agent.security.session_cipher import SessionCipher
 
 
@@ -37,6 +37,33 @@ def make_message(
         date=date or datetime.now(timezone.utc),
         **kwargs,
     )
+
+
+async def test_collected_page_supports_search_embeddings_and_analytics(db):
+    """A committed page is visible through every repository component exactly once."""
+    channel_id = 87654
+    await db.repos.channels.add_channel(Channel(channel_id=channel_id, title="Repository components"))
+    repository = db.repos.messages
+    message = make_message(channel_id, 7, "componentneedle", views=10)
+    assert await repository.save_collected_page(channel_id, [message], 7) == 1
+    assert await repository.save_collected_page(channel_id, [message], 7) == 0
+
+    page = await repository.search_messages(SearchParams(query="componentneedle"))
+    assert page.total == 1
+    assert len(page.messages) == 1
+    message_id = page.messages[0].id
+    assert message_id is not None
+    assert await repository.get_by_id(message_id) == await repository.get_message_by_id(message_id)
+
+    assert await repository.upsert_message_embeddings([(message_id, [1.0, 0.0])]) == 1
+    matches, total = await repository.search_semantic_messages([1.0, 0.0], channel_id=channel_id)
+    assert total == 1
+    assert [match.id for match in matches] == [message_id]
+    assert await repository.count_embeddings() == 1
+    assert (await repository.get_stats())["messages"] == 1
+    channel = await db.repos.channels.get_channel_by_channel_id(channel_id)
+    assert channel is not None
+    assert channel.last_collected_id == 7
 
 
 # insert_message tests
