@@ -36,7 +36,6 @@ async def _web_mode_client(tmp_path):
         config,
         log_buffer=log_buffer,
         templates=None,
-        runtime_mode="web",
     )
     await container.db.add_account(Account(phone="+1234567890", session_string="test_session"))
 

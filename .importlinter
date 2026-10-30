@@ -2,6 +2,15 @@
 root_package = tg_agent
 include_external_packages = True
 
+[importlinter:contract:runtime_no_web_imports]
+name = Worker runtime does not import the legacy web layer directly
+type = forbidden
+source_modules =
+    tg_agent.runtime
+forbidden_modules =
+    tg_agent.web
+allow_indirect_imports = True
+
 [importlinter:contract:telegram_actions_no_raw_telethon_functions_in_entrypoints]
 name = Telegram entrypoints do not import Telethon directly outside allowed pipeline errors
 type = forbidden
