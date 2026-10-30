@@ -95,6 +95,7 @@ def _bind_dialog_cache_methods(pool):
     # MagicMock(spec=ClientPool) the latter resolves to a mock, so bind the real
     # collaborators these tests rely on (same pattern as the cache helpers above).
     pool._fetch_dialogs_for_phone = ClientPool._fetch_dialogs_for_phone.__get__(pool, ClientPool)
+    pool._sweep_dialogs_for_phone = ClientPool._sweep_dialogs_for_phone.__get__(pool, ClientPool)
     pool._mark_degraded_cached_dialogs = ClientPool._mark_degraded_cached_dialogs.__get__(
         pool, ClientPool
     )
