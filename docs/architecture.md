@@ -76,6 +76,13 @@ db.repos.settings.get_setting("key")
 pass-through-методов (ratchet «только вниз») — добавление новых pass-through падает в CI,
 вынуждая использовать `db.repos`.
 
+## CLI Pipelines
+
+- `tg_agent/cli/commands/pipeline.py` — Typer-входные точки и совместимый `run(argparse.Namespace)`; адаптация аргументов выполняется на границе CLI.
+- `tg_agent/cli/pipeline/requests.py` — явные dataclass-запросы для каждой команды.
+- `tg_agent/cli/pipeline/` — отдельные обработчики CRUD, генерации, модерации и графа; форматирование результатов и JSONL вынесено в `responses.py`.
+- Общий dispatcher владеет одним lifecycle БД и пула; фабрики сервисов передаются обработчикам через `PipelineServices`.
+
 ## Runtime and Web App Wiring
 
 - `tg_agent/runtime/bootstrap.py` — общая сборка сервисов и lifecycle worker; `RuntimeContainer` не содержит шаблонов или web timing state.
