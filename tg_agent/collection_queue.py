@@ -6,7 +6,7 @@ import logging
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 from telethon.errors import (
     ChannelPrivateError,
@@ -76,6 +76,13 @@ def _is_permanent_collection_error(exc: BaseException) -> bool:
     dead channel just exhausts its retry-pass attempts and stays FAILED.
     """
     return isinstance(exc, (UsernameNotOccupiedError, UsernameInvalidError))
+
+
+class CollectionFailureOutcome(NamedTuple):
+    """Ownership and worker-lifecycle decisions after a collection failure."""
+
+    keep_known_task_id: bool = False
+    stop_after_no_clients: bool = False
 
 
 class CollectionQueue:
@@ -469,8 +476,7 @@ class CollectionQueue:
 
             cancel_event = asyncio.Event()
             self._active_task_ids[task_id] = cancel_event
-            stop_after_no_clients = False
-            keep_known_task_id = False
+            failure = CollectionFailureOutcome()
             should_stop_workers = False
             try:
                 await self._channels.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
@@ -484,16 +490,16 @@ class CollectionQueue:
                 self._retried_tasks.discard(task_id)
                 self._retry_pass.pop(task_id, None)
             except Exception as exc:
-                keep_known_task_id, stop_after_no_clients = await self._handle_collection_exception(
+                failure = await self._handle_collection_exception(
                     exc, task_id=task_id, channel=channel, force=force, full=full
                 )
             finally:
                 self._active_task_ids.pop(task_id, None)
-                if not keep_known_task_id:
+                if not failure.keep_known_task_id:
                     self._known_task_ids.discard(task_id)
                 self._queue.task_done()
                 await self._log_progress()
-                if stop_after_no_clients:
+                if failure.stop_after_no_clients:
                     self._stop_workers = True
                     should_stop_workers = True
             if should_stop_workers:
@@ -693,12 +699,35 @@ class CollectionQueue:
             self._channel_private_error_counts.pop(channel.id, None)
         logger.info("Collected %d messages from channel %d", count, channel.channel_id)
 
+    async def _defer_collection_task(
+        self,
+        task_id: int,
+        channel: Channel,
+        *,
+        force: bool,
+        full: bool,
+        run_after: datetime,
+        note: str,
+        requeue: bool = True,
+    ) -> None:
+        """Persist a deferral before scheduling its in-memory wakeup.
+
+        With no connected clients, leave ownership in the database so the pull
+        loop can pick the task up when collection becomes available again.
+        """
+        self._retried_tasks.discard(task_id)
+        await self._channels.reschedule_collection_task(task_id, run_after=run_after, note=note)
+        if requeue:
+            self._schedule_requeue_after_delay(
+                task_id=task_id, channel=channel, force=force, full=full, run_after=run_after
+            )
+
     async def _handle_collection_exception(
         self, exc: Exception, *, task_id: int, channel: Channel, force: bool, full: bool
-    ) -> tuple[bool, bool]:
+    ) -> CollectionFailureOutcome:
         """Handle a failure raised while collecting a single channel.
 
-        Returns ``(keep_known_task_id, stop_after_no_clients)`` for the worker
+        Returns named ownership and stop decisions for the worker
         loop's finally block. The ``isinstance`` chain mirrors the original
         except-clause precedence exactly. Split out of ``_run_single_worker`` (#922).
         """
@@ -713,10 +742,8 @@ class CollectionQueue:
                 "Отложено: все аккаунты во Flood Wait "
                 f"до {exc.next_available_at.astimezone(timezone.utc).isoformat()}"
             )
-            self._retried_tasks.discard(task_id)
-            await self._channels.reschedule_collection_task(task_id, run_after=run_after, note=note)
-            self._schedule_requeue_after_delay(
-                task_id=task_id, channel=channel, force=force, full=full, run_after=run_after
+            await self._defer_collection_task(
+                task_id, channel, force=force, full=full, run_after=run_after, note=note
             )
             logger.warning(
                 "Rescheduled collection task %d for channel %d until %s: all clients flooded",
@@ -724,7 +751,7 @@ class CollectionQueue:
                 channel.channel_id,
                 run_after.isoformat(),
             )
-            return True, False
+            return CollectionFailureOutcome(keep_known_task_id=True)
         if isinstance(exc, UsernameResolveFloodWaitDeferredError):
             run_after = exc.next_available_at + timedelta(
                 seconds=RESOLVE_USERNAME_BACKOFF_BUFFER_SEC
@@ -733,10 +760,8 @@ class CollectionQueue:
                 "Отложено: Flood Wait на resolve_username до "
                 f"{run_after.astimezone(timezone.utc).isoformat()}"
             )
-            self._retried_tasks.discard(task_id)
-            await self._channels.reschedule_collection_task(task_id, run_after=run_after, note=note)
-            self._schedule_requeue_after_delay(
-                task_id=task_id, channel=channel, force=force, full=full, run_after=run_after
+            await self._defer_collection_task(
+                task_id, channel, force=force, full=full, run_after=run_after, note=note
             )
             logger.warning(
                 "Rescheduled collection task %d for channel %d until %s: username resolve flood wait",
@@ -744,17 +769,15 @@ class CollectionQueue:
                 channel.channel_id,
                 run_after.isoformat(),
             )
-            return True, False
+            return CollectionFailureOutcome(keep_known_task_id=True)
         if isinstance(exc, UsernameResolveRateLimitedError):
             run_after = exc.run_after_with_buffer()
             note = (
                 "Отложено: resolve_username rate-limited до "
                 f"{run_after.astimezone(timezone.utc).isoformat()}"
             )
-            self._retried_tasks.discard(task_id)
-            await self._channels.reschedule_collection_task(task_id, run_after=run_after, note=note)
-            self._schedule_requeue_after_delay(
-                task_id=task_id, channel=channel, force=force, full=full, run_after=run_after
+            await self._defer_collection_task(
+                task_id, channel, force=force, full=full, run_after=run_after, note=note
             )
             logger.warning(
                 "Rescheduled collection task %d for channel %d until %s: "
@@ -764,7 +787,7 @@ class CollectionQueue:
                 run_after.isoformat(),
                 exc.phone,
             )
-            return True, False
+            return CollectionFailureOutcome(keep_known_task_id=True)
         if isinstance(exc, TelegramRateLimitedError):
             # The calibrated gate (#1418) legitimately binds on peak collector
             # minutes (media 50/min vs the 48/min history cap): deferring the
@@ -777,10 +800,8 @@ class CollectionQueue:
                 "Отложено: gate "
                 f"{exc.category} rate-limited до {run_after.astimezone(timezone.utc).isoformat()}"
             )
-            self._retried_tasks.discard(task_id)
-            await self._channels.reschedule_collection_task(task_id, run_after=run_after, note=note)
-            self._schedule_requeue_after_delay(
-                task_id=task_id, channel=channel, force=force, full=full, run_after=run_after
+            await self._defer_collection_task(
+                task_id, channel, force=force, full=full, run_after=run_after, note=note
             )
             logger.warning(
                 "Rescheduled collection task %d for channel %d until %s: "
@@ -791,16 +812,14 @@ class CollectionQueue:
                 exc.category,
                 exc.phone,
             )
-            return True, False
+            return CollectionFailureOutcome(keep_known_task_id=True)
         if isinstance(exc, NoActiveCollectionClientsError):
             run_after = datetime.now(timezone.utc) + timedelta(
                 seconds=self.NO_CLIENTS_RETRY_DELAY_SEC
             )
-            self._retried_tasks.discard(task_id)
-            await self._channels.reschedule_collection_task(
-                task_id,
-                run_after=run_after,
-                note=self.NO_CLIENTS_REQUEUE_NOTE,
+            await self._defer_collection_task(
+                task_id, channel, force=force, full=full, run_after=run_after,
+                note=self.NO_CLIENTS_REQUEUE_NOTE, requeue=False,
             )
             drained_task_ids = self._drain_memory_queue()
             for drained_task_id in drained_task_ids:
@@ -813,15 +832,15 @@ class CollectionQueue:
                 run_after.isoformat(),
                 len(drained_task_ids),
             )
-            return False, True
+            return CollectionFailureOutcome(stop_after_no_clients=True)
         if isinstance(exc, ChannelPrivateError):
             await self._handle_channel_private_error(task_id, channel, exc)
-            return False, False
+            return CollectionFailureOutcome()
         if isinstance(exc, ConnectionError):
             outcome = await self._try_reconnect_and_requeue(task_id, channel, full, force, exc)
             if outcome == "requeued":
                 # Task is PENDING and back in the in-memory queue; keep it owned.
-                return True, False
+                return CollectionFailureOutcome(keep_known_task_id=True)
             if outcome == "pending":
                 # Queue was full: the task is PENDING in the DB. Do NOT overwrite
                 # to FAILED — that would strand the retry (the pull loop only
@@ -834,13 +853,13 @@ class CollectionQueue:
                     channel.channel_id,
                     task_id,
                 )
-                return False, False
+                return CollectionFailureOutcome()
             self._retried_tasks.discard(task_id)
             await self._update_task_status_shutdown_safe(
                 task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
             )
             logger.exception("Collection failed for channel %d (reconnect failed)", channel.channel_id)
-            return False, False
+            return CollectionFailureOutcome()
         self._retried_tasks.discard(task_id)
         tl_note = unknown_tl_type_note(exc)
         await self._update_task_status_shutdown_safe(
@@ -856,23 +875,19 @@ class CollectionQueue:
         if _is_permanent_collection_error(exc):
             # Deleted/renamed channel: no point re-attempting this run.
             self._retry_pass.pop(task_id, None)
-            return False, False
+            return CollectionFailureOutcome()
         attempts = self._retry_pass.get(task_id, 0) + 1
         if attempts >= self.RETRY_PASS_MAX_ATTEMPTS:
             self._retry_pass.pop(task_id, None)  # exhausted: terminal FAILED
-            return False, False
+            return CollectionFailureOutcome()
         self._retry_pass[task_id] = attempts
         # Same delayed-requeue path as the flood/gate branches: the delay keeps the
         # retry out of the fresh channels' way; restart-survival and single-pickup
         # semantics are inherited from that machinery.
         run_after = datetime.now(timezone.utc) + timedelta(seconds=self.RETRY_PASS_DELAY_SEC)
-        await self._channels.reschedule_collection_task(
-            task_id,
-            run_after=run_after,
+        await self._defer_collection_task(
+            task_id, channel, force=force, full=full, run_after=run_after,
             note=f"Retry pass {attempts + 1}/{self.RETRY_PASS_MAX_ATTEMPTS}",
-        )
-        self._schedule_requeue_after_delay(
-            task_id=task_id, channel=channel, force=force, full=full, run_after=run_after
         )
         logger.warning(
             "Retry pass: task %d re-enqueued for channel %d (attempt %d/%d)",
@@ -881,7 +896,7 @@ class CollectionQueue:
             attempts + 1,
             self.RETRY_PASS_MAX_ATTEMPTS,
         )
-        return True, False
+        return CollectionFailureOutcome(keep_known_task_id=True)
 
     async def _handle_channel_private_error(
         self, task_id: int, channel: Channel, exc: ChannelPrivateError
