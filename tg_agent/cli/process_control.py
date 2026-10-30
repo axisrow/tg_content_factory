@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
-from tg_agent.config import AppConfig
+from tg_agent.config import GLOBAL_DB_NAME, AppConfig, load_config, read_global_store_marker
 from tg_agent.telegram.session_lock import SessionLock, SessionLockError
 from tg_agent.utils.process_identity import process_executable, process_start_identity
 
@@ -47,6 +47,65 @@ class StopOutcome:
 def pid_file_path(config: AppConfig) -> Path:
     db_path = Path(config.database.path)
     return db_path.with_suffix(".pid")
+
+
+def pid_file_candidates(config_path: str) -> list[Path]:
+    """Every PID file a daemon of this project may be registered at (#1698).
+
+    The path resolves from the *current* config, but a running daemon keeps
+    the path it was launched with: a store switch (global enable/migrate/
+    disable, legacy markers — #1724) moves ``database.path`` underneath it,
+    and the documented stop/restart flow then looks in the wrong place.
+    Candidates, in check order:
+
+    * the current config (marker applied),
+    * the same config without the marker (the pre-switch database path),
+    * the legacy plain-path marker's store (a pre-#1724 daemon keeps its PID
+      file there until someone stops it).
+
+    Duplicates collapse; the current store comes first.
+    """
+    candidates = [
+        pid_file_path(load_config(config_path)),
+        pid_file_path(load_config(config_path, apply_marker=False)),
+    ]
+    marker_root = read_global_store_marker()
+    if marker_root is not None:
+        candidates.append((marker_root / GLOBAL_DB_NAME).with_suffix(".pid"))
+    unique: list[Path] = []
+    for candidate in candidates:
+        if candidate not in unique:
+            unique.append(candidate)
+    return unique
+
+
+def ensure_no_sibling_daemon(pid_path: Path, config_path: str) -> None:
+    """Refuse to start when a live project daemon is registered elsewhere (#1698).
+
+    ``restart`` stops every candidate first, so a fresh ``worker``/``serve``
+    start that still sees a live daemon on another candidate path is a
+    double-spawn that ends degraded (the second worker loses every session
+    lock and loops "Pending-task ingest throttled" forever).
+    """
+    for candidate in pid_file_candidates(config_path):
+        if candidate.resolve() == Path(pid_path).resolve():
+            continue  # ensure_server_not_running owns the registration path itself
+        pid = read_pid(candidate)
+        if pid is not None and pid != os.getpid() and is_expected_server_process(pid):
+            owner = read_process_owner(candidate)
+            provenance = ""
+            stop_hint = "its owning project"
+            if owner is not None:
+                provenance = (
+                    f" (project {owner.get('project_root')}, store {owner.get('store_root')}, "
+                    f"started {owner.get('started_at')})"
+                )
+                stop_hint = str(owner.get("project_root", stop_hint))
+            raise ProcessControlError(
+                f"Refusing to start: this project's daemon is already running on another "
+                f"store path — PID {pid}, PID file {candidate}{provenance}. Stop it first "
+                f"(tg-agent stop from {stop_hint}) or inspect with tg-agent daemon status."
+            )
 
 
 def is_process_alive(pid: int) -> bool:
@@ -284,6 +343,7 @@ def stop_server(
     path: Path,
     timeout_sec: float = 150.0,
     kill_timeout_sec: float = 5.0,
+    force: bool = False,
 ) -> StopOutcome:
     pid = read_pid(path)
     if pid is None:
@@ -299,37 +359,45 @@ def stop_server(
             f"Removed stale PID file: {path}.",
         )
 
+    # The managed-process check stays in force under --force: an unknown PID
+    # is never signalled, escape hatch or not (#1714).
     if not is_expected_server_process(pid):
         return StopOutcome(
             StopResult.UNMANAGED,
             f"PID {pid} is not a managed tg-agent daemon process.",
         )
 
-    owner = read_process_owner(path)
-    if owner is None:
-        return StopOutcome(StopResult.UNMANAGED,
-            f"Cannot verify provenance for legacy PID {pid}; refusing to signal it. "
-            "Stop the original worker from its owning installation or verify it manually.")
-    observed_executable = process_executable(pid)
-    if (owner.get("role") != "worker" or owner.get("store_root") != str(path.resolve().parent)
-            or not owner.get("start_identity") or not owner.get("executable")
-            or (owner["executable"] != observed_executable
-                and owner.get("executable_observed") != observed_executable)):
-        return StopOutcome(StopResult.UNMANAGED,
-                           f"Cannot verify role, storage, executable and start identity for PID {pid}; "
-                           f"recorded executable {owner.get('executable')!r}, observed {observed_executable!r}.")
-    if owner is not None:
-        if owner["pid"] != pid or owner["project_root"] != str(Path.cwd().resolve()):
-            return StopOutcome(
-                StopResult.UNMANAGED,
-                f"Refusing to stop PID {pid}: daemon belongs to project {owner['project_root']} "
-                f"(store {owner.get('store_root', path.parent)}). Run process control from that project.",
-            )
-        recorded_command = owner.get("command")
-        if recorded_command and recorded_command != _process_command(pid):
-            return StopOutcome(StopResult.UNMANAGED, f"PID {pid} no longer matches its process owner record.")
-        if owner.get("start_identity") and owner["start_identity"] != process_start_identity(pid):
-            return StopOutcome(StopResult.UNMANAGED, f"PID {pid} has been reused; refusing to signal it.")
+    owner = None
+    if not force:
+        # Provenance verification (#1714): refuse unless the caller's project
+        # owns this daemon. stop --force is the explicit operator escape hatch.
+        owner = read_process_owner(path)
+        if owner is None:
+            return StopOutcome(StopResult.UNMANAGED,
+                f"Cannot verify provenance for legacy PID {pid}; refusing to signal it. "
+                "Stop the original worker from its owning installation, verify it "
+                "manually, or pass --force.")
+        observed_executable = process_executable(pid)
+        if (owner.get("role") != "worker" or owner.get("store_root") != str(path.resolve().parent)
+                or not owner.get("start_identity") or not owner.get("executable")
+                or (owner["executable"] != observed_executable
+                    and owner.get("executable_observed") != observed_executable)):
+            return StopOutcome(StopResult.UNMANAGED,
+                               f"Cannot verify role, storage, executable and start identity for PID {pid}; "
+                               f"recorded executable {owner.get('executable')!r}, observed {observed_executable!r}.")
+        if owner is not None:
+            if owner["pid"] != pid or owner["project_root"] != str(Path.cwd().resolve()):
+                return StopOutcome(
+                    StopResult.UNMANAGED,
+                    f"Refusing to stop PID {pid}: daemon belongs to project {owner['project_root']} "
+                    f"(store {owner.get('store_root', path.parent)}). Run process control from that "
+                    f"project, or pass --force from this one.",
+                )
+            recorded_command = owner.get("command")
+            if recorded_command and recorded_command != _process_command(pid):
+                return StopOutcome(StopResult.UNMANAGED, f"PID {pid} no longer matches its process owner record.")
+            if owner.get("start_identity") and owner["start_identity"] != process_start_identity(pid):
+                return StopOutcome(StopResult.UNMANAGED, f"PID {pid} has been reused; refusing to signal it.")
 
     try:
         os.kill(pid, signal.SIGTERM)

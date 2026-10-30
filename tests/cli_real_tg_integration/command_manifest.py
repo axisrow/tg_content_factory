@@ -152,6 +152,10 @@ CLI_REAL_TG_CLEANUP_COMMAND_CASES: set[tuple[str, ...]] = {
 }
 
 CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
+    ("daemon", "status"): (
+        "read-only provenance view of the managed daemon PID files (#1714); "
+        "no live Telegram, covered by offline CLI tests"
+    ),
     ("account", "attach"): "project grant mutation; two-project gateway acceptance scenario",
     ("account", "detach"): "project grant mutation; two-project gateway acceptance scenario",
     ("global", "migrate"): "legacy database migration; offline snapshots and interrupted-migration acceptance",

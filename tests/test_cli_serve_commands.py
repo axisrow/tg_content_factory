@@ -1,6 +1,7 @@
 """Tests for src/cli/commands/serve.py and server_control.py — CLI serve/stop/restart."""
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,6 +23,19 @@ def make_app_config():
     cfg.web.port = 8080
     cfg.database.path = "data/test.db"
     return cfg
+
+
+@pytest.fixture(autouse=True)
+def isolate_pid_file_candidates(monkeypatch):
+    """Daemon lifecycle tests never probe the real machine's PID files.
+
+    stop/restart, worker and serve enumerate PID-file candidates (#1698);
+    pin them to one throwaway path so the suite stays machine-independent.
+    """
+    monkeypatch.setattr(
+        "tg_agent.cli.process_control.pid_file_candidates",
+        lambda config_path: [Path("/tmp/test.pid")],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -253,14 +267,11 @@ def test_worker_register_failure_exits():
 
 
 def test_stop_success(capsys):
-    cfg = make_app_config()
     outcome = MagicMock()
     outcome.message = "Server stopped."
     from tg_agent.cli.commands.server_control import StopResult
     outcome.result = StopResult.STOPPED
-    with patch("tg_agent.cli.commands.server_control.load_config", return_value=cfg), \
-         patch("tg_agent.cli.commands.server_control.stop_server", return_value=outcome), \
-         patch("tg_agent.cli.commands.server_control.pid_file_path", return_value="/tmp/test.pid"):
+    with patch("tg_agent.cli.commands.server_control.stop_server", return_value=outcome):
         run_stop(_args())
     out = capsys.readouterr().out
     assert "подожду завершения активной задачи" in out
@@ -268,24 +279,18 @@ def test_stop_success(capsys):
 
 
 def test_stop_process_control_error():
-    cfg = make_app_config()
     from tg_agent.cli.commands.server_control import ProcessControlError
-    with patch("tg_agent.cli.commands.server_control.load_config", return_value=cfg), \
-         patch("tg_agent.cli.commands.server_control.stop_server", side_effect=ProcessControlError("no pid")), \
-         patch("tg_agent.cli.commands.server_control.pid_file_path", return_value="/tmp/test.pid"):
+    with patch("tg_agent.cli.commands.server_control.stop_server", side_effect=ProcessControlError("no pid")):
         with pytest.raises(SystemExit):
             run_stop(_args())
 
 
 def test_stop_timeout():
-    cfg = make_app_config()
     outcome = MagicMock()
     outcome.message = "Timeout"
     from tg_agent.cli.commands.server_control import StopResult
     outcome.result = StopResult.TIMEOUT
-    with patch("tg_agent.cli.commands.server_control.load_config", return_value=cfg), \
-         patch("tg_agent.cli.commands.server_control.stop_server", return_value=outcome), \
-         patch("tg_agent.cli.commands.server_control.pid_file_path", return_value="/tmp/test.pid"):
+    with patch("tg_agent.cli.commands.server_control.stop_server", return_value=outcome):
         with pytest.raises(SystemExit):
             run_stop(_args())
 
@@ -296,14 +301,11 @@ def test_stop_timeout():
 
 
 def test_restart_success(capsys):
-    cfg = make_app_config()
     outcome = MagicMock()
     outcome.message = "Stopped."
     from tg_agent.cli.commands.server_control import StopResult
     outcome.result = StopResult.STOPPED
-    with patch("tg_agent.cli.commands.server_control.load_config", return_value=cfg), \
-         patch("tg_agent.cli.commands.server_control.stop_server", return_value=outcome), \
-         patch("tg_agent.cli.commands.server_control.pid_file_path", return_value="/tmp/test.pid"), \
+    with patch("tg_agent.cli.commands.server_control.stop_server", return_value=outcome), \
          patch("tg_agent.cli.commands.worker.serve_worker") as mock_worker:
         run_restart(_args())
     out = capsys.readouterr().out
