@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectBinding(BaseModel):
@@ -26,6 +29,17 @@ def read_binding(path: Path) -> ProjectBinding | None:
         return None
     if not raw.startswith("{"):
         return None
+    try:
+        json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning(
+            "Gateway marker %s is not valid JSON — ignored; re-run "
+            "`tg-agent global enable --account PHONE` to rewrite it.",
+            path,
+        )
+        return None
+    # Valid JSON that fails the ProjectBinding schema (e.g. unknown version)
+    # still refuses loudly: only *malformed* JSON is treated as absent (#1733).
     binding = ProjectBinding.model_validate_json(raw)
     if not Path(binding.store_root).is_absolute() or not Path(binding.token_file).is_absolute():
         raise ValueError("Gateway marker requires absolute store and token paths")

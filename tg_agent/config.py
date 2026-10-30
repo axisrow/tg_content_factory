@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -289,6 +290,17 @@ def read_global_store_marker() -> Path | None:
     except OSError:
         return None
     if raw.startswith("{"):
+        try:
+            json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning(
+                "Gateway marker %s is not valid JSON — ignored; re-run "
+                "`tg-agent global enable --account PHONE` to rewrite it.",
+                global_marker_path(),
+            )
+            return None
+        # Valid JSON that fails the ProjectBinding schema (e.g. unknown version)
+        # still refuses loudly: only *malformed* JSON is treated as absent (#1733).
         from tg_agent.gateway.project import ProjectBinding
 
         ProjectBinding.model_validate_json(raw)
