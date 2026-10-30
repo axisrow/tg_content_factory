@@ -16,6 +16,7 @@ from tests.test_secret_store import KEY, FakeBackend, _install, _proc
 from tg_agent.cli.commands.global_store import _maybe_suggest_key
 from tg_agent.cli.typer_app import app
 from tg_agent.config import AppConfig, SecurityConfig
+from tg_agent.security.secret_store import backend_name
 
 runner = CliRunner()
 
@@ -31,13 +32,15 @@ class _FakeTty:
 
 
 @pytest.fixture()
-def store_on(monkeypatch: pytest.MonkeyPatch):
+def store_on(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setenv("TG_AGENT_SECRET_STORE", "")
     monkeypatch.setattr("tg_agent.security.secret_store._backend_error", None, raising=False)
     # Pin the keychain dialect — CI runs Linux; without the pin dispatch would
-    # pick the file backend and never consult the faked backend.
+    # pick the file backend and never consult the faked backend. The global
+    # store root moves into tmp so no regression can touch the real ~/.tg-agent.
     monkeypatch.setattr("sys.platform", "darwin")
     monkeypatch.setattr("shutil.which", lambda _n: None)
+    monkeypatch.setenv("TG_AGENT_GLOBAL_DIR", str(tmp_path / "global"))
     from tg_agent.security import secret_store
 
     secret_store.read_stored_key.cache_clear()
@@ -186,5 +189,12 @@ def test_suggest_key_silent_with_explicit_key(store_on, capsys, monkeypatch):
 
 def test_suggest_key_silent_when_already_stored(store_on, capsys, monkeypatch):
     monkeypatch.setattr("tg_agent.security.secret_store._run", FakeBackend("darwin", KEY))
+    _maybe_suggest_key(AppConfig(security=SecurityConfig(session_encryption_key="")))
+    assert capsys.readouterr().out == ""
+
+
+def test_suggest_key_silent_when_store_layer_off(capsys):
+    """With TG_AGENT_SECRET_STORE=off `key set` would fail — no tip (#1742 review)."""
+    assert backend_name() == "off"
     _maybe_suggest_key(AppConfig(security=SecurityConfig(session_encryption_key="")))
     assert capsys.readouterr().out == ""

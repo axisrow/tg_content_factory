@@ -116,17 +116,19 @@ class FakeBackend:
 
 
 @pytest.fixture()
-def store_on(monkeypatch: pytest.MonkeyPatch):
+def store_on(monkeypatch: pytest.MonkeyPatch, tmp_path):
     """Opt back into the store layer with every backend faked; reset caches.
 
     Pins the keychain dialect: the macOS-targeting tests must not drift with
     the host OS (CI runs Linux, where dispatch would pick the file backend
-    and never consult the fake ``_run``).
+    and never consult the fake ``_run``). TG_AGENT_GLOBAL_DIR moves into tmp
+    so a regression can never touch the runner's real ~/.tg-agent.
     """
     monkeypatch.setenv("TG_AGENT_SECRET_STORE", "")
     monkeypatch.setattr(secret_store, "_backend_error", None, raising=False)
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(shutil, "which", lambda _n: None)
+    monkeypatch.setenv("TG_AGENT_GLOBAL_DIR", str(tmp_path / "global"))
     read_stored_key.cache_clear()
     yield
     read_stored_key.cache_clear()
@@ -259,6 +261,51 @@ def test_credential_manager_write_failure_raises(store_on, monkeypatch):
     _install(monkeypatch, FailingWrite("win32"))
     monkeypatch.setattr(sys, "platform", "win32")
     with pytest.raises(SecretStoreError, match="CredWrite"):
+        store_key(KEY)
+
+
+def test_credential_manager_blob_is_utf8_end_to_end(store_on, monkeypatch):
+    """The write script must encode the blob UTF-8 — the reader decodes UTF-8.
+
+    A Unicode(UTF-16LE) write with a UTF-8 read silently returns NUL-padded
+    garbage, and the FakeBackend roundtrip masks it (it re-encodes UTF-8), so
+    the encoding marker is asserted against the real script text (#1742).
+    """
+    fake = _install(monkeypatch, FakeBackend("win32"))
+    monkeypatch.setattr(sys, "platform", "win32")
+    store_key(KEY)
+    (cmd, input_text), *_ = fake.calls
+    script = input_text or ""
+    assert "]::Unicode.GetBytes" not in script
+    assert "]::UTF8.GetBytes($key)" in script
+    assert read_stored_key() == KEY
+
+
+def test_run_converts_timeout_to_rc124(store_on, monkeypatch):
+    def hang(cmd, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd, 10)
+
+    monkeypatch.setattr(secret_store.subprocess, "run", hang)
+    proc = secret_store._run(["security", "find-generic-password"])
+    assert proc.returncode == 124
+    assert "timed out" in proc.stderr
+
+
+def test_read_timeout_degrades_to_none_with_error(store_on, monkeypatch):
+    def hang(cmd, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd, 10)
+
+    monkeypatch.setattr(secret_store.subprocess, "run", hang)
+    assert read_stored_key() is None
+    assert "timed out" in (secret_store.last_backend_error() or "")
+
+
+def test_write_timeout_raises_secret_store_error(store_on, monkeypatch):
+    def hang(cmd, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd, 10)
+
+    monkeypatch.setattr(secret_store.subprocess, "run", hang)
+    with pytest.raises(SecretStoreError, match="timed out"):
         store_key(KEY)
 
 

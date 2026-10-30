@@ -22,9 +22,9 @@ def _maybe_suggest_key(config) -> None:
     """Suggest the machine-level key store once; never store anything itself (#1699)."""
     if config.security.session_encryption_key:
         return
-    from tg_agent.security.secret_store import read_stored_key
+    from tg_agent.security.secret_store import backend_name, read_stored_key
 
-    if read_stored_key() is not None:
+    if backend_name() == "off" or read_stored_key() is not None:
         return
     print("Tip: store the session key machine-wide once instead of per-project .env copies: tg-agent key set")
 

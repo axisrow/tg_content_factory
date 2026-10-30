@@ -73,14 +73,24 @@ def backend_name() -> str:
 
 
 def _run(cmd: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        cmd,
-        input=input_text,
-        capture_output=True,
-        text=True,
-        timeout=_CLI_TIMEOUT_SEC,
-        check=False,
-    )
+    try:
+        return subprocess.run(
+            cmd,
+            input=input_text,
+            capture_output=True,
+            text=True,
+            timeout=_CLI_TIMEOUT_SEC,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        # A hung keyring agent degrades like any backend failure: reads treat
+        # non-0/44 as "not stored" + recorded error, writes raise.
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=124,
+            stdout="",
+            stderr=f"timed out after {_CLI_TIMEOUT_SEC}s",
+        )
 
 
 def _set_backend_error(message: str) -> None:
@@ -132,7 +142,8 @@ def _delete_keychain() -> bool:
 # Windows — Credential Manager (PowerShell + CredRead/CredWrite P/Invoke).
 # The P/Invoke script travels on stdin (`-Command -`), never argv; the key is
 # base64 inside the script so any encoding survives, and the secret comes back
-# base64 on stdout.
+# base64 on stdout. Blob bytes are UTF-8 on both write and read — our writer
+# is the only reader, no interop with cmdkey-written items is attempted.
 # --------------------------------------------------------------------------- #
 
 _PS_CRED_TYPE = (
@@ -172,7 +183,7 @@ _PS_WRITE_TEMPLATE = (
     "$ErrorActionPreference='Stop'\n"
     f"Add-Type -TypeDefinition '{_PS_CRED_TYPE}'\n"
     "$key=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('@KEY_B64@'))\n"
-    "$bytes=[Text.Encoding]::Unicode.GetBytes($key)\n"
+    "$bytes=[Text.Encoding]::UTF8.GetBytes($key)\n"
     "$ptr=[System.Runtime.InteropServices.Marshal]::AllocHGlobal($bytes.Length)\n"
     "[System.Runtime.InteropServices.Marshal]::Copy($bytes,0,$ptr,$bytes.Length)\n"
     "$c=New-Object TgCred+CREDENTIAL\n"
@@ -288,6 +299,10 @@ def _write_file_fallback(key: str) -> None:
     path = fallback_file_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        # Create with 0600 up front — no window where the file sits world-
+        # readable under a permissive umask; the final chmod enforces 0600
+        # even where umask would have widened touch()'s mode.
+        path.touch(mode=0o600)
         path.write_text(key + "\n", encoding="utf-8")
         path.chmod(0o600)
     except OSError as exc:
