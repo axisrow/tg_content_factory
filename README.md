@@ -254,7 +254,7 @@ telethon-cli users get-me --output json
  python -m tg_agent.main test benchmark
 
   # Lint
-  ruff check tg_agent/ tests/ conftest.py
+  ruff check tg_agent/ tests/ packages/ conftest.py
   ```
 
 ### CI Note

@@ -10,6 +10,8 @@ the per-item hook is delegated for the same reason.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import tests.conftest as _core
@@ -27,12 +29,19 @@ def pytest_runtest_setup(item):
     _core.pytest_runtest_setup(item)
 
 
+_PACKAGE_TESTS_DIR = Path(__file__).resolve().parent
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    _core.pytest_collection_modifyitems(config, items)
+    # Session-wide hook: when tests/ is collected too, the core conftest already
+    # handles its own items, so only this package's items are passed on.
+    _core.pytest_collection_modifyitems(
+        config, [item for item in items if item.path.is_relative_to(_PACKAGE_TESTS_DIR)]
+    )
 
 
 @pytest.fixture
-async def pipeline_client(tmp_path, real_pool_harness_factory):
+async def pipeline_client(tmp_path, db, real_pool_harness_factory):
     """Authenticated web client seeded for pipeline route tests.
 
     Shared fixture (deduped from test_pipelines.py / test_integration_generation.py):
@@ -49,7 +58,8 @@ async def pipeline_client(tmp_path, real_pool_harness_factory):
 
     config = make_test_config(tmp_path)
     harness = real_pool_harness_factory()
-    app, built_db = await build_web_app(config, harness)
+    # The app must share the harness's in-memory `db` (CLAUDE.md, "`db` fixture is `:memory:`").
+    app, built_db = await build_web_app(config, harness, db=db)
     await built_db.add_account(Account(phone="+100", session_string="sess"))
     await built_db.add_channel(Channel(channel_id=1001, title="Source A"))
     await built_db.repos.dialog_cache.replace_dialogs(
@@ -86,4 +96,4 @@ async def pipeline_client(tmp_path, real_pool_harness_factory):
         yield client
 
     await app.state.collection_queue.shutdown()
-    await built_db.close()
+    # `built_db` is the `db` fixture, which closes it itself.

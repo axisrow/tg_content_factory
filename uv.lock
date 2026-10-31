@@ -5219,6 +5219,7 @@ dependencies = [
     { name = "python-multipart" },
     { name = "qrcode" },
     { name = "tg-agent" },
+    { name = "tg-shared" },
 ]
 
 [package.metadata]
@@ -5229,6 +5230,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.29" },
     { name = "qrcode", specifier = ">=8.0" },
     { name = "tg-agent", editable = "." },
+    { name = "tg-shared", editable = "packages/tg_shared" },
 ]
 
 [[package]]

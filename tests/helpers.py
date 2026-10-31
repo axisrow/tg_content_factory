@@ -990,7 +990,7 @@ def hide_packages(*names: str):
                 raise ModuleNotFoundError(f"No module named {top!r}", name=top)
             return None
 
-    hidden = {key: None for key in list(sys.modules) if key.partition(".")[0] in names}
+    hidden = [key for key in sys.modules if key.partition(".")[0] in names]
     finder = _Hider()
     with patch.dict(sys.modules):
         for key in hidden:

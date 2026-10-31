@@ -68,11 +68,11 @@ python -m tg_agent.main worker
 # For split deployments (Docker/k8s) pass --no-worker and run `worker`.
 python -m tg_agent.main serve [--web-pass PASS] [--no-worker]
 
-# Lint
-ruff check tg_agent/ tests/ conftest.py
+# Lint (the monorepo packages are linted too, as in CI)
+ruff check tg_agent/ tests/ packages/ conftest.py
 
 # Auto-fix lint issues
-ruff check --fix tg_agent/ tests/ conftest.py
+ruff check --fix tg_agent/ tests/ packages/ conftest.py
 
 # Run parallel-safe tests (-n auto is capped at 4 workers by root conftest.py;
 # override via TGCF_PYTEST_XDIST_WORKERS; single-test runs with :: force 1 worker).

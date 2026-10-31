@@ -226,7 +226,8 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 anyio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-testpaths = ["tests"]
+# Package suites (tg_shared #1421, tg_tui + tg_webui #1720) belong to a bare `pytest` run too.
+testpaths = ["tests", "packages/tg_shared/tests", "packages/tg_tui/tests", "packages/tg_webui/tests"]
 # Keep pytest-timeout as a deadlock guard; xdist workers can be CPU-starved on shared dev hosts.
 timeout = 120
 addopts = "--dist=loadfile"
@@ -313,6 +314,9 @@ verbose = 1
 source_paths = ["tg_agent"]
 also_copy = [
     "conftest.py",
+    # Monorepo packages: the conftest sys.path shim imports them, and core guard
+    # tests scan the web panel sources/tests under packages/ (#1720).
+    "packages",
     "scripts",
     ".github/workflows",
     "docs/reference",

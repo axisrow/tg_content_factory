@@ -39,6 +39,7 @@ from tg_agent.services.agent_provider_service import (
 from tg_agent.services.embedding_service import EmbeddingService
 from tg_agent.telegram.collector import Collector
 from tg_webui.app import create_app
+from tg_webui.paths import TEMPLATES_DIR
 from tg_webui.routes.channel_collection import _COLLECT_ALL_BTN, _COLLECT_ALL_FORM
 from tg_webui.session import COOKIE_NAME, create_session_token
 from tg_webui.template_globals import PYPROJECT_PATH, _agent_available_for_request, get_app_version
@@ -359,7 +360,7 @@ async def test_settings_page_hides_credentials_form_when_env_credentials_configu
     assert "Telegram-аккаунты" in resp.text
     assert 'href="/auth/login"' in resp.text
     assert "Добавить аккаунт" in resp.text
-    template_text = await asyncio.to_thread(_read_text, "packages/tg_webui/src/tg_webui/templates/settings.html")
+    template_text = await asyncio.to_thread(_read_text, TEMPLATES_DIR / "settings.html")
     assert "_accounts.html" in template_text
     assert "_scheduler.html" in template_text
     assert template_text.index("_accounts.html") < template_text.index("_scheduler.html")
@@ -3139,7 +3140,7 @@ async def test_get_channel_ids_with_active_tasks_returns_distinct_non_stats_ids(
 
 @pytest.mark.anyio
 async def test_channels_page_collect_all_button_matches_htmx_fragment(client):
-    template_path = Path("packages/tg_webui/src/tg_webui/templates/channels.html")
+    template_path = TEMPLATES_DIR / "channels.html"
     template_text = await asyncio.to_thread(_read_text, template_path)
     match = re.search(r'(<span id="collect-all-btn">.*?</span>)', template_text, re.S)
     assert match is not None
@@ -3162,7 +3163,7 @@ async def test_channels_page_collect_all_button_matches_htmx_fragment(client):
 
 @pytest.mark.anyio
 async def test_channel_actions_include_explicit_full_backfill_button(client):
-    template_text = await asyncio.to_thread(_read_text, "packages/tg_webui/src/tg_webui/templates/_macros.html")
+    template_text = await asyncio.to_thread(_read_text, TEMPLATES_DIR / "_macros.html")
 
     for expected in (
         'id="collect-btn-{{ prefix }}{{ ch.id }}"',

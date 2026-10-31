@@ -78,5 +78,12 @@ def test_wheel_ships_tg_agent_package_not_src(tmp_path: Path) -> None:
     assert not any(n.startswith(("tg_webui/", "tg_agent/web/")) for n in names), (
         "web panel files must not ship in the core wheel"
     )
+    # Declared package-data must actually make it into the wheel.
+    source_seeds = {
+        path.relative_to(ROOT).as_posix() for path in (ROOT / "tg_agent" / "database" / "seeds").glob("*.csv")
+    }
+    assert source_seeds, "no seed CSVs found in the source tree"
+    missing_seeds = source_seeds - set(names)
+    assert not missing_seeds, f"database seeds missing from the wheel: {sorted(missing_seeds)}"
     assert "Name: tg-agent" in metadata
     assert "tg-agent = tg_agent.main:main" in entry_points

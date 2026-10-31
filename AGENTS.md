@@ -8,7 +8,7 @@ Install locally with `pip install -e .` from the repo root. Run `python -m tg_ag
 
 Use these validation commands during development:
 
-- `ruff check tg_agent/ tests/ conftest.py` — lint Python code.
+- `ruff check tg_agent/ tests/ packages/ conftest.py` — lint Python code (core and monorepo packages).
 - `pytest tests/ -v -m "not aiosqlite_serial" -n auto` — run parallel-safe tests.
 - `pytest tests/ -q -m aiosqlite_serial -n auto --dist=loadfile` — run DB/thread-sensitive tests sequentially within each file, with independent files in parallel.
 - `pytest packages/tg_webui/tests/test_web.py::test_health_endpoint -v` — run one focused test.
