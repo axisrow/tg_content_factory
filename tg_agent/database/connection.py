@@ -45,7 +45,7 @@ class ProfilingConnection:
         return getattr(self._conn, name)
 
     async def execute(self, sql, parameters=()):
-        from tg_agent.web.timing import get_current_profiler
+        from tg_agent.utils.timing import get_current_profiler
 
         profiler = get_current_profiler()
         if profiler is None:
@@ -57,7 +57,7 @@ class ProfilingConnection:
             profiler.record_db(time.perf_counter_ns() - t0)
 
     async def execute_fetchall(self, sql, parameters=()):
-        from tg_agent.web.timing import get_current_profiler
+        from tg_agent.utils.timing import get_current_profiler
 
         profiler = get_current_profiler()
         if profiler is None:
@@ -69,7 +69,7 @@ class ProfilingConnection:
             profiler.record_db(time.perf_counter_ns() - t0)
 
     async def executemany(self, sql, parameters):
-        from tg_agent.web.timing import get_current_profiler
+        from tg_agent.utils.timing import get_current_profiler
 
         profiler = get_current_profiler()
         if profiler is None:
@@ -81,7 +81,7 @@ class ProfilingConnection:
             profiler.record_db(time.perf_counter_ns() - t0)
 
     async def executescript(self, sql):
-        from tg_agent.web.timing import get_current_profiler
+        from tg_agent.utils.timing import get_current_profiler
 
         profiler = get_current_profiler()
         if profiler is None:

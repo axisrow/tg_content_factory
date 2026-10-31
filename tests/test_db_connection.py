@@ -60,14 +60,14 @@ async def test_profiling_connection_execute():
     inner.row_factory = None
 
     pc = ProfilingConnection(inner)
-    with patch("tg_agent.web.timing.get_current_profiler", return_value=None):
+    with patch("tg_agent.utils.timing.get_current_profiler", return_value=None):
         result = await pc.execute("SELECT 1")
         assert result == mock_cursor
 
 
 @pytest.mark.anyio
 async def test_profiling_connection_execute_with_profiler():
-    from tg_agent.web.timing import RequestProfiler
+    from tg_agent.utils.timing import RequestProfiler
 
     inner = AsyncMock()
     mock_cursor = MagicMock()
@@ -86,7 +86,7 @@ async def test_profiling_connection_execute_with_profiler():
 
 @pytest.mark.anyio
 async def test_profiling_connection_execute_fetchall():
-    from tg_agent.web.timing import RequestProfiler
+    from tg_agent.utils.timing import RequestProfiler
 
     inner = AsyncMock()
     inner.execute_fetchall = AsyncMock(return_value=[[1, 2]])
@@ -104,7 +104,7 @@ async def test_profiling_connection_execute_fetchall():
 
 @pytest.mark.anyio
 async def test_profiling_connection_executemany():
-    from tg_agent.web.timing import RequestProfiler
+    from tg_agent.utils.timing import RequestProfiler
 
     inner = AsyncMock()
     inner.executemany = AsyncMock(return_value=None)
@@ -121,7 +121,7 @@ async def test_profiling_connection_executemany():
 
 @pytest.mark.anyio
 async def test_profiling_connection_executescript():
-    from tg_agent.web.timing import RequestProfiler
+    from tg_agent.utils.timing import RequestProfiler
 
     inner = AsyncMock()
     inner.executescript = AsyncMock(return_value=None)

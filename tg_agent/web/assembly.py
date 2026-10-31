@@ -189,7 +189,7 @@ def register_routes(app: FastAPI) -> None:
 
 
 def build_timing_buffer():
-    from tg_agent.web.timing import TimingBuffer
+    from tg_agent.utils.timing import TimingBuffer
 
     return TimingBuffer(maxlen=200)
 

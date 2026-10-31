@@ -12,9 +12,9 @@ from tg_agent.agent.provider_registry import (
     ProviderRuntimeConfig,
     provider_spec,
 )
+from tg_agent.paths import data_root
 from tg_agent.utils.datetime import try_parse_datetime
 from tg_agent.utils.json import safe_json_dumps
-from tg_agent.web.paths import data_root
 
 if TYPE_CHECKING:
     from typing import Protocol

@@ -18,7 +18,7 @@ from tg_agent.runtime.container import (
 from tg_agent.runtime.container import (
     RuntimeScheduler as WebScheduler,
 )
-from tg_agent.web.timing import TimingBuffer
+from tg_agent.utils.timing import TimingBuffer
 
 __all__ = ["AppContainer", "WebClientPool", "WebCollector", "WebScheduler"]
 
