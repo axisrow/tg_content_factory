@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tg_agent.paths import DATA_DIR_ENV, data_root, image_dir
-from tg_agent.web.paths import PROJECT_ROOT, STATIC_DIR, TEMPLATES_DIR, WEB_DIR
+from tg_agent.web.paths import (
+    DATA_DIR_ENV,
+    PROJECT_ROOT,
+    STATIC_DIR,
+    TEMPLATES_DIR,
+    WEB_DIR,
+    data_root,
+    image_dir,
+)
 
 
 def test_web_dir_is_web_package():

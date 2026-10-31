@@ -16,7 +16,7 @@ use `python -m tg_agent.main serve --no-worker` plus a separately launched worke
 Both modes keep sharing the SQLite file and `runtime_snapshots` rows as before.
 
 We deliberately do NOT reuse the web container's `Database` instance: each
-AppContainer owns its own aiosqlite connection (`Database.close()` is called
+RuntimeContainer owns its own aiosqlite connection (`Database.close()` is called
 in both `stop_container` paths), so sharing would double-close. Two
 connections to the same SQLite file are fine because SQLite file-level
 locking already serialises writes, which is exactly how the two-process
@@ -31,8 +31,8 @@ from tg_agent.config import AppConfig
 from tg_agent.database import DatabaseBusyError
 from tg_agent.database.repositories.accounts import AccountSessionDecryptError
 from tg_agent.runtime.bootstrap import build_worker_container, start_container, stop_container
-from tg_agent.runtime.container import AppContainer
-from tg_agent.runtime.log_buffer import LogBuffer
+from tg_agent.runtime.container import RuntimeContainer
+from tg_agent.runtime.log_handler import LogBuffer
 from tg_agent.runtime.worker import (
     _current_task_is_cancelling,
     _publish_snapshots,
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 class EmbeddedWorker:
     """Lifecycle wrapper around an in-process worker container.
 
-    Owns a separate `AppContainer` with runtime_mode="worker", its own
+    Owns a separate `RuntimeContainer` with runtime_mode="worker", its own
     aiosqlite connection, ClientPool, CollectionQueue, UnifiedDispatcher,
     TelegramCommandDispatcher and SchedulerManager — i.e. everything that
     `tg_agent/runtime/worker.py` bootstraps in its own process.
@@ -58,7 +58,7 @@ class EmbeddedWorker:
 
     def __init__(self, config: AppConfig):
         self._config = config
-        self._container: AppContainer | None = None
+        self._container: RuntimeContainer | None = None
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._ready_event = asyncio.Event()
@@ -66,7 +66,7 @@ class EmbeddedWorker:
         self._startup_error: str | None = None
 
     @property
-    def container(self) -> AppContainer | None:
+    def container(self) -> RuntimeContainer | None:
         return self._container
 
     @property

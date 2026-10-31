@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
-from tg_agent.runtime.snapshot_shims import (
+from tg_agent.web.runtime_shims import (
     SnapshotClientPool,
     SnapshotCollector,
     SnapshotSchedulerManager,

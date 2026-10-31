@@ -14,7 +14,6 @@ from tg_agent.collection_queue import CollectionQueue
 from tg_agent.config import AppConfig, DatabaseConfig
 from tg_agent.database import Database
 from tg_agent.models import Account, Channel, RuntimeSnapshot
-from tg_agent.runtime.log_buffer import LogBuffer
 from tg_agent.scheduler.service import SchedulerManager
 from tg_agent.search.ai_search import AISearchEngine
 from tg_agent.search.engine import SearchEngine
@@ -22,6 +21,7 @@ from tg_agent.services.provider_service import RuntimeProviderRegistry
 from tg_agent.telegram.collector import Collector
 from tg_agent.web.app import create_app
 from tg_agent.web.bootstrap import build_container_with_templates
+from tg_agent.web.log_handler import LogBuffer
 from tg_shared.auth import TelegramAuth
 
 
@@ -166,7 +166,7 @@ def agent_manager_mock():
 # `SnapshotSchedulerManager` shims.
 #
 # This fixture goes through the real `build_container_with_templates`
-# bootstrap with `runtime_mode="web"` — the exact same wiring that
+# bootstrap — the exact same wiring that
 # `python -m tg_agent.main serve` uses in production. Tests that want to exercise
 # the web-mode code path should take this fixture instead of `base_app`.
 
@@ -186,7 +186,6 @@ async def web_mode_app(tmp_path):
         config,
         log_buffer=LogBuffer(),
         templates=None,
-        runtime_mode="web",
     )
 
     # Seed one account + one channel so scheduler/channels pages render cleanly.

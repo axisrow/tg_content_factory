@@ -50,6 +50,11 @@ TG_API_HASH=ваш_api_hash
 SESSION_ENCRYPTION_KEY=your_random_secret    # обязателен для добавления/импорта аккаунтов
 ```
 
+Для нескольких проектов на одной машине копию ключа в каждом `.env` можно не
+дублировать: сохраните его один раз в ОС-хранилище секретов командой
+`tg-agent key set` (macOS Keychain / Windows Credential Manager / secret-tool).
+Явно заданный `SESSION_ENCRYPTION_KEY` по-прежнему имеет приоритет.
+
 ### 3. Авторизуйте аккаунт (интерактивно, один раз)
 
 ```bash
@@ -135,7 +140,7 @@ search остаются целевым контрактом.
 |---|---|---|
 | `TG_API_ID` | Да | Telegram API ID |
 | `TG_API_HASH` | Да | Telegram API Hash |
-| `SESSION_ENCRYPTION_KEY` | Да* | Ключ шифрования Telegram session string в БД |
+| `SESSION_ENCRYPTION_KEY` | Да* | Ключ шифрования Telegram session string в БД; может храниться в ОС-хранилище секретов (`tg-agent key set`) |
 | `WEB_PASS` | —† | Пароль веб-панели (только легаси-дашборд) |
 | `LLM_API_KEY` | Нет | API-ключ для AI-поиска |
 | `ANTHROPIC_API_KEY` | —† | Только `claude-agent-sdk` (легаси встроенный агент-чат) |

@@ -1,8 +1,10 @@
+"""Services shared by standalone and embedded runtimes, without UI state."""
+
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TypeAlias
 
 from tg_agent.agent.manager import AgentManager
 from tg_agent.collection_queue import CollectionQueue
@@ -22,8 +24,8 @@ from tg_agent.database.bundles import (
 )
 from tg_agent.live_runtime_pause import LiveRuntimePauseGate
 from tg_agent.plugin_api import PluginRuntime
-from tg_agent.runtime.log_buffer import LogBuffer
-from tg_agent.runtime.snapshot_shims import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
+from tg_agent.runtime.log_handler import LogBuffer
+from tg_agent.runtime.snapshots import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
 from tg_agent.scheduler.service import SchedulerManager
 from tg_agent.search.ai_search import AISearchEngine
 from tg_agent.search.engine import SearchEngine
@@ -42,19 +44,15 @@ from tg_agent.telegram.collector import Collector
 from tg_agent.telegram.dm_catchup import DmCatchupService
 from tg_agent.telegram.dm_listener import DmListener
 from tg_agent.telegram.notifier import Notifier
-from tg_agent.utils.timing import TimingBuffer
 from tg_shared.auth import TelegramAuth
 
-if TYPE_CHECKING:
-    from fastapi.templating import Jinja2Templates
-
-WebClientPool: TypeAlias = ClientPool | SnapshotClientPool
-WebCollector: TypeAlias = Collector | SnapshotCollector
-WebScheduler: TypeAlias = SchedulerManager | SnapshotSchedulerManager
+RuntimeClientPool: TypeAlias = ClientPool | SnapshotClientPool
+RuntimeCollector: TypeAlias = Collector | SnapshotCollector
+RuntimeScheduler: TypeAlias = SchedulerManager | SnapshotSchedulerManager
 
 
 @dataclass(slots=True)
-class AppContainer:
+class RuntimeContainer:
     runtime_mode: str
     config: AppConfig
     db: Database
@@ -69,22 +67,21 @@ class AppContainer:
     scheduler_bundle: SchedulerBundle
     search_query_bundle: SearchQueryBundle
     auth: TelegramAuth
-    pool: WebClientPool
+    pool: RuntimeClientPool
     notification_target_service: NotificationTargetService
     notifier: Notifier | None
     photo_publish_service: PhotoPublishService
     photo_task_service: PhotoTaskService
     photo_auto_upload_service: PhotoAutoUploadService
-    collector: WebCollector
+    collector: RuntimeCollector
     collection_queue: CollectionQueue | None
     task_enqueuer: TaskEnqueuer | None
     unified_dispatcher: UnifiedDispatcher | None
     telegram_command_dispatcher: TelegramCommandDispatcher | None
     search_engine: SearchEngine
     ai_search: AISearchEngine
-    scheduler: WebScheduler
+    scheduler: RuntimeScheduler
     log_buffer: LogBuffer | None
-    timing_buffer: TimingBuffer | None
     session_secret: str
     bg_tasks: set[asyncio.Task]
     live_runtime_pause_gate: LiveRuntimePauseGate | None = None
@@ -99,7 +96,4 @@ class AppContainer:
     # and sends — worker-only, like the listener.
     ping_monitor_service: PingMonitorService | None = None
     plugins: PluginRuntime | None = None
-    # Jinja2 templates of the legacy web panel: the core runtime never builds
-    # them (worker mode needs none); the web surface attaches them after build.
-    templates: Jinja2Templates | None = None
     shutting_down: bool = False

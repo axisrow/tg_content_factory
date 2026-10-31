@@ -389,7 +389,7 @@ app.state.task_enqueuer = enqueuer_mock
 - `tests/routes/test_moderation_routes.py` — паттерн вспомогательных DB-функций и monkeypatch
 - `tg_agent/web/deps.py` — точки монтирования для правильных путей `patch(...)`
 - `tg_agent/web/routes/agent.py` — логика agent routes и нужные поля `AgentManager`
-- `tg_agent/runtime/container.py` — список всех `app.state.*` атрибутов
+- `tg_agent/web/container.py` — список всех `app.state.*` атрибутов
 
 ---
 

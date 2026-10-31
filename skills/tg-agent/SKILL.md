@@ -22,13 +22,19 @@ tg-agent --version
   Set a private `SESSION_ENCRYPTION_KEY` there before adding/importing accounts; retain it
   to decrypt stored sessions. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
   The key is required for account writes; sessions are never stored in plaintext.
+  Multi-project machines: the key may live ONCE in the OS secret store instead of per-project
+  `.env` copies — `tg-agent key set` (macOS Keychain / Windows Credential Manager / secret-tool;
+  `key status` / `key clear` manage it). An explicit env/config key still wins; nothing is
+  stored unless the owner runs `key set`.
 - Check an account is authorized: `tg-agent account list`. If none, first authorization is
   **interactive** — the user must run `tg-agent account add` themselves (they receive a
   Telegram login code). Never try to automate the code entry.
 - Fresh project shows `No accounts found`? Accounts are per-project by default. Attach the
-  project to the machine-wide store once with `tg-agent global enable` (shared DB at
-  `~/.tg-agent`, seeded from local accounts on first enable; `global status` shows the
-  effective store) — the shared accounts become visible without re-logging in.
+  project to the machine-wide account gateway once with `tg-agent global enable --account
+  <PHONE>` (repeatable; requires explicit grants) — shared accounts become visible without
+  re-logging in. Only accounts are shared: the project database stays project-local (#1724,
+  global auth never implies a global DB). Legacy plain-path `.tg-agent-global` markers are
+  inert; replace one with `enable`, check with `global status`.
 - `.env` from the current directory is picked up automatically.
 - If Telegram connections time out (MTProto IPs blocked on this network), set
   `TG_PROXY=socks5://user:pass@host:port` (no-auth `socks5://host:port`, or
@@ -49,6 +55,7 @@ Task → group (details in [reference.md](reference.md)):
 |------|-------|
 | AI news digest (structured, schema-first) | [digest.md](digest.md) — window search → schema JSON → format per request → publish on approval |
 | Per-channel posting style specs (local-only, never committed) | `style init|list|show --channel <id>` — voice specs live in `~/.tg-agent/designs/`; bootstrap a missing one, read it before rendering for a channel |
+| Publish an article as a telegra.ph page (long-form behind a TG post) | `telegraph login --short-name N` once (stores the account token in settings), then `telegraph create --title "..." --file article.md [--format json]` — prints the page URL to pair with `dialogs send` |
 | Channel discovery by keywords (premium search) | [discovery.md](discovery.md) — keyword sweep → candidates short-list → toggle on explicit approval |
 | Read message history | `messages read <id> [--query TEXT --date-from D --date-to D --topic-id ID --limit N --format json]` |
 | Search collected history | `search "query" ["query2" ...] [--limit N --mode local|semantic|hybrid|telegram|my_chats|channel]` — 2+ queries = batch JSON |
@@ -61,6 +68,7 @@ Task → group (details in [reference.md](reference.md)):
 | Content factory (LLM pipelines, images) | `pipeline`, `photo-loader` |
 | Analytics, notifications, scheduling, accounts, settings | `analytics`, `notification`, `scheduler`, `account`, `settings` |
 | Shared account store across projects (attach/detach/status) | `global` |
+| Installed plugin tools: activation status, run a tool | `plugin` — `plugin list [--json]`, `plugin run TOOL [flags from schema] [--with-pool]`; output is JSON, details in [reference.md](reference.md) |
 
 ## Safety — this is the user's real Telegram
 
@@ -90,7 +98,10 @@ One-off: `tg-agent channel collect <id>` runs a collection synchronously and
 exits. Continuous/scheduled collection needs the long-lived daemon: `tg-agent restart`
 stops any previous daemon and starts the worker runtime — no web panel, no WEB_PASS
 required, managed via a PID file (`tg-agent stop` halts it). Check scheduler state with
-`tg-agent scheduler status`.
+`tg-agent scheduler status`. Check the daemon itself with `tg-agent daemon status`
+(read-only: up/down + provenance — do this before any stop/restart; a stop from a
+directory that does not own the daemon is refused, and a failed restart says so loudly).
+See [reference.md](reference.md) → "Daemon lifecycle".
 
 While the daemon runs, most `dialogs` actions (`send`, `forward`, `react`, `refresh`, …),
 `channel collect`, `collect --channel-id`, `channel stats` and the scheduler mutations

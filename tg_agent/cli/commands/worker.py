@@ -5,6 +5,7 @@ import logging
 import sys
 
 from tg_agent.cli.process_control import (
+    ensure_no_sibling_daemon,
     pid_file_path,
     register_current_process,
     unregister_current_process,
@@ -27,6 +28,9 @@ def serve_worker(config_path: str) -> None:
     config = load_config(config_path)
     pid_path = pid_file_path(config)
     try:
+        # Refuse a double-spawn next to a daemon still registered on a
+        # previous store path — it would end degraded (#1698).
+        ensure_no_sibling_daemon(pid_path, config_path)
         register_current_process(pid_path)
     except RuntimeError as exc:
         logging.error(str(exc))

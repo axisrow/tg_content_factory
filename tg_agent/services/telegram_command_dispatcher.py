@@ -19,7 +19,6 @@ from tg_agent.models import (  # noqa: F401  (RuntimeSnapshot re-exported for te
     RuntimeSnapshot,
     TelegramCommandStatus,
 )
-from tg_agent.paths import data_root
 from tg_agent.scheduler.service import SchedulerManager
 from tg_agent.services.dispatcher._constants import (
     COMMAND_STATUS_UPDATE_BUSY_RETRY_INITIAL_SEC,
@@ -53,6 +52,7 @@ from tg_agent.telegram.collector_types import AllCollectionClientsFloodedError, 
 from tg_agent.telegram.notifier import Notifier
 from tg_agent.telegram.reactions import TelegramReactionInvalidError
 from tg_agent.utils.safe_logging import elapsed_ms, query_log_fields
+from tg_agent.web.paths import data_root
 from tg_shared.auth import TelegramAuth
 
 try:  # telethon is an optional dependency at test-time

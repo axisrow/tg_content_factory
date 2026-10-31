@@ -18,7 +18,6 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from tg_agent.config import AppConfig, load_config
 from tg_agent.database import DatabaseBusyError
-from tg_agent.runtime.bootstrap import start_container, stop_container
 from tg_agent.web.assembly import (
     build_log_buffer,
     build_timing_buffer,
@@ -26,7 +25,7 @@ from tg_agent.web.assembly import (
     register_builtin_endpoints,
     register_routes,
 )
-from tg_agent.web.bootstrap import build_container_with_templates
+from tg_agent.web.bootstrap import build_container_with_templates, start_container, stop_container
 from tg_agent.web.csrf import OriginCSRFMiddleware
 from tg_agent.web.embedded_worker import EmbeddedWorker
 from tg_agent.web.panel_auth import (
@@ -172,7 +171,7 @@ class TimingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         profiler = None
         if _PROFILING_ENABLED:
-            from tg_agent.utils.timing import RequestProfiler
+            from tg_agent.web.timing import RequestProfiler
 
             profiler = RequestProfiler()
             profiler.activate()
@@ -407,7 +406,6 @@ async def lifespan(app: FastAPI):
         log_buffer=app.state.log_buffer,
         timing_buffer=app.state.timing_buffer,
         templates=app.state.templates,
-        runtime_mode="web",
     )
     configure_app(app, container)
     logger.info("Application started")

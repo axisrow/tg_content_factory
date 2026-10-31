@@ -1,3 +1,5 @@
+"""Service assembly, startup recovery and shutdown shared by all runtimes."""
+
 from __future__ import annotations
 
 import asyncio
@@ -26,9 +28,9 @@ from tg_agent.database.bundles import (
 from tg_agent.database.repositories.accounts import AccountSessionDecryptError
 from tg_agent.live_runtime_pause import LiveRuntimePauseGate
 from tg_agent.models import DmMessage, IncomingDm
-from tg_agent.runtime.container import AppContainer, WebClientPool, WebCollector, WebScheduler
-from tg_agent.runtime.log_buffer import LogBuffer
-from tg_agent.runtime.snapshot_shims import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
+from tg_agent.runtime.container import RuntimeClientPool, RuntimeCollector, RuntimeContainer, RuntimeScheduler
+from tg_agent.runtime.log_handler import LogBuffer
+from tg_agent.runtime.snapshots import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
 from tg_agent.scheduler.service import SchedulerManager
 from tg_agent.search.ai_search import AISearchEngine
 from tg_agent.search.engine import SearchEngine
@@ -48,10 +50,10 @@ from tg_agent.telegram.dm_catchup import DmCatchupService
 from tg_agent.telegram.dm_listener import DmListener, IncomingDmEvent
 from tg_agent.telegram.notifier import Notifier
 from tg_agent.utils.asyncio import make_log_task_exception_callback
-from tg_agent.utils.timing import TimingBuffer
 from tg_shared.auth import TelegramAuth
 
-logger = logging.getLogger(__name__)
+# Keep the historical log category for existing operator filters.
+logger = logging.getLogger("tg_agent.web.bootstrap")
 _is_dev = os.environ.get("ENV", "PROD").upper() == "DEV"
 _POOL_INIT_TIMEOUT = 20
 _POOL_RETRY_INTERVAL_SEC = 60.0
@@ -112,7 +114,7 @@ def _connected_pool_count(pool: object) -> int:
         return 0
 
 
-async def _retry_telegram_pool_until_connected(container: AppContainer) -> None:
+async def _retry_telegram_pool_until_connected(container: RuntimeContainer) -> None:
     pool = cast(ClientPool, container.pool)
     while _connected_pool_count(pool) == 0 and getattr(
         container, "shutting_down", False
@@ -157,7 +159,7 @@ async def _retry_telegram_pool_until_connected(container: AppContainer) -> None:
                 return
 
 
-def _schedule_telegram_pool_retry(container: AppContainer) -> None:
+def _schedule_telegram_pool_retry(container: RuntimeContainer) -> None:
     bg_tasks = getattr(container, "bg_tasks", None)
     if not isinstance(bg_tasks, set):
         bg_tasks = set()
@@ -190,7 +192,8 @@ async def load_telegram_credentials(db: Database, config: AppConfig) -> tuple[in
     return api_id, api_hash
 
 
-async def build_worker_container(config: AppConfig, *, log_buffer: LogBuffer) -> AppContainer:
+async def build_worker_container(config: AppConfig, *, log_buffer: LogBuffer) -> RuntimeContainer:
+    """Assemble a live runtime without creating any web presentation state."""
     return await build_runtime_container(config, log_buffer=log_buffer, runtime_mode="worker")
 
 
@@ -198,15 +201,8 @@ async def build_runtime_container(
     config: AppConfig,
     *,
     log_buffer: LogBuffer,
-    timing_buffer: TimingBuffer | None = None,
-    runtime_mode: str = "web",
-) -> AppContainer:
-    """Build the runtime container for ``runtime_mode`` ("web" or "worker").
-
-    The core never touches web templates: ``container.templates`` stays
-    ``None`` here and the web surface attaches them
-    (``tg_agent.web.bootstrap.build_container_with_templates``).
-    """
+    runtime_mode: str = "worker",
+) -> RuntimeContainer:
     if _is_dev:
         t_build = time.monotonic()
 
@@ -264,7 +260,7 @@ async def build_runtime_container(
         from tg_agent.gateway.pool import GatewayAuth
 
         auth = GatewayAuth()
-    pool: WebClientPool
+    pool: RuntimeClientPool
     search_pool: ClientPool | None
     if runtime_mode == "worker":
         if isinstance(config.gateway, dict) and config.gateway:
@@ -294,7 +290,7 @@ async def build_runtime_container(
     agent_manager = None
     ping_monitor_service: PingMonitorService | None = None
     live_runtime_pause_gate = LiveRuntimePauseGate() if runtime_mode == "worker" else None
-    collector: WebCollector
+    collector: RuntimeCollector
     if runtime_mode == "worker":
         live_pool = cast(ClientPool, pool)
         # Dormant-DM pings (#1415): live history reads + sends through the same
@@ -342,7 +338,7 @@ async def build_runtime_container(
     llm_provider_service = RuntimeProviderRegistry(db, config, env=dict(os.environ))
     await llm_provider_service.load_db_providers()
 
-    scheduler: WebScheduler
+    scheduler: RuntimeScheduler
     if runtime_mode == "worker":
         live_pool = cast(ClientPool, pool)
         live_collector = cast(Collector, collector)
@@ -420,7 +416,7 @@ async def build_runtime_container(
     from tg_agent.plugin_api import start_plugins
 
     plugins = await start_plugins(db, config, pool, scheduler)
-    return AppContainer(
+    return RuntimeContainer(
         plugins=plugins,
         runtime_mode=runtime_mode,
         config=config,
@@ -454,7 +450,6 @@ async def build_runtime_container(
         ai_search=ai_search,
         scheduler=scheduler,
         log_buffer=log_buffer,
-        timing_buffer=timing_buffer,
         session_secret=session_secret,
         bg_tasks=set(),
         live_runtime_pause_gate=live_runtime_pause_gate,
@@ -466,7 +461,7 @@ async def build_runtime_container(
 
 
 async def _recover_startup_state(
-    container: AppContainer,
+    container: RuntimeContainer,
     *,
     runtime_mode: str,
     t_start: float,
@@ -497,7 +492,7 @@ async def _recover_startup_state(
 
 
 async def _initialize_startup_telegram_pool(
-    container: AppContainer,
+    container: RuntimeContainer,
     *,
     runtime_mode: str,
     t_start: float,
@@ -551,7 +546,7 @@ async def _initialize_startup_telegram_pool(
 
 
 async def _start_collection_queue(
-    container: AppContainer,
+    container: RuntimeContainer,
     *,
     runtime_mode: str,
     t_start: float,
@@ -576,7 +571,7 @@ async def _start_collection_queue(
 
 
 async def _start_dispatchers_ai_and_agent(
-    container: AppContainer,
+    container: RuntimeContainer,
     *,
     runtime_mode: str,
     t_start: float,
@@ -616,7 +611,7 @@ async def _start_dispatchers_ai_and_agent(
 
 
 async def _start_scheduler(
-    container: AppContainer,
+    container: RuntimeContainer,
     *,
     runtime_mode: str,
     t_start: float,
@@ -631,7 +626,7 @@ async def _start_scheduler(
     logger.info("startup: scheduler done (%.1fs)", time.monotonic() - t_start)
 
 
-async def start_container(container: AppContainer) -> None:
+async def start_container(container: RuntimeContainer) -> None:
     t_start = time.monotonic()
     runtime_mode = getattr(container, "runtime_mode", "worker")
 
@@ -675,7 +670,7 @@ async def _cancel_bg_tasks(tasks: set[asyncio.Task]) -> None:
     tasks.clear()
 
 
-async def stop_container(container: AppContainer) -> None:
+async def stop_container(container: RuntimeContainer) -> None:
     if container.shutting_down:
         return
     container.shutting_down = True

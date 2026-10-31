@@ -74,8 +74,8 @@
       "confidence": "med"
     },
     {
-      "file": "tg_agent/runtime/bootstrap.py",
-      "line": 115,
+      "file": "tg_agent/web/bootstrap.py",
+      "line": 76,
       "kind": "handrolled-retry-loop",
       "what": "самописный retry/backoff-цикл в _retry_telegram_pool_until_connected()",
       "replacement": "tenacity.retry / aiolimiter (для rate-limit)",

@@ -76,10 +76,20 @@ db.repos.settings.get_setting("key")
 pass-through-методов (ratchet «только вниз») — добавление новых pass-through падает в CI,
 вынуждая использовать `db.repos`.
 
-## Web App Wiring
+## CLI Pipelines
+
+- `tg_agent/cli/commands/pipeline.py` — Typer-входные точки и совместимый `run(argparse.Namespace)`; адаптация аргументов выполняется на границе CLI.
+- `tg_agent/cli/pipeline/requests.py` — явные dataclass-запросы для каждой команды.
+- `tg_agent/cli/pipeline/` — отдельные обработчики CRUD, генерации, модерации и графа; форматирование результатов и JSONL вынесено в `responses.py`.
+- Общий dispatcher владеет одним lifecycle БД и пула; фабрики сервисов передаются обработчикам через `PipelineServices`.
+
+## Runtime and Web App Wiring
+
+- `tg_agent/runtime/bootstrap.py` — общая сборка сервисов и lifecycle worker; `RuntimeContainer` не содержит шаблонов или web timing state.
+- `tg_agent/web/bootstrap.py` — совместимые входные точки и сборка web-представления поверх runtime; `AppContainer` добавляет Jinja-шаблоны и timing buffer.
 
 - `tg_agent/web/assembly.py` — `register_routes()` монтирует все роутеры; `configure_app()` привязывает `AppContainer` к `app.state.*`
-- `tg_agent/runtime/container.py` — `AppContainer` агрегирует все сервисы
+- `tg_agent/web/container.py` — `AppContainer` агрегирует все сервисы
 - `tg_agent/web/deps.py` — хелперы `deps.get_db()`, `deps.get_pool()` и др.
 
 ## Web Route Layering

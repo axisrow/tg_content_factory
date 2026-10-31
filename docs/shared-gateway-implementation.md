@@ -48,7 +48,14 @@ a native local ClientPool constructor is rejected there.
 
 ## Migrate legacy global mode
 
-Legacy text markers retain their old interpretation until an explicit migration:
+Owner decision #1724 (2026-10-30): **global auth never implies a global
+database.** Legacy text markers no longer redirect anything — a project with a
+legacy marker keeps its own database and sessions, and every config load logs
+a WARNING saying so (`global status` reports the marker as inert). Sharing
+accounts is explicit: `tg-agent global enable --account PHONE` replaces the
+legacy marker with a JSON binding. `global migrate` remains for the opposite
+direction — adopting the content of a legacy shared database into an
+independent project database:
 
 ```sh
 tg-agent global migrate --project-db /absolute/path/project.db

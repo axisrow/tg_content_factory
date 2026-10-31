@@ -152,6 +152,10 @@ CLI_REAL_TG_CLEANUP_COMMAND_CASES: set[tuple[str, ...]] = {
 }
 
 CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
+    ("daemon", "status"): (
+        "read-only provenance view of the managed daemon PID files (#1714); "
+        "no live Telegram, covered by offline CLI tests"
+    ),
     ("account", "attach"): "project grant mutation; two-project gateway acceptance scenario",
     ("account", "detach"): "project grant mutation; two-project gateway acceptance scenario",
     ("global", "migrate"): "legacy database migration; offline snapshots and interrupted-migration acceptance",
@@ -167,6 +171,18 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("gateway", "account", "import"): "shared session import requiring --shared; dedicated test accounts only",
     ("gateway", "account", "export-session"): "explicit secret export requiring --shared; offline fixture only",
     ("gateway", "account", "replace-session"): "shared session replacement; dedicated test accounts only",
+    ("key", "clear"): (
+        "local OS secret-store delete (Keychain/Credential Manager/secret-tool); "
+        "no live Telegram, covered by offline CLI tests with a faked backend (#1699)"
+    ),
+    ("key", "set"): (
+        "local OS secret-store write (Keychain/Credential Manager/secret-tool); "
+        "no live Telegram, covered by offline CLI tests with a faked backend (#1699)"
+    ),
+    ("key", "status"): (
+        "list-only local OS secret-store read; no live Telegram, "
+        "covered by offline CLI tests with a faked backend (#1699)"
+    ),
     ("mcp-server",): "stdio MCP daemon serving the tool registry; not a Telegram leaf operation",
     ("dm", "journal", "list"): "list-only local incoming_dms journal view — DB-only read (#1580)",
     ("dm", "archive", "list"): "list-only local dm_messages archive view — DB-only read (#1580)",
@@ -343,8 +359,18 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
         "bootstraps a local-only style spec under ~/.tg-agent/designs (file-only, "
         "never committed, #1687); covered by offline CLI tests"
     ),
+    ("plugin", "list"): "local installed-package catalogue; no live Telegram (#1710)",
+    ("plugin", "run"): "operator-installed tools have arbitrary effects; schema/ACL and digest covered offline (#1710)",
     ("style", "list"): "list-only local style spec view; file-only, no live Telegram (#1687)",
     ("style", "show"): "list-only local style spec view; file-only, no live Telegram (#1687)",
+    ("telegraph", "create"): (
+        "external telegra.ph HTTP POST — no Telegram; covered by offline "
+        "unit/integration tests with a fake HTTP session (#1703)"
+    ),
+    ("telegraph", "login"): (
+        "external telegra.ph createAccount + local encrypted settings write; "
+        "no Telegram, covered by offline CLI tests with a fake HTTP session (#1703)"
+    ),
     ("test", "write"): "diagnostic aggregate with local DB writes",
     ("translate", "detect"): "local message backfill mutation",
     ("translate", "message"): "provider/network translation",

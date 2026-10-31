@@ -68,6 +68,7 @@ from tg_agent.cli.commands.common import (
     TriBool,
     resolve_date_bounds,
 )
+from tg_agent.cli.commands.daemon_control import daemon_app
 from tg_agent.cli.commands.debug import debug_app
 from tg_agent.cli.commands.dialogs import dialogs_app
 from tg_agent.cli.commands.dm import dm_app
@@ -76,16 +77,19 @@ from tg_agent.cli.commands.filter import filter_app
 from tg_agent.cli.commands.gateway import gateway_app
 from tg_agent.cli.commands.global_store import global_app
 from tg_agent.cli.commands.image import image_app
+from tg_agent.cli.commands.key import key_app
 from tg_agent.cli.commands.messages import messages_app
 from tg_agent.cli.commands.notification import notification_app
 from tg_agent.cli.commands.photo_loader import photo_loader_app
 from tg_agent.cli.commands.ping import ping_app
 from tg_agent.cli.commands.pipeline import pipeline_app
+from tg_agent.cli.commands.plugin import plugin_app
 from tg_agent.cli.commands.provider import provider_app
 from tg_agent.cli.commands.scheduler import scheduler_app
 from tg_agent.cli.commands.search_query import search_query_app
 from tg_agent.cli.commands.settings import settings_app
 from tg_agent.cli.commands.style import style_app
+from tg_agent.cli.commands.telegraph import telegraph_app
 from tg_agent.cli.commands.test import test_app
 from tg_agent.cli.commands.translate import translate_app
 from tg_agent.cli.typer_app import app, apply_startup, run_async
@@ -169,10 +173,22 @@ def worker(ctx: typer.Context) -> None:
 
 
 @app.command()
-def stop(ctx: typer.Context) -> None:
+def stop(
+    ctx: typer.Context,
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help=(
+            "Operator escape hatch (#1714): stop even when provenance "
+            "verification refuses (daemon owned by another project or a legacy "
+            "PID file without an owner record). The PID must still be a live "
+            "managed tg-agent daemon process."
+        ),
+    ),
+) -> None:
     """Stop the managed daemon (worker or legacy serve) started by this app."""
     apply_startup(ctx)
-    server_control_cmd.stop_web(ctx.obj.config)
+    server_control_cmd.stop_web(ctx.obj.config, force=force)
 
 
 @app.command()
@@ -428,6 +444,15 @@ app.add_typer(global_app, name="global")
 
 app.add_typer(gateway_app, name="gateway")
 
+app.add_typer(daemon_app, name="daemon")
+
+
+# --------------------------------------------------------------------------- #
+# key → set / clear / status — machine-level session key in the OS store (#1699)
+# --------------------------------------------------------------------------- #
+
+app.add_typer(key_app, name="key")
+
 
 # --------------------------------------------------------------------------- #
 # style → init / list / show — local-only per-channel style specs (#1687)
@@ -437,7 +462,16 @@ app.add_typer(style_app, name="style")
 
 
 # --------------------------------------------------------------------------- #
+# telegraph → create — telegra.ph page creation (#1703)
+# --------------------------------------------------------------------------- #
+
+app.add_typer(telegraph_app, name="telegraph")
+
+
+# --------------------------------------------------------------------------- #
 # test → all / read / write / telegram / benchmark
 # --------------------------------------------------------------------------- #
 
 app.add_typer(test_app, name="test")
+
+app.add_typer(plugin_app, name="plugin")

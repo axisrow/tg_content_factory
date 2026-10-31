@@ -795,7 +795,7 @@ def test_running_task_not_stale_when_idle_timeout_is_large():
 @pytest.mark.anyio
 async def test_web_mode_app_has_snapshot_shims(web_mode_app):
     """Sanity check — the new fixture must really produce the web-mode wiring."""
-    from tg_agent.runtime.snapshot_shims import (
+    from tg_agent.web.runtime_shims import (
         SnapshotClientPool,
         SnapshotCollector,
         SnapshotSchedulerManager,

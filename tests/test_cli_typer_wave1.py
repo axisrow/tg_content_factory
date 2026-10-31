@@ -71,7 +71,7 @@ def test_stop_delegates():
     with patch("tg_agent.cli.typer_commands.server_control_cmd.stop_web") as mock_stop:
         result = runner.invoke(app, ["stop"])
     assert result.exit_code == 0
-    mock_stop.assert_called_once_with("config.yaml")
+    mock_stop.assert_called_once_with("config.yaml", force=False)
 
 
 def test_restart_starts_worker_daemon_without_web_pass():

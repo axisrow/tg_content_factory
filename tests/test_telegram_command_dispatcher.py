@@ -14,9 +14,9 @@ from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError
 
 from tg_agent.database import Database
 from tg_agent.models import Account, AccountSessionStatus, AccountSummary, TelegramCommand, TelegramCommandStatus
-from tg_agent.paths import DATA_DIR_ENV
 from tg_agent.services import telegram_command_dispatcher as mod
 from tg_agent.services.telegram_command_dispatcher import TelegramCommandDispatcher, TelegramCommandRetryLaterError
+from tg_agent.web.paths import DATA_DIR_ENV
 
 
 def _download_media_path_checks(actual_path: str, expected_file: Path, expected_dir: Path) -> tuple[bool, bool]:

@@ -104,11 +104,13 @@ python -m tg_agent.main channel list|add|delete|toggle|collect|stats|refresh-typ
 python -m tg_agent.main filter analyze|apply|reset|precheck|toggle|purge|purge-messages|hard-delete
 python -m tg_agent.main account list|info|toggle|set-primary|delete|send-code|verify-code|add|flood-status|flood-clear
 python -m tg_agent.main global enable|disable|status   # shared account store (~/.tg-agent, TG_AGENT_GLOBAL_DIR); per-project .tg-agent-global marker (#1683)
+python -m tg_agent.main key set|clear|status   # machine-level SESSION_ENCRYPTION_KEY in the OS secret store (opt-in; env/config wins) (#1699)
 python -m tg_agent.main scheduler start|trigger|status|stop|job-toggle|set-interval|task-cancel|clear-pending|queue-pause|queue-resume
 python -m tg_agent.main notification setup|status|delete|test|dry-run|set-account
 python -m tg_agent.main test all|read|write|telegram|benchmark
 
-python -m tg_agent.main stop|restart   # restart = worker daemon, no web panel
+python -m tg_agent.main stop|restart   # restart = worker daemon, no web panel; --force = provenance escape hatch
+python -m tg_agent.main daemon status  # read-only daemon provenance check (up/down, PID, store, executable; #1714)
 python -m tg_agent.main search-query list|get|add|edit|delete|toggle|run|stats
 python -m tg_agent.main pipeline list|show|add|dry-run-count|edit|delete|toggle|run|generate|generate-stream|runs|run-show|queue|moderation-list|moderation-view|publish|approve|reject|bulk-approve|bulk-reject|refinement-steps|export|import|templates|from-template|ai-edit|filter|node|edge|graph
 python -m tg_agent.main photo-loader dialogs|refresh|send|schedule-send|batch-create|batch-list|items|batch-cancel|auto-create|auto-list|auto-update|auto-toggle|auto-delete|run-due
@@ -121,6 +123,8 @@ python -m tg_agent.main export json|csv|rss
 python -m tg_agent.main translate stats|detect|run|message
 python -m tg_agent.main settings get|set|info|server-time|agent|filter-criteria|reactions|semantic
 python -m tg_agent.main style init|list|show --channel <id>   # local-only per-channel style specs (~/.tg-agent/designs, never committed)
+python -m tg_agent.main telegraph login --short-name "..."   # one-time: createAccount, token → settings (enc:v2, masked)
+python -m tg_agent.main telegraph create --title "..." --file article.md [--author-name N] [--author-url U] [--format text|json]   # telegra.ph page from markdown (#1703)
 python -m tg_agent.main debug logs|memory|timing
 python -m tg_agent.main image generate|models|providers|generated
 python -m tg_agent.main mcp-server [--no-pool]   # LEGACY: stdio MCP bridge over the agent tool registry (frozen)
@@ -132,8 +136,8 @@ CLI command for Telegram dialogs management is `dialogs`.
 
 Three layers: **CLI (native surface; web/TUI/agent-chat/MCP are legacy)** → **Telegram + Search + Scheduler + Agent/Pipeline** → **SQLite**
 
-- **Runtime split (web ↔ worker)**: since #444 the runtime consists of two `AppContainer` flavours keyed on `runtime_mode` ("web" vs "worker") built by the core `tg_agent/runtime/bootstrap.py` (the web side only attaches Jinja2 templates in `tg_agent/web/bootstrap.py`; the core must not import `tg_agent.web` — import-linter contract, #1720). The **default daemon is worker-only** (automation-first): `restart`/`worker` run the standalone worker (`tg_agent/runtime/worker.py` — functionally identical to the embedded one) with the managed PID file and no web surface. `serve` is the legacy panel entry: it hosts uvicorn and spawns an `EmbeddedWorker` (`tg_agent/web/embedded_worker.py`) next to the web container; `--no-worker` runs only the web side (Docker/k8s split deployments).
-  - Web container (`runtime_mode="web"`) uses snapshot shims (`SnapshotClientPool`, `SnapshotCollector`, `SnapshotSchedulerManager` in `tg_agent/runtime/snapshot_shims.py`). It does NOT open Telegram connections; UI actions enqueue work into `collection_tasks` / `telegram_commands` / task tables and read `runtime_snapshots` to render status.
+- **Runtime split (web ↔ worker)**: the worker runtime is assembled in `tg_agent/runtime/bootstrap.py` into `RuntimeContainer`; legacy web adds presentation state through the `AppContainer` subclass in `tg_agent/web/`, with compatible entrypoints in `web/bootstrap.py`. The **default daemon is worker-only** (automation-first): `restart`/`worker` run the standalone worker (`tg_agent/runtime/worker.py` — functionally identical to the embedded one) with the managed PID file and no web surface. `serve` is the legacy panel entry: it hosts uvicorn and spawns an `EmbeddedWorker` (`tg_agent/web/embedded_worker.py`) next to the web container; `--no-worker` runs only the web side (Docker/k8s split deployments).
+  - Web container (`runtime_mode="web"`) uses snapshot shims (`SnapshotClientPool`, `SnapshotCollector`, `SnapshotSchedulerManager` in `tg_agent/web/runtime_shims.py`). It does NOT open Telegram connections; UI actions enqueue work into `collection_tasks` / `telegram_commands` / task tables and read `runtime_snapshots` to render status.
   - Worker container (`runtime_mode="worker"`, either embedded or standalone via `tg_agent/runtime/worker.py`) owns the live `ClientPool`, `CollectionQueue`, `UnifiedDispatcher`, `TelegramCommandDispatcher`, and `SchedulerManager`, and publishes `runtime_snapshots` (heartbeat, accounts_status, scheduler_status, …) that the web side reads.
   - In web-mode `collection_queue = None` and `CollectionService` falls back to writing a PENDING row — the worker picks those up at startup via `CollectionQueue.requeue_startup_tasks()`.
 - CLI (`tg_agent/main.py` → `tg_agent/cli/commands/`) is the primary entry point and the product contract for coding agents (see Positioning); Web (`tg_agent/web/`) is a legacy parallel entry to the same logic — keep it working, do not extend
@@ -178,7 +182,7 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 ### Web app wiring
 
 - `tg_agent/web/assembly.py` — `register_routes()` imports and mounts all routers; `configure_app()` binds the `AppContainer` to `app.state.*`
-- `tg_agent/runtime/container.py` — `AppContainer` dataclass aggregates all services; injected into FastAPI `app.state` at startup; accessed in routes via `tg_agent/web/deps.py` helpers (`deps.get_db()`, `deps.get_templates()`, etc.)
+- `tg_agent/web/container.py` — `AppContainer` inherits shared services from `tg_agent/runtime/container.py` and adds templates/timing state; injected into FastAPI `app.state` at startup; accessed in routes via `tg_agent/web/deps.py` helpers (`deps.get_db()`, `deps.get_templates()`, etc.)
 
 ## Key Patterns
 
@@ -226,6 +230,7 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 - ruff for linting: line-length=120, target py311, rules E/F/I/N/W
 - Tests: pytest-asyncio with `asyncio_mode="auto"`
 - Session strings stored as `enc:v2:*` when `SESSION_ENCRYPTION_KEY` is set; startup fails fast if encrypted rows exist without key
+- `SESSION_ENCRYPTION_KEY` resolution (#1699): config.yaml/env → opt-in OS secret store (`tg-agent key set`; macOS Keychain / Windows Credential Manager / secret-tool, 0600-file fallback in the global store root) → warning + degraded pool. Both former raw env read sites (config loader and `Database.__init__` default) route through the shared resolvers (`resolve_session_encryption_secret` / `resolve_session_secret_from_env_or_store`); `TG_AGENT_SECRET_STORE=off` disables the store layer (tests set it for hermeticity)
 
 ## CI
 

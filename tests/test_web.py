@@ -348,7 +348,7 @@ async def test_startup_continues_after_pool_initialize_timeout(tmp_path, db, cap
     import asyncio
     from types import SimpleNamespace
 
-    from tg_agent.runtime.bootstrap import start_container
+    from tg_agent.web.bootstrap import start_container
 
     # Shrink timeout so test runs fast
     monkeypatch.setattr("tg_agent.runtime.bootstrap._POOL_INIT_TIMEOUT", 0.1)

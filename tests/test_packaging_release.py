@@ -21,6 +21,7 @@ def test_packaging_config_keeps_tg_agent_namespace_for_console_script() -> None:
     assert data["tool"]["setuptools"]["packages"]["find"]["include"] == ["tg_agent*"]
     assert data["tool"]["setuptools"]["package-data"]["tg_agent"] == [
         "web/templates/*.html",
+        "web/templates/**/*.html",
         "web/static/*.css",
         "web/static/*.js",
         "web/static/js/*.js",
@@ -80,5 +81,11 @@ def test_wheel_ships_tg_agent_package_not_src(tmp_path: Path) -> None:
     assert any(
         n.startswith("tg_agent/web/templates/") and n.endswith(".html") for n in names
     ), "web templates missing from wheel — package-data mapping broke"
+    source_templates = {
+        path.relative_to(ROOT).as_posix()
+        for path in (ROOT / "tg_agent" / "web" / "templates").rglob("*.html")
+    }
+    missing_templates = source_templates - set(names)
+    assert not missing_templates, f"nested web templates missing from wheel: {sorted(missing_templates)}"
     assert "Name: tg-agent" in metadata
     assert "tg-agent = tg_agent.main:main" in entry_points

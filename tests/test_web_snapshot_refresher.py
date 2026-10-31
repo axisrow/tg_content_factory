@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tg_agent.runtime.snapshot_shims import (
+from tg_agent.web.runtime_shims import (
     SnapshotClientPool,
     SnapshotCollector,
     SnapshotSchedulerManager,

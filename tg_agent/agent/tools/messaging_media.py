@@ -9,7 +9,6 @@ from telethon_floodgate import HandledFloodWaitError
 
 from tg_agent.agent.tools._registry import _text_response, arg_bool, require_confirmation
 from tg_agent.agent.tools.messaging_schemas import DOWNLOAD_MEDIA_SCHEMA, PIN_MESSAGE_SCHEMA, UNPIN_MESSAGE_SCHEMA
-from tg_agent.paths import data_root
 from tg_agent.services.telegram_actions import (
     TelegramActionClientUnavailableError,
     TelegramActionMessageNotFoundError,
@@ -17,6 +16,7 @@ from tg_agent.services.telegram_actions import (
     TelegramActionPathEscapeError,
     TelegramActionService,
 )
+from tg_agent.web.paths import data_root
 
 
 def _downloads_dir() -> pathlib.Path:

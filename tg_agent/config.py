@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -16,6 +17,8 @@ from urllib.parse import unquote, urlparse
 
 import yaml
 from pydantic import BaseModel, Field
+
+from tg_agent.security.secret_store import backend_name, read_stored_key
 
 logger = logging.getLogger(__name__)
 
@@ -240,16 +243,17 @@ _ENV_PATTERN = re.compile(r"\$\{(\w+)\}")
 
 
 # --- Global account store (#1683) ------------------------------------------ #
-# A machine-wide account store several project directories can share. The
-# switch is a marker file in the project root (cwd), written by
-# `tg-agent global enable` and removed by `global disable`; while it exists,
-# load_config resolves the database and the Telegram session cache into the
-# global store instead of the project-local data/ tree.
+# A machine-wide account gateway several project directories can share. The
+# switch is a marker file in the project root (cwd): a JSON ProjectBinding
+# written by `tg-agent global enable`, removed by `global disable`. The binding
+# shares ACCOUNTS through the gateway process only — the project database and
+# session cache stay project-local (#1724: global auth never implies a global
+# database). Legacy plain-path markers (#1684) no longer redirect anything;
+# they are inert pointers, loudly warned about on every load.
 
 GLOBAL_STORE_DIR_ENV = "TG_AGENT_GLOBAL_DIR"
 GLOBAL_STORE_MARKER = ".tg-agent-global"
 GLOBAL_DB_NAME = "tg_search.db"
-GLOBAL_SESSIONS_SUBDIR = "telegram_sessions"
 GLOBAL_DESIGNS_SUBDIR = "designs"
 
 
@@ -288,6 +292,17 @@ def read_global_store_marker() -> Path | None:
     except OSError:
         return None
     if raw.startswith("{"):
+        try:
+            json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning(
+                "Gateway marker %s is not valid JSON — ignored; re-run "
+                "`tg-agent global enable --account PHONE` to rewrite it.",
+                global_marker_path(),
+            )
+            return None
+        # Valid JSON that fails the ProjectBinding schema (e.g. unknown version)
+        # still refuses loudly: only *malformed* JSON is treated as absent (#1733).
         from tg_agent.gateway.project import ProjectBinding
 
         ProjectBinding.model_validate_json(raw)
@@ -296,12 +311,18 @@ def read_global_store_marker() -> Path | None:
 
 
 def apply_global_store(config: AppConfig) -> None:
-    """Перенаправить базу и сессии проекта в глобальное хранилище (#1683).
+    """Привязать проект к общему шлюзу аккаунтов, НЕ трогая базу проекта (#1683, #1724).
 
-    Пока в корне проекта лежит маркер `global enable`, база и каталог сессий
-    читаются из общего каталога; остальные пути (логи, изображения, выгрузки)
-    остаются локальными. Явный `TG_SESSION_CACHE_DIR` сильнее маркера — это
-    осознанное переопределение окружения конкретного процесса.
+    JSON-маркер (`ProjectBinding`, пишет `global enable`) подключает проект к
+    gateway-процессу: Telegram-операции идут через шлюз, база и сессии остаются
+    проектными; `binding.database_path` задаётся только миграцией `global migrate`.
+
+    Директива владельца (2026-10-30, #1724): глобальная авторизация НЕ включает
+    глобальную базу. Legacy-маркер (плоский путь из #1684) больше не
+    перенаправляет `database.path`/`session_cache_dir` — проект продолжает
+    работать на своей базе, а маркер признаётся устаревшим указателем
+    (громкий WARNING в лог при каждой загрузке; заменить на binding:
+    `global enable --account PHONE`).
     """
     from tg_agent.gateway.project import read_binding
 
@@ -312,12 +333,15 @@ def apply_global_store(config: AppConfig) -> None:
         if binding.database_path is not None:
             config.database.path = binding.database_path
         return
-    root = read_global_store_marker()
-    if root is None:
+    if read_global_store_marker() is None:
         return
-    config.database.path = str(root / GLOBAL_DB_NAME)
-    if not os.environ.get("TG_SESSION_CACHE_DIR", "").strip():
-        config.telegram_runtime.session_cache_dir = str(root / GLOBAL_SESSIONS_SUBDIR)
+    logger.warning(
+        "Legacy .tg-agent-global marker no longer redirects the project database "
+        "(owner decision #1724: global auth never implies a global database). "
+        "This project keeps its own database at %r (sessions: %r). Replace the "
+        "legacy marker with a binding: tg-agent global enable --account PHONE.",
+        config.database.path, config.telegram_runtime.session_cache_dir,
+    )
 
 
 def is_provider_model_ref(value: str) -> bool:
@@ -411,11 +435,18 @@ def load_config(path: str | Path = "config.yaml", *, apply_marker: bool = True) 
 def resolve_session_encryption_secret(config: AppConfig) -> str | None:
     """Resolve a stable secret for account session encryption.
 
-    Returns ``None`` when no suitable secret is available. Account writes must
-    refuse to persist sessions without a key; never use a well-known default.
+    Resolution order (#1699): config.yaml/env (the escape hatch, merged into
+    ``config.security`` by :func:`load_config`), then the opt-in machine-level
+    OS secret store (``tg-agent key set``), then ``None``. Returns ``None``
+    when no suitable secret is available. Account writes must refuse to
+    persist sessions without a key; never use a well-known default.
     """
     if config.security.session_encryption_key:
         return config.security.session_encryption_key
+    stored = read_stored_key()
+    if stored:
+        logger.info("Using SESSION_ENCRYPTION_KEY from the machine secret store (%s).", backend_name())
+        return stored
     logger.warning(
         "No SESSION_ENCRYPTION_KEY configured. "
         "Adding or importing Telegram accounts requires a key; encrypted sessions cannot be read without it. "

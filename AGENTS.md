@@ -31,4 +31,4 @@ Define the acceptance criterion before implementing: the observable result as *c
 - Before merging: description and criteria reconciled with the final diff; an unmet mandatory criterion blocks acceptance unless explicitly excluded from scope.
 
 ## Security & Configuration Tips
-Keep secrets in `.env`, not in tracked files. Required runtime values include `TG_API_ID`, `TG_API_HASH`, and `WEB_PASS`; `SESSION_ENCRYPTION_KEY` should be set before storing live sessions. Prefer `config.yaml` with `${ENV_VAR}` substitution for local overrides.
+Keep secrets in `.env`, not in tracked files. Required runtime values include `TG_API_ID`, `TG_API_HASH`, and `WEB_PASS`; `SESSION_ENCRYPTION_KEY` should be set before storing live sessions. Prefer `config.yaml` with `${ENV_VAR}` substitution for local overrides. For multi-project machines the key may instead be stored once in the OS secret store (`tg-agent key set`; opt-in, env/config still wins).

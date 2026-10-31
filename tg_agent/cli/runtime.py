@@ -10,10 +10,10 @@ import click
 from tg_agent.cli import worker_handoff
 from tg_agent.config import load_config, resolve_session_encryption_secret
 from tg_agent.database import Database
-from tg_agent.paths import data_root
 from tg_agent.settings_utils import parse_int_setting
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.utils.safe_logging import RedactingFormatter
+from tg_agent.web.paths import data_root
 from tg_shared.auth import TelegramAuth
 
 _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"

@@ -48,6 +48,28 @@ session (up to `TGCF_SESSION_LOCK_GRACE_SECONDS`, default 20) and then fails wit
 .../session-<hash>.lock held by PID 12345)` — useful only while a daemon is shutting down.
 When the holder exits, the lock clears on its own.
 
+## Daemon lifecycle — check before you touch (#1714)
+
+The managed daemon is project-scoped but its PID file can sit on any store path the
+project used since launch (#1698). Before `stop`/`restart`, run:
+
+```
+daemon status          # read-only: daemon up/down, PID, PID file, project/store roots,
+                       # executable (recorded + observed), started_at; exit 0 even when down
+```
+
+- `stop`/`restart` probe every candidate PID file (current store, pre-switch store,
+  legacy marker store) and terminate whichever daemon is alive — the documented
+  `global enable` → `restart` flow no longer orphans the previous daemon (#1698).
+- A `stop`/`restart` from a directory that does not own the running daemon is REFUSED
+  with provenance output (exit 1); the daemon survives. `worker`/`serve` refuse to
+  double-spawn next to a daemon registered on a previous store path.
+- A `restart` whose start phase fails prints a loud `RESTART FAILED … NO daemon is
+  running now` banner — never assume a restart succeeded; verify with `daemon status`.
+- `stop --force` is the human-operator escape hatch (#1714): it overrides the
+  provenance refusal but still only signals a live managed tg-agent daemon. Agents do
+  not use `--force` without explicit operator instruction.
+
 ## channels / collection
 
 ```
@@ -326,6 +348,34 @@ blocks (no is_filtered effect).
 useful/genre). CALIBRATION ONLY: costs provider spend; its verdicts are the
 ground truth that calibrates `usefulness` thresholds, never a production path.
 
+## plugins — installed plugin tools
+
+```
+plugin list [--json]
+plugin run TOOL [OPTIONS...] [--with-pool]
+```
+
+Plugins install via the `tg_agent.plugins` entry-point group and register agent tools.
+`plugin list` prints one tab-separated line per plugin —
+`id <TAB> version <TAB> status <TAB> tools <TAB> reason` (`-` = missing version/tools,
+tools comma-joined) or `No plugins installed`; `--json` prints a JSON array of
+`{id, version, status, reason, tools}` records. Statuses: `active`, `disabled`
+(via `plugins_disabled` config), `incompatible` (plugin API mismatch), `failed`
+(load/setup error — `reason` says why). DB + entry-points only — safe to run while
+the daemon is up.
+
+`plugin run` generates flags from the tool's JSON Schema at runtime: every schema
+property becomes `--name` (underscores → dashes); `boolean` → `--name/--no-name`,
+`integer`/`number`/`string` take typed values, any other shape (`object`, `array`,
+multi-type) takes a JSON value (`--opts '{"limit": 5}'`). Only flags actually passed
+on the command line are forwarded; `help` and `with-pool` are reserved, an unknown
+flag is a usage error. The tool result prints as one JSON line on stdout; errors go
+to stderr as `Error: <detail>` — exit 1 (unknown tool, invalid arguments, access
+denied, no live runtime), exit 2 (flag/usage errors). Phone-bound tools need a live
+Telegram connection: pass `--with-pool` (refused by the session lock while the daemon
+runs — `tg-agent stop` first); without `--with-pool` they fail with
+"Live Telegram runtime is unavailable".
+
 ## accounts, notifications, settings, misc
 
 ```
@@ -333,14 +383,24 @@ account list | info | toggle | set-primary | delete | add
 account send-code | verify-code        # interactive first-time auth — user does this themselves
 account flood-status | flood-clear
 global enable | disable | status       # shared account store across projects (#1683)
-# global: `enable` attaches the current project to the machine-wide store
-# (~/.tg-agent, TG_AGENT_GLOBAL_DIR overrides) via a .tg-agent-global marker in the
-# project root; accounts and Telegram sessions then resolve to the shared store in
-# every attached project, logs/images/downloads stay project-local. First enable of
-# an empty store seeds it from the project's local accounts (enc:v2 ciphertext
-# copied as-is — SESSION_ENCRYPTION_KEY stays required, never printed). `disable`
-# removes the marker (local files untouched); `status` prints the effective store.
-# Restart any running worker/daemon in the project after enable/disable.
+# global: `enable` attaches the current project to the machine-wide account
+# gateway (~/.tg-agent, TG_AGENT_GLOBAL_DIR overrides) via a .tg-agent-global
+# marker (JSON binding) in the project root. Accounts are shared through the
+# gateway; the project DATABASE ALWAYS STAYS PROJECT-LOCAL — global auth never
+# implies a global database (#1724). Requires explicit --account PHONE grants
+# (repeatable). Legacy plain-path markers no longer redirect anything (status
+# flags them as inert; replace with `enable`). `disable` detaches the project
+# (local files untouched); `status` prints the marker format and the effective
+# database path. Restart any running worker/daemon after enable/disable.
+key set | clear | status                # machine-level SESSION_ENCRYPTION_KEY in the OS secret store (#1699)
+# key: opt-in storage of the session-encryption key outside per-project .env copies.
+# `set` prompts (or reads piped stdin: printf '%s' "$KEY" | tg-agent key set; the key is
+# never echoed) and stores into macOS Keychain / Windows Credential Manager / secret-tool
+# (0600-file fallback under ~/.tg-agent on headless Linux). `status` prints the backend,
+# whether a key is stored, and which source currently wins. Resolution: config.yaml/env
+# SESSION_ENCRYPTION_KEY wins, then the store; with nothing stored behavior is unchanged
+# (warning + degraded pool). Nothing is ever stored silently; `clear` removes it. Restart
+# any running worker/daemon after set/clear. TG_AGENT_SECRET_STORE=off disables the layer.
 style init | list | show --channel <id>  # local-only per-channel style specs (#1687)
 # style: per-channel posting-voice specs (skeleton, nicknames, emoji policy, digest
 # rules) stored OUTSIDE the repository in ~/.tg-agent/designs/<key>.md
@@ -350,6 +410,19 @@ style init | list | show --channel <id>  # local-only per-channel style specs (#
 # prints the spec — read it to render content in the channel's voice, and fill a
 # fresh template in together with the user.
 notification setup | status | delete | test | dry-run | set-account
+telegraph login --short-name N [--author-name A] [--author-url U]
+telegraph create --title T --file f.md [--author-name A] [--author-url U] [--format json]
+# telegraph: publishes a public telegra.ph page from markdown (#1703). `login`
+# runs once per project: it creates a (disposable) Telegraph account via
+# createAccount and stores its access token in settings as
+# telegraph_access_token — a secret (enc:v2 via set_secret, masked in every
+# settings surface; needs SESSION_ENCRYPTION_KEY). A live probe showed
+# createPage rejects anonymous calls (ACCESS_TOKEN_INVALID), so the token is
+# required. `create` converts a markdown subset (h1–h4, lists,
+# bold/italic/links, bare URLs, `code`, quotes, hr) to Telegraph nodes — body
+# from --file or stdin — prints the page URL (--format json = full API
+# response). telegra.ph has no tables — lay them out as lists/paragraphs
+# yourself. Pair with `dialogs send` for title+link posts.
 settings get | set | info | server-time | agent | filter-criteria | reactions | semantic
 # settings: secret-looking keys (*_api_key, *_token, *_secret, session_secret_key) are
 # masked in get/set output; settings semantic --api-key and `set semantic_embeddings_api_key`
@@ -363,7 +436,8 @@ image generate | models | providers | generated
 provider list | add | delete | probe | refresh | test-all
 debug logs | memory | timing
 test all | read | write | telegram | benchmark
-stop | restart
+stop | restart [--force]
+daemon status                            # read-only: is the project daemon up, whose is it (#1714)
 serve [--web-pass PASS] [--no-worker]   # legacy web panel (deprecated)
 worker                                  # default daemon: worker runtime, no web panel
 restart                                 # stop + start the worker daemon (managed PID file)
