@@ -42,10 +42,10 @@ from tg_agent.services.unified_dispatcher import UnifiedDispatcher
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.telegram.collector import Collector
 from tg_agent.telegram.notifier import Notifier
+from tg_agent.utils.timing import TimingBuffer
 from tg_agent.web.container import AppContainer, WebClientPool, WebCollector, WebScheduler
 from tg_agent.web.log_handler import LogBuffer
 from tg_agent.web.paths import TEMPLATES_DIR
-from tg_agent.web.timing import TimingBuffer
 from tg_shared.auth import TelegramAuth
 
 T = TypeVar("T")

@@ -171,7 +171,7 @@ class TimingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         profiler = None
         if _PROFILING_ENABLED:
-            from tg_agent.web.timing import RequestProfiler
+            from tg_agent.utils.timing import RequestProfiler
 
             profiler = RequestProfiler()
             profiler.activate()

@@ -29,10 +29,10 @@ from tg_agent.runtime.bootstrap import (
     stop_container as stop_container,
 )
 from tg_agent.runtime.log_handler import LogBuffer
+from tg_agent.utils.timing import TimingBuffer
 from tg_agent.web.container import AppContainer
 from tg_agent.web.paths import TEMPLATES_DIR
 from tg_agent.web.template_globals import configure_template_globals
-from tg_agent.web.timing import TimingBuffer
 
 
 async def build_container(config: AppConfig, *, log_buffer: LogBuffer) -> AppContainer:

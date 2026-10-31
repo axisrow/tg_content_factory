@@ -1,4 +1,4 @@
-from tg_agent.web.timing import RequestProfiler, TimingBuffer, TimingRecord, get_current_profiler
+from tg_agent.utils.timing import RequestProfiler, TimingBuffer, TimingRecord, get_current_profiler
 
 
 def test_get_current_profiler_default_none():

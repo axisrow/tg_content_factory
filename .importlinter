@@ -2,14 +2,40 @@
 root_package = tg_agent
 include_external_packages = True
 
+# #1720: the core (worker runtime, services, gateway, DB, ...) must not depend
+# on the legacy web layer, which is moving to its own package. Only the `serve`
+# entry point may reach it. Direct edges are checked from every core module, so
+# indirect chains through `serve` (main -> cli -> serve) are fine.
 [importlinter:contract:runtime_no_web_imports]
-name = Worker runtime does not import the legacy web layer directly
+name = Core does not import the legacy web layer (only the serve entry point may)
 type = forbidden
 source_modules =
+    tg_agent.agent
+    tg_agent.cli
+    tg_agent.collection_queue
+    tg_agent.config
+    tg_agent.database
+    tg_agent.filters
+    tg_agent.gateway
+    tg_agent.live_runtime_pause
+    tg_agent.main
+    tg_agent.models
+    tg_agent.parsers
+    tg_agent.paths
+    tg_agent.plugin_api
     tg_agent.runtime
+    tg_agent.scheduler
+    tg_agent.search
+    tg_agent.security
+    tg_agent.services
+    tg_agent.settings_utils
+    tg_agent.telegram
+    tg_agent.utils
 forbidden_modules =
     tg_agent.web
 allow_indirect_imports = True
+ignore_imports =
+    tg_agent.cli.commands.serve -> tg_agent.web.**
 
 [importlinter:contract:telegram_actions_no_raw_telethon_functions_in_entrypoints]
 name = Telegram entrypoints do not import Telethon directly outside allowed pipeline errors
