@@ -186,7 +186,6 @@ tg_agent = [
     "web/static/*.css",
     "web/static/*.js",
     "web/static/js/*.js",
-    "cli/commands/*.tcss",
     "database/seeds/*.csv",
 ]
 

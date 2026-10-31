@@ -25,7 +25,7 @@ def test_packaging_config_keeps_tg_agent_namespace_for_console_script() -> None:
         "web/static/*.css",
         "web/static/*.js",
         "web/static/js/*.js",
-        "cli/commands/*.tcss",
+        # cli/commands/*.tcss left with the TUI for packages/tg_tui (#1720 wave 2)
         "database/seeds/*.csv",
     ]
 

@@ -20,7 +20,7 @@
 | 2 | **Web** (HTML/HTMX) | для **человека** в браузере | `tg_agent/web/routes/` — Jinja2-шаблоны, HTMX-фрагменты, формы |
 | 3 | **CLI** | команды терминала | `tg_agent/cli/commands/` (тела `*_impl`) + `tg_agent/cli/typer_commands.py` (Typer-приложение `app`, ~212 leaf-команд) |
 | 4 | **Agent-tools** | тулы AI-агента (MCP) | `tg_agent/agent/tools/` (173 tools в 20 группах) |
-| 5 | **TUI** (Textual) | интерактивный терминальный UI | `tg_agent/cli/commands/agent_tui.py` + `.tcss` (dep `textual[syntax]`); запуск — `agent chat` без `--prompt`. **УЗКАЯ**: только AI-чат, см. ниже |
+| 5 | **TUI** (Textual) | интерактивный терминальный UI | `packages/tg_tui/src/tg_tui/app.py` + `.tcss` (optional package `tg-tui`, #1720) (dep `textual[syntax]`); запуск — `agent chat` без `--prompt`. **УЗКАЯ**: только AI-чат, см. ниже |
 
 ### Важно про FastAPI vs Web
 
@@ -30,7 +30,7 @@
 
 ### Важно про TUI
 
-TUI — это **единственный** Textual-app в проекте: `AgentTuiApp` (`tg_agent/cli/commands/agent_tui.py`, стили в `agent_tui.tcss`). Запускается через `python -m tg_agent.main agent chat` в интерактивном режиме (без `--prompt`). Проверено grep'ом по `tg_agent/`: больше нигде Textual/`.tcss`/`ComposeResult` не используется. Поэтому **TUI покрывает ровно один сервис — «AI-агент»**; во всех остальных строках TUF-колонка = «—».
+TUI — это **единственный** Textual-app в проекте: `AgentTuiApp` (`packages/tg_tui/src/tg_tui/app.py`, стили в `agent_tui.tcss`; опциональный пакет `tg-tui`, #1720). Запускается через `python -m tg_agent.main agent chat` в интерактивном режиме (без `--prompt`). Проверено grep'ом по `tg_agent/`: больше нигде Textual/`.tcss`/`ComposeResult` не используется. Поэтому **TUI покрывает ровно один сервис — «AI-агент»**; во всех остальных строках TUF-колонка = «—».
 
 ## Что означает «Статус»
 
@@ -388,7 +388,7 @@ APScheduler: периодический сбор, запуск search-queries, �
 | Web | ✅ | `/agent`, `POST /agent/threads`, `/agent/threads/{id}/chat` (**SSE**), `/agent/threads/{id}/{stop,context,permission/{req}}` |
 | CLI | ✅ | `agent threads/thread-create/thread-delete/chat/thread-rename/thread-stop/messages/context/test-escaping/test-tools` |
 | Agent-tools | ✅ | `agent_threads.py` (5: list/create/delete/rename/get_messages) + сам реестр 173 tools |
-| TUI | ✅ | `AgentTuiApp` (`agent_tui.py` + `.tcss`); запуск `agent chat` без `--prompt` |
+| TUI | ✅ | `AgentTuiApp` (`tg_tui/app.py` + `.tcss`, пакет `tg-tui`); запуск `agent chat` без `--prompt` |
 
 **Backend:** `AgentManager`, `AgentProviderService`, react-agent fallback, MCP-server.
 **Статус:** 🟢 **проверено вживую** (чтение/one-shot) — real-TG `safe_ro/test_agent_threads.py`, `test_agent_messages_first.py`, `safe_write/test_proc_agent_chat_oneshot.py`; e2e `/agent`. ⚠️ Codex/ADK backend'ы и TUI-режим — 🟡 только код (opt-in / gated / интерактив без авто-теста).

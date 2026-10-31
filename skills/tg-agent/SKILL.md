@@ -126,4 +126,7 @@ without a pool, so pipelines containing them need the daemon stopped); `dialogs 
 The web panel, TUI, embedded agent chat (`tg-agent agent chat`) and MCP server still work,
 but their development is paused indefinitely (bug fixes only). For coding agents the CLI
 above is the only supported interface.
+Interactive `tg-agent agent chat` (no prompt) needs the optional `tg-tui` package
+(`pip install -e packages/tg_tui`); without it the command exits 1 with an install hint.
+One-shot `agent chat -p "..."` works without it.
 

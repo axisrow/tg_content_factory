@@ -9,12 +9,12 @@ from pathlib import Path
 
 import pytest
 
-# tg-shared (#1421, wave A): the factory imports the shared package straight
-# from the monorepo checkout until the split (same shim as the scaffold test;
-# a declared dependency lands with the #1424 wave).
-_SHARED_SRC = Path(__file__).resolve().parent / "packages" / "tg_shared" / "src"
-if str(_SHARED_SRC) not in sys.path:
-    sys.path.insert(0, str(_SHARED_SRC))
+# Monorepo packages (tg-shared #1421 wave A, tg-tui #1720 wave 2): import them
+# straight from the checkout until they are published (same shim as the
+# scaffold test; declared dependencies land with the #1424 wave).
+for _package_src in sorted((Path(__file__).resolve().parent / "packages").glob("*/src")):
+    if str(_package_src) not in sys.path:
+        sys.path.insert(0, str(_package_src))
 
 _REAL_TG_PARALLEL_GATES = (
     "RUN_REAL_TELEGRAM_SAFE",

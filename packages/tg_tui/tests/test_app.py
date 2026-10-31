@@ -1,4 +1,4 @@
-"""Tests for the agent TUI (agent_tui.py)."""
+"""Tests for the agent TUI (tg_tui/app.py)."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def _make_manager(*chunks: str) -> MagicMock:
 def test_streaming_message_append_accumulates():
     from unittest.mock import MagicMock
 
-    from tg_agent.cli.commands.agent_tui import StreamingMessage
+    from tg_tui.app import StreamingMessage
 
     widget = StreamingMessage()
     widget._content = ""
@@ -62,7 +62,7 @@ def test_streaming_message_append_accumulates():
 
 
 def test_streaming_message_finalize_changes_class():
-    from tg_agent.cli.commands.agent_tui import StreamingMessage
+    from tg_tui.app import StreamingMessage
 
     widget = StreamingMessage()
     widget._content = "done"
@@ -73,7 +73,7 @@ def test_streaming_message_finalize_changes_class():
 
 
 def test_streaming_message_set_pending_status():
-    from tg_agent.cli.commands.agent_tui import StreamingMessage
+    from tg_tui.app import StreamingMessage
 
     widget = StreamingMessage()
     widget._elapsed_label = MagicMock()
@@ -88,7 +88,7 @@ def test_streaming_message_set_pending_status():
 def test_streaming_message_tick_elapsed_with_tool():
     import time as _time
 
-    from tg_agent.cli.commands.agent_tui import StreamingMessage
+    from tg_tui.app import StreamingMessage
 
     widget = StreamingMessage()
     widget._elapsed_label = MagicMock()
@@ -103,7 +103,7 @@ def test_streaming_message_tick_elapsed_with_tool():
 def test_streaming_message_tick_elapsed_with_status_label():
     import time as _time
 
-    from tg_agent.cli.commands.agent_tui import StreamingMessage
+    from tg_tui.app import StreamingMessage
 
     widget = StreamingMessage()
     widget._elapsed_label = MagicMock()
@@ -118,7 +118,7 @@ def test_streaming_message_tick_elapsed_with_status_label():
 
 
 def test_streaming_message_set_error_changes_class():
-    from tg_agent.cli.commands.agent_tui import StreamingMessage
+    from tg_tui.app import StreamingMessage
 
     widget = StreamingMessage()
     widget._md = MagicMock()
@@ -134,7 +134,7 @@ def test_streaming_message_set_error_changes_class():
 
 
 def test_thread_item_active_class():
-    from tg_agent.cli.commands.agent_tui import ThreadItem
+    from tg_tui.app import ThreadItem
 
     item = ThreadItem(thread_id=1, title="test", active=True)
     assert "active" in item.classes
@@ -144,7 +144,7 @@ def test_thread_item_active_class():
 
 
 def test_thread_item_set_active():
-    from tg_agent.cli.commands.agent_tui import ThreadItem
+    from tg_tui.app import ThreadItem
 
     item = ThreadItem(thread_id=1, title="test")
     item.set_active(True)
@@ -163,7 +163,7 @@ def app_factory(db):
     """Returns a factory that builds AgentTuiApp with fresh mock manager."""
 
     def _factory(chunks=None):
-        from tg_agent.cli.commands.agent_tui import AgentTuiApp
+        from tg_tui.app import AgentTuiApp
 
         if chunks is None:
             chunks = [_make_sse_chunk("hi"), _make_sse_done("hi")]
@@ -180,7 +180,7 @@ async def test_tui_mounts_and_shows_threads(db, app_factory):
     app = app_factory()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        from tg_agent.cli.commands.agent_tui import ThreadItem
+        from tg_tui.app import ThreadItem
 
         items = app.query(ThreadItem)
         assert len(items) >= 1
@@ -196,7 +196,7 @@ async def test_tui_shows_existing_thread_messages(db, app_factory):
     app = app_factory()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        from tg_agent.cli.commands.agent_tui import MessageBubble
+        from tg_tui.app import MessageBubble
 
         bubbles = app.query(MessageBubble)
         roles = [b._role for b in bubbles]
@@ -211,7 +211,7 @@ async def test_tui_send_message_calls_chat_stream(db, app_factory):
     chunks = [_make_sse_chunk("response"), _make_sse_done("response")]
     mgr = _make_manager(*chunks)
 
-    from tg_agent.cli.commands.agent_tui import AgentTuiApp
+    from tg_tui.app import AgentTuiApp
 
     app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -238,7 +238,7 @@ async def test_tui_send_message_saves_to_db(db, app_factory):
     chunks = [_make_sse_chunk("agent reply"), _make_sse_done("agent reply")]
     mgr = _make_manager(*chunks)
 
-    from tg_agent.cli.commands.agent_tui import AgentTuiApp
+    from tg_tui.app import AgentTuiApp
 
     app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -293,7 +293,7 @@ async def test_tui_toggle_sidebar(db, app_factory):
     app = app_factory()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        from tg_agent.cli.commands.agent_tui import ThreadSidebar
+        from tg_tui.app import ThreadSidebar
 
         sidebar = app.query_one(ThreadSidebar)
         assert sidebar.display is True
@@ -312,7 +312,7 @@ async def test_tui_thread_auto_rename(db, app_factory):
     chunks = [_make_sse_chunk("ok"), _make_sse_done("ok")]
     mgr = _make_manager(*chunks)
 
-    from tg_agent.cli.commands.agent_tui import AgentTuiApp
+    from tg_tui.app import AgentTuiApp
 
     app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -337,7 +337,7 @@ async def test_tui_error_chunk_cleans_up(db, app_factory):
     mgr = _make_manager(*chunks)
     db.delete_last_agent_exchange = AsyncMock()
 
-    from tg_agent.cli.commands.agent_tui import AgentTuiApp
+    from tg_tui.app import AgentTuiApp
 
     app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -359,14 +359,14 @@ async def test_tui_error_chunk_cleans_up(db, app_factory):
 
 def test_allow_select_enabled():
     """ALLOW_SELECT must be True so Textual's built-in text selection works."""
-    from tg_agent.cli.commands.agent_tui import AgentTuiApp
+    from tg_tui.app import AgentTuiApp
 
     assert getattr(AgentTuiApp, "ALLOW_SELECT", False) is True
 
 
 def test_ctrl_c_not_bound():
     """ctrl+c must not be captured by app bindings — it's reserved for copy."""
-    from tg_agent.cli.commands.agent_tui import AgentTuiApp
+    from tg_tui.app import AgentTuiApp
 
     bound_keys = {b.key for b in AgentTuiApp.BINDINGS}
     assert "ctrl+c" not in bound_keys
@@ -389,7 +389,7 @@ async def test_copy_to_clipboard_called(db, app_factory, monkeypatch):
 
 def test_copy_to_clipboard_uses_native_tool(monkeypatch):
     """copy_to_clipboard calls pbcopy on macOS / xclip on Linux, not OSC 52."""
-    from tg_agent.cli.commands.agent_tui import AgentTuiApp
+    from tg_tui.app import AgentTuiApp
 
     app = AgentTuiApp.__new__(AgentTuiApp)
     app._clipboard = ""
@@ -410,7 +410,7 @@ def test_copy_to_clipboard_uses_native_tool(monkeypatch):
 
 def test_clipboard_reads_from_native_tool(monkeypatch):
     """clipboard property reads from pbpaste/xclip instead of internal buffer."""
-    from tg_agent.cli.commands.agent_tui import AgentTuiApp
+    from tg_tui.app import AgentTuiApp
 
     app = AgentTuiApp.__new__(AgentTuiApp)
     app._clipboard = "internal"
@@ -422,135 +422,6 @@ def test_clipboard_reads_from_native_tool(monkeypatch):
     )
 
     assert app.clipboard == "from-system"
-
-
-# ---------------------------------------------------------------------------
-# CLI one-shot mode (prompt=) tests
-# ---------------------------------------------------------------------------
-
-
-class TestAgentChatOneShotMode:
-    """Tests for `agent chat -p <message>` one-shot mode."""
-
-    def _run_chat(self, cli_env, prompt: str, thread_id=None, cli_init_patch=None, monkeypatch=None, capsys=None):
-        """Helper: run agent chat in one-shot mode with mocked AgentManager."""
-        from unittest.mock import MagicMock
-        from unittest.mock import patch as _patch
-
-        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
-
-        from tests.helpers import cli_ns as _ns
-        from tg_agent.cli.commands.agent import run
-
-        if monkeypatch:
-            monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-
-        text_block = TextBlock(text="one-shot reply")
-        assistant_msg = MagicMock(spec=AssistantMessage)
-        assistant_msg.content = [text_block]
-        result_msg = MagicMock(spec=ResultMessage)
-
-        async def mock_query(prompt, options):
-            yield assistant_msg
-            yield result_msg
-
-        with (
-            cli_init_patch(cli_env, "tg_agent.cli.runtime.init_db"),
-            _patch("tg_agent.agent.backends.claude_sdk.query", mock_query),
-        ):
-            run(_ns(agent_action="chat", prompt=prompt, thread_id=thread_id, model=None))
-
-    def test_one_shot_prints_response(self, cli_env, cli_init_patch, capsys, monkeypatch):
-        self._run_chat(cli_env, "hello", cli_init_patch=cli_init_patch, monkeypatch=monkeypatch)
-        assert "one-shot reply" in capsys.readouterr().out
-
-    def test_one_shot_creates_thread_if_none(self, cli_env, cli_init_patch, monkeypatch):
-        import sqlite3
-
-        self._run_chat(cli_env, "hi", cli_init_patch=cli_init_patch, monkeypatch=monkeypatch)
-        conn = sqlite3.connect(cli_env._db_path)
-        try:
-            count = conn.execute("SELECT COUNT(*) FROM agent_threads").fetchone()[0]
-        finally:
-            conn.close()
-        assert count >= 1
-
-    def test_one_shot_uses_existing_thread(self, cli_env, cli_init_patch, monkeypatch):
-        import sqlite3
-
-        tid = asyncio.run(cli_env.create_agent_thread("existing"))
-        self._run_chat(cli_env, "hi", thread_id=tid, cli_init_patch=cli_init_patch, monkeypatch=monkeypatch)
-        # CLI closes the aiosqlite connection, use raw sqlite3 to read state
-        conn = sqlite3.connect(cli_env._db_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            rows = [dict(r) for r in conn.execute(
-                "SELECT role, content FROM agent_messages WHERE thread_id = ?", (tid,)
-            ).fetchall()]
-        finally:
-            conn.close()
-        assert any(r["role"] == "user" and r["content"] == "hi" for r in rows)
-
-    def test_one_shot_prints_status_to_stderr(self, cli_env, cli_init_patch, capsys, monkeypatch):
-        """Status events are printed to stderr, not stdout, in one-shot mode."""
-        from unittest.mock import patch as _patch
-
-        from tests.helpers import cli_ns as _ns
-        from tg_agent.cli.commands.agent import run
-
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-
-        async def fake_chat_stream(*_a, **_kw):
-            yield 'data: {"type": "status", "text": "Создание клиента"}\n\n'
-            yield 'data: {"type": "status", "text": "Запрос к API"}\n\n'
-            yield 'data: {"text": "reply text"}\n\n'
-            yield 'data: {"done": true, "full_text": "reply text"}\n\n'
-
-        with (
-            cli_init_patch(cli_env, "tg_agent.cli.runtime.init_db"),
-            _patch("tg_agent.agent.manager.AgentManager.chat_stream", fake_chat_stream),
-        ):
-            run(_ns(agent_action="chat", prompt="test", thread_id=None, model=None))
-
-        captured = capsys.readouterr()
-        assert "reply text" in captured.out
-        # Status events must NOT leak into stdout
-        assert "Создание клиента" not in captured.out
-        assert "Запрос к API" not in captured.out
-
-
-# ---------------------------------------------------------------------------
-# CLI interactive mode (no prompt) launches TUI
-# ---------------------------------------------------------------------------
-
-
-class TestAgentChatInteractiveMode:
-    """Tests that `agent chat` without --prompt launches TUI."""
-
-    def test_no_prompt_launches_tui(self, cli_env, cli_init_patch, monkeypatch):
-        """When prompt is None, AgentTuiApp.run_async() is called."""
-        from unittest.mock import AsyncMock
-        from unittest.mock import patch as _patch
-
-        from tests.helpers import cli_ns as _ns
-        from tg_agent.cli.commands.agent import run
-
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-
-        mock_run_async = AsyncMock()
-
-        with (
-            cli_init_patch(cli_env, "tg_agent.cli.runtime.init_db"),
-            _patch("tg_agent.cli.commands.agent_tui.AgentTuiApp.run_async", mock_run_async),
-        ):
-            run(_ns(agent_action="chat", prompt=None, thread_id=None, model=None))
-
-        mock_run_async.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# Parser tests
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -572,7 +443,7 @@ async def test_button_toggles_to_stop_during_streaming(db, app_factory):
     mgr = MagicMock()
     mgr.chat_stream = MagicMock(side_effect=_slow_stream)
 
-    from tg_agent.cli.commands.agent_tui import AgentTuiApp
+    from tg_tui.app import AgentTuiApp
 
     app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -611,7 +482,7 @@ async def test_button_reverts_after_cancel(db, app_factory):
     mgr = MagicMock()
     mgr.chat_stream = MagicMock(side_effect=_slow_stream)
 
-    from tg_agent.cli.commands.agent_tui import AgentTuiApp
+    from tg_tui.app import AgentTuiApp
 
     app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
     db.delete_last_agent_exchange = AsyncMock()
@@ -650,7 +521,7 @@ async def test_stop_button_click_cancels_streaming(db, app_factory):
     mgr = MagicMock()
     mgr.chat_stream = MagicMock(side_effect=_slow_stream)
 
-    from tg_agent.cli.commands.agent_tui import AgentTuiApp
+    from tg_tui.app import AgentTuiApp
 
     app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
     db.delete_last_agent_exchange = AsyncMock()
@@ -692,7 +563,7 @@ async def test_no_race_condition_button_set_before_worker_runs(db, app_factory):
     chunks = [_make_sse_done("")]
     mgr = _make_manager(*chunks)
 
-    from tg_agent.cli.commands.agent_tui import AgentTuiApp
+    from tg_tui.app import AgentTuiApp
 
     app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
 
@@ -721,47 +592,6 @@ async def test_no_race_condition_button_set_before_worker_runs(db, app_factory):
     assert true_indices[0] < false_indices[0], f"Race detected! Order: {call_order}"
 
 
-class TestAgentChatParser:
-    @staticmethod
-    def _invoke(argv):
-        from unittest.mock import MagicMock, patch
-
-        from typer.testing import CliRunner
-
-        from tg_agent.cli.typer_app import app
-
-        mock_impl = MagicMock()
-        with (
-            patch("tg_agent.cli.typer_commands.agent_cmd.chat_impl", mock_impl),
-            patch("tg_agent.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
-        ):
-            result = CliRunner().invoke(app, argv)
-        assert result.exit_code == 0, result.output
-        return mock_impl.call_args.kwargs
-
-    def test_prompt_flag_long(self):
-        kwargs = self._invoke(["agent", "chat", "--prompt", "hello"])
-        assert kwargs["prompt"] == "hello"
-
-    def test_prompt_flag_short(self):
-        kwargs = self._invoke(["agent", "chat", "-p", "hello"])
-        assert kwargs["prompt"] == "hello"
-
-    def test_no_prompt_is_none(self):
-        kwargs = self._invoke(["agent", "chat"])
-        assert kwargs["prompt"] is None
-
-    def test_prompt_with_model(self):
-        kwargs = self._invoke(["agent", "chat", "-p", "hi", "--model", "claude-haiku-4-5-20251001"])
-        assert kwargs["prompt"] == "hi"
-        assert kwargs["model"] == "claude-haiku-4-5-20251001"
-
-    def test_prompt_with_thread_id(self):
-        kwargs = self._invoke(["agent", "chat", "-p", "hi", "--thread-id", "5"])
-        assert kwargs["prompt"] == "hi"
-        assert kwargs["thread_id"] == 5
-
-
 @pytest.mark.anyio
 async def test_tui_stream_shows_tool_status(db, app_factory):
     """Tool SSE events update the streaming widget status label."""
@@ -775,7 +605,7 @@ async def test_tui_stream_shows_tool_status(db, app_factory):
     ]
     mgr = _make_manager(*chunks)
 
-    from tg_agent.cli.commands.agent_tui import AgentTuiApp
+    from tg_tui.app import AgentTuiApp
 
     app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
     async with app.run_test(size=(120, 40)) as pilot:

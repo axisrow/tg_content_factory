@@ -214,6 +214,19 @@ async def chat_impl(
     """Interactive TUI chat, or a one-shot message when ``prompt`` is given."""
     from tg_agent.agent.manager import AgentManager
 
+    if not prompt:
+        # The interactive TUI is an optional package (#1720 wave 2); check it
+        # before opening the DB, pool and agent manager.
+        try:
+            from tg_tui.app import AgentTuiApp
+        except ImportError:
+            print(
+                "Интерактивный TUI вынесен в отдельный пакет: pip install -e packages/tg_tui "
+                "(или передайте prompt для однократного режима).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     # chat streams to stdout; move log noise to a file so it doesn't interleave.
     removed_log_handler = runtime.redirect_logging_to_file()
     config, db = await runtime.init_db(config_path)
@@ -292,8 +305,6 @@ async def chat_impl(
                 await db.save_agent_message(resolved_thread_id, "assistant", full_text)
         else:
             # Interactive TUI mode
-            from tg_agent.cli.commands.agent_tui import AgentTuiApp
-
             app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
             await app.run_async()
     finally:
