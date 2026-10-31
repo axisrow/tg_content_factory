@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 # How often the worker (both the standalone `tg_agent/runtime/worker.py` and the
-# embedded `tg_agent/web/embedded_worker.py`) republishes `worker_heartbeat` and the
+# embedded `tg_webui/embedded_worker.py`) republishes `worker_heartbeat` and the
 # other runtime snapshots. Single source of truth so the two worker flavours
 # cannot drift apart.
 HEARTBEAT_INTERVAL_SEC = 5.0

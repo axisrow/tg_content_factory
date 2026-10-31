@@ -1035,7 +1035,7 @@ async def _dialogs_queue(args, db, pool) -> None:
 
 # action -> (queue command_type, argparse attrs forming its payload).
 #
-# Mirrors what the web UI enqueues in tg_agent/web/dialogs/handlers.py, so a CLI
+# Mirrors what the web UI enqueues in tg_webui/dialogs/handlers.py, so a CLI
 # hand-off produces a row the worker's TelegramCommandDispatcher already knows
 # how to execute. Actions absent here have no queue equivalent (local views such
 # as `cache-status`, or the `queue` group itself) and keep running in-process.

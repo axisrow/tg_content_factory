@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from fastapi import Request
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
+
+from tg_agent.utils.json import safe_json_dumps
+from tg_webui import deps
+from tg_webui.redirects import redirect_see_other
+
+
+@dataclass(frozen=True)
+class PipelineRedirect:
+    code: str
+    error: bool = False
+    phone: str | None = None
+
+
+@dataclass(frozen=True)
+class PipelineUrlRedirect:
+    """Redirect to an explicit URL (e.g. /pipelines/{id}/edit), not the flash list page."""
+
+    url: str
+    status_code: int = 303
+
+
+@dataclass(frozen=True)
+class PipelineTemplate:
+    name: str
+    context: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class PipelineJson:
+    content: Any
+    status_code: int = 200
+
+
+@dataclass(frozen=True)
+class PipelineStream:
+    iterator: Any
+    media_type: str = "text/event-stream"
+
+
+@dataclass(frozen=True)
+class PipelineFile:
+    content: Any
+    filename: str
+    media_type: str = "application/json"
+
+
+PipelineResult = (
+    PipelineRedirect
+    | PipelineUrlRedirect
+    | PipelineTemplate
+    | PipelineJson
+    | PipelineStream
+    | PipelineFile
+)
+
+
+def pipeline_redirect_response(result: PipelineRedirect) -> RedirectResponse:
+    key = "error" if result.error else "msg"
+    return redirect_see_other("/pipelines", {key: result.code, "phone": result.phone})
+
+
+def pipeline_response(request: Request, result: PipelineResult) -> Response:
+    if isinstance(result, PipelineRedirect):
+        return pipeline_redirect_response(result)
+    if isinstance(result, PipelineUrlRedirect):
+        return RedirectResponse(url=result.url, status_code=result.status_code)
+    if isinstance(result, PipelineTemplate):
+        return deps.get_templates(request).TemplateResponse(request, result.name, result.context)
+    if isinstance(result, PipelineJson):
+        return JSONResponse(content=result.content, status_code=result.status_code)
+    if isinstance(result, PipelineStream):
+        return StreamingResponse(result.iterator, media_type=result.media_type)
+    if isinstance(result, PipelineFile):
+        return Response(
+            content=safe_json_dumps(result.content, ensure_ascii=False, indent=2),
+            media_type=result.media_type,
+            headers={"Content-Disposition": f'attachment; filename="{result.filename}"'},
+        )

@@ -52,8 +52,10 @@ from tg_agent.telegram.notifier import Notifier
 from tg_agent.utils.asyncio import make_log_task_exception_callback
 from tg_shared.auth import TelegramAuth
 
-# Keep the historical log category for existing operator filters.
-logger = logging.getLogger("tg_agent.web.bootstrap")
+# Module logger (``tg_agent.runtime.bootstrap``). Until #1720 wave 3 this used the
+# historical ``tg_agent.web.bootstrap`` category; operator log filters keyed on
+# it (or on the ``tg_agent.web`` hierarchy, now ``tg_webui``) need updating.
+logger = logging.getLogger(__name__)
 _is_dev = os.environ.get("ENV", "PROD").upper() == "DEV"
 _POOL_INIT_TIMEOUT = 20
 _POOL_RETRY_INTERVAL_SEC = 60.0

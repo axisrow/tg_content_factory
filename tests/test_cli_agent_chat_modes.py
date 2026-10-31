@@ -9,16 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from types import ModuleType
 
-
-def fake_tg_tui_modules(app_cls) -> dict[str, ModuleType]:
-    package = ModuleType("tg_tui")
-    app_module = ModuleType("tg_tui.app")
-    app_module.AgentTuiApp = app_cls
-    package.app = app_module
-    return {"tg_tui": package, "tg_tui.app": app_module}
-
+from tests.helpers import fake_tg_tui_modules
 
 # ---------------------------------------------------------------------------
 # CLI one-shot mode (prompt=) tests

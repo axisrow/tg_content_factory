@@ -28,10 +28,15 @@ from tg_agent.models import Channel, Message
 from tg_agent.telegram.collector import Collector
 
 SRC_DIR = Path(__file__).resolve().parent.parent / "tg_agent"
+# The web panel lives in packages/tg_webui since #1720 wave 3; the guard keeps
+# covering it.
+WEB_SRC_DIR = SRC_DIR.parent / "packages" / "tg_webui" / "src" / "tg_webui"
 
 
 def _iter_py_sources() -> list[Path]:
-    return sorted(p for p in SRC_DIR.rglob("*.py") if "__pycache__" not in p.parts)
+    return sorted(
+        p for root in (SRC_DIR, WEB_SRC_DIR) for p in root.rglob("*.py") if "__pycache__" not in p.parts
+    )
 
 
 # Provenance-guarded columns: a value here encodes WHO decided (auto vs

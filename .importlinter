@@ -2,49 +2,31 @@
 root_packages =
     tg_agent
     tg_tui
+    tg_webui
 include_external_packages = True
 
-# #1720: the core (worker runtime, services, gateway, DB, ...) must not depend
-# on the legacy web layer, which is moving to its own package. Only the `serve`
-# entry point may reach it. Direct edges are checked from every core module, so
-# indirect chains through `serve` (main -> cli -> serve) are fine.
+# #1720: the core (worker runtime, services, gateway, DB, CLI, ...) must not
+# depend on the legacy web panel, which lives in the optional packages/tg_webui
+# (wave 3). Only the `serve` entry point reaches it, lazily, and fails fast with
+# an install hint when it is missing. Direct edges are checked from every core
+# module, so indirect chains through `serve` (main -> cli -> serve) are fine.
 [importlinter:contract:runtime_no_web_imports]
-name = Core does not import the legacy web layer (only the serve entry point may)
+name = Core does not import the optional web panel package (only the serve entry point may)
 type = forbidden
 source_modules =
-    tg_agent.agent
-    tg_agent.cli
-    tg_agent.collection_queue
-    tg_agent.config
-    tg_agent.database
-    tg_agent.filters
-    tg_agent.gateway
-    tg_agent.live_runtime_pause
-    tg_agent.main
-    tg_agent.models
-    tg_agent.parsers
-    tg_agent.paths
-    tg_agent.plugin_api
-    tg_agent.runtime
-    tg_agent.scheduler
-    tg_agent.search
-    tg_agent.security
-    tg_agent.services
-    tg_agent.settings_utils
-    tg_agent.telegram
-    tg_agent.utils
+    tg_agent
 forbidden_modules =
-    tg_agent.web
+    tg_webui
 allow_indirect_imports = True
 ignore_imports =
-    tg_agent.cli.commands.serve -> tg_agent.web.**
+    tg_agent.cli.commands.serve -> tg_webui.**
 
 [importlinter:contract:telegram_actions_no_raw_telethon_functions_in_entrypoints]
 name = Telegram entrypoints do not import Telethon directly outside allowed pipeline errors
 type = forbidden
 source_modules =
     tg_agent.cli
-    tg_agent.web
+    tg_webui
     tg_agent.agent.tools
     tg_agent.services.pipeline_nodes
     tg_agent.services.telegram_command_dispatcher
@@ -62,29 +44,7 @@ ignore_imports =
 name = Core does not import the optional TUI package (only the agent chat entry point may)
 type = forbidden
 source_modules =
-    tg_agent.agent
-    tg_agent.cli
-    tg_agent.collection_queue
-    tg_agent.config
-    tg_agent.database
-    tg_agent.filters
-    tg_agent.gateway
-    tg_agent.live_runtime_pause
-    tg_agent.main
-    tg_agent.models
-    tg_agent.parsers
-    tg_agent.paths
-    tg_agent.plugin_api
-    tg_agent.runtime
-    tg_agent.scheduler
-    tg_agent.search
-    tg_agent.security
-    tg_agent.services
-    tg_agent.settings_utils
-    tg_agent.telegram
-    tg_agent.utils
-    # Web is still part of tg_agent until #1720 wave 3 moves it to packages/tg_webui.
-    tg_agent.web
+    tg_agent
 forbidden_modules =
     tg_tui
 allow_indirect_imports = True

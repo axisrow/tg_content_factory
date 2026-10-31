@@ -1,0 +1,378 @@
+"""Tests for channels routes."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+
+@pytest.fixture
+async def db(base_app):
+    """Get db from base_app."""
+    _, db, _ = base_app
+    return db
+
+
+@pytest.mark.anyio
+async def test_channels_page_renders(route_client):
+    """Test channels page renders."""
+    resp = await route_client.get("/channels/")
+    assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_channels_page_with_message(route_client):
+    """Test channels page with message param."""
+    resp = await route_client.get("/channels/?msg=channel_added")
+    assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_channels_page_with_error(route_client):
+    """Test channels page with error param."""
+    resp = await route_client.get("/channels/?error=resolve")
+    assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_add_channel_success(route_client, pool_mock):
+    """Test add channel success."""
+    pool_mock.resolve_channel = AsyncMock(
+        return_value={
+            "channel_id": -100999,
+            "title": "New Channel",
+            "username": "newchannel",
+            "channel_type": "channel",
+        }
+    )
+
+    resp = await route_client.post(
+        "/channels/add",
+        data={"identifier": "newchannel"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_add_channel_no_client(route_client):
+    """Test add channel with no route_client available."""
+    resp = await route_client.post(
+        "/channels/add",
+        data={"identifier": "testchannel"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_add_channel_resolve_fail(route_client):
+    """Test add channel when resolve fails."""
+    resp = await route_client.post(
+        "/channels/add",
+        data={"identifier": "badchannel"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_get_dialogs_json(route_client, db):
+    """Test get dialogs returns JSON."""
+    await db.repos.dialog_cache.replace_dialogs(
+        "+1234567890",
+        [{"channel_id": 200, "title": "Test Dialog", "channel_type": "channel"}],
+    )
+
+    with patch("tg_webui.channels.handlers.deps.channel_service") as mock_svc:
+        mock_svc.return_value.get_dialogs_with_added_flags = AsyncMock(
+            return_value=[{"channel_id": 200, "title": "Test Dialog"}]
+        )
+        resp = await route_client.get("/channels/dialogs")
+        assert resp.status_code == 200
+        import json
+        data = json.loads(resp.text)
+        assert isinstance(data, list)
+
+
+@pytest.mark.anyio
+async def test_add_bulk_channels(route_client):
+    """Test add bulk channels."""
+    with patch("tg_webui.channels.handlers.deps.channel_service") as mock_svc:
+        mock_svc.return_value.add_bulk_by_dialog_ids = AsyncMock()
+        resp = await route_client.post(
+            "/channels/add-bulk",
+            data={"channel_ids": ["200", "300"]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "msg=channels_added" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_toggle_channel(route_client):
+    """Test toggle channel."""
+    with patch("tg_webui.channels.handlers.deps.channel_service") as mock_svc:
+        mock_svc.return_value.toggle = AsyncMock()
+        resp = await route_client.post("/channels/1/toggle", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "msg=channel_toggled" in resp.headers["location"]
+        mock_svc.return_value.toggle.assert_awaited_once_with(
+            1, origin="human", actor="web"
+        )
+
+
+@pytest.mark.anyio
+async def test_delete_channel(route_client):
+    """Test delete channel."""
+    with patch("tg_webui.channels.handlers.deps.channel_service") as mock_svc:
+        mock_svc.return_value.delete = AsyncMock()
+        resp = await route_client.post("/channels/1/delete", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "msg=channel_deleted" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_delete_channel_in_pipeline(route_client):
+    """Test delete channel that is in pipeline."""
+    with patch("tg_webui.channels.handlers.deps.channel_service") as mock_svc:
+        import sqlite3
+
+        mock_svc.return_value.delete = AsyncMock(
+            side_effect=sqlite3.IntegrityError("FOREIGN KEY constraint failed")
+        )
+        resp = await route_client.post("/channels/1/delete", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "error=channel_in_pipeline" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_collect_all_redirect(route_client):
+    """Test collect all redirects."""
+    with patch("tg_webui.routes.channel_collection.deps.collection_service") as mock_svc:
+        from tg_agent.services.collection_service import BulkEnqueueResult
+        mock_svc.return_value.enqueue_all_channels = AsyncMock(
+            return_value=BulkEnqueueResult(
+                queued_count=1,
+                skipped_existing_count=0,
+                total_candidates=1,
+            )
+        )
+        resp = await route_client.post("/channels/collect-all", follow_redirects=False)
+        assert resp.status_code == 303
+
+
+@pytest.mark.anyio
+async def test_collect_all_htmx(route_client):
+    """Test collect all with HTMX header."""
+    with patch("tg_webui.routes.channel_collection.deps.collection_service") as mock_svc:
+        from tg_agent.services.collection_service import BulkEnqueueResult
+        mock_svc.return_value.enqueue_all_channels = AsyncMock(
+            return_value=BulkEnqueueResult(
+                queued_count=1,
+                skipped_existing_count=0,
+                total_candidates=1,
+            )
+        )
+        resp = await route_client.post(
+            "/channels/collect-all",
+            headers={"HX-Request": "true"},
+        )
+        assert resp.status_code == 200
+        assert "collect-all-btn" in resp.text
+
+
+@pytest.mark.anyio
+async def test_collect_all_shutting_down(route_client):
+    """Test collect all when shutting down."""
+    route_client._transport_app.state.shutting_down = True
+    resp = await route_client.post("/channels/collect-all", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=shutting_down" in resp.headers["location"]
+    route_client._transport_app.state.shutting_down = False
+
+
+@pytest.mark.anyio
+async def test_collect_all_shutting_down_htmx(route_client):
+    """Test collect all when shutting down with HTMX."""
+    route_client._transport_app.state.shutting_down = True
+    resp = await route_client.post(
+        "/channels/collect-all",
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200
+    assert "collect-all-btn" in resp.text
+    route_client._transport_app.state.shutting_down = False
+
+
+@pytest.mark.anyio
+async def test_collect_channel(route_client, db):
+    """Test collect single channel."""
+    with patch("tg_webui.routes.channel_collection.deps.collection_service") as mock_svc:
+        svc = mock_svc.return_value
+        svc.enqueue_channel_by_pk = AsyncMock(return_value="queued")
+        resp = await route_client.post("/channels/1/collect", follow_redirects=False)
+        assert resp.status_code == 303
+        svc.enqueue_channel_by_pk.assert_awaited_once_with(1, force=True, full=False)
+
+
+@pytest.mark.anyio
+async def test_collect_channel_htmx(route_client, db):
+    """Test collect single channel with HTMX."""
+    with patch("tg_webui.routes.channel_collection.deps.collection_service") as mock_svc:
+        svc = mock_svc.return_value
+        svc.enqueue_channel_by_pk = AsyncMock(return_value="queued")
+        resp = await route_client.post(
+            "/channels/1/collect",
+            headers={"HX-Request": "true"},
+        )
+        assert resp.status_code == 200
+        assert "collect-btn-1" in resp.text
+        assert "collect-btn-m-1" in resp.text
+        svc.enqueue_channel_by_pk.assert_awaited_once_with(1, force=True, full=False)
+
+
+@pytest.mark.anyio
+async def test_collect_channel_full(route_client, db):
+    """Test explicit full backfill route."""
+    with patch("tg_webui.routes.channel_collection.deps.collection_service") as mock_svc:
+        svc = mock_svc.return_value
+        svc.enqueue_channel_by_pk = AsyncMock(return_value="queued")
+        resp = await route_client.post("/channels/1/collect/full", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "collect_full" in resp.headers["location"]
+        svc.enqueue_channel_by_pk.assert_awaited_once_with(1, force=True, full=True)
+
+
+@pytest.mark.anyio
+async def test_collect_channel_full_htmx(route_client, db):
+    """Explicit full backfill HTMX response updates desktop and mobile buttons."""
+    with patch("tg_webui.routes.channel_collection.deps.collection_service") as mock_svc:
+        svc = mock_svc.return_value
+        svc.enqueue_channel_by_pk = AsyncMock(return_value="queued")
+        resp = await route_client.post(
+            "/channels/1/collect/full",
+            headers={"HX-Request": "true"},
+        )
+        assert resp.status_code == 200
+        assert "collect-full-btn-1" in resp.text
+        assert "collect-full-btn-m-1" in resp.text
+        svc.enqueue_channel_by_pk.assert_awaited_once_with(1, force=True, full=True)
+
+
+@pytest.mark.anyio
+async def test_collect_stats(route_client):
+    """Test collect stats for all channels."""
+    with patch("tg_webui.routes.channel_collection.deps.get_collector") as mock_col:
+        mock_collector = MagicMock()
+        mock_collector.is_stats_running = False
+        mock_col.return_value = mock_collector
+
+        resp = await route_client.post("/channels/stats/all", follow_redirects=False)
+        assert resp.status_code == 303
+
+
+@pytest.mark.anyio
+async def test_add_channel_missing_identifier(route_client):
+    """POST /channels/add without identifier returns 422."""
+    resp = await route_client.post("/channels/add", data={}, follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.anyio
+async def test_add_tag_missing_name(route_client):
+    """POST /channels/tags without name returns 422."""
+    resp = await route_client.post("/channels/tags", data={}, follow_redirects=False)
+    assert resp.status_code == 303
+
+
+# ── Quarantine review routes (#875) ────────────────────────────────────────────
+
+async def _seed_quarantined(db, channel_id, title, username):
+    """Insert a channel and flag it for review; return its pk (base_app already seeds one)."""
+    await db.execute_write(
+        "INSERT INTO channels (channel_id, title, username, is_active) VALUES (?,?,?,1)",
+        (channel_id, title, username),
+    )
+    ch = next(c for c in await db.get_channels() if c.channel_id == channel_id)
+    await db.repos.channels.set_channel_review(ch.id, "numeric_unresolved")
+    return ch.id
+
+
+@pytest.mark.anyio
+async def test_review_list_page_renders(route_client, db):
+    """GET /channels/review renders the quarantine list, including a flagged channel."""
+    await _seed_quarantined(db, 700, "Maybe Dead", "maybe")
+    resp = await route_client.get("/channels/review")
+    assert resp.status_code == 200
+    assert "Maybe Dead" in resp.text
+    assert "numeric_unresolved" in resp.text
+
+
+@pytest.mark.anyio
+async def test_review_keep_clears_flag(route_client, db):
+    """POST /channels/{pk}/review-keep clears the flag and keeps the channel active."""
+    pk = await _seed_quarantined(db, 701, "Keep Me", "keep")
+    resp = await route_client.post(f"/channels/{pk}/review-keep", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=channel_review_kept" in resp.headers["location"]
+    refreshed = await db.get_channel_by_pk(pk)
+    assert refreshed.needs_review is False
+    assert refreshed.is_active is True
+
+
+@pytest.mark.anyio
+async def test_review_confirm_deactivates(route_client, db):
+    """POST /channels/{pk}/review-confirm deactivates the channel and clears the flag."""
+    pk = await _seed_quarantined(db, 702, "Dead For Real", "dead")
+    resp = await route_client.post(f"/channels/{pk}/review-confirm", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=channel_review_confirmed" in resp.headers["location"]
+    refreshed = await db.get_channel_by_pk(pk)
+    assert refreshed.needs_review is False
+    assert refreshed.is_active is False
+    assert refreshed.active_origin == "human"
+    assert refreshed.channel_type == "unavailable"
+
+
+@pytest.mark.anyio
+async def test_review_confirm_missing_channel(route_client):
+    """POST review-confirm for a non-existent pk redirects with an error, not a 500."""
+    resp = await route_client.post("/channels/99999/review-confirm", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=resolve" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_channels_page_lazy_loads_list(route_client):
+    """#756: the channels page paints a skeleton wired to the HTMX list fragment."""
+    resp = await route_client.get("/channels/")
+    assert resp.status_code == 200
+    assert 'hx-get="/channels/fragments/list' in resp.text
+    assert 'hx-trigger="load"' in resp.text
+    # The collect-all button (independent OOB target) stays in the skeleton.
+    assert 'id="collect-all-btn"' in resp.text
+
+
+@pytest.mark.anyio
+async def test_channels_fragment_is_bare_partial_with_both_oob_copies(route_client, db):
+    """#756: the list fragment is a bare partial and renders BOTH per-row collect
+    button copies (desktop -{pk} and mobile -m-{pk}) so OOB swaps resolve."""
+    from tg_agent.models import Channel
+
+    await db.add_channel(
+        Channel(channel_id=-100777, title="OOB Chan", username="oobchan", channel_type="channel")
+    )
+    pk = (await db.get_channel_by_channel_id(-100777)).id
+
+    resp = await route_client.get("/channels/fragments/list")
+    assert resp.status_code == 200
+    assert "<html" not in resp.text.lower()
+    assert "OOB Chan" in resp.text
+    # Both OOB copies present (collect-btn-{pk} and collect-btn-m-{pk}).
+    assert f"collect-btn-{pk}" in resp.text
+    assert f"collect-btn-m-{pk}" in resp.text

@@ -162,7 +162,7 @@ class SnapshotSchedulerManager:
         # Web routes must NOT rely on this to apply an interval change — the
         # worker has no periodic re-sync, so a mutation only reaches the running
         # scheduler when the route enqueues a `scheduler.reconcile` command
-        # (see tg_agent/web/scheduler/commands.py). Kept only to satisfy the
+        # (see tg_webui/scheduler/commands.py). Kept only to satisfy the
         # WebScheduler interface. (#1247)
         return None
 

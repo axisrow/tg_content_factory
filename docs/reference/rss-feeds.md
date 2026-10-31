@@ -8,7 +8,7 @@ The web app exposes two read-only syndication endpoints:
 ## Public by design
 
 Both endpoints are **intentionally unauthenticated**. They are listed in
-`is_public_path()` (`tg_agent/web/panel_auth.py`), so the Basic-auth middleware lets
+`is_public_path()` (`packages/tg_webui/src/tg_webui/panel_auth.py`), so the Basic-auth middleware lets
 them through without a session.
 
 This is deliberate: RSS/Atom readers cannot perform interactive HTTP Basic auth,

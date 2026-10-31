@@ -54,6 +54,9 @@ _TG_CHECKS_AFTER_POOL = [
 ]
 # tg_agent/cli/commands/test.py → tg_agent/cli/commands → tg_agent/cli → src → repo root
 REPO_ROOT = Path(__file__).resolve().parents[3]
+# Test roots of the whole monorepo: the core suite plus the package suites
+# (tg_shared #1421; tg_tui and tg_webui since #1720), like the CI shards.
+PYTEST_ROOTS = ("tests", "packages/tg_shared/tests", "packages/tg_tui/tests", "packages/tg_webui/tests")
 NON_LIVE_PYTEST_MARKER_EXPR = (
     "not real_tg_safe and not real_tg_mutation_safe and not real_tg_manual and not real_provider_smoke"
 )
@@ -61,7 +64,7 @@ SERIAL_PYTEST_COMMAND = (
     sys.executable,
     "-m",
     "pytest",
-    "tests",
+    *PYTEST_ROOTS,
     "-q",
     "-m",
     NON_LIVE_PYTEST_MARKER_EXPR,
@@ -70,7 +73,7 @@ PARALLEL_SAFE_PYTEST_COMMAND = (
     sys.executable,
     "-m",
     "pytest",
-    "tests",
+    *PYTEST_ROOTS,
     "-q",
     "-m",
     f"not aiosqlite_serial and {NON_LIVE_PYTEST_MARKER_EXPR}",
@@ -81,7 +84,7 @@ AIOSQLITE_SERIAL_PYTEST_COMMAND = (
     sys.executable,
     "-m",
     "pytest",
-    "tests",
+    *PYTEST_ROOTS,
     "-q",
     "-m",
     f"aiosqlite_serial and {NON_LIVE_PYTEST_MARKER_EXPR}",

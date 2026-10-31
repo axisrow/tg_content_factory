@@ -1,0 +1,585 @@
+from __future__ import annotations
+
+import dataclasses
+
+from fastapi import APIRouter, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+
+from tg_agent.services.channel_analysis_service import ChannelAnalysisService
+from tg_agent.services.channel_analytics_service import ChannelAnalyticsService
+from tg_agent.services.content_analytics_service import ContentAnalyticsService
+from tg_agent.services.trend_service import TrendService
+from tg_webui import deps
+from tg_webui.schemas.analytics import (
+    ChannelOverviewResponse,
+    ChannelRatingItem,
+    ContentSummary,
+    ContentTypeStat,
+    DailyStat,
+    HourlyMessageItem,
+    MessageVelocityItem,
+    PeakHourItem,
+    PipelineStat,
+    TopMessageItem,
+    TrendingChannelItem,
+    TrendingEmojiItem,
+    TrendingTopicItem,
+)
+
+router = APIRouter()
+
+_MAX_TREND_DAYS = 365
+_MAX_TREND_LIMIT = 100
+_MAX_RATING_LIMIT = 1000
+# Mirror the CLI judge bounds (#994): keep the prompt from tripping token limits.
+_MAX_RATING_SAMPLE = 200
+_DEFAULT_RATING_SAMPLE = 40
+
+
+def _clamp_positive(value: int, upper: int) -> int:
+    return max(1, min(value, upper))
+
+
+def _norm_limit(limit: int) -> int:
+    return limit if limit in (20, 50, 100) else 50
+
+
+def _norm_days(days: int) -> int:
+    return days if days in (7, 14, 30) else 7
+
+
+def _content_svc(request: Request) -> ContentAnalyticsService:
+    return ContentAnalyticsService(deps.get_db(request))
+
+
+def _trend_svc(request: Request) -> TrendService:
+    return TrendService(deps.get_db(request))
+
+
+@router.get("", response_class=HTMLResponse)
+async def analytics_page(
+    request: Request,
+    date_from: str = "",
+    date_to: str = "",
+    limit: int = 50,
+):
+    # Render the page skeleton immediately; the three heavy aggregations
+    # (top messages, engagement, hourly) are loaded lazily via HTMX fragments
+    # below so the page paints instantly on large databases (#756).
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "analytics.html",
+        {
+            "date_from": date_from,
+            "date_to": date_to,
+            "limit": _norm_limit(limit),
+        },
+    )
+
+
+@router.get("/fragments/top-messages", response_class=HTMLResponse)
+async def fragment_top_messages(
+    request: Request,
+    date_from: str = "",
+    date_to: str = "",
+    limit: int = 50,
+):
+    db = deps.get_db(request)
+    top_messages = await db.get_top_messages(
+        limit=_norm_limit(limit), date_from=date_from or None, date_to=date_to or None
+    )
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/_top_messages.html", {"top_messages": top_messages}
+    )
+
+
+@router.get("/fragments/engagement", response_class=HTMLResponse)
+async def fragment_engagement(request: Request, date_from: str = "", date_to: str = ""):
+    db = deps.get_db(request)
+    by_media_type = await db.get_engagement_by_media_type(
+        date_from=date_from or None, date_to=date_to or None
+    )
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/_engagement.html", {"by_media_type": by_media_type}
+    )
+
+
+@router.get("/fragments/hourly", response_class=HTMLResponse)
+async def fragment_hourly(request: Request, date_from: str = "", date_to: str = ""):
+    db = deps.get_db(request)
+    hourly = await db.get_hourly_activity(date_from=date_from or None, date_to=date_to or None)
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/_hourly.html", {"hourly": hourly}
+    )
+
+
+@router.get("/content", response_class=HTMLResponse)
+async def content_analytics_page(request: Request):
+    """Render the content-analytics skeleton; summary/pipelines load lazily (#756)."""
+    return deps.get_templates(request).TemplateResponse(request, "analytics/content.html", {})
+
+
+@router.get("/content/fragments/summary", response_class=HTMLResponse)
+async def fragment_content_summary(request: Request):
+    summary = await _content_svc(request).get_summary()
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/_content_summary.html", {"summary": summary}
+    )
+
+
+@router.get("/content/fragments/pipelines", response_class=HTMLResponse)
+async def fragment_content_pipelines(request: Request):
+    pipeline_stats = await _content_svc(request).get_pipeline_stats()
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/_content_pipelines.html", {"pipeline_stats": pipeline_stats}
+    )
+
+
+@router.get(
+    "/content/api/summary",
+    response_model=ContentSummary,
+    status_code=200,
+    tags=["analytics"],
+    summary="Aggregate content generation/publication counters",
+)
+async def api_content_summary(request: Request):
+    """Get content summary statistics as JSON (totals across all pipelines)."""
+    db = deps.get_db(request)
+    analytics = ContentAnalyticsService(db)
+    return JSONResponse(await analytics.get_summary())
+
+
+@router.get(
+    "/content/api/types",
+    response_model=list[ContentTypeStat],
+    status_code=200,
+    tags=["analytics"],
+    summary="Engagement grouped by media/content type",
+)
+async def api_content_type_stats(
+    request: Request,
+    date_from: str = "",
+    date_to: str = "",
+):
+    """Get engagement stats grouped by media/content type as JSON."""
+    db = deps.get_db(request)
+    rows = await db.get_engagement_by_media_type(date_from=date_from or None, date_to=date_to or None)
+    return JSONResponse(rows)
+
+
+@router.get(
+    "/content/api/pipelines",
+    response_model=list[PipelineStat],
+    status_code=200,
+    tags=["analytics"],
+    summary="Per-pipeline generation statistics",
+)
+async def api_pipeline_stats(request: Request, pipeline_id: int | None = None):
+    """Get pipeline statistics as JSON (optionally filtered by pipeline_id)."""
+    db = deps.get_db(request)
+    analytics = ContentAnalyticsService(db)
+    stats = await analytics.get_pipeline_stats(pipeline_id)
+    return JSONResponse([
+        {
+            "pipeline_id": s.pipeline_id,
+            "pipeline_name": s.pipeline_name,
+            "total_generations": s.total_generations,
+            "total_published": s.total_published,
+            "total_rejected": s.total_rejected,
+            "pending_moderation": s.pending_moderation,
+            "success_rate": s.success_rate,
+        }
+        for s in stats
+    ])
+
+
+@router.get(
+    "/content/api/daily",
+    response_model=list[DailyStat],
+    status_code=200,
+    tags=["analytics"],
+    summary="Daily generation/publication/rejection stats",
+)
+async def api_daily_stats(request: Request, days: int = 30, pipeline_id: int | None = None):
+    """Get daily generation/publication/rejection stats as JSON."""
+    db = deps.get_db(request)
+    analytics = ContentAnalyticsService(db)
+    stats = await analytics.get_daily_stats(days=max(1, days), pipeline_id=pipeline_id)
+    return JSONResponse([dataclasses.asdict(row) for row in stats])
+
+
+@router.get("/trends", response_class=HTMLResponse)
+async def trends_page(request: Request, days: int = 7):
+    """Render the trends skeleton; the NLP-heavy aggregations load lazily (#756)."""
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/trends.html", {"days": _norm_days(days)}
+    )
+
+
+@router.get("/trends/fragments/topics", response_class=HTMLResponse)
+async def fragment_trends_topics(request: Request, days: int = 7):
+    topics = await _trend_svc(request).get_trending_topics(days=_norm_days(days), limit=20)
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/_trends_topics.html", {"topics": topics}
+    )
+
+
+@router.get("/trends/fragments/channels", response_class=HTMLResponse)
+async def fragment_trends_channels(request: Request, days: int = 7):
+    channels = await _trend_svc(request).get_trending_channels(days=_norm_days(days), limit=10)
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/_trends_channels.html", {"channels": channels}
+    )
+
+
+@router.get("/trends/fragments/emojis", response_class=HTMLResponse)
+async def fragment_trends_emojis(request: Request, days: int = 7):
+    emojis = await _trend_svc(request).get_trending_emojis(days=_norm_days(days), limit=15)
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/_trends_emojis.html", {"emojis": emojis}
+    )
+
+
+@router.get(
+    "/trends/topics",
+    response_model=list[TrendingTopicItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Trending topics (keywords)",
+)
+async def api_trending_topics(request: Request, days: int = 7, limit: int = 20):
+    """Get trending topics as JSON."""
+    db = deps.get_db(request)
+    trend = TrendService(db)
+    topics = await trend.get_trending_topics(
+        days=_clamp_positive(days, _MAX_TREND_DAYS),
+        limit=_clamp_positive(limit, _MAX_TREND_LIMIT),
+    )
+    return JSONResponse([dataclasses.asdict(row) for row in topics])
+
+
+@router.get(
+    "/trends/channels",
+    response_model=list[TrendingChannelItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Trending channels by average views",
+)
+async def api_trending_channels(request: Request, days: int = 7, limit: int = 10):
+    """Get trending channels as JSON."""
+    db = deps.get_db(request)
+    trend = TrendService(db)
+    channels = await trend.get_trending_channels(
+        days=_clamp_positive(days, _MAX_TREND_DAYS),
+        limit=_clamp_positive(limit, _MAX_TREND_LIMIT),
+    )
+    return JSONResponse([dataclasses.asdict(row) for row in channels])
+
+
+@router.get(
+    "/trends/emojis",
+    response_model=list[TrendingEmojiItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Trending reaction emojis",
+)
+async def api_trending_emojis(request: Request, days: int = 7, limit: int = 15):
+    """Get trending reaction emojis as JSON."""
+    db = deps.get_db(request)
+    trend = TrendService(db)
+    emojis = await trend.get_trending_emojis(
+        days=_clamp_positive(days, _MAX_TREND_DAYS),
+        limit=_clamp_positive(limit, _MAX_TREND_LIMIT),
+    )
+    return JSONResponse([dataclasses.asdict(row) for row in emojis])
+
+
+# ── Channel analytics ────────────────────────────────────────────
+
+
+@router.get("/channels", response_class=HTMLResponse)
+async def channel_analytics_page(request: Request, channel_id: int = 0, days: int = 30):
+    """Render the per-channel analytics skeleton.
+
+    The channel selector (``get_active_channels()``) is loaded lazily via an
+    HTMX fragment so the page paints instantly on large databases (#951).
+    """
+    days = days if days in (7, 14, 30, 90) else 30
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "analytics/channels.html",
+        {
+            "selected_channel_id": channel_id,
+            "days": days,
+        },
+    )
+
+
+def _svc(request: Request) -> ChannelAnalyticsService:
+    return ChannelAnalyticsService(deps.get_db(request))
+
+
+@router.get("/channels/fragments/selector", response_class=HTMLResponse)
+async def fragment_channel_selector(request: Request, channel_id: int = 0):
+    """Channel selector dropdown loaded lazily by the channels page (#951)."""
+    channels = await _svc(request).get_active_channels()
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "analytics/_channel_selector.html",
+        {
+            "channels": [dataclasses.asdict(c) for c in channels],
+            "selected_channel_id": channel_id,
+        },
+    )
+
+
+@router.get(
+    "/channels/api/overview",
+    response_model=ChannelOverviewResponse,
+    status_code=200,
+    tags=["analytics"],
+    summary="Single-channel summary card",
+)
+async def api_channel_overview(request: Request, channel_id: int, days: int = 30):
+    """Get the summary card for one channel (subscribers, ERR, post counts, averages)."""
+    overview = await _svc(request).get_channel_overview(channel_id, days=max(1, days))
+    return JSONResponse(dataclasses.asdict(overview))
+
+
+def _rating_svc(request: Request) -> ChannelAnalysisService:
+    return ChannelAnalysisService(deps.get_db(request))
+
+
+@router.get(
+    "/channels/api/ratings",
+    response_model=list[ChannelRatingItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Channel quality ratings (usefulness × genre)",
+)
+async def api_channel_ratings(
+    request: Request,
+    useful: str | None = None,
+    genre: str | None = None,
+    limit: int = 100,
+):
+    """Read-only channel ratings (usefulness × genre) as JSON (#968)."""
+    ratings = await _rating_svc(request).list_ratings(
+        useful=useful, genre=genre, limit=_clamp_positive(limit, _MAX_RATING_LIMIT)
+    )
+    return JSONResponse([r.model_dump(mode="json") for r in ratings])
+
+
+@router.get("/channels/ratings", response_class=HTMLResponse)
+async def channel_ratings_page(
+    request: Request,
+    useful: str | None = None,
+    genre: str | None = None,
+    limit: int = 100,
+):
+    """Minimal channel-ratings table (#968). Read-only; full two-axis UI is a follow-up."""
+    limit = _clamp_positive(limit, _MAX_RATING_LIMIT)
+    ratings = await _rating_svc(request).list_ratings(useful=useful, genre=genre, limit=limit)
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "analytics/channel_ratings.html",
+        {
+            "ratings": ratings,
+            "selected_useful": useful or "",
+            "selected_genre": genre or "",
+            "limit": limit,
+        },
+    )
+
+
+def _verdict_fragment(request: Request, *, rating=None, error: str | None = None) -> HTMLResponse:
+    """Render the LLM-judge verdict as an HTMX swap fragment (#999)."""
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "analytics/_rating_verdict.html",
+        {"rating": rating, "error": error},
+    )
+
+
+@router.post("/channels/rate", response_class=HTMLResponse)
+async def rate_channel(
+    request: Request,
+    channel_id: int = Form(...),
+    model: str = Form(""),
+    sample_size: int = Form(_DEFAULT_RATING_SAMPLE),
+):
+    """Run the LLM judge for one channel and upsert its verdict (#999).
+
+    Web parity for the CLI ``analytics channel-rate`` write path (#994): this is
+    the *only* web entry point that invokes ``classify_channel`` — a provider
+    spend + ``channel_ratings`` write. Returns an HTMX fragment with the fresh
+    verdict (server-driven swap, per the project's HTMX-over-fetch policy);
+    every guard branch renders the same fragment so the UI always swaps.
+    """
+    provider_service = deps.get_llm_provider_service(request)
+    if not provider_service.has_providers():
+        return _verdict_fragment(
+            request,
+            error=(
+                "LLM-провайдер не настроен. Добавьте его на странице /settings "
+                "или задайте ключ (например OPENAI_API_KEY)."
+            ),
+        )
+
+    # A mistyped model must NOT silently fall back to the stub provider and
+    # persist a meaningless verdict — surface the error instead (mirrors the
+    # CLI guard from #994 / cycle-review).
+    try:
+        provider_callable = provider_service.resolve_provider_callable(model or None)
+    except ValueError as exc:
+        return _verdict_fragment(request, error=str(exc))
+
+    svc = _rating_svc(request)
+    sample_size = _clamp_positive(sample_size, _MAX_RATING_SAMPLE)
+    # Guard against an empty channel before spending a provider call: no posts
+    # would otherwise persist a defaulted "useless/original" verdict (n_total=0)
+    # that looks valid but carries zero signal.
+    posts = await svc.sample_posts(channel_id, sample_size)
+    if not posts:
+        return _verdict_fragment(
+            request,
+            error=f"У канала {channel_id} нет текстовых постов для оценки.",
+        )
+
+    try:
+        rating = await svc.classify_channel(
+            channel_id, provider_callable=provider_callable, sample_size=sample_size
+        )
+    except Exception as exc:  # provider/network/parse failure
+        return _verdict_fragment(request, error=f"Судья не отработал: {exc}")
+
+    return _verdict_fragment(request, rating=rating)
+
+
+@router.get("/channels/api/subscribers")
+async def api_subscriber_history(request: Request, channel_id: int, days: int = 30):
+    data = await _svc(request).get_subscriber_history(channel_id, days)
+    return JSONResponse(data)
+
+
+@router.get("/channels/api/views")
+async def api_views_timeseries(request: Request, channel_id: int, days: int = 30):
+    data = await _svc(request).get_views_timeseries(channel_id, days)
+    return JSONResponse(data)
+
+
+@router.get("/channels/api/frequency")
+async def api_post_frequency(request: Request, channel_id: int, days: int = 30):
+    data = await _svc(request).get_post_frequency(channel_id, days)
+    return JSONResponse(data)
+
+
+@router.get("/channels/api/err")
+async def api_err(request: Request, channel_id: int):
+    svc = _svc(request)
+    err = await svc.get_err(channel_id)
+    err24 = await svc.get_err24(channel_id)
+    return JSONResponse({"err": err, "err24": err24})
+
+
+@router.get("/channels/api/hourly")
+async def api_hourly_activity(request: Request, channel_id: int, days: int = 30):
+    data = await _svc(request).get_hourly_activity(channel_id, days)
+    return JSONResponse(data)
+
+
+@router.get("/channels/api/citation")
+async def api_citation_stats(request: Request, channel_id: int):
+    stats = await _svc(request).get_citation_stats(channel_id)
+    return JSONResponse(dataclasses.asdict(stats))
+
+
+@router.get("/channels/api/heatmap")
+async def api_heatmap(request: Request, channel_id: int, days: int = 30):
+    data = await _svc(request).get_heatmap(channel_id, days)
+    return JSONResponse(data)
+
+
+@router.get("/channels/api/cross-citations")
+async def api_cross_citations(
+    request: Request, channel_id: int, days: int = 30, limit: int = 20,
+):
+    data = await _svc(request).get_cross_channel_citations(channel_id, days, limit)
+    return JSONResponse(data)
+
+
+@router.get(
+    "/messages/top",
+    response_model=list[TopMessageItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Top messages by total reactions",
+)
+async def api_messages_top(
+    request: Request, limit: int = 20, date_from: str = "", date_to: str = "",
+):
+    """Top messages by reactions (parity with CLI `analytics top`)."""
+    db = deps.get_db(request)
+    limit = max(1, min(limit, 100))
+    rows = await db.get_top_messages(limit=limit, date_from=date_from or None, date_to=date_to or None)
+    return JSONResponse(rows)
+
+
+@router.get(
+    "/messages/hourly",
+    response_model=list[HourlyMessageItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Message distribution by hour-of-day",
+)
+async def api_messages_hourly(
+    request: Request,
+    date_from: str = "",
+    date_to: str = "",
+):
+    """Message distribution by hour as JSON (parity with CLI `analytics hourly`)."""
+    db = deps.get_db(request)
+    rows = await db.get_hourly_activity(date_from=date_from or None, date_to=date_to or None)
+    return JSONResponse(rows)
+
+
+@router.get(
+    "/pipelines/stats",
+    response_model=list[PipelineStat],
+    status_code=200,
+    tags=["analytics"],
+    summary="Per-pipeline statistics (alias of /content/api/pipelines)",
+)
+async def api_pipeline_stats_alias(request: Request, pipeline_id: int | None = None):
+    """Pipeline statistics (parity with CLI `analytics pipeline-stats`)."""
+    db = deps.get_db(request)
+    stats = await ContentAnalyticsService(db).get_pipeline_stats(pipeline_id)
+    return JSONResponse([dataclasses.asdict(s) for s in stats])
+
+
+@router.get(
+    "/messages/velocity",
+    response_model=list[MessageVelocityItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Daily message velocity",
+)
+async def api_message_velocity(request: Request, days: int = 30):
+    """Daily message velocity (parity with CLI `analytics velocity`)."""
+    db = deps.get_db(request)
+    data = await TrendService(db).get_message_velocity(days=_clamp_positive(days, _MAX_TREND_DAYS))
+    return JSONResponse([dataclasses.asdict(v) for v in data])
+
+
+@router.get(
+    "/peak-hours",
+    response_model=list[PeakHourItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Peak posting hours",
+)
+async def api_peak_hours(request: Request, days: int = 30):
+    """Peak posting hours (parity with CLI `analytics peak-hours`)."""
+    db = deps.get_db(request)
+    data = await TrendService(db).get_peak_hours(days=_clamp_positive(days, _MAX_TREND_DAYS))
+    return JSONResponse([dataclasses.asdict(h) for h in data])

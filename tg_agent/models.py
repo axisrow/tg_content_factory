@@ -324,7 +324,7 @@ class RuntimeSnapshot(BaseModel):
 # dialogs_history snapshots carry DM/private-group message text (unlike other
 # runtime_snapshots payloads, which only cache names/statuses/counters), so they
 # get a TTL other snapshot types don't need. Shared by the web-layer cache-hit
-# check (tg_agent/web/dialogs/handlers.py) and the worker-layer prune-on-write
+# check (tg_webui/dialogs/handlers.py) and the worker-layer prune-on-write
 # (tg_agent/services/dispatcher/dialogs_mixin.py) so the two stay in lockstep
 # (cycle-review #1299 round 2/3).
 DIALOGS_HISTORY_SNAPSHOT_TTL_SECONDS = 300

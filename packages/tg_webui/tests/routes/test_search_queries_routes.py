@@ -1,0 +1,234 @@
+"""Tests for search_queries routes."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+
+@pytest.fixture
+async def db(base_app):
+    """Get db from base_app."""
+    _, db, _ = base_app
+    return db
+
+
+@pytest.mark.anyio
+async def test_search_queries_page_renders_empty(route_client):
+    """Test search queries page renders empty."""
+    resp = await route_client.get("/search-queries/")
+    assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_search_queries_page_lists_items(route_client):
+    """Test search queries page lists items after add."""
+    await route_client.post(
+        "/search-queries/add",
+        data={"query": "test query", "interval_minutes": "60"},
+    )
+    resp = await route_client.get("/search-queries/")
+    assert resp.status_code == 200
+    assert "test query" in resp.text
+
+
+@pytest.mark.anyio
+async def test_add_search_query_redirects(route_client):
+    """Test add search query redirects."""
+    resp = await route_client.post(
+        "/search-queries/add",
+        data={"query": "new query", "interval_minutes": "30"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=sq_added" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_add_search_query_with_all_fields(route_client):
+    """Test add search query with all fields."""
+    resp = await route_client.post(
+        "/search-queries/add",
+        data={
+            "query": "complex query",
+            "interval_minutes": "120",
+            "is_regex": "on",  # checkbox sends "on" when checked
+            "is_fts": "",  # is_regex and is_fts are mutually exclusive
+            "notify_on_collect": "on",
+            "track_stats": "on",
+            "exclude_patterns": "spam",
+            "max_length": "1000",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=sq_added" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_add_search_query_with_chat_filter_saves_and_warns(route_client, db):
+    """Chat filter is saved even when it cannot be resolved locally."""
+    resp = await route_client.post(
+        "/search-queries/add",
+        data={"query": "scoped query", "interval_minutes": "60", "chat_filter": "@missing_chat"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert "msg=sq_added" in resp.headers["location"]
+    assert "warning=" in resp.headers["location"]
+    queries = await db.repos.search_queries.get_all()
+    assert queries[0].chat_filter == "@missing_chat"
+
+
+@pytest.mark.anyio
+async def test_add_search_query_invalid_regex_rejected(route_client, db):
+    """An un-compilable regex pattern redirects to invalid_value and is not saved (#1607)."""
+    resp = await route_client.post(
+        "/search-queries/add",
+        data={"query": "[bad", "interval_minutes": "60", "is_regex": "on", "is_fts": ""},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=invalid_value" in resp.headers["location"]
+    assert await db.repos.search_queries.get_all() == []
+
+
+@pytest.mark.anyio
+async def test_toggle_search_query(route_client):
+    """Test toggle search query."""
+    await route_client.post(
+        "/search-queries/add",
+        data={"query": "toggle test", "interval_minutes": "60"},
+    )
+    resp = await route_client.post("/search-queries/1/toggle", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=sq_toggled" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_edit_search_query(route_client):
+    """Test edit search query."""
+    await route_client.post(
+        "/search-queries/add",
+        data={"query": "original", "interval_minutes": "60"},
+    )
+    resp = await route_client.post(
+        "/search-queries/1/edit",
+        data={"query": "edited query", "interval_minutes": "90"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=sq_edited" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_delete_search_query(route_client, db):
+    """Test delete search query."""
+    await route_client.post(
+        "/search-queries/add",
+        data={"query": "to delete", "interval_minutes": "60"},
+    )
+    resp = await route_client.post("/search-queries/1/delete", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=sq_deleted" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_run_search_query(route_client):
+    """Test run search query."""
+    await route_client.post(
+        "/search-queries/add",
+        data={"query": "run test", "interval_minutes": "60"},
+    )
+
+    with patch("tg_webui.search_queries.handlers.deps.search_query_service") as mock_svc:
+        mock_svc.return_value.run_once = AsyncMock()
+        resp = await route_client.post("/search-queries/1/run", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "msg=sq_run" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_scheduler_synced_after_add(route_client, db):
+    """Adding a search query enqueues a scheduler.reconcile command (#1236).
+
+    The old in-process sync_search_query_jobs() call was a no-op behind the web
+    container; the mutation now reaches the live worker scheduler via a reconcile
+    command instead.
+    """
+    resp = await route_client.post(
+        "/search-queries/add",
+        data={"query": "sync test", "interval_minutes": "60"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    reconciles = await db.repos.telegram_commands.list_commands(command_type="scheduler.reconcile")
+    assert len(reconciles) == 1
+
+
+@pytest.mark.anyio
+async def test_scheduler_synced_after_toggle(route_client, db):
+    """Toggling a search query enqueues a scheduler.reconcile command (#1236)."""
+    await route_client.post(
+        "/search-queries/add",
+        data={"query": "sync toggle", "interval_minutes": "60"},
+    )
+    # The add already enqueued one reconcile; toggling must enqueue another distinct
+    # command (dedup only collapses identical PENDING ones, so drain first).
+    await db.execute_write("DELETE FROM telegram_commands", ())
+
+    resp = await route_client.post("/search-queries/1/toggle", follow_redirects=False)
+    assert resp.status_code == 303
+    reconciles = await db.repos.telegram_commands.list_commands(command_type="scheduler.reconcile")
+    assert len(reconciles) == 1
+
+
+@pytest.mark.anyio
+async def test_delete_nonexistent_no_crash(route_client):
+    """Test delete nonexistent query doesn't crash."""
+    resp = await route_client.post("/search-queries/999999/delete", follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.anyio
+async def test_add_search_query_missing_query(route_client):
+    """POST /search-queries/add without query returns 422."""
+    resp = await route_client.post("/search-queries/add", data={}, follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.anyio
+async def test_edit_search_query_missing_query(route_client):
+    """POST /search-queries/{id}/edit without query returns 422."""
+    resp = await route_client.post("/search-queries/1/edit", data={}, follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.anyio
+async def test_get_search_query_json(route_client, db):
+    from tg_agent.models import SearchQuery
+
+    sq_id = await db.repos.search_queries.add(SearchQuery(query="btc", interval_minutes=60))
+    resp = await route_client.get(f"/search-queries/{sq_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == sq_id
+    assert data["query"] == "btc"
+
+
+@pytest.mark.anyio
+async def test_get_search_query_not_found(route_client):
+    resp = await route_client.get("/search-queries/9999")
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_get_search_query_stats_json(route_client, db):
+    from tg_agent.models import SearchQuery
+
+    sq_id = await db.repos.search_queries.add(SearchQuery(query="eth", interval_minutes=60))
+    resp = await route_client.get(f"/search-queries/{sq_id}/stats?days=7")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)

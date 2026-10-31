@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import typer
 
+from tests.helpers import patch_serve_create_app
 from tg_agent.config import AppConfig
 from tg_agent.database import Database
 from tg_agent.models import Account, Channel, CollectionTaskStatus, NotificationBot
@@ -1020,7 +1021,7 @@ class TestServeCommand:
 
         with (
             patch("tg_agent.cli.commands.serve.load_config") as mock_load,
-            patch("tg_agent.cli.commands.serve.create_app") as mock_create,
+            patch_serve_create_app() as mock_create,
             patch("tg_agent.cli.commands.serve.pid_file_path") as mock_pid_path,
             patch("tg_agent.cli.commands.serve.register_current_process"),
             patch("tg_agent.cli.commands.serve.unregister_current_process"),
@@ -1045,7 +1046,7 @@ class TestServeCommand:
 
         with (
             patch("tg_agent.cli.commands.serve.load_config") as mock_load,
-            patch("tg_agent.cli.commands.serve.create_app") as mock_create,
+            patch_serve_create_app() as mock_create,
             patch("tg_agent.cli.commands.serve.pid_file_path") as mock_pid_path,
             patch("tg_agent.cli.commands.serve.register_current_process") as mock_register,
             patch("tg_agent.cli.commands.serve.unregister_current_process") as mock_unregister,
@@ -1069,7 +1070,7 @@ class TestServeCommand:
 
         with (
             patch("tg_agent.cli.commands.serve.load_config") as mock_load,
-            patch("tg_agent.cli.commands.serve.create_app"),
+            patch_serve_create_app(),
             patch("tg_agent.cli.commands.serve.pid_file_path") as mock_pid_path,
             patch("tg_agent.cli.commands.serve.register_current_process") as mock_register,
         ):

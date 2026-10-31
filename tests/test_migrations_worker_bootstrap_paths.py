@@ -668,7 +668,7 @@ async def test_publish_snapshots_notification_exception():
 
 # ============================================================================
 # 3 & 4. src/web/routes/agent.py + channels.py
-#   (moved to tests/routes/test_agent_channels_routes_regression.py to access route_client)
+#   (moved to packages/tg_webui/tests/routes/test_agent_channels_routes_regression.py to access route_client)
 # ============================================================================
 
 
@@ -992,7 +992,7 @@ def test_has_valid_secrets_with_empty_secrets():
 @pytest.mark.anyio
 async def test_load_telegram_credentials_from_config():
     """Covers load_telegram_credentials with config values."""
-    from tg_agent.web.bootstrap import load_telegram_credentials
+    from tg_agent.runtime.bootstrap import load_telegram_credentials
 
     config = AppConfig()
     config.telegram.api_id = 12345
@@ -1008,7 +1008,7 @@ async def test_load_telegram_credentials_from_config():
 @pytest.mark.anyio
 async def test_load_telegram_credentials_from_db():
     """Covers load_telegram_credentials falling back to DB settings."""
-    from tg_agent.web.bootstrap import load_telegram_credentials
+    from tg_agent.runtime.bootstrap import load_telegram_credentials
 
     config = AppConfig()
     config.telegram.api_id = 0
@@ -1024,7 +1024,7 @@ async def test_load_telegram_credentials_from_db():
 @pytest.mark.anyio
 async def test_load_telegram_credentials_no_db_fallback():
     """Covers load_telegram_credentials with no DB values."""
-    from tg_agent.web.bootstrap import load_telegram_credentials
+    from tg_agent.runtime.bootstrap import load_telegram_credentials
 
     config = AppConfig()
     config.telegram.api_id = 0
@@ -1143,7 +1143,7 @@ def mock_search_bundle_for_local():
 @pytest.mark.anyio
 async def test_cancel_bg_tasks_empty():
     """Covers _cancel_bg_tasks with empty set."""
-    from tg_agent.web.bootstrap import _cancel_bg_tasks
+    from tg_agent.runtime.bootstrap import _cancel_bg_tasks
 
     tasks: set = set()
     await _cancel_bg_tasks(tasks)
@@ -1153,7 +1153,7 @@ async def test_cancel_bg_tasks_empty():
 @pytest.mark.anyio
 async def test_cancel_bg_tasks_with_tasks():
     """Covers _cancel_bg_tasks cancelling active tasks."""
-    from tg_agent.web.bootstrap import _cancel_bg_tasks
+    from tg_agent.runtime.bootstrap import _cancel_bg_tasks
 
     async def _long_task():
         await asyncio.sleep(100)

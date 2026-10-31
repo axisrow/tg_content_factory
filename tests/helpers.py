@@ -4,37 +4,28 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 import hashlib
 import json
 import subprocess
 import sys
 import tomllib
 from collections.abc import Callable
-from contextlib import asynccontextmanager
+from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
 from telethon_floodgate import ResolveRateLimiter
 
-from tg_agent.collection_queue import CollectionQueue
 from tg_agent.config import AppConfig, TelegramRuntimeConfig
 from tg_agent.database import Database
-from tg_agent.models import Account, Channel
-from tg_agent.scheduler.service import SchedulerManager
-from tg_agent.search.ai_search import AISearchEngine
-from tg_agent.search.engine import SearchEngine
+from tg_agent.models import Account, Channel, IncomingDm
 from tg_agent.telegram.client_pool import ClientPool
-from tg_agent.telegram.collector import Collector
 from tg_agent.telegram.resolve_guard import ResolveGuardMixin, build_resolve_rate_limiter
-from tg_agent.web.app import create_app
 from tg_shared.auth import TelegramAuth
 
 
@@ -822,51 +813,6 @@ def make_test_config(
     return config
 
 
-async def build_web_app(
-    config: AppConfig,
-    harness: RealPoolHarness,
-    *,
-    db: Database | None = None,
-    add_account: str | None = None,
-    session_secret: str = "test_secret_key",
-) -> tuple[FastAPI, Database]:
-    app = create_app(config)
-    if db is None:
-        db = Database(
-            config.database.path,
-            session_encryption_secret=config.security.session_encryption_key,
-        )
-        await db.initialize()
-    app.state.db = db
-    app.state.auth = harness.auth
-    app.state.pool = harness.pool
-    app.state.notifier = None
-    collector = Collector(app.state.pool, db, config.scheduler)
-    app.state.collector = collector
-    app.state.collection_queue = CollectionQueue(collector, db)
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(config.scheduler)
-    app.state.session_secret = session_secret
-    if add_account:
-        await db.add_account(Account(phone=add_account, session_string="test_session"))
-    return app, db
-
-
-@asynccontextmanager
-async def make_auth_client(app, *, password: str = "testpass", with_auth: bool = True):
-    transport = ASGITransport(app=app)
-    headers = {"Origin": "http://test"}
-    if with_auth:
-        auth_header = base64.b64encode(f":{password}".encode()).decode()
-        headers["Authorization"] = f"Basic {auth_header}"
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        follow_redirects=True,
-        headers=headers,
-    ) as c:
-        yield c
 
 
 def make_channel_entity(
@@ -997,5 +943,108 @@ def fast_llm_error_recovery(max_retries: int = 0):
             base_delay=0.0,
             max_delay=0.0,
             jitter=False,
+        )
+    )
+
+
+@contextmanager
+def patch_serve_create_app(**mock_kwargs):
+    """Patch the web app factory ``serve`` loads lazily from tg_webui (#1720 wave 3).
+
+    ``serve_web`` imports the optional web package through ``_load_web_surface``;
+    stub it so the core CLI tests never need tg_webui installed.
+    """
+    create_app = MagicMock(**mock_kwargs)
+    with patch("tg_agent.cli.commands.serve._load_web_surface", return_value=create_app):
+        yield create_app
+
+
+def fake_tg_tui_modules(app_cls) -> dict[str, ModuleType]:
+    """``sys.modules`` stand-ins for the optional tg_tui package (#1720 wave 2).
+
+    Core CLI tests patch these in so they never need the TUI package installed.
+    """
+    package = ModuleType("tg_tui")
+    app_module = ModuleType("tg_tui.app")
+    app_module.AgentTuiApp = app_cls
+    package.app = app_module
+    return {"tg_tui": package, "tg_tui.app": app_module}
+
+
+@contextmanager
+def hide_packages(*names: str):
+    """Make ``names`` import as if they were not installed (#1720).
+
+    A ``None`` entry in ``sys.modules`` does not model a missing distribution:
+    ``import pkg.sub`` then fails with ``exc.name == "pkg.sub"``, whereas an
+    absent package fails with ``exc.name == "pkg"`` — the case the CLI's
+    optional-surface loaders (tg_webui, tg_tui) tell apart from a broken import
+    inside an installed package. This finder raises exactly that error.
+    """
+    import importlib.abc
+
+    class _Hider(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path=None, target=None):
+            top = fullname.partition(".")[0]
+            if top in names:
+                raise ModuleNotFoundError(f"No module named {top!r}", name=top)
+            return None
+
+    hidden = [key for key in sys.modules if key.partition(".")[0] in names]
+    finder = _Hider()
+    with patch.dict(sys.modules):
+        for key in hidden:
+            del sys.modules[key]
+        sys.meta_path.insert(0, finder)
+        try:
+            yield
+        finally:
+            sys.meta_path.remove(finder)
+
+
+def _is_path_param(part: str) -> bool:
+    return part.startswith("{") and part.endswith("}")
+
+def _paths_match(actual_path: str, documented_path: str) -> bool:
+    actual_parts = actual_path.strip("/").split("/") if actual_path.strip("/") else []
+    documented_parts = documented_path.strip("/").split("/") if documented_path.strip("/") else []
+    if len(actual_parts) != len(documented_parts):
+        return False
+    # A segment matches only when it is literally equal, or BOTH sides are path
+    # params. Treating a single param segment as a wildcard (e.g. documented
+    # {id} vs actual static "notifications") would let an unrelated static
+    # sibling satisfy a removed dynamic route, false-greening the guard.
+    return all(
+        actual == documented or (_is_path_param(actual) and _is_path_param(documented))
+        for actual, documented in zip(actual_parts, documented_parts, strict=True)
+    )
+
+def _route_exists(actual_routes: set[tuple[str, str]], method: str, documented_path: str) -> bool:
+    return any(
+        actual_method == method and _paths_match(actual_path, documented_path)
+        for actual_method, actual_path in actual_routes
+    )
+
+
+def _dialog_stream(dialogs):
+    async def _iter():
+        for dialog in dialogs:
+            yield dialog
+
+    return _iter()
+
+
+async def _record_dm(
+    db, *, chat_id: int = 42, message_id: int = 7, text: str = "привет", minutes_ago: int = 0
+) -> None:
+    received = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    await db.repos.incoming_dms.record(
+        IncomingDm(
+            phone="+10000000001",
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            message_date=received,
+            received_at=received,
         )
     )

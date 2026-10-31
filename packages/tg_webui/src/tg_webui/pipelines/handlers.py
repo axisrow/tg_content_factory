@@ -1,0 +1,1051 @@
+from __future__ import annotations
+
+import logging
+from datetime import datetime
+from typing import cast
+
+from fastapi import Request
+
+from tg_agent.agent.prompt_template import ALLOWED_TEMPLATE_VARIABLES
+from tg_agent.models import PipelineGenerationBackend, PipelinePublishMode
+from tg_agent.services.pipeline_filters import filter_messages
+from tg_agent.services.pipeline_llm_requirements import (
+    get_dag_source_channel_ids,
+    get_react_emoji_config,
+    pipeline_is_dag,
+    pipeline_needs_llm,
+    pipeline_needs_publish_mode,
+)
+from tg_agent.services.pipeline_service import (
+    PipelineScopeError,
+    PipelineService,
+    PipelineValidationError,
+)
+from tg_agent.services.pipeline_service import (
+    to_since_hours as _to_since_hours,
+)
+from tg_agent.utils.json import safe_json_dumps
+from tg_webui import deps
+from tg_webui.pipelines.forms import (
+    CreateWizardForm,
+    PipelineAutoSelectVariantForm,
+    PipelineCreateForm,
+    PipelineEditForm,
+    PipelineGenerateForm,
+    PipelineImportForm,
+    PipelinePublishForm,
+    PipelineRunForm,
+    PipelineSelectVariantForm,
+    PipelineTemplateCreateForm,
+    build_filter_config_from_form,
+    get_filter_config,
+    parse_target_refs,
+)
+from tg_webui.pipelines.responses import (
+    PipelineFile,
+    PipelineJson,
+    PipelineRedirect,
+    PipelineStream,
+    PipelineTemplate,
+    PipelineUrlRedirect,
+)
+from tg_webui.scheduler.commands import enqueue_scheduler_reconcile
+
+logger = logging.getLogger("tg_webui.routes.pipelines")
+
+
+def _pipeline_redirect(
+    code: str,
+    *,
+    error: bool = False,
+    phone: str | None = None,
+) -> PipelineRedirect:
+    return PipelineRedirect(code=code, error=error, phone=phone)
+
+
+def _target_refs(values):
+    return parse_target_refs(values)
+
+
+def _get_filter_config(pipeline) -> dict | None:
+    return get_filter_config(pipeline)
+
+
+def _build_filter_config_from_form(
+    *,
+    filter_present: str,
+    filter_message_kinds: list[str],
+    filter_service_actions: list[str],
+    filter_media_types: list[str],
+    filter_sender_kinds: list[str],
+    filter_keywords: str,
+    filter_regex: str,
+    filter_has_text: str,
+) -> dict | None:
+    return build_filter_config_from_form(
+        filter_present=filter_present,
+        filter_message_kinds=filter_message_kinds,
+        filter_service_actions=filter_service_actions,
+        filter_media_types=filter_media_types,
+        filter_sender_kinds=filter_sender_kinds,
+        filter_keywords=filter_keywords,
+        filter_regex=filter_regex,
+        filter_has_text=filter_has_text,
+    )
+
+
+async def api_channels_search(request: Request, q: str = ""):
+    """AJAX endpoint for searchable picker — returns up to 50 channels matching *q*."""
+    db = deps.get_db(request)
+    query = q.strip()
+    if len(query) < 2:
+        cur = await db.execute(
+            "SELECT channel_id, title, username FROM channels ORDER BY id DESC LIMIT 50",
+        )
+        rows = await cur.fetchall()
+        items = [
+            {
+                "value": row["channel_id"],
+                "title": row["title"] or str(row["channel_id"]),
+                "username": row["username"] or "",
+                "group": "channel",
+            }
+            for row in rows
+        ]
+        return PipelineJson(items)
+    cur = await db.execute(
+        """SELECT channel_id, title, username FROM channels
+           WHERE (LOWER(title) LIKE ? OR LOWER(username) LIKE ? OR CAST(channel_id AS TEXT) LIKE ?)
+           ORDER BY channel_id LIMIT 50""",
+        (f"%{query.lower()}%", f"%{query.lower()}%", f"%{query}%"),
+    )
+    rows = await cur.fetchall()
+    items = [
+        {
+            "value": row["channel_id"],
+            "title": row["title"] or str(row["channel_id"]),
+            "username": row["username"] or "",
+            "group": "channel",
+        }
+        for row in rows
+    ]
+    return PipelineJson(items)
+
+
+async def _page_context(request: Request) -> dict:
+    svc = deps.pipeline_service(request)
+    channels = await deps.get_channel_bundle(request).list_channels(include_filtered=True)
+    accounts = await deps.get_account_bundle(request).list_account_summaries()
+    selected_phone = request.query_params.get("phone") or (accounts[0].phone if accounts else "")
+    if selected_phone:
+        refresh = request.query_params.get("refresh") == "1"
+        try:
+            await deps.channel_service(request).get_my_dialogs(selected_phone, refresh=refresh)
+        except Exception:
+            logger.warning("Failed to refresh dialog cache for %s", selected_phone, exc_info=True)
+    cached_dialogs = await svc.list_cached_dialogs_by_phone()
+    items = await svc.get_with_relations()
+    # Annotate each item with whether the pipeline actually needs an LLM provider.
+    # Used by the template to disable Generate/Run buttons per-pipeline instead of
+    # globally — non-LLM pipelines (SOURCE→PUBLISH DAGs) remain runnable.
+    needs_llm_map: dict[int, bool] = {}
+    for item in items:
+        pipeline = item.get("pipeline") if isinstance(item, dict) else None
+        if pipeline is None or pipeline.id is None:
+            continue
+        try:
+            needs_llm_map[pipeline.id] = pipeline_needs_llm(pipeline)
+        except Exception:
+            # Fail safe: assume LLM is needed on unexpected shapes.
+            logger.warning("pipeline_needs_llm failed for pipeline_id=%s", pipeline.id, exc_info=True)
+            needs_llm_map[pipeline.id] = True
+    # gather next_run times for pipelines (batch query)
+    next_runs: dict[int, str | None] = {}
+    try:
+        scheduler = deps.get_scheduler(request)
+        # The web-mode shim reads next_run from the scheduler_jobs snapshot
+        # bound by get_potential_jobs(); rebind per render (same pattern as
+        # _build_jobs_context) so a fresh container is not silently empty. (#1439)
+        await scheduler.get_potential_jobs()
+        all_jobs = scheduler.get_all_jobs_next_run()
+        for item in items:
+            pipeline = item.get("pipeline") if isinstance(item, dict) else None
+            if pipeline is None or pipeline.id is None:
+                continue
+            # content_generate_<id> is the single periodic generation job since
+            # #835/2 (pipeline_run_<id> is enqueued as a task, not scheduled,
+            # and sync_pipeline_jobs removes leftovers) — looking up
+            # pipeline_run_ made this column empty in both runtime modes. (#1439)
+            job_id = f"content_generate_{pipeline.id}"
+            nr = cast(datetime | None, all_jobs.get(job_id))
+            next_runs[pipeline.id] = nr.isoformat() if nr else None
+    except Exception:
+        next_runs = {}
+    ctx = {
+        "items": items,
+        "channels": channels,
+        "accounts": accounts,
+        "cached_dialogs": cached_dialogs,
+        "selected_phone": selected_phone,
+        "prompt_variables": sorted(ALLOWED_TEMPLATE_VARIABLES),
+        "publish_modes": list(PipelinePublishMode),
+        "generation_backends": list(PipelineGenerationBackend),
+        "next_runs": next_runs,
+        "llm_configured": deps.get_llm_provider_service(request).has_providers(),
+        "needs_llm_map": needs_llm_map,
+    }
+    # Only query DB for provider statuses when the banner is visible
+    if not ctx["llm_configured"]:
+        ctx["llm_provider_statuses"] = await deps.get_llm_provider_service(request).get_provider_status_list()
+    return ctx
+
+
+async def pipelines_page(request: Request):
+    # Lazyload skeleton (#947): the heavy _page_context (per-account dialog cache
+    # + pipelines-with-relations) runs in the fragment below, not on page render.
+    return PipelineTemplate("pipelines.html", {})
+
+
+async def pipelines_list_fragment(request: Request):
+    return PipelineTemplate("pipelines_content.html", await _page_context(request))
+
+
+async def create_wizard_page(request: Request):
+    svc = deps.pipeline_service(request)
+    accounts = await deps.get_account_bundle(request).list_account_summaries()
+    cached_dialogs = await svc.list_cached_dialogs_by_phone()
+    llm_provider_svc = deps.get_llm_provider_service(request)
+    llm_configured = llm_provider_svc.has_providers()
+    return PipelineTemplate(
+        "pipelines/create.html",
+        {
+            "accounts": accounts,
+            "cached_dialogs": cached_dialogs,
+            "llm_configured": llm_configured,
+        },
+    )
+
+
+async def create_wizard_submit(
+    request: Request,
+    form: CreateWizardForm,
+):
+    if not form.name or not form.pipeline_json:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    import json as _json
+
+    svc = deps.pipeline_service(request)
+    try:
+        graph_data = _json.loads(form.pipeline_json)
+        # Extract llm_model from first LLM node config for pipeline-level setting
+        llm_model = ""
+        for node in graph_data.get("nodes", []):
+            if node.get("type") in ("llm_generate", "llm_refine", "agent_loop"):
+                llm_model = node.get("config", {}).get("model", "") or ""
+                break
+        data = {
+            "name": form.name,
+            "prompt_template": ".",
+            "llm_model": llm_model or None,
+            "source_ids": form.source_channel_ids,
+            "target_refs": form.target_refs,
+            "generate_interval_minutes": form.generate_interval_minutes,
+            "pipeline_json": graph_data,
+            "account_phone": form.account_phone or None,
+        }
+        pipeline_id = await svc.import_json(data)
+    except PipelineValidationError as exc:
+        return _pipeline_redirect(str(exc), error=True)
+    except Exception as exc:
+        logger.warning("create-wizard failed: %s", exc, exc_info=True)
+        return _pipeline_redirect(f"Ошибка: {exc}", error=True)
+    if form.is_active:
+        await svc.toggle(pipeline_id)
+    try:
+        # Web-mode scheduler is a read-only snapshot shim; enqueue a reconcile so the
+        # live worker scheduler re-registers content_generate_<id> jobs (#1236).
+        await enqueue_scheduler_reconcile(request, requested_by="web:pipeline.sync")
+    except Exception:
+        logger.warning("Scheduler sync failed", exc_info=True)
+    if form.run_after:
+        _since = _to_since_hours(form.since_value, form.since_unit)
+        enqueuer = deps.get_task_enqueuer(request)
+        assert enqueuer is not None, "Task enqueuer is required to enqueue pipeline runs"
+        await enqueuer.enqueue_pipeline_run(pipeline_id, since_hours=_since)
+        return _pipeline_redirect("pipeline_run_with_since")
+    return _pipeline_redirect("pipeline_added")
+
+
+async def add_pipeline(
+    request: Request,
+    form: PipelineCreateForm,
+):
+    if not form.name or not form.prompt_template:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    svc: PipelineService = deps.pipeline_service(request)
+    try:
+        new_pipeline_id = await svc.add(
+            name=form.name,
+            prompt_template=form.prompt_template,
+            source_channel_ids=form.source_channel_ids,
+            target_refs=_target_refs(form.target_refs),
+            llm_model=form.llm_model,
+            image_model=form.image_model,
+            publish_mode=form.publish_mode,
+            generation_backend=form.generation_backend,
+            generate_interval_minutes=form.generate_interval_minutes,
+            is_active=form.is_active,
+            ab_num_variants=form.ab_num_variants,
+            ab_auto_select=form.ab_auto_select,
+        )
+    except PipelineValidationError:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    try:
+        # Web-mode scheduler is a read-only snapshot shim; enqueue a reconcile so the
+        # live worker scheduler re-registers content_generate_<id> jobs (#1236).
+        await enqueue_scheduler_reconcile(request, requested_by="web:pipeline.sync")
+    except Exception:
+        logger.warning("Scheduler sync failed", exc_info=True)
+    # Warn if pipeline needs LLM but no provider is configured — still create it.
+    try:
+        created = await svc.get(new_pipeline_id)
+        if created is not None and pipeline_needs_llm(created):
+            if not deps.get_llm_provider_service(request).has_providers():
+                return _pipeline_redirect("pipeline_added_no_llm")
+    except Exception:
+        logger.debug("pipeline_needs_llm check failed after add", exc_info=True)
+    return _pipeline_redirect("pipeline_added")
+
+
+async def edit_pipeline(
+    request: Request,
+    pipeline_id: int,
+    form: PipelineEditForm,
+):
+    if not form.name:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    svc: PipelineService = deps.pipeline_service(request)
+    phone = request.query_params.get("phone")
+    existing = await svc.get(pipeline_id)
+    if existing is None:
+        return _pipeline_redirect("pipeline_invalid", error=True, phone=phone)
+    prompt_template = form.prompt_template
+    generation_backend = form.generation_backend
+    # For DAG pipelines, hidden form fields send defaults — preserve existing values
+    if pipeline_is_dag(existing):
+        if not prompt_template:
+            prompt_template = existing.prompt_template or ""
+        if generation_backend == PipelineGenerationBackend.CHAIN.value and existing.generation_backend:
+            generation_backend = existing.generation_backend.value
+    try:
+        ok = await svc.update(
+            pipeline_id,
+            name=form.name,
+            prompt_template=prompt_template,
+            source_channel_ids=form.source_channel_ids,
+            target_refs=_target_refs(form.target_refs),
+            llm_model=form.llm_model,
+            image_model=form.image_model,
+            publish_mode=form.publish_mode,
+            generation_backend=generation_backend,
+            generate_interval_minutes=form.generate_interval_minutes,
+            is_active=form.is_active,
+            react_emoji=form.react_emoji,
+            filter_config=_build_filter_config_from_form(
+                filter_present=form.filter_present,
+                filter_message_kinds=form.filter_message_kinds,
+                filter_service_actions=form.filter_service_actions,
+                filter_media_types=form.filter_media_types,
+                filter_sender_kinds=form.filter_sender_kinds,
+                filter_keywords=form.filter_keywords,
+                filter_regex=form.filter_regex,
+                filter_has_text=form.filter_has_text,
+            ),
+            dag_source_channel_ids=form.dag_source_channel_ids,
+            account_phone=form.account_phone,
+            ab_num_variants=form.ab_num_variants,
+            ab_auto_select=form.ab_auto_select,
+        )
+    except PipelineValidationError as exc:
+        return _pipeline_redirect(str(exc), error=True, phone=phone)
+    if not ok:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    try:
+        # Web-mode scheduler is a read-only snapshot shim; enqueue a reconcile so the
+        # live worker scheduler re-registers content_generate_<id> jobs (#1236).
+        await enqueue_scheduler_reconcile(request, requested_by="web:pipeline.sync")
+    except Exception:
+        logger.warning("Scheduler sync failed", exc_info=True)
+    return _pipeline_redirect("pipeline_edited")
+
+
+async def toggle_pipeline(request: Request, pipeline_id: int):
+    ok = await deps.pipeline_service(request).toggle(pipeline_id)
+    if not ok:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    try:
+        # Web-mode scheduler is a read-only snapshot shim; enqueue a reconcile so the
+        # live worker scheduler re-registers content_generate_<id> jobs (#1236).
+        await enqueue_scheduler_reconcile(request, requested_by="web:pipeline.sync")
+    except Exception:
+        logger.warning("Scheduler sync failed", exc_info=True)
+    return _pipeline_redirect("pipeline_toggled")
+
+
+async def delete_pipeline(request: Request, pipeline_id: int):
+    await deps.pipeline_service(request).delete(pipeline_id)
+    try:
+        # Web-mode scheduler is a read-only snapshot shim; enqueue a reconcile so the
+        # live worker scheduler re-registers content_generate_<id> jobs (#1236).
+        await enqueue_scheduler_reconcile(request, requested_by="web:pipeline.sync")
+    except Exception:
+        logger.warning("Scheduler sync failed", exc_info=True)
+    return _pipeline_redirect("pipeline_deleted")
+
+
+async def run_pipeline(request: Request, pipeline_id: int, form: PipelineRunForm):
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    # Per-pipeline LLM requirement: pure forward/publish DAGs run fine without a provider.
+    if pipeline_needs_llm(pipeline) and not deps.get_llm_provider_service(request).has_providers():
+        return _pipeline_redirect("llm_not_configured", error=True)
+    try:
+        since_hours = _to_since_hours(form.since_value, form.since_unit)
+        enqueuer = deps.get_task_enqueuer(request)
+        assert enqueuer is not None, "Task enqueuer is required to enqueue pipeline runs"
+        await enqueuer.enqueue_pipeline_run(pipeline_id, since_hours=since_hours)
+    except Exception:
+        logger.warning("Failed to enqueue pipeline run for pipeline_id=%d", pipeline_id, exc_info=True)
+        return _pipeline_redirect("pipeline_run_failed", error=True)
+    return _pipeline_redirect("pipeline_run_enqueued")
+
+
+async def dry_run_pipeline(request: Request, pipeline_id: int):
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    if pipeline_needs_llm(pipeline) and not deps.get_llm_provider_service(request).has_providers():
+        return _pipeline_redirect("llm_not_configured", error=True)
+    try:
+        enqueuer = deps.get_task_enqueuer(request)
+        assert enqueuer is not None, "Task enqueuer is required to enqueue pipeline runs"
+        await enqueuer.enqueue_pipeline_run(pipeline_id, dry_run=True)
+    except Exception:
+        logger.warning("Failed to enqueue dry-run for pipeline_id=%d", pipeline_id, exc_info=True)
+        return _pipeline_redirect("pipeline_run_failed", error=True)
+    return _pipeline_redirect("pipeline_dry_run_enqueued")
+
+
+async def edit_page(request: Request, pipeline_id: int):
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    db = deps.get_db(request)
+    channels = await deps.get_channel_bundle(request).list_channels(include_filtered=True)
+    accounts = await deps.get_account_bundle(request).list_account_summaries()
+    selected_phone = request.query_params.get("phone") or (accounts[0].phone if accounts else "")
+    if selected_phone and request.query_params.get("refresh") == "1":
+        try:
+            await deps.channel_service(request).get_my_dialogs(selected_phone, refresh=True)
+        except Exception:
+            logger.warning("Failed to refresh dialog cache for %s", selected_phone, exc_info=True)
+    cached_dialogs = await svc.list_cached_dialogs_by_phone()
+    sources = await db.repos.content_pipelines.list_sources(pipeline_id)
+    targets = await db.repos.content_pipelines.list_targets(pipeline_id)
+    source_ids = [s.channel_id for s in sources]
+    target_refs = [f"{t.phone}|{t.dialog_id}" for t in targets]
+    return PipelineTemplate(
+        "pipelines/edit.html",
+        {
+            "pipeline": pipeline,
+            "channels": channels,
+            "accounts": accounts,
+            "cached_dialogs": cached_dialogs,
+            "source_ids": source_ids,
+            "target_refs": target_refs,
+            "prompt_variables": sorted(ALLOWED_TEMPLATE_VARIABLES),
+            "generation_backends": list(PipelineGenerationBackend),
+            "publish_modes": list(PipelinePublishMode),
+            "needs_llm": pipeline_needs_llm(pipeline),
+            "needs_publish_mode": pipeline_needs_publish_mode(pipeline),
+            "is_dag": pipeline_is_dag(pipeline),
+            "react_emoji": get_react_emoji_config(pipeline),
+            "filter_config": _get_filter_config(pipeline),
+            "dag_source_channel_ids": get_dag_source_channel_ids(pipeline),
+        },
+    )
+
+
+async def generate_page(request: Request, pipeline_id: int):
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    db = deps.get_db(request)
+    runs = await db.repos.generation_runs.list_by_pipeline(pipeline_id)
+    needs_llm = pipeline_needs_llm(pipeline)
+    llm_configured = deps.get_llm_provider_service(request).has_providers()
+    return PipelineTemplate(
+        "pipelines/generate.html",
+        {
+            "pipeline": pipeline,
+            "runs": runs,
+            "request": request,
+            "needs_llm": needs_llm,
+            "llm_configured": llm_configured,
+        },
+    )
+
+
+async def generate_stream(
+    request: Request,
+    pipeline_id: int,
+    model: str = "",
+    max_tokens: int = 256,
+    temperature: float = 0.0,
+):
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    db = deps.get_db(request)
+    engine = deps.get_search_engine(request)
+
+    provider_service = deps.get_llm_provider_service(request)
+    if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
+        return _pipeline_redirect("llm_not_configured", error=True)
+    if not pipeline_needs_llm(pipeline):
+        return _pipeline_redirect("pipeline_no_llm_nodes", error=True)
+    provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+
+    from tg_agent.services.generation_service import GenerationService
+
+    gen = GenerationService(engine, provider_callable=provider_callable)
+    # Fail-closed (#1077): a source-scope resolution failure must not silently
+    # widen the retrieval to all channels. Abort the run cleanly instead.
+    try:
+        scope = await svc.get_retrieval_scope(pipeline)
+    except PipelineScopeError as exc:
+        return _pipeline_redirect(str(exc), error=True)
+
+    # persist run
+    run_id = await db.repos.generation_runs.create_run(pipeline_id, pipeline.prompt_template)
+    try:
+        await db.repos.generation_runs.set_status(run_id, "running")
+    except Exception:
+        await db.repos.generation_runs.set_status(run_id, "failed")
+        raise
+    async def event_gen():
+        last = None
+        try:
+            async for update in gen.generate_stream(
+                query=scope.query,
+                prompt_template=pipeline.prompt_template,
+                model=(model or pipeline.llm_model),
+                max_tokens=max_tokens,
+                temperature=temperature,
+                channel_id=scope.channel_id,
+            ):
+                last = update
+                data = {
+                    "delta": update.get("delta"),
+                    "text": update.get("generated_text"),
+                    "citations": update.get("citations"),
+                }
+                yield f"data: {safe_json_dumps(data)}\n\n"
+
+            # A mid-stream provider failure ends the generator gracefully (partial
+            # text preserved for the UI) but flags partial/stream_error — it is NOT
+            # a successful run. Persist it as failed with the error recorded instead
+            # of saving truncated text as completed (issue #1034, cycle-review).
+            if last and last.get("stream_error"):
+                await db.repos.generation_runs.set_status(
+                    run_id, "failed", metadata={"stream_error": last["stream_error"]}
+                )
+                yield f"event: error\ndata: {safe_json_dumps({'error': 'Generation interrupted'})}\n\n"
+                return
+
+            # finished successfully
+            final_text = last.get("generated_text") if last else ""
+            metadata = {"citations": last.get("citations", []) if last else []}
+            await db.repos.generation_runs.save_result(run_id, final_text, metadata)
+            await db.repos.generation_runs.set_status(run_id, "completed")
+            yield f"event: done\ndata: {safe_json_dumps({'run_id': run_id})}\n\n"
+        except Exception:
+            logger.exception("Generation stream failed for pipeline_id=%d run_id=%d", pipeline_id, run_id)
+            await db.repos.generation_runs.set_status(run_id, "failed")
+            yield f"event: error\ndata: {safe_json_dumps({'error': 'Generation failed'})}\n\n"
+        except BaseException:
+            await db.repos.generation_runs.set_status(run_id, "failed")
+            raise
+
+    return PipelineStream(event_gen())
+
+
+async def generate_pipeline(
+    request: Request,
+    pipeline_id: int,
+    form: PipelineGenerateForm,
+):
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    db = deps.get_db(request)
+    engine = deps.get_search_engine(request)
+
+    provider_service = deps.get_llm_provider_service(request)
+    if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
+        return _pipeline_redirect("llm_not_configured", error=True)
+
+    from tg_agent.agent.runtime_context import detect_runtime_kind
+    from tg_agent.services.content_generation_service import ContentGenerationService
+    from tg_agent.services.quality_scoring_service import QualityScoringService
+
+    pool = deps.get_pool(request)
+    live_pool = pool if detect_runtime_kind(pool) == "live" else None
+
+    gen = ContentGenerationService(
+        db,
+        engine,
+        config=request.app.state.config,
+        quality_service=QualityScoringService(db, provider_service=provider_service),
+        client_pool=live_pool,
+        provider_service=provider_service,
+    )
+    try:
+        run = await gen.generate(
+            pipeline=pipeline,
+            model=(form.model or pipeline.llm_model),
+            max_tokens=form.max_tokens,
+            temperature=form.temperature,
+        )
+    except Exception:
+        logger.exception("Generation failed for pipeline_id=%d", pipeline_id)
+        runs = await db.repos.generation_runs.list_by_pipeline(pipeline_id)
+        return PipelineTemplate(
+            "pipelines/generate.html",
+            {
+                "pipeline": pipeline,
+                "runs": runs,
+                "error": "Generation failed",
+                "needs_llm": pipeline_needs_llm(pipeline),
+                "llm_configured": provider_service.has_providers(),
+                "request": request,
+            },
+        )
+    return PipelineTemplate(
+        "pipelines/generate.html",
+        {
+            "pipeline": pipeline,
+            "run": run,
+            "needs_llm": pipeline_needs_llm(pipeline),
+            "llm_configured": provider_service.has_providers(),
+            "request": request,
+        },
+    )
+
+
+async def publish_pipeline(request: Request, pipeline_id: int, form: PipelinePublishForm):
+    if form.run_id is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    db = deps.get_db(request)
+    run = await db.repos.generation_runs.get(form.run_id)
+    if run is None or run.pipeline_id != pipeline_id:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    # Mark as published (no external publishing performed here)
+    metadata = run.metadata or {}
+    from datetime import datetime, timezone
+
+    metadata["published"] = True
+    metadata["published_at"] = datetime.now(timezone.utc).isoformat()
+    await db.repos.generation_runs.save_result(form.run_id, run.generated_text or "", metadata)
+    await db.repos.generation_runs.set_status(form.run_id, "published")
+    return _pipeline_redirect("pipeline_published")
+
+
+def _ab_testing_service(request: Request):
+    """Build an ABTestingService bound to the request's DB + provider service."""
+    from tg_agent.services.ab_testing_service import ABTestingService
+
+    return ABTestingService(
+        deps.get_db(request),
+        provider_service=deps.get_llm_provider_service(request),
+        config=request.app.state.config,
+    )
+
+
+async def get_pipeline_variants(request: Request, pipeline_id: int, run_id: int):
+    """Return the A/B variants of a run as JSON (issue #1068)."""
+    db = deps.get_db(request)
+    run = await db.repos.generation_runs.get(run_id)
+    if run is None or run.pipeline_id != pipeline_id:
+        return PipelineJson({"error": "run_not_found"}, status_code=404)
+    result = await _ab_testing_service(request).get_variants(run_id)
+    if result is None:
+        return PipelineJson({"error": "run_not_found"}, status_code=404)
+    return PipelineJson(
+        {
+            "run_id": result.run_id,
+            "selected_index": result.selected_index,
+            "variants": [
+                {"index": variant.index, "text": variant.text, "score": variant.score}
+                for variant in result.variants
+            ],
+        }
+    )
+
+
+async def select_pipeline_variant(
+    request: Request, pipeline_id: int, form: PipelineSelectVariantForm
+):
+    """Select an A/B variant as the run's final content (issue #1068)."""
+    if form.run_id is None or form.variant_index is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    db = deps.get_db(request)
+    run = await db.repos.generation_runs.get(form.run_id)
+    if run is None or run.pipeline_id != pipeline_id:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    try:
+        await _ab_testing_service(request).select_variant(form.run_id, form.variant_index)
+    except ValueError:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    return _pipeline_redirect("variant_selected")
+
+
+async def auto_select_pipeline_variant(
+    request: Request, pipeline_id: int, form: PipelineAutoSelectVariantForm
+):
+    """Auto-select the best A/B variant by quality score (issue #1068)."""
+    if form.run_id is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    db = deps.get_db(request)
+    run = await db.repos.generation_runs.get(form.run_id)
+    if run is None or run.pipeline_id != pipeline_id:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    from tg_agent.services.quality_scoring_service import QualityScoringService
+
+    quality_service = QualityScoringService(
+        db, provider_service=deps.get_llm_provider_service(request)
+    )
+    await _ab_testing_service(request).auto_select_best(
+        form.run_id, scoring_service=quality_service
+    )
+    return _pipeline_redirect("variant_auto_selected")
+
+
+async def get_refinement_steps(request: Request, pipeline_id: int):
+    db = deps.get_db(request)
+    pipeline = await db.repos.content_pipelines.get_by_id(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_not_found", error=True)
+    return PipelineJson({"steps": pipeline.refinement_steps})
+
+
+# ------------------------------------------------------------------
+# Dry-run count endpoints
+# ------------------------------------------------------------------
+
+
+def _apply_fetch_limit(pipeline, messages: list) -> list:
+    """Cap candidates by the fetch_messages node's `limit`, mirroring the real run.
+
+    FetchMessagesHandler trims messages[:limit] before the filter; dry-run ignored
+    it and over-counted (audit #837/10)."""
+    if pipeline.pipeline_json is None:
+        return messages
+    fetch_node = next(
+        (n for n in pipeline.pipeline_json.nodes if n.type.value == "fetch_messages"),
+        None,
+    )
+    if fetch_node is None:
+        return messages
+    limit = fetch_node.config.get("limit")
+    if limit is not None and len(messages) > int(limit):
+        return messages[: int(limit)]
+    return messages
+
+
+def _apply_pipeline_filter(pipeline, messages: list) -> int:
+    """Count messages that would pass the filter node, if any."""
+    if pipeline.pipeline_json is None:
+        return len(messages)
+    graph = pipeline.pipeline_json
+    filter_node = next(
+        (n for n in graph.nodes if n.type.value == "filter"),
+        None,
+    )
+    if filter_node is None:
+        return len(messages)
+    return len(filter_messages(messages, filter_node.config))
+
+
+async def dry_run_count_new(request: Request, source_ids: str = "",
+                             since_value: int = 6, since_unit: str = "h"):
+    since_hours = _to_since_hours(since_value, since_unit)
+    ids = [int(x) for x in source_ids.split(",") if x.strip().isdigit()]
+    db = deps.get_db(request)
+    messages = await db.repos.messages.get_recent_for_channels(ids, since_hours)
+    return PipelineJson({"total": len(messages), "after_filter": len(messages)})
+
+
+async def dry_run_count(request: Request, pipeline_id: int,
+                        since_value: int = 6, since_unit: str = "h"):
+    since_hours = _to_since_hours(since_value, since_unit)
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return PipelineJson({"error": "not found"}, status_code=404)
+    db = deps.get_db(request)
+    if pipeline.pipeline_json:
+        ids = get_dag_source_channel_ids(pipeline) or []
+    else:
+        sources = await db.repos.content_pipelines.list_sources(pipeline_id)
+        ids = [s.channel_id for s in sources]
+    messages = await db.repos.messages.get_recent_for_channels(ids, since_hours)
+    # Mirror the real run order: fetch -> limit -> filter (audit #837/10).
+    limited = _apply_fetch_limit(pipeline, messages)
+    after_filter = _apply_pipeline_filter(pipeline, limited)
+    return PipelineJson({"total": len(limited), "after_filter": after_filter})
+
+
+# ------------------------------------------------------------------
+# Templates
+# ------------------------------------------------------------------
+
+
+async def templates_page(request: Request):
+    svc: PipelineService = deps.pipeline_service(request)
+    templates = await svc.list_templates()
+    channels = await deps.get_channel_bundle(request).list_channels(include_filtered=True)
+    accounts = await deps.get_account_bundle(request).list_account_summaries()
+    cached_dialogs = await svc.list_cached_dialogs_by_phone()
+    llm_configured = deps.get_llm_provider_service(request).has_providers()
+    return PipelineTemplate(
+        "pipelines/templates.html",
+        {
+            "templates": templates,
+            "channels": channels,
+            "accounts": accounts,
+            "cached_dialogs": cached_dialogs,
+            "llm_configured": llm_configured,
+        },
+    )
+
+
+async def templates_json(request: Request):
+    svc: PipelineService = deps.pipeline_service(request)
+    templates = await svc.list_templates()
+    result = []
+    import json as _json
+    for tpl in templates:
+        result.append({
+            "id": tpl.id,
+            "name": tpl.name,
+            "description": tpl.description,
+            "category": tpl.category,
+            "template_json": _json.loads(tpl.template_json.to_json()),
+        })
+    return PipelineJson(result)
+
+
+async def create_from_template(
+    request: Request,
+    form: PipelineTemplateCreateForm,
+):
+    if form.template_id is None or not form.name:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    svc: PipelineService = deps.pipeline_service(request)
+    try:
+        pipeline_id = await svc.create_from_template(
+            form.template_id,
+            name=form.name,
+            source_ids=form.source_channel_ids,
+            target_refs=_target_refs(form.target_refs),
+            overrides={
+                "llm_model": form.llm_model or None,
+                "image_model": form.image_model or None,
+                "generate_interval_minutes": form.generate_interval_minutes,
+            },
+        )
+    except PipelineValidationError as exc:
+        return _pipeline_redirect(str(exc), error=True)
+    try:
+        # Web-mode scheduler is a read-only snapshot shim; enqueue a reconcile so the
+        # live worker scheduler re-registers content_generate_<id> jobs (#1236).
+        await enqueue_scheduler_reconcile(request, requested_by="web:pipeline.sync")
+    except Exception:
+        logger.warning("Scheduler sync failed", exc_info=True)
+    return PipelineUrlRedirect(f"/pipelines/{pipeline_id}/edit")
+
+
+# ------------------------------------------------------------------
+# JSON import / export
+# ------------------------------------------------------------------
+
+
+async def export_pipeline(request: Request, pipeline_id: int):
+    svc: PipelineService = deps.pipeline_service(request)
+    data = await svc.export_json(pipeline_id)
+    if data is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    return PipelineFile(content=data, filename=f"pipeline_{pipeline_id}.json")
+
+
+async def import_pipeline(
+    request: Request,
+    form: PipelineImportForm,
+):
+    svc: PipelineService = deps.pipeline_service(request)
+    import json as _json
+
+    try:
+        if form.json_file and form.json_file.filename:
+            try:
+                raw = await form.json_file.read()
+            finally:
+                await form.json_file.close()
+            data = _json.loads(raw)
+        elif form.json_text.strip():
+            data = _json.loads(form.json_text.strip())
+        else:
+            return _pipeline_redirect("Не передан JSON файл или текст.", error=True)
+
+        pipeline_id = await svc.import_json(data, name_override=form.name_override or None)
+    except PipelineValidationError as exc:
+        return _pipeline_redirect(str(exc), error=True)
+    except Exception as exc:
+        return _pipeline_redirect(f"Ошибка импорта: {exc}", error=True)
+
+    try:
+        # Web-mode scheduler is a read-only snapshot shim; enqueue a reconcile so the
+        # live worker scheduler re-registers content_generate_<id> jobs (#1236).
+        await enqueue_scheduler_reconcile(request, requested_by="web:pipeline.sync")
+    except Exception:
+        logger.warning("Scheduler sync failed", exc_info=True)
+    return PipelineUrlRedirect(f"/pipelines/{pipeline_id}/generate")
+
+
+async def ai_edit_pipeline(request: Request, pipeline_id: int):
+    """Accept JSON body: {"instruction": "..."}. Returns updated pipeline_json."""
+    if not deps.get_llm_provider_service(request).has_providers():
+        return PipelineJson({"ok": False, "error": "LLM not configured"}, status_code=400)
+    svc: PipelineService = deps.pipeline_service(request)
+    db = deps.get_db(request)
+    try:
+        body = await request.json()
+        instruction = body.get("instruction", "").strip()
+        if not instruction:
+            return PipelineJson({"ok": False, "error": "instruction is required"}, status_code=400)
+        result = await svc.edit_via_llm(pipeline_id, instruction, db, config=request.app.state.config)
+        return PipelineJson(result)
+    except Exception as exc:
+        return PipelineJson({"ok": False, "error": str(exc)}, status_code=500)
+
+
+async def set_refinement_steps(request: Request, pipeline_id: int):
+    """Accept JSON body: {"steps": [{"name": "...", "prompt": "...{text}..."}]}."""
+    db = deps.get_db(request)
+    pipeline = await db.repos.content_pipelines.get_by_id(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_not_found", error=True)
+    try:
+        body = await request.json()
+        steps = body.get("steps", [])
+        if not isinstance(steps, list):
+            raise ValueError("steps must be a list")
+        validated = [
+            {"name": str(s.get("name", "")).strip(), "prompt": str(s.get("prompt", "")).strip()}
+            for s in steps
+            if isinstance(s, dict) and s.get("prompt", "").strip()
+        ]
+    except Exception as exc:
+        return PipelineJson({"ok": False, "error": str(exc)}, status_code=400)
+    await db.repos.content_pipelines.set_refinement_steps(pipeline_id, validated)
+    return PipelineJson({"ok": True, "steps": validated})
+
+
+def _run_to_dict(run) -> dict:
+    return run.model_dump(
+        mode="json",
+        include={"id", "pipeline_id", "status", "moderation_status", "created_at", "published_at"},
+    )
+
+
+async def show_pipeline(request: Request, pipeline_id: int):
+    """GET /pipelines/{id}/show — pipeline details as JSON (parity with CLI `pipeline show`)."""
+    svc = deps.pipeline_service(request)
+    detail = await svc.get_detail(pipeline_id)
+    if detail is None:
+        return PipelineJson({"error": "pipeline_not_found"}, status_code=404)
+    p = detail["pipeline"]
+    return PipelineJson({
+        "id": p.id,
+        "name": p.name,
+        "is_active": p.is_active,
+        "llm_model": p.llm_model,
+        "publish_mode": p.publish_mode.value,
+        "generation_backend": p.generation_backend.value,
+        "generate_interval_minutes": p.generate_interval_minutes,
+        "source_ids": detail.get("source_ids", []),
+        "source_titles": detail.get("source_titles", []),
+        "target_refs": detail.get("target_refs", []),
+    })
+
+
+async def list_pipeline_runs(
+    request: Request,
+    pipeline_id: int,
+    limit: int = 20,
+    offset: int = 0,
+    status: str | None = None,
+    moderation_status: str | None = None,
+):
+    """GET /pipelines/{id}/runs — run history (parity with CLI `pipeline runs`)."""
+    db = deps.get_db(request)
+    if await db.repos.content_pipelines.get_by_id(pipeline_id) is None:
+        return PipelineJson({"error": "pipeline_not_found"}, status_code=404)
+    runs = await db.repos.generation_runs.list_by_pipeline(
+        pipeline_id,
+        limit=limit,
+        offset=offset,
+        status=status,
+        moderation_status=moderation_status,
+    )
+    return PipelineJson({"pipeline_id": pipeline_id, "runs": [_run_to_dict(r) for r in runs]})
+
+
+async def show_pipeline_run(request: Request, pipeline_id: int, run_id: int):
+    """GET /pipelines/{id}/runs/{run_id} — run details (parity with CLI `pipeline run-show`)."""
+    db = deps.get_db(request)
+    run = await db.repos.generation_runs.get(run_id)
+    if run is None or run.pipeline_id != pipeline_id:
+        return PipelineJson({"error": "run_not_found"}, status_code=404)
+    data = _run_to_dict(run)
+    data["generated_text"] = run.generated_text
+    # Re-sign so a run detail fetched past the 7-day presigned TTL returns a live
+    # image link (#869/#873/#874); non-S3 URLs pass through.
+    from tg_agent.services.s3_store import refresh_s3_url
+
+    data["image_url"] = await refresh_s3_url(run.image_url)
+    data["quality_score"] = run.quality_score
+    return PipelineJson(data)
+
+
+async def pipeline_queue(request: Request, pipeline_id: int, limit: int = 50):
+    """GET /pipelines/{id}/queue — moderation queue (parity with CLI `pipeline queue`)."""
+    db = deps.get_db(request)
+    if await db.repos.content_pipelines.get_by_id(pipeline_id) is None:
+        return PipelineJson({"error": "pipeline_not_found"}, status_code=404)
+    runs = await db.repos.generation_runs.list_pending_moderation(pipeline_id=pipeline_id, limit=limit)
+    return PipelineJson({
+        "pipeline_id": pipeline_id,
+        "queue": [
+            {**_run_to_dict(r), "preview": (r.generated_text or "")[:100]}
+            for r in runs
+        ],
+    })

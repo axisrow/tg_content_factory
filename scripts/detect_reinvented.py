@@ -196,7 +196,7 @@ def _detect_handrolled_signing(
 ) -> Finding | None:
     """Ручная криптоподпись токена: `hmac.new`/`hashlib.*` + base64 + json в одной функции.
 
-    Эталон эпика — hand-rolled HMAC-JWT из `tg_agent/web/session.py` (#782 / #1): функция
+    Эталон эпика — hand-rolled HMAC-JWT из `tg_webui/session.py` (#782 / #1): функция
     собирала `base64url(HMAC-SHA256(secret, payload))` руками. Зрелая замена —
     `itsdangerous.Signer` (на которую session.py и переехал в #953), либо
     PyJWT/`hmac.compare_digest`. High-confidence, потому что комбинация

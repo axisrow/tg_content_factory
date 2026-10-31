@@ -33,11 +33,13 @@ _LEASE_OWNERSHIP_ALLOWLIST = {
 @pytest.mark.mutmut_skip
 def test_pool_acquisition_call_sites_have_an_explicit_release_owner():
     """New acquisition call sites must show their lease ownership in source."""
-    root = Path(__file__).parents[1] / "tg_agent"
+    repo = Path(__file__).parents[1]
+    # The web panel lives in packages/tg_webui since #1720 wave 3; keep it covered.
+    roots = (repo / "tg_agent", repo / "packages" / "tg_webui" / "src" / "tg_webui")
     violations: list[str] = []
-    for path in root.rglob("*.py"):
+    for path in (p for root in roots for p in root.rglob("*.py") if "__pycache__" not in p.parts):
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        relative = path.relative_to(root.parent).as_posix()
+        relative = path.relative_to(repo).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
                 continue

@@ -236,13 +236,13 @@ telethon-cli users get-me --output json
  pytest tests/ -q -m aiosqlite_serial -n auto --dist=loadfile
 
  # Один тест
- pytest tests/test_web.py::test_health_endpoint -v
+ pytest packages/tg_webui/tests/test_web.py::test_health_endpoint -v
 
  # Сравнить serial и safe mixed-mode прогон всего suite
  python -m tg_agent.main test benchmark
 
  # Линтер
- ruff check tg_agent/ tests/ conftest.py
+ ruff check tg_agent/ tests/ packages/ conftest.py
  ```
 
 ### Важное замечание по CI
