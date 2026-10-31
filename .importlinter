@@ -83,6 +83,8 @@ source_modules =
     tg_agent.settings_utils
     tg_agent.telegram
     tg_agent.utils
+    # Web is still part of tg_agent until #1720 wave 3 moves it to packages/tg_webui.
+    tg_agent.web
 forbidden_modules =
     tg_tui
 allow_indirect_imports = True
