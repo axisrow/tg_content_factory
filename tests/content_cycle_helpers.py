@@ -46,6 +46,7 @@ def _build_real_generation_service(
         notification_service=notification_service,
     )
 
+
 def _generate_task(task_id: int, pipeline_id: int) -> CollectionTask:
     return CollectionTask(
         id=task_id,
@@ -53,6 +54,7 @@ def _generate_task(task_id: int, pipeline_id: int) -> CollectionTask:
         status=CollectionTaskStatus.RUNNING,
         payload=ContentGenerateTaskPayload(pipeline_id=pipeline_id),
     )
+
 
 def _make_context(db, pool) -> TaskHandlerContext:
     """A TaskHandlerContext wired to the real db, a real PipelineBundle, and the
@@ -78,6 +80,7 @@ def _make_context(db, pool) -> TaskHandlerContext:
         client_pool=pool,
     )
 
+
 def _make_search_engine() -> MagicMock:
     """A search engine stub: the legacy RAG path awaits has_semantic_index and the
     search_* methods, so return empty results to run generation without an index."""
@@ -88,6 +91,7 @@ def _make_search_engine() -> MagicMock:
     search_engine.search_hybrid = AsyncMock(return_value=empty)
     search_engine.search_semantic = AsyncMock(return_value=empty)
     return search_engine
+
 
 def _patch_generation(monkeypatch, db, notifier=None) -> None:
     """Route the handler's build_content_generation_service to our real service.
@@ -103,6 +107,7 @@ def _patch_generation(monkeypatch, db, notifier=None) -> None:
         _builder,
     )
 
+
 def _provider_callable(text: str = GENERATED_TEXT):
     """A fake LLM provider callable: returns canned text, ignores the prompt."""
 
@@ -110,6 +115,7 @@ def _provider_callable(text: str = GENERATED_TEXT):
         return text
 
     return fn
+
 
 async def _seed_pipeline(
     db,
@@ -136,10 +142,12 @@ async def _seed_pipeline(
         targets=targets,
     )
 
+
 async def _seed_source_channel(db) -> None:
     """A source channel so the pipeline references a real row (defensive; the RAG
     path is stubbed, but keeps the fixture honest)."""
     await db.add_channel(Channel(channel_id=1001, title="Source A"))
+
 
 def _target(phone: str = "+100", dialog_id: int = -1001) -> PipelineTarget:
     return PipelineTarget(

@@ -2,10 +2,26 @@
   "_comment": "Baseline-снимок scripts/detect_reinvented.py (#1108). Фиксирует текущие находки-велосипеды, чтобы прогоны диффили и подсвечивали НОВЫЕ. Пересоздать: python scripts/detect_reinvented.py --update-baseline.",
   "findings": [
     {
+      "file": "packages/tg_webui/src/tg_webui/search/handlers.py",
+      "line": 86,
+      "kind": "handrolled-retry-loop",
+      "what": "самописный retry/backoff-цикл в _telegram_search_via_worker()",
+      "replacement": "tenacity.retry / aiolimiter (для rate-limit)",
+      "confidence": "med"
+    },
+    {
       "file": "tg_agent/agent/backends/_stream.py",
       "line": 463,
       "kind": "handrolled-retry-loop",
       "what": "самописный retry/backoff-цикл в _await_with_countdown()",
+      "replacement": "tenacity.retry / aiolimiter (для rate-limit)",
+      "confidence": "med"
+    },
+    {
+      "file": "tg_agent/runtime/bootstrap.py",
+      "line": 121,
+      "kind": "handrolled-retry-loop",
+      "what": "самописный retry/backoff-цикл в _retry_telegram_pool_until_connected()",
       "replacement": "tenacity.retry / aiolimiter (для rate-limit)",
       "confidence": "med"
     },
@@ -70,30 +86,6 @@
       "line": 1353,
       "kind": "handrolled-retry-loop",
       "what": "самописный retry/backoff-цикл в delete_dialogs()",
-      "replacement": "tenacity.retry / aiolimiter (для rate-limit)",
-      "confidence": "med"
-    },
-    {
-      "file": "tg_agent/web/bootstrap.py",
-      "line": 76,
-      "kind": "handrolled-retry-loop",
-      "what": "самописный retry/backoff-цикл в _retry_telegram_pool_until_connected()",
-      "replacement": "tenacity.retry / aiolimiter (для rate-limit)",
-      "confidence": "med"
-    },
-    {
-      "file": "tg_agent/web/scheduler/context.py",
-      "line": 236,
-      "kind": "manual-counter",
-      "what": "самописный частотный счётчик в _dedupe_recent_unavailability_events()",
-      "replacement": "collections.Counter",
-      "confidence": "med"
-    },
-    {
-      "file": "tg_agent/web/search/handlers.py",
-      "line": 86,
-      "kind": "handrolled-retry-loop",
-      "what": "самописный retry/backoff-цикл в _telegram_search_via_worker()",
       "replacement": "tenacity.retry / aiolimiter (для rate-limit)",
       "confidence": "med"
     }

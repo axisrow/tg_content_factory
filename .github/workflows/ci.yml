@@ -79,6 +79,12 @@ jobs:
           python -m build packages/tg_tui --outdir dist
           python -m build packages/tg_webui --outdir dist
 
+      # The core must install and start without the legacy UI packages (#1720):
+      # only the tg_agent + tg_shared wheels go into the runner's Python first;
+      # the next step adds the UI wheels on top (one dependency install).
+      - name: Smoke test core wheel without UI packages
+        run: python scripts/smoke_core_wheel.py dist
+
       # Python handles globbing on every OS, including Windows PowerShell.
       - name: Install built wheel
         run: python -c "import pathlib, subprocess, sys; wheels = sorted(map(str, pathlib.Path('dist').glob('*.whl'))); assert len(wheels) == 4, wheels; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *wheels])"
