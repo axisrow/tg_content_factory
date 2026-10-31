@@ -1005,6 +1005,7 @@ def hide_packages(*names: str):
 def _is_path_param(part: str) -> bool:
     return part.startswith("{") and part.endswith("}")
 
+
 def _paths_match(actual_path: str, documented_path: str) -> bool:
     actual_parts = actual_path.strip("/").split("/") if actual_path.strip("/") else []
     documented_parts = documented_path.strip("/").split("/") if documented_path.strip("/") else []
@@ -1018,6 +1019,7 @@ def _paths_match(actual_path: str, documented_path: str) -> bool:
         actual == documented or (_is_path_param(actual) and _is_path_param(documented))
         for actual, documented in zip(actual_parts, documented_parts, strict=True)
     )
+
 
 def _route_exists(actual_routes: set[tuple[str, str]], method: str, documented_path: str) -> bool:
     return any(

@@ -40,7 +40,6 @@ dependencies = [
     "tg-messenger>=0.1.0",
     "fastapi>=0.136.3,<0.163",
     "uvicorn[standard]>=0.48.0",
-    "jinja2>=3.1.6",
     "aiosqlite>=0.22.1",
     "apscheduler>=3.11.3",
     "pydantic>=2.13.4",
@@ -49,7 +48,6 @@ dependencies = [
     "pydantic-settings>=2.14.1",
     "pyyaml>=6.0.3",
     "python-dotenv>=1.2.2",
-    "python-multipart>=0.0.29",
     # CLI framework (epic #959, argparse→Typer migration). Typer was already in
     # the tree transitively; pinning it directly makes the dependency explicit
     # for the Wave-0 scaffold (tg_agent/cli/typer_app.py). 0.12 is the first release
@@ -62,7 +60,6 @@ dependencies = [
     "scikit-learn>=1.8.0",
     "jieba>=0.42.1",
     "langdetect>=1.0.9",
-    "textual[syntax]>=8.2.8",
     "claude-agent-sdk>=0.2.87",
     "deepagents>=0.6.4",
     "huggingface_hub>=1.16.4",
@@ -92,15 +89,11 @@ dependencies = [
     "httpx>=0.28.1",
     "beautifulsoup4>=4.14.3",
     "orjson>=3.10.0",
-    "itsdangerous>=2.2.0",
     # ReDoS guard for user-supplied notification regexes: the `regex` engine's
     # `timeout=` aborts catastrophic backtracking inside its C matching loop,
     # which the stdlib `re` cannot (#1240). Present transitively (dateparser,
     # tiktoken) but declared here because it is now a direct runtime import.
     "regex>=2024.11.6",
-    # QR login in the web panel (#1551): renders the tg://login token as an
-    # inline SVG (SvgPathImage) — no PIL pull, unlike the PNG factories.
-    "qrcode>=8.0",
 ]
 
 [project.optional-dependencies]

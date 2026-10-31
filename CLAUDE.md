@@ -39,7 +39,10 @@ pip install -e packages/tg_shared
 # Optional legacy surfaces live in their own monorepo packages (#1720): the
 # interactive agent-chat TUI (`agent chat` without a prompt) needs tg-tui, the
 # web panel (`serve`) needs tg-webui. The core never imports them
-# (import-linter contracts); their tests live in packages/*/tests.
+# (import-linter contracts) and declares none of their deps (jinja2,
+# python-multipart, itsdangerous, qrcode, textual — they live in the packages'
+# pyproject); tests/test_core_without_surfaces.py and the CI core-wheel smoke
+# (scripts/smoke_core_wheel.py) pin that. Their tests live in packages/*/tests.
 pip install -e packages/tg_tui -e packages/tg_webui
 
 # Dependency-touching PRs must regenerate the lockfile: the committed uv.lock
