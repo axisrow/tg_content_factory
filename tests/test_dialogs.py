@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from telethon.tl.types import InputPeerChannel
 
+from tests.helpers import _dialog_stream
 from tg_agent.services.channel_service import ChannelService
 
 _FAKE_DIALOGS = [
@@ -1202,12 +1203,6 @@ def _sweep_pool(db, phone: str = "+1234567890"):
     return pool
 
 
-def _dialog_stream(dialogs):
-    async def _iter():
-        for dialog in dialogs:
-            yield dialog
-
-    return _iter()
 
 
 def test_advance_cursor_mirrors_telethon_split_offsets():

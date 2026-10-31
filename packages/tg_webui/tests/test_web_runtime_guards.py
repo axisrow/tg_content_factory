@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Anchored to this file, not the cwd: a cwd-relative path that does not resolve
+# makes the scans below find nothing and pass silently.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_WEB_DIR = _REPO_ROOT / "packages" / "tg_webui" / "src" / "tg_webui"
+
 # Tokens that indicate a live ClientPool / Collector / scheduler call happening
 # inside a web request. All Telegram RPC must go through telegram_commands
 # enqueued by the route and executed by the worker process.
@@ -58,7 +63,8 @@ _ALLOWLIST: dict[str, tuple[str, ...]] = {
 
 
 def test_web_routes_do_not_call_live_pool_methods() -> None:
-    routes_dir = Path("packages/tg_webui/src/tg_webui/routes")
+    routes_dir = _WEB_DIR / "routes"
+    assert routes_dir.is_dir(), routes_dir
     offenders: list[str] = []
     for path in sorted(routes_dir.glob("*.py")):
         if path.name == "__init__.py":
@@ -76,18 +82,12 @@ def test_web_routes_do_not_call_live_pool_methods() -> None:
 
 def test_web_services_do_not_call_live_pool_methods() -> None:
     """Services consumed by web routes must also stay off the live pool."""
-    services_dir = Path("packages/tg_webui/src/tg_webui")
+    services_dir = _WEB_DIR
+    assert services_dir.is_dir(), services_dir
     offenders: list[str] = []
     skip_dirs = {"templates", "static", "routes", "__pycache__"}
     for path in services_dir.rglob("*.py"):
-        if any(part in skip_dirs for part in path.parts):
-            continue
-        # runtime_shims defines the stubs; it is expected to mention pool methods.
-        if path.name == "runtime_shims.py":
-            continue
-        # bootstrap is the only legitimate place where worker-mode initializes
-        # the live pool/scheduler — gated behind `if runtime_mode == "worker":`.
-        if path.name == "bootstrap.py":
+        if any(part in skip_dirs for part in path.relative_to(services_dir).parts):
             continue
         text = path.read_text(encoding="utf-8")
         for token in _DISALLOWED:
@@ -128,7 +128,8 @@ def test_account_service_not_imported_by_web() -> None:
     would re-open the HTTP 500 regression fixed for #453.
     """
     token = "tg_agent.services.account_service"
-    web_dir = Path("packages/tg_webui/src/tg_webui")
+    web_dir = _WEB_DIR
+    assert web_dir.is_dir(), web_dir
     offenders: list[str] = []
     for path in web_dir.rglob("*.py"):
         if "__pycache__" in path.parts:
@@ -142,7 +143,8 @@ def test_account_service_not_imported_by_web() -> None:
 
 def test_web_consumed_services_do_not_call_live_pool_methods() -> None:
     """Services imported by web routes/deps must stay off the live pool."""
-    services_dir = Path("tg_agent/services")
+    services_dir = _REPO_ROOT / "tg_agent" / "services"
+    assert services_dir.is_dir(), services_dir
     offenders: list[str] = []
     for name in _WEB_CONSUMED_SERVICES:
         path = services_dir / name

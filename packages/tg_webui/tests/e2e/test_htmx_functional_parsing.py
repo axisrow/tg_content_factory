@@ -1,7 +1,7 @@
 """Pure-logic tests for the HTMX functional e2e helpers (issue #1015).
 
 These run in normal CI (no browser, no live server) and cover the parts of
-``tests/e2e/htmx_functional.py`` that need no Playwright: the result-model ``ok``
+``packages/tg_webui/tests/e2e/htmx_functional.py`` that need no Playwright: the result-model ``ok``
 flags (including the Codex-review empty-DB-vs-broken-lazyload distinction), the spec
 coverage guard, and the summary rendering. The actual browser-driving (navigation,
 ``page.expect_response``, ``wait_for_function``) is exercised by the opt-in

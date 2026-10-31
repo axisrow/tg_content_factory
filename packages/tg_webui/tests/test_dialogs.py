@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 from webui_helpers import build_web_app, make_auth_client
 
-from tests.helpers import AsyncIterMessages, FakeCliTelethonClient
+from tests.helpers import AsyncIterMessages, FakeCliTelethonClient, _dialog_stream
 from tg_agent.config import AppConfig
 
 _FAKE_DIALOGS = [
@@ -260,12 +260,6 @@ async def test_dialogs_page_without_accounts_shows_disabled_photo_loader(
     await app.state.collection_queue.shutdown()
 
 
-def _dialog_stream(dialogs):
-    async def _iter():
-        for dialog in dialogs:
-            yield dialog
-
-    return _iter()
 
 
 async def test_stream_dialogs_forwards_offset_kwargs():

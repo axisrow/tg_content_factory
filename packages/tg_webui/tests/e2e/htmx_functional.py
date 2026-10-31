@@ -33,11 +33,11 @@ icon is gone. We assert its absence (structural, locale-independent) rather than
 matching the "Загрузка…" text or waiting for a specific table that an empty DB never
 produces.
 
-Run it by hand or via pytest (``tests/e2e/test_htmx_functional.py``)::
+Run it by hand or via pytest (``packages/tg_webui/tests/e2e/test_htmx_functional.py``)::
 
     python -m tg_agent.main serve --web-pass secret      # in another terminal
     RUN_E2E_CONSOLE_SMOKE=1 E2E_BASE_URL=http://localhost:8080 WEB_PASS=secret \\
-        pytest tests/e2e/test_htmx_functional.py -m e2e
+        pytest packages/tg_webui/tests/e2e/test_htmx_functional.py -m e2e
 """
 
 from __future__ import annotations

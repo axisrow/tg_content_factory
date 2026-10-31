@@ -8,11 +8,11 @@ build (``playwright install --with-deps chromium``), so they are skipped by defa
 Enable them with::
 
     RUN_E2E_CONSOLE_SMOKE=1 E2E_BASE_URL=http://localhost:8080 WEB_PASS=secret \\
-        pytest tests/e2e/test_htmx_functional.py -m e2e
+        pytest packages/tg_webui/tests/e2e/test_htmx_functional.py -m e2e
 
 The gate env is shared with the console smoke (#792) so one switch turns on every
 browser-driven e2e against a live server. The browser-walking logic lives in
-``tests/e2e/htmx_functional.py`` (driven by the Playwright Python API, the same engine
+``packages/tg_webui/tests/e2e/htmx_functional.py`` (driven by the Playwright Python API, the same engine
 ``console_smoke`` migrated to in #1014) so it can also be run by hand.
 
 Once the gate is open, an infrastructure failure (dead server, wrong password, hung

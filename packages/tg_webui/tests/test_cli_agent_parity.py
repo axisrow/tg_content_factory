@@ -7,6 +7,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from tests.helpers import _route_exists
+
 ROOT = Path(__file__).resolve().parents[3]  # repo root (packages/tg_webui/tests/…)
 
 
@@ -53,30 +55,10 @@ def _expand_web_endpoint(endpoint: str) -> list[tuple[str, str]]:
     return [(match.group(1), match.group(2).strip())]
 
 
-def _route_exists(actual_routes: set[tuple[str, str]], method: str, documented_path: str) -> bool:
-    return any(
-        actual_method == method and _paths_match(actual_path, documented_path)
-        for actual_method, actual_path in actual_routes
-    )
 
 
-def _paths_match(actual_path: str, documented_path: str) -> bool:
-    actual_parts = actual_path.strip("/").split("/") if actual_path.strip("/") else []
-    documented_parts = documented_path.strip("/").split("/") if documented_path.strip("/") else []
-    if len(actual_parts) != len(documented_parts):
-        return False
-    # A segment matches only when it is literally equal, or BOTH sides are path
-    # params. Treating a single param segment as a wildcard (e.g. documented
-    # {id} vs actual static "notifications") would let an unrelated static
-    # sibling satisfy a removed dynamic route, false-greening the guard.
-    return all(
-        actual == documented or (_is_path_param(actual) and _is_path_param(documented))
-        for actual, documented in zip(actual_parts, documented_parts, strict=True)
-    )
 
 
-def _is_path_param(part: str) -> bool:
-    return part.startswith("{") and part.endswith("}")
 
 
 def test_documented_web_endpoints_exist_in_app_routes():

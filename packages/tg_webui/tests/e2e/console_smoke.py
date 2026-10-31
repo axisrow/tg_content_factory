@@ -4,7 +4,7 @@ Why a standalone module (issue #792): a manual ``playwright-cli console`` pass o
 one page already found 0 errors (#788), but regressions are inevitable. This
 walks **every** main panel page in a real browser and asserts that none of them
 logs a JS error to the console. The check is opt-in (a live server must be
-running) and intentionally lives next to ``tests/e2e/test_collection_flow.py``.
+running) and intentionally lives next to ``packages/tg_webui/tests/e2e/test_collection_flow.py``.
 
 Design notes (issue #1014 — migrated off the external ``playwright-cli`` binary):
 
@@ -65,8 +65,8 @@ if TYPE_CHECKING:
 # (e.g. /moderation/, /calendar/); we list them without the slash to match the
 # existing convention — a browser navigation follows the 307 redirect and the
 # bounce-to-/login guard in check_page still holds. Keep this in lockstep with
-# test_panel_paths_match_issue_list (tests/e2e/test_console_smoke_parsing.py)
-# and the "Pages walked" list in tests/e2e/README.md.
+# test_panel_paths_match_issue_list (packages/tg_webui/tests/e2e/test_console_smoke_parsing.py)
+# and the "Pages walked" list in packages/tg_webui/tests/e2e/README.md.
 PANEL_PATHS: tuple[str, ...] = (
     "/",
     "/channels",
@@ -340,7 +340,7 @@ def main(argv: list[str] | None = None) -> int:
     Usage::
 
         python -m tg_agent.main serve --web-pass PASS   # in another terminal
-        python -m e2e.console_smoke --base-url http://localhost:8080 --web-pass PASS
+        cd packages/tg_webui/tests && python -m e2e.console_smoke --base-url http://localhost:8080 --web-pass PASS
 
     The password also reads from ``WEB_PASS`` if ``--web-pass`` is omitted.
     Exit code is 0 when every page is clean, 1 otherwise.

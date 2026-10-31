@@ -32,7 +32,7 @@ the deferred fragment loaded — that deeper check is tracked separately.
 python -m tg_agent.main serve --web-pass secret
 
 # 2. In another terminal, walk every page and check the console:
-python -m e2e.console_smoke --base-url http://localhost:8080 --web-pass secret
+cd packages/tg_webui/tests && python -m e2e.console_smoke --base-url http://localhost:8080 --web-pass secret
 ```
 
 It prints a per-page summary (✓ clean / ✗ N errors) and exits non-zero if any
@@ -56,7 +56,7 @@ wrong password or broken auth fails loudly instead of passing green.
 RUN_E2E_CONSOLE_SMOKE=1 \
 E2E_BASE_URL=http://localhost:8080 \
 WEB_PASS=secret \
-pytest tests/e2e/test_console_smoke.py -m e2e
+pytest packages/tg_webui/tests/e2e/test_console_smoke.py -m e2e
 ```
 
 Without `RUN_E2E_CONSOLE_SMOKE=1` the test is skipped, so it never breaks the
@@ -111,7 +111,7 @@ against a live server, reusing the console-smoke gate env:
 python -m tg_agent.main serve --web-pass secret          # in another terminal
 
 RUN_E2E_CONSOLE_SMOKE=1 E2E_BASE_URL=http://localhost:8080 WEB_PASS=secret \
-    pytest tests/e2e/test_htmx_functional.py -m e2e
+    pytest packages/tg_webui/tests/e2e/test_htmx_functional.py -m e2e
 ```
 
 For the full picture (incl. OOB collect + dashboard), seed a channel and an account

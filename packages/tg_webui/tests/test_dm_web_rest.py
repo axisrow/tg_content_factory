@@ -13,13 +13,10 @@ test seeds through (`app.state.db is db`).
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
 import pytest
 from webui_helpers import build_web_app, make_auth_client
 
-from tests.helpers import make_test_config
-from tg_agent.models import IncomingDm
+from tests.helpers import _record_dm, make_test_config
 
 
 @pytest.fixture
@@ -31,20 +28,6 @@ async def client(db, real_pool_harness_factory, tmp_path):
         yield c
 
 
-async def _record_dm(
-    db, *, chat_id: int = 42, message_id: int = 7, text: str = "привет", minutes_ago: int = 0
-) -> None:
-    received = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
-    await db.repos.incoming_dms.record(
-        IncomingDm(
-            phone="+10000000001",
-            chat_id=chat_id,
-            message_id=message_id,
-            text=text,
-            message_date=received,
-            received_at=received,
-        )
-    )
 
 
 async def _make_draft(db, incoming_dm_id: int) -> int:

@@ -1,4 +1,4 @@
-"""Compatibility entrypoints and presentation assembly for the legacy web app."""
+"""Presentation assembly for the legacy web app: the core runtime container plus templates."""
 
 from __future__ import annotations
 
@@ -7,27 +7,7 @@ from dataclasses import fields
 from fastapi.templating import Jinja2Templates
 
 from tg_agent.config import AppConfig
-from tg_agent.runtime.bootstrap import (
-    _cancel_bg_tasks as _cancel_bg_tasks,
-)
-from tg_agent.runtime.bootstrap import (
-    _log_task_exception as _log_task_exception,
-)
-from tg_agent.runtime.bootstrap import (
-    _persist_incoming_dm as _persist_incoming_dm,
-)
-from tg_agent.runtime.bootstrap import (
-    build_runtime_container,
-)
-from tg_agent.runtime.bootstrap import (
-    load_telegram_credentials as load_telegram_credentials,
-)
-from tg_agent.runtime.bootstrap import (
-    start_container as start_container,
-)
-from tg_agent.runtime.bootstrap import (
-    stop_container as stop_container,
-)
+from tg_agent.runtime.bootstrap import build_runtime_container
 from tg_agent.runtime.log_handler import LogBuffer
 from tg_agent.utils.timing import TimingBuffer
 from tg_webui.container import AppContainer

@@ -438,7 +438,7 @@ debug logs | memory | timing
 test all | read | write | telegram | benchmark
 stop | restart [--force]
 daemon status                            # read-only: is the project daemon up, whose is it (#1714)
-serve [--web-pass PASS] [--no-worker]   # legacy web panel (deprecated)
+serve [--web-pass PASS] [--no-worker]   # legacy web panel (deprecated); needs the optional tg-webui package, exits 1 with an install hint without it
 worker                                  # default daemon: worker runtime, no web panel
 restart                                 # stop + start the worker daemon (managed PID file)
 agent threads | chat | messages | ...   # legacy embedded agent

@@ -6,10 +6,10 @@ This test is **opt-in** and skipped by default — it needs a live web server
 standard CI run. Enable it with::
 
     RUN_E2E_CONSOLE_SMOKE=1 E2E_BASE_URL=http://localhost:8080 WEB_PASS=secret \
-        pytest tests/e2e/test_console_smoke.py -m e2e
+        pytest packages/tg_webui/tests/e2e/test_console_smoke.py -m e2e
 
-The actual browser-walking logic lives in ``tests/e2e/console_smoke.py`` so it
-can also be run by hand: ``python -m e2e.console_smoke --base-url ... --web-pass ...``.
+The actual browser-walking logic lives in ``packages/tg_webui/tests/e2e/console_smoke.py`` so it
+can also be run by hand: ``cd packages/tg_webui/tests && python -m e2e.console_smoke --base-url ... --web-pass ...``.
 
 Once the gate is open, an infrastructure failure (dead server, wrong password,
 hung navigation, missing browser binary at runtime) must FAIL the test, not

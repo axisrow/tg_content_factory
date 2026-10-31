@@ -2,7 +2,7 @@
 
 These run in normal CI (no browser, no live server) and cover the
 redaction / auth-guard / dead-server / console-collection logic in
-``tests/e2e/console_smoke.py``. The actual browser-walking is exercised by the
+``packages/tg_webui/tests/e2e/console_smoke.py``. The actual browser-walking is exercised by the
 opt-in ``test_console_smoke.py``.
 
 Since #1014 the module drives the Playwright Python API instead of shelling out

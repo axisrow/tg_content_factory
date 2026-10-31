@@ -11,28 +11,9 @@ test seeds through (`app.state.db is db`).
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
 import pytest
 
-from tg_agent.models import IncomingDm
-
-
-async def _record_dm(
-    db, *, chat_id: int = 42, message_id: int = 7, text: str = "привет", minutes_ago: int = 0
-) -> None:
-    received = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
-    await db.repos.incoming_dms.record(
-        IncomingDm(
-            phone="+10000000001",
-            chat_id=chat_id,
-            message_id=message_id,
-            text=text,
-            message_date=received,
-            received_at=received,
-        )
-    )
-
+from tests.helpers import _record_dm
 
 # === Repo read paths ========================================================
 

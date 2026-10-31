@@ -12,7 +12,7 @@ import tomllib
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -23,7 +23,7 @@ from telethon_floodgate import ResolveRateLimiter
 
 from tg_agent.config import AppConfig, TelegramRuntimeConfig
 from tg_agent.database import Database
-from tg_agent.models import Account, Channel
+from tg_agent.models import Account, Channel, IncomingDm
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.telegram.resolve_guard import ResolveGuardMixin, build_resolve_rate_limiter
 from tg_shared.auth import TelegramAuth
@@ -1000,3 +1000,51 @@ def hide_packages(*names: str):
             yield
         finally:
             sys.meta_path.remove(finder)
+
+
+def _is_path_param(part: str) -> bool:
+    return part.startswith("{") and part.endswith("}")
+
+def _paths_match(actual_path: str, documented_path: str) -> bool:
+    actual_parts = actual_path.strip("/").split("/") if actual_path.strip("/") else []
+    documented_parts = documented_path.strip("/").split("/") if documented_path.strip("/") else []
+    if len(actual_parts) != len(documented_parts):
+        return False
+    # A segment matches only when it is literally equal, or BOTH sides are path
+    # params. Treating a single param segment as a wildcard (e.g. documented
+    # {id} vs actual static "notifications") would let an unrelated static
+    # sibling satisfy a removed dynamic route, false-greening the guard.
+    return all(
+        actual == documented or (_is_path_param(actual) and _is_path_param(documented))
+        for actual, documented in zip(actual_parts, documented_parts, strict=True)
+    )
+
+def _route_exists(actual_routes: set[tuple[str, str]], method: str, documented_path: str) -> bool:
+    return any(
+        actual_method == method and _paths_match(actual_path, documented_path)
+        for actual_method, actual_path in actual_routes
+    )
+
+
+def _dialog_stream(dialogs):
+    async def _iter():
+        for dialog in dialogs:
+            yield dialog
+
+    return _iter()
+
+
+async def _record_dm(
+    db, *, chat_id: int = 42, message_id: int = 7, text: str = "привет", minutes_ago: int = 0
+) -> None:
+    received = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    await db.repos.incoming_dms.record(
+        IncomingDm(
+            phone="+10000000001",
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            message_date=received,
+            received_at=received,
+        )
+    )

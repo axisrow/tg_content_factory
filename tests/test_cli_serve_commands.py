@@ -354,11 +354,12 @@ def test_serve_propagates_broken_import_inside_installed_tg_webui():
     """Only a missing tg_webui itself gets the install hint: a failing import inside an
     installed package (e.g. one of its dependencies missing) keeps its real error."""
     import sys
+    from types import ModuleType
 
-    import tg_webui  # noqa: F401 — the package itself is present
     from tg_agent.cli.commands.serve import run
 
-    with patch.dict(sys.modules, {"tg_webui.app": None}), \
+    # The package is "installed" (a stand-in), but importing its app module fails.
+    with patch.dict(sys.modules, {"tg_webui": ModuleType("tg_webui"), "tg_webui.app": None}), \
          patch("tg_agent.cli.commands.serve.load_config") as load_config, \
          pytest.raises(ModuleNotFoundError) as exc_info:
         run(_args(web_pass=None))

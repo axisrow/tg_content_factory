@@ -1,0 +1,579 @@
+"""Tests for start_container bootstrap behavior."""
+# Core worker-startup tests (start_container/stop_container): split back out of the
+# web package's test_bootstrap.py (#1720 wave 3 review) — they test the core runtime.
+
+from __future__ import annotations
+
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from tg_agent.database import Database
+from tg_agent.database.repositories.accounts import AccountSessionDecryptError
+from tg_agent.models import TelegramCommand, TelegramCommandStatus
+from tg_agent.runtime.bootstrap import _log_task_exception, start_container, stop_container
+
+
+def _make_container(db: Database) -> MagicMock:
+    """Build a minimal AppContainer mock backed by a real Database."""
+    container = MagicMock()
+    container.runtime_mode = "worker"
+    container.db = db
+    container.auth.is_configured = False
+    container.pool = MagicMock()
+    container.collection_queue = None
+    container.unified_dispatcher = None
+    container.ai_search = MagicMock()
+    container.ai_search.initialize = MagicMock()
+    container.agent_manager = None
+    container.channel_bundle.fail_running_collection_tasks_on_startup = AsyncMock(return_value=0)
+    container.photo_task_service.recover_running = AsyncMock(return_value=0)
+    container.db.repos.generation_runs.reset_running_on_startup = AsyncMock(return_value=0)
+    container.db.repos.dm_reply_drafts.reset_sending_on_startup = AsyncMock(return_value=0)
+    return container
+
+
+@pytest.mark.anyio
+async def test_start_container_autostarts_scheduler_when_flag_set(tmp_path):
+    """start_container calls scheduler.start() when scheduler_autostart=1 is in DB."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    await db.set_setting("scheduler_autostart", "1")
+
+    container = _make_container(db)
+    scheduler_mock = AsyncMock()
+    scheduler_mock.load_settings = AsyncMock()
+    container.scheduler = scheduler_mock
+
+    try:
+        await start_container(container)
+        scheduler_mock.start.assert_called_once()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_no_autostart_when_flag_absent(tmp_path):
+    """start_container does not call scheduler.start() when flag is not set."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    # Do not set scheduler_autostart
+
+    container = _make_container(db)
+    scheduler_mock = AsyncMock()
+    scheduler_mock.load_settings = AsyncMock()
+    container.scheduler = scheduler_mock
+
+    try:
+        await start_container(container)
+        scheduler_mock.start.assert_not_called()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_no_autostart_when_flag_zero(tmp_path):
+    """start_container does not call scheduler.start() when scheduler_autostart=0."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    await db.set_setting("scheduler_autostart", "0")
+
+    container = _make_container(db)
+    scheduler_mock = AsyncMock()
+    scheduler_mock.load_settings = AsyncMock()
+    container.scheduler = scheduler_mock
+
+    try:
+        await start_container(container)
+        scheduler_mock.start.assert_not_called()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_calls_load_settings(tmp_path):
+    """start_container always calls scheduler.load_settings() on startup."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    container = _make_container(db)
+    scheduler_mock = AsyncMock()
+    scheduler_mock.load_settings = AsyncMock()
+    container.scheduler = scheduler_mock
+
+    try:
+        await start_container(container)
+        scheduler_mock.load_settings.assert_called_once()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_web_mode_skips_inflight_recovery(tmp_path):
+    """Web restart must not reset the live worker's in-flight photo/generation
+    rows on the shared DB in a split deploy (audit #836/2)."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    container = _make_container(db)
+    container.runtime_mode = "web"
+    container.scheduler = AsyncMock()
+    container.scheduler.load_settings = AsyncMock()
+
+    try:
+        await start_container(container)
+        container.photo_task_service.recover_running.assert_not_called()
+        container.db.repos.generation_runs.reset_running_on_startup.assert_not_called()
+        container.db.repos.dm_reply_drafts.reset_sending_on_startup.assert_not_called()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_worker_mode_runs_inflight_recovery(tmp_path):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    container = _make_container(db)
+    container.runtime_mode = "worker"
+    container.auth.is_configured = False
+    container.scheduler = AsyncMock()
+    container.scheduler.load_settings = AsyncMock()
+
+    try:
+        await start_container(container)
+        container.photo_task_service.recover_running.assert_awaited_once()
+        container.db.repos.generation_runs.reset_running_on_startup.assert_awaited_once()
+        container.db.repos.dm_reply_drafts.reset_sending_on_startup.assert_awaited_once()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_worker_recovers_orphaned_telegram_commands(tmp_path):
+    """Worker startup requeues telegram_commands stranded in RUNNING (#1030).
+
+    A worker killed mid-dispatch leaves its claimed command RUNNING; only
+    PENDING rows are claimable, so without recovery that command is stuck
+    forever. Driving the real start_container path (not just the repo method)
+    proves the dispatcher's recovery is actually wired into worker boot.
+    """
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    # Seed a command and promote it to RUNNING, simulating an interrupted worker.
+    command_id = await db.repos.telegram_commands.create_command(
+        TelegramCommand(
+            command_type="dialogs.react",
+            payload={"phone": "+1", "message_id": 1, "emoji": "👍"},
+            requested_by="test",
+        )
+    )
+    await db.repos.telegram_commands.update_command(
+        command_id, status=TelegramCommandStatus.RUNNING
+    )
+
+    container = _make_container(db)
+    container.runtime_mode = "worker"
+    container.auth.is_configured = False
+    container.scheduler = AsyncMock()
+    container.scheduler.load_settings = AsyncMock()
+
+    try:
+        await start_container(container)
+
+        recovered = await db.repos.telegram_commands.get_command(command_id)
+        assert recovered is not None
+        assert recovered.status == TelegramCommandStatus.PENDING
+        assert recovered.started_at is None
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_web_mode_skips_telegram_command_recovery(tmp_path):
+    """Web restart must not touch the live worker's RUNNING telegram_commands.
+
+    Mirror of the photo/generation web-skip guard (#836/2) for telegram_commands:
+    in a split deploy the web side shares the DB and must leave in-flight rows for
+    the worker to own.
+    """
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    command_id = await db.repos.telegram_commands.create_command(
+        TelegramCommand(
+            command_type="dialogs.react",
+            payload={"phone": "+1", "message_id": 1, "emoji": "👍"},
+            requested_by="test",
+        )
+    )
+    await db.repos.telegram_commands.update_command(
+        command_id, status=TelegramCommandStatus.RUNNING
+    )
+
+    container = _make_container(db)
+    container.runtime_mode = "web"
+    container.scheduler = AsyncMock()
+    container.scheduler.load_settings = AsyncMock()
+
+    try:
+        await start_container(container)
+
+        # The worker still owns this row — web must not have requeued it.
+        still_running = await db.repos.telegram_commands.get_command(command_id)
+        assert still_running is not None
+        assert still_running.status == TelegramCommandStatus.RUNNING
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_does_not_fail_running_channel_tasks(tmp_path):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    container = _make_container(db)
+    scheduler_mock = AsyncMock()
+    scheduler_mock.load_settings = AsyncMock()
+    container.scheduler = scheduler_mock
+
+    try:
+        await start_container(container)
+        container.channel_bundle.fail_running_collection_tasks_on_startup.assert_not_called()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_web_mode_skips_telegram_runtime(tmp_path):
+    """Web runtime should not initialize Telegram pool or worker dispatchers."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    container = _make_container(db)
+    container.runtime_mode = "web"
+    container.auth.is_configured = True
+    container.pool.initialize = AsyncMock()
+    container.pool.warm_all_dialogs = AsyncMock()
+    container.scheduler = AsyncMock()
+    container.scheduler.load_settings = AsyncMock()
+    container.unified_dispatcher = AsyncMock()
+    container.unified_dispatcher.start = AsyncMock()
+    container.dm_listener = AsyncMock()
+    container.dm_listener.start = AsyncMock()
+
+    try:
+        await start_container(container)
+        container.pool.initialize.assert_not_called()
+        container.unified_dispatcher.start.assert_not_called()
+        # Web runtime must never start the DM listener (#1426): `serve` with
+        # its embedded worker plus a standalone worker would otherwise put
+        # two listeners on the same accounts.
+        container.dm_listener.start.assert_not_called()
+        container.scheduler.load_settings.assert_not_called()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_worker_mode_initializes_runtime(tmp_path):
+    """Worker runtime should initialize Telegram pool and dispatcher startup paths."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    container = _make_container(db)
+    container.runtime_mode = "worker"
+    container.auth.is_configured = True
+    container.pool.initialize = AsyncMock()
+    container.pool.warm_all_dialogs = AsyncMock()
+    container.scheduler = AsyncMock()
+    container.scheduler.load_settings = AsyncMock()
+    container.unified_dispatcher = AsyncMock()
+    container.unified_dispatcher.start = AsyncMock()
+    container.dm_listener = AsyncMock()
+    container.dm_listener.start = AsyncMock()
+
+    try:
+        await start_container(container)
+        container.pool.initialize.assert_awaited_once()
+        container.unified_dispatcher.start.assert_awaited_once()
+        container.dm_listener.start.assert_awaited_once()
+        container.scheduler.load_settings.assert_awaited_once()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_empty_pool_skips_collection_requeue_and_schedules_retry(tmp_path):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    container = _make_container(db)
+    container.runtime_mode = "worker"
+    container.auth.is_configured = True
+    container.pool.initialize = AsyncMock()
+    container.pool.clients = {}
+    container.pool.warm_all_dialogs = AsyncMock()
+    container.collection_queue = MagicMock()
+    container.collection_queue.requeue_startup_tasks = AsyncMock(return_value=0)
+    container.collection_queue.start_db_pull = MagicMock()
+    container.bg_tasks = set()
+    container.scheduler = AsyncMock()
+    container.scheduler.load_settings = AsyncMock()
+    container.unified_dispatcher = AsyncMock()
+    container.unified_dispatcher.start = AsyncMock()
+
+    try:
+        await start_container(container)
+        container.collection_queue.requeue_startup_tasks.assert_not_called()
+        container.collection_queue.start_db_pull.assert_called_once()
+        assert any(task.get_name() == "telegram_pool_reconnect_retry" for task in container.bg_tasks)
+    finally:
+        for task in list(container.bg_tasks):
+            task.cancel()
+        await asyncio.gather(*container.bg_tasks, return_exceptions=True)
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_continues_when_pool_init_decrypt_fails(tmp_path, caplog):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    container = _make_container(db)
+    container.runtime_mode = "worker"
+    container.auth.is_configured = True
+    container.pool.initialize = AsyncMock(
+        side_effect=AccountSessionDecryptError(phone="+7000", status="key_mismatch")
+    )
+    container.pool.warm_all_dialogs = AsyncMock()
+    container.scheduler = AsyncMock()
+    container.scheduler.load_settings = AsyncMock()
+    container.unified_dispatcher = AsyncMock()
+    container.unified_dispatcher.start = AsyncMock()
+    container.agent_manager = MagicMock()
+    container.agent_manager.refresh_settings_cache = AsyncMock()
+
+    try:
+        with caplog.at_level("WARNING"):
+            await start_container(container)
+        assert "telegram pool degraded by session decrypt failure" in caplog.text
+        container.agent_manager.refresh_settings_cache.assert_awaited_once_with(preflight=True)
+        container.agent_manager.initialize.assert_called_once()
+        container.pool.warm_all_dialogs.assert_not_called()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_worker_startup_phase_order(tmp_path):
+    """Worker startup keeps the load-bearing service phase order."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    await db.set_setting("scheduler_autostart", "1")
+
+    order: list[str] = []
+
+    def sync_step(name: str):
+        def _step(*_args, **_kwargs):
+            order.append(name)
+
+        return _step
+
+    def async_step(name: str, result=0):
+        async def _step(*_args, **_kwargs):
+            order.append(name)
+            return result
+
+        return _step
+
+    class OrderedPool:
+        clients = {"connected": object()}
+
+        async def initialize(self):
+            order.append("pool.initialize")
+
+    container = _make_container(db)
+    container.runtime_mode = "worker"
+    container.auth.is_configured = True
+    container.pool = OrderedPool()
+    container.photo_task_service.recover_running = async_step("recover.photo")
+    container.db.repos.generation_runs.reset_running_on_startup = async_step("recover.generation")
+    container.db.repos.dm_reply_drafts.reset_sending_on_startup = async_step("recover.dm_drafts")
+    container.db.repos.telegram_commands.reset_running_on_startup = async_step("recover.commands")
+    container.collection_queue = SimpleNamespace(
+        pause=sync_step("queue.pause"),
+        requeue_startup_tasks=async_step("queue.requeue"),
+        start_db_pull=sync_step("queue.db_pull"),
+    )
+    container.unified_dispatcher = SimpleNamespace(start=async_step("unified_dispatcher.start"))
+    container.telegram_command_dispatcher = SimpleNamespace(
+        start=async_step("telegram_command_dispatcher.start")
+    )
+    container.dm_listener = SimpleNamespace(start=async_step("dm_listener.start"))
+    container.ai_search = SimpleNamespace(initialize=sync_step("ai_search.initialize"))
+    container.agent_manager = SimpleNamespace(
+        refresh_settings_cache=async_step("agent.preflight"),
+        initialize=sync_step("agent.initialize"),
+    )
+    container.scheduler = SimpleNamespace(
+        load_settings=async_step("scheduler.load_settings"),
+        start=async_step("scheduler.start"),
+    )
+
+    try:
+        await start_container(container)
+    finally:
+        await db.close()
+
+    assert order == [
+        "recover.photo",
+        "recover.generation",
+        "recover.dm_drafts",
+        "recover.commands",
+        "pool.initialize",
+        "queue.requeue",
+        "queue.db_pull",
+        "unified_dispatcher.start",
+        "telegram_command_dispatcher.start",
+        "dm_listener.start",
+        "ai_search.initialize",
+        "agent.preflight",
+        "agent.initialize",
+        "scheduler.load_settings",
+        "scheduler.start",
+    ]
+
+
+@pytest.mark.anyio
+async def test_stop_container_stops_dm_listener_before_pool_disconnect(tmp_path):
+    """The DM listener must detach its handlers while clients are still alive —
+    stop BEFORE pool.disconnect_all() (#1426)."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    order: list[str] = []
+
+    def async_step(name: str):
+        async def _step(*_args, **_kwargs):
+            order.append(name)
+
+        return _step
+
+    container = _make_container(db)
+    container.shutting_down = False
+    container.scheduler = SimpleNamespace(stop=async_step("scheduler.stop"))
+    container.telegram_command_dispatcher = SimpleNamespace(stop=async_step("tcd.stop"))
+    container.dm_listener = SimpleNamespace(stop=async_step("dm_listener.stop"))
+    container.collector = SimpleNamespace(cancel=async_step("collector.cancel"))
+    container.bg_tasks = set()
+    container.pool = SimpleNamespace(disconnect_all=async_step("pool.disconnect_all"))
+    container.auth = SimpleNamespace(cleanup=async_step("auth.cleanup"))
+
+    try:
+        await stop_container(container)
+    finally:
+        await db.close()
+
+    assert order.index("dm_listener.stop") < order.index("pool.disconnect_all")
+
+
+@pytest.mark.anyio
+async def test_log_task_exception_logs_failed_task(caplog):
+    """#633 bug #31: a failed background task is surfaced as a warning log."""
+
+    async def _boom():
+        raise RuntimeError("warm failed")
+
+    task = asyncio.create_task(_boom(), name="warm_all_dialogs_startup")
+    with pytest.raises(RuntimeError):
+        await task
+
+    with caplog.at_level("WARNING", logger="tg_agent.runtime.bootstrap"):
+        _log_task_exception(task)
+
+    assert any(
+        "warm_all_dialogs_startup" in r.getMessage() and r.exc_info is not None
+        for r in caplog.records
+    )
+
+
+@pytest.mark.anyio
+async def test_log_task_exception_silent_on_success(caplog):
+    """A successful task produces no warning."""
+
+    async def _ok():
+        return 1
+
+    task = asyncio.create_task(_ok())
+    await task
+
+    with caplog.at_level("WARNING", logger="tg_agent.runtime.bootstrap"):
+        _log_task_exception(task)
+
+    assert caplog.records == []
+
+
+@pytest.mark.anyio
+async def test_log_task_exception_silent_on_cancel(caplog):
+    """A cancelled task is not treated as a failure."""
+
+    async def _sleep():
+        await asyncio.sleep(10)
+
+    task = asyncio.create_task(_sleep())
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    with caplog.at_level("WARNING", logger="tg_agent.runtime.bootstrap"):
+        _log_task_exception(task)
+
+    assert caplog.records == []
+
+
+# ---------------------------------------------------------------------------
+# Approval queue startup log (#1314)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_start_container_logs_nonempty_approval_queue(tmp_path, caplog):
+    """A non-empty approval queue is announced at startup (#1314)."""
+    import logging
+
+    from tg_agent.models import Channel
+
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    await db.add_channel(
+        Channel(channel_id=830, title="PendingLog", approval_state="pending")
+    )
+    container = _make_container(db)
+    container.scheduler = AsyncMock()
+    try:
+        with caplog.at_level(logging.INFO, logger="tg_agent.runtime.bootstrap"):
+            await start_container(container)
+        assert any("await approval" in r.message for r in caplog.records)
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_silent_on_empty_approval_queue(tmp_path, caplog):
+    """No pending channels — no approval-queue startup line."""
+    import logging
+
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    container = _make_container(db)
+    container.scheduler = AsyncMock()
+    try:
+        with caplog.at_level(logging.INFO, logger="tg_agent.runtime.bootstrap"):
+            await start_container(container)
+        assert not any("await approval" in r.message for r in caplog.records)
+    finally:
+        await db.close()
