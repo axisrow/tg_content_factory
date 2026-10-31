@@ -86,11 +86,11 @@ pass-through-методов (ratchet «только вниз») — добавл
 ## Runtime and Web App Wiring
 
 - `tg_agent/runtime/bootstrap.py` — общая сборка сервисов и lifecycle worker; `RuntimeContainer` не содержит шаблонов или web timing state.
-- `tg_agent/web/bootstrap.py` — совместимые входные точки и сборка web-представления поверх runtime; `AppContainer` добавляет Jinja-шаблоны и timing buffer.
+- `packages/tg_webui/src/tg_webui/bootstrap.py` — совместимые входные точки и сборка web-представления поверх runtime; `AppContainer` добавляет Jinja-шаблоны и timing buffer.
 
-- `tg_agent/web/assembly.py` — `register_routes()` монтирует все роутеры; `configure_app()` привязывает `AppContainer` к `app.state.*`
-- `tg_agent/web/container.py` — `AppContainer` агрегирует все сервисы
-- `tg_agent/web/deps.py` — хелперы `deps.get_db()`, `deps.get_pool()` и др.
+- `packages/tg_webui/src/tg_webui/assembly.py` — `register_routes()` монтирует все роутеры; `configure_app()` привязывает `AppContainer` к `app.state.*`
+- `packages/tg_webui/src/tg_webui/container.py` — `AppContainer` агрегирует все сервисы
+- `packages/tg_webui/src/tg_webui/deps.py` — хелперы `deps.get_db()`, `deps.get_pool()` и др.
 
 ## Web Route Layering
 
@@ -100,7 +100,7 @@ pass-through-методов (ratchet «только вниз») — добавл
 - `handlers`: оркестрируют сервисы и возвращают доменный результат.
 - `responses`: мапят результат в `RedirectResponse`, `JSONResponse` или template response.
 
-Общие redirect/JSON helpers живут в `tg_agent/web/responses.py`. Flash-redirects должны использовать
+Общие redirect/JSON helpers живут в `packages/tg_webui/src/tg_webui/responses.py`. Flash-redirects должны использовать
 query-string convention `?msg=...` / `?error=...` и статус `303`; route modules не должны заново
 кодировать этот boilerplate, если хватает общего helper-а. Не создавайте пустые `forms` или
 `handlers` модули заранее — выделяйте их при реальном разрезании конкретного route domain.

@@ -14,6 +14,7 @@ members = [
     "tg-agent",
     "tg-shared",
     "tg-tui",
+    "tg-webui",
 ]
 
 [[package]]
@@ -5204,6 +5205,29 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "textual", extras = ["syntax"], specifier = ">=8.2.8" },
+    { name = "tg-agent", editable = "." },
+]
+
+[[package]]
+name = "tg-webui"
+version = "0.1.0"
+source = { editable = "packages/tg_webui" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "itsdangerous" },
+    { name = "jinja2" },
+    { name = "python-multipart" },
+    { name = "qrcode" },
+    { name = "tg-agent" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.136.3,<0.163" },
+    { name = "itsdangerous", specifier = ">=2.2.0" },
+    { name = "jinja2", specifier = ">=3.1.6" },
+    { name = "python-multipart", specifier = ">=0.0.29" },
+    { name = "qrcode", specifier = ">=8.0" },
     { name = "tg-agent", editable = "." },
 ]
 

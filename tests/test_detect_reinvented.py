@@ -9,7 +9,7 @@ interrogate на фейках формы, а не на реальном инст
     false-positive.
 
 Верификационный кейс эпика (#1083: «детектор находит ≥1 известный кейс из #782»)
-— hand-rolled HMAC-JWT из tg_agent/web/session.py (#782 / пункт #1). Эталонная
+— hand-rolled HMAC-JWT из tg_webui/session.py (#782 / пункт #1). Эталонная
 функция собирала `base64url(HMAC-SHA256(secret, payload))` руками; детектор
 обязан её поймать. При этом ТЕКУЩИЙ session.py уже переехал на itsdangerous.Signer
 (#953) — и на нём детектор молчать НЕ обязан по этой эвристике, что тоже
@@ -87,7 +87,7 @@ IDIOMATIC_ITSDANGEROUS = """
 
 def test_handrolled_hmac_jwt_is_caught() -> None:
     """Verification-кейс #1083: эталонный hand-rolled HMAC-JWT (#782) ловится, high."""
-    findings = detect_in_source(textwrap.dedent(HANDROLLED_HMAC_JWT), "tg_agent/web/session.py")
+    findings = detect_in_source(textwrap.dedent(HANDROLLED_HMAC_JWT), "tg_webui/session.py")
     signing = [f for f in findings if f.kind == "handrolled-token-signing"]
     assert len(signing) == 1, "детектор обязан поймать самописную HMAC-JWT подпись (#782 эталон)"
     assert signing[0].confidence == "high"
@@ -411,17 +411,17 @@ def test_load_baseline_missing_returns_none(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Прогон по реальному tg_agent/web/session.py: текущий код НЕ должен давать
+# Прогон по реальному tg_webui/session.py: текущий код НЕ должен давать
 # handrolled-signing (он на itsdangerous). Защищает от регресса эвристики.
 # --------------------------------------------------------------------------- #
 
 
 def test_real_session_py_not_flagged_as_handrolled() -> None:
-    """Текущий tg_agent/web/session.py (itsdangerous) не ловится как hand-rolled signing."""
-    session_py = Path(__file__).resolve().parents[1] / "tg_agent" / "web" / "session.py"
+    """Текущий tg_webui/session.py (itsdangerous) не ловится как hand-rolled signing."""
+    session_py = Path(__file__).resolve().parents[1] / "packages" / "tg_webui" / "src" / "tg_webui" / "session.py"
     if not session_py.exists():  # pragma: no cover - файл есть в репозитории
-        pytest.skip("tg_agent/web/session.py отсутствует")
-    findings = detect_in_source(session_py.read_text(encoding="utf-8"), "tg_agent/web/session.py")
+        pytest.skip("tg_webui/session.py отсутствует")
+    findings = detect_in_source(session_py.read_text(encoding="utf-8"), "tg_webui/session.py")
     assert "handrolled-token-signing" not in {f.kind for f in findings}
 
 
@@ -439,7 +439,7 @@ def test_real_session_py_not_flagged_as_handrolled() -> None:
 def test_journal_row_matches_782_columns() -> None:
     """Строка журнала #782: 5 колонок, дата, находка(файл:строка), замена, заглушки."""
     f = _finding(
-        "tg_agent/web/session.py", line=12, kind="handrolled-token-signing",
+        "tg_webui/session.py", line=12, kind="handrolled-token-signing",
         what="ручная HMAC/JWT-подпись токена в create_session_token()",
     )
     row = detect_reinvented.journal_row(f, date="2026-06-24")
@@ -449,7 +449,7 @@ def test_journal_row_matches_782_columns() -> None:
     date, finding_cell, replacement_cell, decision_cell, pr_cell = cells
     assert date == "2026-06-24"
     assert "create_session_token" in finding_cell
-    assert "tg_agent/web/session.py:12" in finding_cell  # файл:строка внутри находки
+    assert "tg_webui/session.py:12" in finding_cell  # файл:строка внутри находки
     assert replacement_cell == "r"
     assert decision_cell == "_ожидает решения_"
     assert pr_cell == "—"

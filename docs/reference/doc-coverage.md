@@ -28,7 +28,7 @@
 python scripts/doc_coverage.py
 
 # Другой путь / больше строк в топах
-python scripts/doc_coverage.py --path tg_agent/web --top 40
+python scripts/doc_coverage.py --path packages/tg_webui/src/tg_webui --top 40
 
 # CI-гейт: ненулевой exit, если покрытие ниже порога
 python scripts/doc_coverage.py --fail-under 23

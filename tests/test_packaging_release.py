@@ -19,13 +19,9 @@ def test_packaging_config_keeps_tg_agent_namespace_for_console_script() -> None:
     assert data["project"]["scripts"]["tg-agent"] == "tg_agent.main:main"
     assert data["tool"]["setuptools"]["packages"]["find"]["where"] == ["."]
     assert data["tool"]["setuptools"]["packages"]["find"]["include"] == ["tg_agent*"]
+    # web/templates + web/static left with the web panel for packages/tg_webui
+    # (#1720 wave 3); cli/commands/*.tcss with the TUI for packages/tg_tui (wave 2).
     assert data["tool"]["setuptools"]["package-data"]["tg_agent"] == [
-        "web/templates/*.html",
-        "web/templates/**/*.html",
-        "web/static/*.css",
-        "web/static/*.js",
-        "web/static/js/*.js",
-        # cli/commands/*.tcss left with the TUI for packages/tg_tui (#1720 wave 2)
         "database/seeds/*.csv",
     ]
 
@@ -77,15 +73,10 @@ def test_wheel_ships_tg_agent_package_not_src(tmp_path: Path) -> None:
     assert not any(n == "src" or n.startswith("src/") for n in names), (
         "wheel must not ship a top-level src package (#1448)"
     )
-    # Declared package-data must actually make it into the wheel.
-    assert any(
-        n.startswith("tg_agent/web/templates/") and n.endswith(".html") for n in names
-    ), "web templates missing from wheel — package-data mapping broke"
-    source_templates = {
-        path.relative_to(ROOT).as_posix()
-        for path in (ROOT / "tg_agent" / "web" / "templates").rglob("*.html")
-    }
-    missing_templates = source_templates - set(names)
-    assert not missing_templates, f"nested web templates missing from wheel: {sorted(missing_templates)}"
+    # The web panel (templates/static included) ships in packages/tg_webui since
+    # #1720 wave 3; its own wheel test lives in packages/tg_webui/tests.
+    assert not any(n.startswith(("tg_webui/", "tg_agent/web/")) for n in names), (
+        "web panel files must not ship in the core wheel"
+    )
     assert "Name: tg-agent" in metadata
     assert "tg-agent = tg_agent.main:main" in entry_points

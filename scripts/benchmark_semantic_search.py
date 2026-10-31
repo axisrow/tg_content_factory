@@ -35,7 +35,7 @@ async def measure(database: str, mode: str, rows: int) -> dict:
     from tg_agent.database.repositories.messages import MessagesRepository
     from tg_agent.search.local_search import LocalSearch
     from tg_agent.search.numpy_semantic import NumpySemanticIndex
-    from tg_agent.web.assembly import register_builtin_endpoints
+    from tg_webui.assembly import register_builtin_endpoints
 
     # Warm numerical imports equally; generation happens in the parent process.
     NearestNeighbors(metric='cosine').fit(np.ones((2, 384), dtype=np.float32))

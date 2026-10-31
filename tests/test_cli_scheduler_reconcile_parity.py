@@ -2,7 +2,7 @@
 
 The worker has no periodic scheduler re-sync: the only way a settings mutation
 reaches the running APScheduler is a ``scheduler.reconcile`` telegram command.
-Web routes enqueue it after every mutation (``tg_agent/web/scheduler/handlers.py``),
+Web routes enqueue it after every mutation (``tg_webui/scheduler/handlers.py``),
 but the CLI ``stop`` / ``job-toggle`` / ``set-interval`` impls wrote the setting
 only — the live scheduler kept the old state until a worker restart (found live
 2026-10-02: ``collect_all`` kept firing every 30 min after a CLI job-toggle).

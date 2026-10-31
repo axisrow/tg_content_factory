@@ -77,10 +77,11 @@ jobs:
           python -m build
           python -m build packages/tg_shared --outdir dist
           python -m build packages/tg_tui --outdir dist
+          python -m build packages/tg_webui --outdir dist
 
       # Python handles globbing on every OS, including Windows PowerShell.
       - name: Install built wheel
-        run: python -c "import pathlib, subprocess, sys; wheels = sorted(map(str, pathlib.Path('dist').glob('*.whl'))); assert len(wheels) == 3, wheels; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *wheels])"
+        run: python -c "import pathlib, subprocess, sys; wheels = sorted(map(str, pathlib.Path('dist').glob('*.whl'))); assert len(wheels) == 4, wheels; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *wheels])"
 
       - name: Check installed dependencies
         run: python -m pip check
@@ -180,7 +181,7 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Ruff
-        run: ruff check tg_agent tests packages/tg_shared packages/tg_tui conftest.py
+        run: ruff check tg_agent tests packages/tg_shared packages/tg_tui packages/tg_webui conftest.py
 
   # Static gates run as their own job so they fail fast and in parallel with the
   # long tests jobs (#944, #1097 §5). Holds the import-architecture contracts and
@@ -222,8 +223,8 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      - name: Install monorepo packages (tg-shared #1421, tg-tui #1720)
-        run: pip install -e packages/tg_shared -e packages/tg_tui
+      - name: Install monorepo packages (tg-shared #1421, tg-tui + tg-webui #1720)
+        run: pip install -e packages/tg_shared -e packages/tg_tui -e packages/tg_webui
 
       - name: Import architecture contracts
         run: lint-imports --config .importlinter
@@ -316,11 +317,11 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      - name: Install monorepo packages (tg-shared #1421, tg-tui #1720)
-        run: pip install -e packages/tg_shared -e packages/tg_tui
+      - name: Install monorepo packages (tg-shared #1421, tg-tui + tg-webui #1720)
+        run: pip install -e packages/tg_shared -e packages/tg_tui -e packages/tg_webui
 
       - name: Pytest (smoke preflight)
-        run: pytest tests -q -m smoke
+        run: pytest tests packages/tg_webui/tests -q -m smoke
 
   # The parallel-safe suite, sharded ×3 across a runner matrix — the wall is
   # the slowest shard instead of the whole suite. Sharding is FILE-atomic so
@@ -360,8 +361,8 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      - name: Install monorepo packages (tg-shared #1421, tg-tui #1720)
-        run: pip install -e packages/tg_shared -e packages/tg_tui
+      - name: Install monorepo packages (tg-shared #1421, tg-tui + tg-webui #1720)
+        run: pip install -e packages/tg_shared -e packages/tg_tui -e packages/tg_webui
 
       # On CI conftest.py uses every runner core (the load throttle is
       # dev-only), so `-n auto` fans out across all vCPUs. --durations surfaces
@@ -391,8 +392,8 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      - name: Install monorepo packages (tg-shared #1421, tg-tui #1720)
-        run: pip install -e packages/tg_shared -e packages/tg_tui
+      - name: Install monorepo packages (tg-shared #1421, tg-tui + tg-webui #1720)
+        run: pip install -e packages/tg_shared -e packages/tg_tui -e packages/tg_webui
 
       - name: Pytest (aiosqlite serial, per-file parallel)
-        run: pytest tests -q -m aiosqlite_serial -n auto --dist=loadfile
+        run: pytest tests packages/tg_webui/tests -q -m aiosqlite_serial -n auto --dist=loadfile

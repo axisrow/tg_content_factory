@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=77.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tg-webui"
+version = "0.1.0"
+description = "Legacy web panel for tg-agent (`tg-agent serve`): FastAPI + Jinja2 dashboard; frozen, optional"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    {name = "Axisrow"}
+]
+keywords = ["telegram", "agent", "web", "fastapi"]
+classifiers = [
+    "Development Status :: 7 - Inactive",
+    "Environment :: Web Environment",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+]
+dependencies = [
+    "tg-agent",
+    "fastapi>=0.136.3,<0.163",
+    "jinja2>=3.1.6",
+    "python-multipart>=0.0.29",
+    "itsdangerous>=2.2.0",
+    # QR login in the web panel (#1551): renders the tg://login token as an
+    # inline SVG (SvgPathImage) — no PIL pull, unlike the PNG factories.
+    "qrcode>=8.0",
+]
+
+# Points at the monorepo until the package is published.
+[project.urls]
+Homepage = "https://github.com/axisrow/tg_content_factory"
+Issues = "https://github.com/axisrow/tg_content_factory/issues"
+
+[tool.uv.sources]
+tg-agent = { workspace = true }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tg_webui = [
+    "templates/*.html",
+    "templates/**/*.html",
+    "static/*.css",
+    "static/*.js",
+    "static/js/*.js",
+    "py.typed",
+]

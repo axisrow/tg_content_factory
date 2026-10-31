@@ -9,9 +9,12 @@ _FILES = [
     _REPO_ROOT / "tests/test_client_pool_runtime.py",
     _REPO_ROOT / "tests/test_notification.py",
     _REPO_ROOT / "tests/test_search.py",
-    _REPO_ROOT / "tests/test_import_web.py",
     _REPO_ROOT / "tests/test_collector_runtime.py",
     _REPO_ROOT / "tests/test_photo_loader.py",
+    # Web halves moved/split into the optional web package (#1720 wave 3).
+    _REPO_ROOT / "packages/tg_webui/tests/test_search.py",
+    _REPO_ROOT / "packages/tg_webui/tests/test_import_web.py",
+    _REPO_ROOT / "packages/tg_webui/tests/test_photo_loader.py",
 ]
 _FORBIDDEN_PATTERNS = {
     r"\bpool\s*=\s*AsyncMock\b": "use RealPoolHarness instead of AsyncMock pool doubles",

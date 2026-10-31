@@ -19,16 +19,16 @@
 
 | Файл | Эндпоинтов | Сложность |
 |------|-----------|-----------|
-| `tg_agent/web/routes/analytics.py` | 4 | Низкая |
-| `tg_agent/web/routes/search.py` | 2 | Низкая |
-| `tg_agent/web/routes/search_queries.py` | 6 | Средняя |
-| `tg_agent/web/routes/channels.py` | 6 | Средняя |
-| `tg_agent/web/routes/filter.py` | 9 | Средняя |
-| `tg_agent/web/routes/settings.py` | 19 | Высокая |
-| `tg_agent/web/routes/agent.py` | 10 | Высокая |
-| `tg_agent/web/routes/photo_loader.py` | 10 | Высокая |
-| `tg_agent/web/routes/channel_collection.py` | 4 | Средняя |
-| `tg_agent/web/routes/moderation.py` | +5 | Средняя |
+| `packages/tg_webui/src/tg_webui/routes/analytics.py` | 4 | Низкая |
+| `packages/tg_webui/src/tg_webui/routes/search.py` | 2 | Низкая |
+| `packages/tg_webui/src/tg_webui/routes/search_queries.py` | 6 | Средняя |
+| `packages/tg_webui/src/tg_webui/routes/channels.py` | 6 | Средняя |
+| `packages/tg_webui/src/tg_webui/routes/filter.py` | 9 | Средняя |
+| `packages/tg_webui/src/tg_webui/routes/settings.py` | 19 | Высокая |
+| `packages/tg_webui/src/tg_webui/routes/agent.py` | 10 | Высокая |
+| `packages/tg_webui/src/tg_webui/routes/photo_loader.py` | 10 | Высокая |
+| `packages/tg_webui/src/tg_webui/routes/channel_collection.py` | 4 | Средняя |
+| `packages/tg_webui/src/tg_webui/routes/moderation.py` | +5 | Средняя |
 
 ---
 
@@ -81,14 +81,14 @@ app.state.agent_manager = agent_manager_mock
 def test_search_with_query(client, monkeypatch):
     mock_svc = MagicMock()
     mock_svc.search = AsyncMock(return_value=SearchResult(messages=[], total=0, query="x"))
-    monkeypatch.setattr("tg_agent.web.routes.search.deps.search_service", lambda r: mock_svc)
+    monkeypatch.setattr("tg_webui.routes.search.deps.search_service", lambda r: mock_svc)
     resp = await client.get("/search?q=x")
 ```
 
 **Способ 2: patch через context manager**
 
 ```python
-with patch("tg_agent.web.routes.scheduler.deps.scheduler_service") as mock_svc:
+with patch("tg_webui.routes.scheduler.deps.scheduler_service") as mock_svc:
     mock_svc.return_value.start = AsyncMock()
     await client.post("/scheduler/start")
     mock_svc.return_value.start.assert_called_once()
@@ -102,7 +102,7 @@ class FakePublishService:
     async def publish_run(self, run, pipeline):
         return [PublishResult(success=True, message_id=777)]
 
-monkeypatch.setattr("tg_agent.web.routes.moderation.PublishService", FakePublishService)
+monkeypatch.setattr("tg_webui.routes.moderation.PublishService", FakePublishService)
 ```
 
 ### 2.3 Вспомогательные функции
@@ -253,7 +253,7 @@ def test_search_with_query(client, monkeypatch):
     mock_svc = MagicMock()
     mock_svc.search = AsyncMock(return_value=mock_result)
     mock_svc.check_quota = AsyncMock(return_value=None)
-    monkeypatch.setattr("tg_agent.web.routes.search.deps.search_service", lambda r: mock_svc)
+    monkeypatch.setattr("tg_webui.routes.search.deps.search_service", lambda r: mock_svc)
     resp = await client.get("/search?q=test")
     assert resp.status_code == 200
 ```
@@ -418,11 +418,11 @@ async def _enable_dev_mode(db):
 
 ```python
 monkeypatch.setattr(
-    "tg_agent.web.routes.settings.AgentProviderService.load_provider_configs",
+    "tg_webui.routes.settings.AgentProviderService.load_provider_configs",
     AsyncMock(return_value=[]),
 )
 monkeypatch.setattr(
-    "tg_agent.web.routes.settings.AgentProviderService.load_model_cache",
+    "tg_webui.routes.settings.AgentProviderService.load_model_cache",
     AsyncMock(return_value={}),
 )
 ```
@@ -532,7 +532,7 @@ def agent_manager_mock():
 
 ```python
 monkeypatch.setattr(
-    "tg_agent.web.routes.photo_loader._persist_uploads",
+    "tg_webui.routes.photo_loader._persist_uploads",
     AsyncMock(return_value=[]),
 )
 ```
@@ -611,8 +611,8 @@ assert "text/event-stream" in resp.headers["content-type"]
 **Решение:** Мокать через monkeypatch:
 
 ```python
-monkeypatch.setattr("tg_agent.web.routes.settings.AgentProviderService.load_provider_configs", AsyncMock(return_value=[]))
-monkeypatch.setattr("tg_agent.web.routes.settings.AgentProviderService.load_model_cache", AsyncMock(return_value={}))
+monkeypatch.setattr("tg_webui.routes.settings.AgentProviderService.load_provider_configs", AsyncMock(return_value=[]))
+monkeypatch.setattr("tg_webui.routes.settings.AgentProviderService.load_model_cache", AsyncMock(return_value={}))
 ```
 
 ### 4.4 MagicMock().available truthy по умолчанию
@@ -726,7 +726,7 @@ from tg_agent.search.ai_search import AISearchEngine
 from tg_agent.search.engine import SearchEngine
 from tg_agent.telegram.auth import TelegramAuth
 from tg_agent.telegram.collector import Collector
-from tg_agent.web.app import create_app
+from tg_webui.app import create_app
 
 
 @pytest.fixture

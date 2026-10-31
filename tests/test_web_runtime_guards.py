@@ -58,7 +58,7 @@ _ALLOWLIST: dict[str, tuple[str, ...]] = {
 
 
 def test_web_routes_do_not_call_live_pool_methods() -> None:
-    routes_dir = Path("tg_agent/web/routes")
+    routes_dir = Path("packages/tg_webui/src/tg_webui/routes")
     offenders: list[str] = []
     for path in sorted(routes_dir.glob("*.py")):
         if path.name == "__init__.py":
@@ -76,7 +76,7 @@ def test_web_routes_do_not_call_live_pool_methods() -> None:
 
 def test_web_services_do_not_call_live_pool_methods() -> None:
     """Services consumed by web routes must also stay off the live pool."""
-    services_dir = Path("tg_agent/web")
+    services_dir = Path("packages/tg_webui/src/tg_webui")
     offenders: list[str] = []
     skip_dirs = {"templates", "static", "routes", "__pycache__"}
     for path in services_dir.rglob("*.py"):
@@ -128,7 +128,7 @@ def test_account_service_not_imported_by_web() -> None:
     would re-open the HTTP 500 regression fixed for #453.
     """
     token = "tg_agent.services.account_service"
-    web_dir = Path("tg_agent/web")
+    web_dir = Path("packages/tg_webui/src/tg_webui")
     offenders: list[str] = []
     for path in web_dir.rglob("*.py"):
         if "__pycache__" in path.parts:

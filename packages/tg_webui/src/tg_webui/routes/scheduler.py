@@ -1,0 +1,167 @@
+import logging
+from urllib.parse import urlencode
+
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+
+from tg_webui import deps  # noqa: F401  (re-export: tests patch tg_webui.routes.scheduler.deps.*)
+from tg_webui.routes.channel_collection import bulk_enqueue_msg  # noqa: F401  (test monkeypatch target)
+from tg_webui.scheduler import forms, handlers  # noqa: F401  (forms re-exported for back-compat)
+
+# Heavy context construction lives in tg_webui/scheduler/context.py and the
+# endpoint orchestration in tg_webui/scheduler/handlers.py (#654). The helpers
+# below are re-exported here for backward compatibility: tg_webui/search imports
+# `_is_worker_alive` from this module (function-level), and several test modules
+# import the pure presentation helpers + monkeypatch `_is_worker_alive` via this
+# path.
+from tg_webui.scheduler.context import (
+    JOB_LABELS,
+    WORKER_HEARTBEAT_STALE_AFTER_SEC,
+    _build_collector_health_context,
+    _build_jobs_context,
+    _collector_health_border_severity,
+    _collector_health_recommendations,
+    _compute_load_level,
+    _dedupe_recent_unavailability_events,
+    _format_retry_hint,
+    _is_worker_alive,
+    _job_label,
+    _load_pipeline_run_result_meta,
+    _notification_snapshot_payload,
+    _worker_status,
+)
+from tg_webui.scheduler.responses import scheduler_response
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+_LEGACY_TASK_QUERY_KEYS = ("status", "page", "limit")
+
+
+def _legacy_tasks_redirect(request: Request) -> Response:
+    """Redirect the retired scheduler task list to its new /jobs home."""
+    query = {"source": "collection_task"}
+    query.update(
+        {
+            key: request.query_params[key]
+            for key in _LEGACY_TASK_QUERY_KEYS
+            if key in request.query_params
+        }
+    )
+    suffix = f"?{urlencode(query)}" if query else ""
+    target = f"/jobs{suffix}"
+    if request.headers.get("HX-Request") == "true":
+        return Response(status_code=200, headers={"HX-Redirect": target})
+    return RedirectResponse(url=target, status_code=303)
+
+# Re-exported for backward compatibility (importers/tests reach these via
+# tg_webui.routes.scheduler). Listed here so the imports above are not flagged
+# as unused.
+__all__ = [
+    "router",
+    "deps",
+    "bulk_enqueue_msg",
+    "WORKER_HEARTBEAT_STALE_AFTER_SEC",
+    "JOB_LABELS",
+    "_build_collector_health_context",
+    "_build_jobs_context",
+    "_collector_health_border_severity",
+    "_collector_health_recommendations",
+    "_compute_load_level",
+    "_dedupe_recent_unavailability_events",
+    "_format_retry_hint",
+    "_is_worker_alive",
+    "_job_label",
+    "_load_pipeline_run_result_meta",
+    "_notification_snapshot_payload",
+    "_worker_status",
+]
+
+
+@router.post("/tasks/{task_id}/cancel")
+async def cancel_task(request: Request, task_id: int):
+    return scheduler_response(request, await handlers.cancel_task(request, task_id))
+
+
+@router.post("/tasks/clear-pending-collect")
+async def clear_pending_collect_tasks(request: Request):
+    return scheduler_response(request, await handlers.clear_pending_collect_tasks(request))
+
+
+@router.get("/", response_class=HTMLResponse)
+async def scheduler_page(request: Request):
+    # The retired task tabs/pagination produced full-page scheduler URLs.
+    if any(key in request.query_params for key in _LEGACY_TASK_QUERY_KEYS):
+        return _legacy_tasks_redirect(request)
+    try:
+        result = await handlers.render_scheduler_page(request)
+    except Exception:
+        logger.exception("scheduler_page failed")
+        raise
+    return scheduler_response(request, result)
+
+
+@router.get("/fragments/health", response_class=HTMLResponse)
+async def scheduler_health_fragment(request: Request):
+    return scheduler_response(request, await handlers.render_scheduler_health_fragment(request))
+
+
+@router.get("/fragments/jobs", response_class=HTMLResponse)
+async def scheduler_jobs_fragment(request: Request):
+    return scheduler_response(request, await handlers.render_scheduler_jobs_fragment(request))
+
+
+@router.get("/fragments/tasks", response_class=HTMLResponse)
+async def scheduler_tasks_fragment(request: Request):
+    return _legacy_tasks_redirect(request)
+
+
+@router.post("/jobs/{job_id}/toggle")
+async def toggle_scheduler_job(request: Request, job_id: str):
+    return scheduler_response(request, await handlers.toggle_scheduler_job(request, job_id))
+
+
+@router.post("/jobs/{job_id}/set-interval")
+async def set_job_interval(request: Request, job_id: str):
+    return scheduler_response(request, await handlers.set_job_interval(request, job_id))
+
+
+@router.post("/start")
+async def start_scheduler(request: Request):
+    return scheduler_response(request, await handlers.start_scheduler(request))
+
+
+@router.post("/stop")
+async def stop_scheduler(request: Request):
+    return scheduler_response(request, await handlers.stop_scheduler(request))
+
+
+@router.post("/pause")
+async def pause_collection_queue(request: Request):
+    return scheduler_response(request, await handlers.pause_collection_queue(request))
+
+
+@router.post("/resume")
+async def resume_collection_queue(request: Request):
+    return scheduler_response(request, await handlers.resume_collection_queue(request))
+
+
+@router.post("/trigger")
+async def trigger_collection(request: Request):
+    return scheduler_response(request, await handlers.trigger_collection(request))
+
+
+@router.post("/trigger-warm")
+async def trigger_warm_dialogs(request: Request):
+    return scheduler_response(request, await handlers.trigger_warm_dialogs(request))
+
+
+@router.post("/test-notification")
+async def test_notification(request: Request):
+    return scheduler_response(request, await handlers.test_notification(request))
+
+
+@router.post("/dry-run-notifications", response_class=HTMLResponse)
+async def dry_run_notifications(request: Request):
+    return scheduler_response(request, await handlers.dry_run_notifications(request))

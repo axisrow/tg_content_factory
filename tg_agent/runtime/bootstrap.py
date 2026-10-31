@@ -53,7 +53,7 @@ from tg_agent.utils.asyncio import make_log_task_exception_callback
 from tg_shared.auth import TelegramAuth
 
 # Keep the historical log category for existing operator filters.
-logger = logging.getLogger("tg_agent.web.bootstrap")
+logger = logging.getLogger(__name__)
 _is_dev = os.environ.get("ENV", "PROD").upper() == "DEV"
 _POOL_INIT_TIMEOUT = 20
 _POOL_RETRY_INTERVAL_SEC = 60.0

@@ -17,7 +17,7 @@ RAW_TELETHON_ALLOWED = {
 
 ENTRYPOINT_ROOTS = (
     Path("tg_agent/cli"),
-    Path("tg_agent/web"),
+    Path("packages/tg_webui/src/tg_webui"),
     Path("tg_agent/agent/tools"),
     Path("tg_agent/services/pipeline_nodes"),
 )

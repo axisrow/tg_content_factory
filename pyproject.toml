@@ -136,7 +136,7 @@ dev = [
     "pip-audit>=2.7.3",
     "bandit>=1.8.0",
     # Console-error e2e smoke (issue #1014): the opt-in browser walk in
-    # tests/e2e/console_smoke.py drives the Playwright Python API directly
+    # packages/tg_webui/tests/e2e/console_smoke.py drives the Playwright Python API directly
     # instead of shelling out to an undeclared `playwright-cli` binary. The
     # browser binaries are installed separately with
     # `playwright install --with-deps chromium`; pytest-playwright pulls in the
@@ -181,11 +181,6 @@ include = ["tg_agent*"]
 
 [tool.setuptools.package-data]
 tg_agent = [
-    "web/templates/*.html",
-    "web/templates/**/*.html",
-    "web/static/*.css",
-    "web/static/*.js",
-    "web/static/js/*.js",
     "database/seeds/*.csv",
 ]
 
@@ -201,7 +196,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["tg_agent", "tg_shared", "tests"]
+known-first-party = ["tg_agent", "tg_shared", "tg_tui", "tg_webui", "tests"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["typer.Option", "typer.Argument", "fastapi.Depends", "fastapi.File", "fastapi.Form"]

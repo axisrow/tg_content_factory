@@ -1,0 +1,391 @@
+import io
+import logging
+from datetime import datetime, timezone
+
+import qrcode
+from fastapi import APIRouter, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from qrcode.image.svg import SvgPathImage
+
+from tg_agent.models import Account, TelegramCommandStatus
+from tg_shared.auth import validate_session_string
+from tg_webui import deps
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+AUTH_PENDING_WARNING_SECONDS = 30
+# Web-side QR status polling cadence (#1551): each tick enqueues one
+# auth.qr_status command the worker answers from its in-memory QR flow.
+QR_POLL_INTERVAL_SECONDS = 5
+
+
+def _render(request: Request, name: str, context: dict):
+    return request.app.state.templates.TemplateResponse(request, name, context)
+
+
+def _is_api_configured(request: Request) -> bool:
+    return request.app.state.auth.is_configured
+
+
+async def _auth_command(request: Request):
+    raw = request.query_params.get("command_id", "").strip()
+    if not raw.isdigit():
+        return None
+    return await deps.telegram_command_service(request).get(int(raw))
+
+
+def _elapsed_seconds(since: datetime | None) -> int:
+    if since is None:
+        return 0
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    else:
+        since = since.astimezone(timezone.utc)
+    return max(0, int((datetime.now(timezone.utc) - since).total_seconds()))
+
+
+def _auth_redirect(request: Request, command_id: int, *, phone: str = "") -> RedirectResponse:
+    target = f"/auth/login?command_id={command_id}"
+    if phone:
+        target += f"&phone={phone}"
+    return RedirectResponse(url=target, status_code=303)
+
+
+@router.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    api_configured = _is_api_configured(request)
+    step = "phone" if api_configured else "credentials"
+    command = await _auth_command(request)
+    context: dict[str, object] = {"step": step, "error": None, "phone": "", "api_configured": api_configured}
+    if command is not None and command.command_type.startswith("auth."):
+        payload = command.payload or {}
+        result = command.result_payload or {}
+        context["phone"] = payload.get("phone", request.query_params.get("phone", ""))
+        if command.status in {TelegramCommandStatus.PENDING, TelegramCommandStatus.RUNNING}:
+            pending_elapsed_seconds = _elapsed_seconds(command.started_at or command.created_at)
+            context.update(
+                {
+                    "step": "pending",
+                    "command_id": command.id,
+                    "pending_action": command.command_type,
+                    "pending_status": command.status.value,
+                    "pending_elapsed_seconds": pending_elapsed_seconds,
+                    "pending_slow": pending_elapsed_seconds >= AUTH_PENDING_WARNING_SECONDS,
+                }
+            )
+        elif command.command_type in {"auth.send_code", "auth.resend_code"}:
+            if command.status == TelegramCommandStatus.SUCCEEDED:
+                context.update(
+                    {
+                        "step": "code",
+                        "phone": result.get("phone", context["phone"]),
+                        "phone_code_hash": result.get("phone_code_hash", ""),
+                        "code_type": result.get("code_type"),
+                        "next_type": result.get("next_type"),
+                        "timeout": result.get("timeout"),
+                    }
+                )
+            else:
+                context.update(
+                    {
+                        "step": "code" if command.command_type == "auth.resend_code" else "phone",
+                        "error": command.error,
+                        "phone_code_hash": payload.get("phone_code_hash", ""),
+                        "code_type": payload.get("code_type", ""),
+                        "next_type": payload.get("next_type", ""),
+                        "timeout": payload.get("timeout", ""),
+                    }
+                )
+        elif command.command_type == "auth.verify_code":
+            if command.status == TelegramCommandStatus.SUCCEEDED:
+                return RedirectResponse(url="/settings?msg=account_connected", status_code=303)
+            error = command.error or ""
+            if "2FA" in error or "password" in error.lower():
+                context.update(
+                    {
+                        "step": "2fa",
+                        "error": error,
+                        "code": payload.get("code", ""),
+                        "phone_code_hash": payload.get("phone_code_hash", ""),
+                    }
+                )
+            else:
+                context.update(
+                    {
+                        "step": "code",
+                        "error": error,
+                        "phone_code_hash": payload.get("phone_code_hash", ""),
+                        "code_type": payload.get("code_type", ""),
+                        "next_type": payload.get("next_type", ""),
+                        "timeout": payload.get("timeout", ""),
+                    }
+                )
+    return _render(
+        request,
+        "login.html",
+        context,
+    )
+
+
+@router.post("/save-credentials")
+async def save_credentials(
+    request: Request,
+    api_id: int | None = Form(None),
+    api_hash: str = Form(""),
+):
+    if api_id is None or not api_hash:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    db = request.app.state.db
+    auth = request.app.state.auth
+
+    await db.repos.settings.set_setting("tg_api_id", str(api_id))
+    await db.repos.settings.set_setting("tg_api_hash", api_hash)
+    auth.update_credentials(api_id, api_hash)
+
+    return RedirectResponse(url="/auth/login", status_code=303)
+
+
+@router.post("/send-code")
+async def send_code(request: Request, phone: str = Form("")):
+    if not phone:
+        return _render(
+            request, "login.html",
+            {"step": "phone", "error": None, "api_configured": _is_api_configured(request)},
+        )
+    if not _is_api_configured(request):
+        return _render(
+            request,
+            "login.html",
+            {
+                "step": "credentials",
+                "error": "API credentials не настроены. Введите api_id и api_hash.",
+                "phone": phone,
+                "api_configured": False,
+            },
+        )
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "auth.send_code",
+        payload={"phone": phone},
+        requested_by="web:auth.send_code",
+    )
+    return _auth_redirect(request, command_id, phone=phone)
+
+
+@router.post("/resend-code")
+async def resend_code(
+    request: Request,
+    phone: str = Form(""),
+    phone_code_hash: str = Form(""),
+):
+    if not phone or not phone_code_hash:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "auth.resend_code",
+        payload={"phone": phone, "phone_code_hash": phone_code_hash},
+        requested_by="web:auth.resend_code",
+    )
+    return _auth_redirect(request, command_id, phone=phone)
+
+
+@router.post("/verify-code")
+async def verify_code(
+    request: Request,
+    phone: str = Form(""),
+    code: str = Form(""),
+    phone_code_hash: str = Form(""),
+    password_2fa: str = Form(""),
+    code_type: str = Form(""),
+    next_type: str = Form(""),
+    timeout: str = Form(""),
+):
+    if not phone or not code or not phone_code_hash:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "auth.verify_code",
+        payload={
+            "phone": phone,
+            "code": code,
+            "phone_code_hash": phone_code_hash,
+            "password_2fa": password_2fa or "",
+            "code_type": code_type or "",
+            "next_type": next_type or "",
+            "timeout": timeout or "",
+        },
+        requested_by="web:auth.verify_code",
+    )
+    return _auth_redirect(request, command_id, phone=phone)
+
+
+@router.post("/import-session")
+async def import_session(
+    request: Request,
+    phone: str = Form(""),
+    session_string: str = Form(""),
+):
+    """Add an account from a ready StringSession (SSO import, #828) — no login flow.
+
+    A pure DB op (validate → add_account, encrypted at rest): unlike send-code /
+    verify-code it needs no worker or live Telegram, so it runs synchronously here.
+    Refuses to overwrite an existing phone. The session string is a secret (full
+    account access) — it arrives in the POST body (never a URL) and is never logged.
+    """
+    phone = phone.strip()
+    session_string = session_string.strip()
+    # Normalize to the stored canonical form (leading '+') so "7999…" and "+7999…"
+    # can't bypass the duplicate guard with two representations (#1146 review).
+    if phone and not phone.startswith("+"):
+        phone = "+" + phone
+
+    def _error(message: str):
+        return _render(
+            request, "login.html",
+            {"step": "phone", "error": message, "phone": phone,
+             "api_configured": _is_api_configured(request)},
+        )
+
+    if not phone or not session_string:
+        return _error("Укажите номер телефона и session string.")
+    if not validate_session_string(session_string):
+        return _error(f"Невалидная Telegram session string для {phone}.")
+
+    db = request.app.state.db
+    from tg_agent.gateway.catalog import project_catalog, shared_project
+
+    if shared_project(getattr(request.app.state, "config", None)):
+        try:
+            async with project_catalog(request.app.state.config, db) as catalog:
+                await catalog.import_session(phone, session_string)
+        except Exception:
+            return _error("Импорт в общий гейт не выполнен. Для замены общей сессии "
+                          "используйте gateway account --shared.")
+        return RedirectResponse(url="/settings?msg=account_connected", status_code=303)
+    # Atomic insert-only (ON CONFLICT DO NOTHING): the DB — not a stale pre-read —
+    # is the source of truth for "already exists", so two concurrent imports for the
+    # same phone can't both pass a check-then-act guard and clobber a session (#1146
+    # review TOCTOU). is_primary is requested True; the SQL only honors it when no
+    # primary exists yet (#733).
+    new_id = await db.repos.accounts.add_account_if_absent(
+        Account(phone=phone, session_string=session_string, is_primary=True, is_premium=False)
+    )
+    if new_id is None:
+        return _error(f"Аккаунт {phone} уже существует. Удалите его перед импортом.")
+    logger.info("account.import_session phone-added by=web")  # no session value
+    return RedirectResponse(url="/settings?msg=account_connected", status_code=303)
+
+
+def _qr_svg(url: str) -> str:
+    """Render a tg://login URL as an inline SVG QR code (no PIL dependency)."""
+    image = qrcode.make(url, image_factory=SvgPathImage, box_size=1, border=1)
+    buffer = io.BytesIO()  # this qrcode writes bytes even for SVG factories
+    image.save(buffer)
+    return buffer.getvalue().decode()
+
+
+def _qr_base_context(request: Request) -> dict[str, object]:
+    return {
+        "step": "start",
+        "error": None,
+        "qr_id": "",
+        "qr_svg": "",
+        "api_configured": _is_api_configured(request),
+        "poll_interval": QR_POLL_INTERVAL_SECONDS,
+    }
+
+
+@router.get("/qr", response_class=HTMLResponse)
+async def qr_page(request: Request):
+    """QR login page (#1551).
+
+    Server-driven flow through the command queue, same pattern as /auth/login:
+    every screen state is derived from one queued command's status/result —
+    auth.qr_start (initial token), auth.qr_status (poll → fresh URL / terminal
+    state) or auth.qr_password (2FA). No fetch(): the page re-submits a poll
+    form on a timer and the browser follows the 303s.
+    """
+    command = await _auth_command(request)
+    context = _qr_base_context(request)
+    if command is not None and command.command_type.startswith("auth.qr"):
+        payload = command.payload or {}
+        result = command.result_payload or {}
+        context["qr_id"] = str(payload.get("qr_id", ""))
+        if command.status in {TelegramCommandStatus.PENDING, TelegramCommandStatus.RUNNING}:
+            pending_elapsed_seconds = _elapsed_seconds(command.started_at or command.created_at)
+            context.update(
+                {
+                    "step": "pending",
+                    "command_id": command.id,
+                    "pending_status": command.status.value,
+                    "pending_elapsed_seconds": pending_elapsed_seconds,
+                    "pending_slow": pending_elapsed_seconds >= AUTH_PENDING_WARNING_SECONDS,
+                }
+            )
+        elif command.status == TelegramCommandStatus.FAILED:
+            context.update({"step": "error", "error": command.error or "QR-логин завершился ошибкой"})
+        elif command.command_type == "auth.qr_password":
+            if result.get("state") in {"success", "consumed"}:
+                return RedirectResponse(url="/settings?msg=account_connected", status_code=303)
+            context.update({"step": "password", "error": result.get("error") or command.error})
+        else:  # auth.qr_start / auth.qr_status
+            state = result.get("state", "pending")
+            if state == "pending":
+                qr_id = str(result.get("qr_id", "")) or str(context["qr_id"])
+                url = str(result.get("url", ""))
+                context.update({"qr_id": qr_id})
+                if not qr_id or not url:
+                    context.update({"step": "error", "error": "QR-токен недоступен, начните заново"})
+                else:
+                    context.update({"step": "qr", "qr_svg": _qr_svg(url)})
+            elif state == "password_needed":
+                context.update({"step": "password", "error": result.get("error")})
+            elif state in {"success", "consumed"}:
+                return RedirectResponse(url="/settings?msg=account_connected", status_code=303)
+            else:  # failed
+                context.update(
+                    {"step": "error", "error": result.get("error") or command.error or "QR-логин не завершён"}
+                )
+    return _render(request, "qr_login.html", context)
+
+
+@router.post("/qr/start")
+async def qr_start(request: Request):
+    if not _is_api_configured(request):
+        context = _qr_base_context(request)
+        context.update(
+            {
+                "error": "API credentials не настроены. Введите api_id и api_hash.",
+                "api_configured": False,
+            }
+        )
+        return _render(request, "qr_login.html", context)
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "auth.qr_start",
+        payload={},
+        requested_by="web:auth.qr_start",
+    )
+    return RedirectResponse(url=f"/auth/qr?command_id={command_id}", status_code=303)
+
+
+@router.post("/qr/poll")
+async def qr_poll(request: Request, qr_id: str = Form("")):
+    if not qr_id:
+        return RedirectResponse(url="/auth/qr", status_code=303)
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "auth.qr_status",
+        payload={"qr_id": qr_id},
+        requested_by="web:auth.qr_status",
+    )
+    return RedirectResponse(url=f"/auth/qr?command_id={command_id}", status_code=303)
+
+
+@router.post("/qr/password")
+async def qr_password(request: Request, qr_id: str = Form(""), password: str = Form("")):
+    if not qr_id or not password:
+        return RedirectResponse(url="/auth/qr", status_code=303)
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "auth.qr_password",
+        payload={"qr_id": qr_id, "password_2fa": password},
+        requested_by="web:auth.qr_password",
+    )
+    return RedirectResponse(url=f"/auth/qr?command_id={command_id}", status_code=303)

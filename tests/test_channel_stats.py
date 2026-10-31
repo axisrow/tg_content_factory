@@ -117,93 +117,6 @@ def _make_mock_msg(msg_id, views=100, forwards=5, reactions_count=10):
     )
 
 
-class _FakeRouteStatsCollector:
-    def __init__(
-        self,
-        *,
-        result: ChannelStats | None = None,
-        error: Exception | None = None,
-    ):
-        self.is_running = False
-        self.is_stats_running = False
-        self.calls: list[Channel] = []
-        self._result = result
-        self._error = error
-
-    async def collect_channel_stats(self, channel: Channel) -> ChannelStats | None:
-        self.calls.append(channel)
-        if self._error is not None:
-            raise self._error
-        return self._result
-
-
-async def _wait_for_task_status(db, task_id: int, status: str, *, timeout: float = 1.0):
-    async def _poll():
-        while True:
-            task = await db.get_collection_task(task_id)
-            if task is not None and task.status == status:
-                return task
-            await asyncio.sleep(0.01)
-
-    return await asyncio.wait_for(_poll(), timeout=timeout)
-
-
-async def _create_stats_web_test_context(tmp_path, collector):
-    from tests.helpers import make_test_config
-    from tg_agent.database import Database
-    from tg_agent.scheduler.service import SchedulerManager
-    from tg_agent.search.ai_search import AISearchEngine
-    from tg_agent.search.engine import SearchEngine
-    from tg_agent.web.app import create_app
-    from tg_shared.auth import TelegramAuth
-
-    config = make_test_config(tmp_path)
-    app = create_app(config)
-
-    db = Database(config.database.path)
-    await db.initialize()
-    app.state.db = db
-
-    ch = Channel(channel_id=-100123, title="Test Channel", username="test")
-    await db.add_channel(ch)
-    channels = await db.get_channels()
-    pk = channels[0].id
-
-    async def _no_users(self):
-        return []
-
-    async def _resolve_channel(self, identifier):
-        return {
-            "channel_id": -100123,
-            "title": "Test Channel",
-            "username": "test",
-            "channel_type": "channel",
-        }
-
-    async def _get_dialogs(self):
-        return []
-
-    app.state.pool = type(
-        "Pool",
-        (),
-        {
-            "clients": {},
-            "get_users_info": _no_users,
-            "resolve_channel": _resolve_channel,
-            "get_dialogs": _get_dialogs,
-        },
-    )()
-
-    app.state.auth = TelegramAuth(12345, "test_hash")
-    app.state.notifier = None
-    app.state.collector = collector
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(config.scheduler)
-    app.state.session_secret = "test_secret_key"
-    return app, db, pk
-
-
 @pytest.mark.anyio
 async def test_collect_channel_stats_success(db):
     ch = Channel(channel_id=-100123, title="Test", username="test_chan")
@@ -349,42 +262,6 @@ async def test_collect_channel_stats_no_client(db):
     collector = Collector(pool, db, SchedulerConfig())
     result = await collector.collect_channel_stats(ch)
     assert result is None
-
-
-@pytest.mark.anyio
-async def test_stats_web_endpoint_enqueues_command(tmp_path):
-    """Web route only enqueues a telegram command; worker executes it."""
-    import base64
-
-    from httpx import ASGITransport, AsyncClient
-
-    collector = _FakeRouteStatsCollector(
-        result=ChannelStats(channel_id=-100123, subscriber_count=999)
-    )
-    app, db, pk = await _create_stats_web_test_context(tmp_path, collector)
-
-    try:
-        transport = ASGITransport(app=app)
-        auth_header = base64.b64encode(b":testpass").decode()
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            follow_redirects=False,
-            headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
-        ) as c:
-            resp = await c.post(f"/channels/{pk}/stats")
-            assert resp.status_code == 303
-            assert "stats_collection_queued" in resp.headers["location"]
-            assert "command_id=" in resp.headers["location"]
-
-        commands = await db.repos.telegram_commands.list_commands(limit=1)
-        assert len(commands) == 1
-        assert commands[0].command_type == "channels.collect_stats"
-        assert commands[0].payload == {"channel_pk": pk}
-        # Route must not have invoked the live collector directly.
-        assert collector.calls == []
-    finally:
-        await db.close()
 
 
 @pytest.mark.anyio

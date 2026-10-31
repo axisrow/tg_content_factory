@@ -248,7 +248,7 @@ class TestSaveSchedulerSettingsTool:
     async def test_enqueues_reconcile_row_in_real_db(self, db):
         """Integration guard: a real ``scheduler.reconcile`` row lands in telegram_commands.
 
-        Mirrors the web-route contract from #1257 (``tests/test_web_scheduler_reconcile_enqueue.py``)
+        Mirrors the web-route contract from #1257 (``packages/tg_webui/tests/test_web_scheduler_reconcile_enqueue.py``)
         but drives the agent tool against a real in-memory Database instead of the web app.
         """
         handlers = _get_tool_handlers(db)

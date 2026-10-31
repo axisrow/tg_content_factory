@@ -35,7 +35,7 @@ class _ImageResultLike(Protocol):
 # Binary / base64 image results are persisted under the runtime data root.
 # Must match where the web app serves generated images from — ``image_dir()``
 # (``<data root>/image``, tg_agent/paths.py) mounted at ``/data/image`` in
-# tg_agent/web/assembly.py. Writing
+# tg_webui/assembly.py. Writing
 # elsewhere (the old ``data/images``) made saved files unreachable over HTTP, so
 # gpt-image-1 / HuggingFace results rendered as broken images in a no-S3 deploy.
 

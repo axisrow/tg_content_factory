@@ -2,28 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import tg_agent
 from tg_agent.paths import DATA_DIR_ENV, data_root, image_dir
-from tg_agent.web.paths import PROJECT_ROOT, STATIC_DIR, TEMPLATES_DIR, WEB_DIR
-
-
-def test_web_dir_is_web_package():
-    assert WEB_DIR.name == "web"
-    assert WEB_DIR.is_dir()
-
-
-def test_static_dir_exists():
-    assert STATIC_DIR == WEB_DIR / "static"
-    assert STATIC_DIR.is_dir()
-
-
-def test_templates_dir_exists():
-    assert TEMPLATES_DIR == WEB_DIR / "templates"
-    assert TEMPLATES_DIR.is_dir()
-
-
-def test_project_root():
-    assert PROJECT_ROOT == WEB_DIR.parent.parent
-    assert (PROJECT_ROOT / "tg_agent").is_dir()
 
 
 def test_data_root_defaults_to_cwd_data(tmp_path, monkeypatch):
@@ -34,7 +14,7 @@ def test_data_root_defaults_to_cwd_data(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     resolved = data_root()
     assert resolved == Path("data")
-    assert WEB_DIR.parent.parent not in resolved.resolve().parents
+    assert Path(tg_agent.__file__).resolve().parent.parent not in resolved.resolve().parents
 
 
 def test_data_root_env_override(tmp_path, monkeypatch):

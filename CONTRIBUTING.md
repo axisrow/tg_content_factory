@@ -24,7 +24,7 @@ credentials, not logs.
 ## Architecture map
 
 ```
-entrypoints (tg_agent/cli, tg_agent/web, tg_agent/agent)   ← no telethon imports allowed here
+entrypoints (tg_agent/cli, tg_webui, tg_agent/agent)   ← no telethon imports allowed here
         ↓
 services + repositories (tg_agent/services, tg_agent/database)
         ↓
@@ -110,7 +110,7 @@ Advisory tools wired into CI: `bandit`, `pip-audit`. Optional: `mutmut`
 
 - skills and recipes (`skills/`), documentation (`docs/`)
 - individual CLI commands (the CLI is the contract — new capabilities land here)
-- web dashboard fixes (`tg_agent/web`, frozen but accepting bug fixes)
+- web dashboard fixes (`packages/tg_webui`, frozen but accepting bug fixes)
 
 **Higher-bar core** — read first, then propose:
 

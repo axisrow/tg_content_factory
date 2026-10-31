@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.helpers import cli_ns
+from tests.helpers import cli_ns, patch_serve_create_app
 from tg_agent.cli.commands.server_control import run_restart, run_stop
 
 
@@ -56,7 +56,7 @@ def test_serve_register_fails():
     from tg_agent.cli.commands.serve import run
     cfg = make_app_config()
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
-         patch("tg_agent.cli.commands.serve.create_app", return_value=MagicMock()), \
+         patch_serve_create_app(return_value=MagicMock()), \
          patch("tg_agent.cli.commands.serve.register_current_process", side_effect=RuntimeError("already running")):
         with pytest.raises(SystemExit):
             run(_args(web_pass=None))
@@ -67,7 +67,7 @@ def test_serve_starts_server():
     cfg = make_app_config()
     app = MagicMock()
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
-         patch("tg_agent.cli.commands.serve.create_app", return_value=app), \
+         patch_serve_create_app(return_value=app), \
          patch("tg_agent.cli.commands.serve.register_current_process"), \
          patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv, \
          patch("tg_agent.cli.commands.serve.unregister_current_process") as mock_unreg:
@@ -82,7 +82,7 @@ def test_serve_no_worker_disables_embedded_worker():
     cfg = make_app_config()
     app = MagicMock()
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
-         patch("tg_agent.cli.commands.serve.create_app", return_value=app), \
+         patch_serve_create_app(return_value=app), \
          patch("tg_agent.cli.commands.serve.register_current_process"), \
          patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv, \
          patch("tg_agent.cli.commands.serve.unregister_current_process") as mock_unreg:
@@ -97,7 +97,7 @@ def test_serve_with_web_pass_override():
     from tg_agent.cli.commands.serve import run
     cfg = make_app_config()
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
-         patch("tg_agent.cli.commands.serve.create_app", return_value=MagicMock()), \
+         patch_serve_create_app(return_value=MagicMock()), \
          patch("tg_agent.cli.commands.serve.register_current_process"), \
          patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv, \
          patch("tg_agent.cli.commands.serve.unregister_current_process"):
@@ -118,7 +118,7 @@ def test_serve_non_loopback_with_weak_password_exits():
     cfg.web.host = "0.0.0.0"
     cfg.web.password = "changeme"
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
-         patch("tg_agent.cli.commands.serve.create_app") as mock_create_app, \
+         patch_serve_create_app() as mock_create_app, \
          patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv:
         with pytest.raises(SystemExit):
             run(_args(web_pass=None))
@@ -134,7 +134,7 @@ def test_serve_loopback_with_weak_password_still_starts():
     cfg.web.password = "changeme"
     app = MagicMock()
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
-         patch("tg_agent.cli.commands.serve.create_app", return_value=app), \
+         patch_serve_create_app(return_value=app), \
          patch("tg_agent.cli.commands.serve.register_current_process"), \
          patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv, \
          patch("tg_agent.cli.commands.serve.unregister_current_process") as mock_unreg:
@@ -155,7 +155,7 @@ def test_serve_non_loopback_with_short_password_exits():
     cfg.web.host = "0.0.0.0"
     cfg.web.password = "1234567"  # 7 chars — below the minimum, not in the denylist
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
-         patch("tg_agent.cli.commands.serve.create_app") as mock_create_app, \
+         patch_serve_create_app() as mock_create_app, \
          patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv:
         with pytest.raises(SystemExit):
             run(_args(web_pass=None))
@@ -176,7 +176,7 @@ def test_serve_non_loopback_with_low_entropy_password_exits(weak_password):
     cfg.web.host = "0.0.0.0"
     cfg.web.password = weak_password
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
-         patch("tg_agent.cli.commands.serve.create_app") as mock_create_app, \
+         patch_serve_create_app() as mock_create_app, \
          patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv:
         with pytest.raises(SystemExit):
             run(_args(web_pass=None))
@@ -192,7 +192,7 @@ def test_serve_non_loopback_rejects_short_or_partial_sequences(weak_password):
     cfg.web.host = "0.0.0.0"
     cfg.web.password = weak_password
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
-         patch("tg_agent.cli.commands.serve.create_app") as mock_create_app, \
+         patch_serve_create_app() as mock_create_app, \
          patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv:
         with pytest.raises(SystemExit):
             run(_args(web_pass=None))
@@ -208,7 +208,7 @@ def test_serve_non_loopback_with_strong_password_starts_with_warning(caplog):
     cfg.web.password = "a-strong-unique-password"
     app = MagicMock()
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
-         patch("tg_agent.cli.commands.serve.create_app", return_value=app), \
+         patch_serve_create_app(return_value=app), \
          patch("tg_agent.cli.commands.serve.register_current_process"), \
          patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv, \
          patch("tg_agent.cli.commands.serve.unregister_current_process") as mock_unreg:
@@ -329,3 +329,23 @@ def test_restart_path_has_no_web_server():
     source = Path(server_control.__file__).read_text(encoding="utf-8")
     assert "uvicorn" not in source, "restart path must not host a web server"
     assert "serve_web" not in source, "restart must not reuse the legacy serve body"
+
+
+def test_serve_without_tg_webui_exits_with_install_hint(caplog):
+    """The web panel is an optional package (#1720 wave 3): without it `serve`
+    exits 1 with an install hint before loading the config or binding a port."""
+    import sys
+
+    from tg_agent.cli.commands.serve import run
+
+    load_config = MagicMock()
+    with patch.dict(sys.modules, {"tg_webui": None, "tg_webui.app": None}), \
+         patch("tg_agent.cli.commands.serve.load_config", load_config), \
+         patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv, \
+         pytest.raises(SystemExit) as exc_info:
+        run(_args(web_pass=None))
+
+    assert exc_info.value.code == 1
+    assert "pip install -e packages/tg_webui" in caplog.text
+    load_config.assert_not_called()
+    mock_uv.run.assert_not_called()

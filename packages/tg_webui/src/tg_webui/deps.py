@@ -1,0 +1,393 @@
+from __future__ import annotations
+
+import os
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TypeVar, cast
+
+from fastapi import Request
+from fastapi.templating import Jinja2Templates
+
+from tg_agent.agent.manager import AgentManager
+from tg_agent.collection_queue import CollectionQueue
+from tg_agent.database import Database
+from tg_agent.database.bundles import (
+    AccountBundle,
+    ChannelBundle,
+    CollectionBundle,
+    NotificationBundle,
+    PhotoLoaderBundle,
+    PipelineBundle,
+    SchedulerBundle,
+    SearchBundle,
+    SearchQueryBundle,
+)
+from tg_agent.runtime.log_handler import LogBuffer
+from tg_agent.search.ai_search import AISearchEngine
+from tg_agent.search.engine import SearchEngine
+from tg_agent.services.channel_service import ChannelService
+from tg_agent.services.collection_service import CollectionService
+from tg_agent.services.filter_deletion_service import FilterDeletionService
+from tg_agent.services.notification_service import NotificationService
+from tg_agent.services.notification_target_service import NotificationTargetService
+from tg_agent.services.photo_auto_upload_service import PhotoAutoUploadService
+from tg_agent.services.photo_publish_service import PhotoPublishService
+from tg_agent.services.photo_task_service import PhotoTaskService
+from tg_agent.services.pipeline_service import PipelineService
+from tg_agent.services.provider_service import RuntimeProviderRegistry
+from tg_agent.services.search_query_service import SearchQueryService
+from tg_agent.services.search_service import SearchService
+from tg_agent.services.task_enqueuer import TaskEnqueuer
+from tg_agent.services.telegram_command_service import TelegramCommandService
+from tg_agent.services.unified_dispatcher import UnifiedDispatcher
+from tg_agent.telegram.client_pool import ClientPool
+from tg_agent.telegram.collector import Collector
+from tg_agent.telegram.notifier import Notifier
+from tg_agent.utils.timing import TimingBuffer
+from tg_shared.auth import TelegramAuth
+from tg_webui.container import AppContainer, WebClientPool, WebCollector, WebScheduler
+from tg_webui.paths import TEMPLATES_DIR
+
+T = TypeVar("T")
+_MISSING = object()
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRuntimeState:
+    state: str
+    manager: AgentManager | None = None
+    error: str | None = None
+
+    @property
+    def live(self) -> bool:
+        return self.state == "live" and self.manager is not None
+
+
+def _request_cached(request: Request, key: str, factory: Callable[[], T]) -> T:
+    value = getattr(request.state, key, _MISSING)
+    if value is _MISSING:
+        value = factory()
+        setattr(request.state, key, value)
+    return cast(T, value)
+
+
+def _require_app_state_attr(request: Request, name: str):
+    value = getattr(request.app.state, name, None)
+    if value is None:
+        raise RuntimeError(f"Application state is missing required attribute: {name}")
+    return value
+
+
+def get_container(request: Request) -> AppContainer:
+    cached = getattr(request.state, "_container", None)
+    if cached is not None:
+        return cached
+
+    db = _require_app_state_attr(request, "db")
+    repos = db.repos
+    account_bundle = AccountBundle.from_database(db)
+    channel_bundle = ChannelBundle.from_database(db)
+    collection_bundle = CollectionBundle.from_database(db)
+    notification_bundle = NotificationBundle.from_database(db)
+    pipeline_bundle = PipelineBundle.from_database(db)
+    search_bundle = SearchBundle.from_database(db)
+    scheduler_bundle = SchedulerBundle.from_database(db)
+    search_query_bundle = SearchQueryBundle.from_database(db)
+    photo_loader_bundle = PhotoLoaderBundle.from_database(db)
+    notification_target_service = getattr(request.app.state, "notification_target_service", None)
+    if notification_target_service is None:
+        notification_target_service = NotificationTargetService(
+            notification_bundle,
+            _require_app_state_attr(request, "pool"),
+        )
+    photo_publish_service = getattr(request.app.state, "photo_publish_service", None)
+    if photo_publish_service is None:
+        photo_publish_service = PhotoPublishService(_require_app_state_attr(request, "pool"))
+    photo_task_service = getattr(request.app.state, "photo_task_service", None)
+    if photo_task_service is None:
+        photo_task_service = PhotoTaskService(photo_loader_bundle, photo_publish_service)
+    photo_auto_upload_service = getattr(request.app.state, "photo_auto_upload_service", None)
+    if photo_auto_upload_service is None:
+        photo_auto_upload_service = PhotoAutoUploadService(
+            photo_loader_bundle,
+            photo_publish_service,
+        )
+    templates = getattr(request.app.state, "templates", None)
+    if templates is None:
+        templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+    container = AppContainer(
+        plugins=getattr(db, "plugins", None),
+        runtime_mode=getattr(request.app.state, "runtime_mode", "web"),
+        config=_require_app_state_attr(request, "config"),
+        db=db,
+        repos=repos,
+        account_bundle=account_bundle,
+        channel_bundle=channel_bundle,
+        collection_bundle=collection_bundle,
+        notification_bundle=notification_bundle,
+        pipeline_bundle=pipeline_bundle,
+        photo_loader_bundle=photo_loader_bundle,
+        search_bundle=search_bundle,
+        scheduler_bundle=scheduler_bundle,
+        search_query_bundle=search_query_bundle,
+        auth=_require_app_state_attr(request, "auth"),
+        pool=_require_app_state_attr(request, "pool"),
+        notification_target_service=notification_target_service,
+        notifier=getattr(request.app.state, "notifier", None),
+        photo_publish_service=photo_publish_service,
+        photo_task_service=photo_task_service,
+        photo_auto_upload_service=photo_auto_upload_service,
+        collector=_require_app_state_attr(request, "collector"),
+        collection_queue=getattr(request.app.state, "collection_queue", None),
+        task_enqueuer=getattr(request.app.state, "task_enqueuer", None),
+        unified_dispatcher=getattr(request.app.state, "unified_dispatcher", None),
+        telegram_command_dispatcher=getattr(request.app.state, "telegram_command_dispatcher", None),
+        search_engine=_require_app_state_attr(request, "search_engine"),
+        ai_search=_require_app_state_attr(request, "ai_search"),
+        scheduler=_require_app_state_attr(request, "scheduler"),
+        templates=templates,
+        log_buffer=getattr(request.app.state, "log_buffer", None),
+        timing_buffer=getattr(request.app.state, "timing_buffer", None),
+        session_secret=_require_app_state_attr(request, "session_secret"),
+        bg_tasks=getattr(request.app.state, "bg_tasks", set()),
+        agent_manager=getattr(request.app.state, "agent_manager", None),
+        shutting_down=getattr(request.app.state, "shutting_down", False),
+    )
+    request.state._container = container
+    return container
+
+
+def get_db(request: Request) -> Database:
+    return get_container(request).db
+
+
+def get_account_bundle(request: Request) -> AccountBundle:
+    return get_container(request).account_bundle
+
+
+def get_channel_bundle(request: Request) -> ChannelBundle:
+    return get_container(request).channel_bundle
+
+
+def get_collection_bundle(request: Request) -> CollectionBundle:
+    return get_container(request).collection_bundle
+
+
+def get_notification_bundle(request: Request) -> NotificationBundle:
+    return get_container(request).notification_bundle
+
+
+def get_pipeline_bundle(request: Request) -> PipelineBundle:
+    return get_container(request).pipeline_bundle
+
+
+def get_search_bundle(request: Request) -> SearchBundle:
+    return get_container(request).search_bundle
+
+
+def get_photo_loader_bundle(request: Request) -> PhotoLoaderBundle:
+    return get_container(request).photo_loader_bundle
+
+
+def get_scheduler_bundle(request: Request) -> SchedulerBundle:
+    return get_container(request).scheduler_bundle
+
+
+def get_search_query_bundle(request: Request) -> SearchQueryBundle:
+    return get_container(request).search_query_bundle
+
+
+def get_pool(request: Request) -> WebClientPool:
+    return get_container(request).pool
+
+
+def get_collector(request: Request) -> WebCollector:
+    return get_container(request).collector
+
+
+def get_queue(request: Request) -> CollectionQueue | None:
+    # In web-mode this is always None (worker-mode only — see bootstrap.py).
+    # Route code must either check for None or go through CollectionService,
+    # which has built-in DB-only fallbacks for queue operations.
+    return get_container(request).collection_queue
+
+
+def get_unified_dispatcher(request: Request) -> UnifiedDispatcher | None:
+    # worker-only; None in web-mode. See bootstrap.py.
+    return get_container(request).unified_dispatcher
+
+
+def get_task_enqueuer(request: Request) -> TaskEnqueuer | None:
+    # worker-only; None in web-mode. See bootstrap.py.
+    return get_container(request).task_enqueuer
+
+
+def get_scheduler(request: Request) -> WebScheduler:
+    return get_container(request).scheduler
+
+
+def get_search_engine(request: Request) -> SearchEngine:
+    return get_container(request).search_engine
+
+
+def get_ai_search(request: Request) -> AISearchEngine:
+    return get_container(request).ai_search
+
+
+def get_auth(request: Request) -> TelegramAuth:
+    return get_container(request).auth
+
+
+def get_templates(request: Request) -> Jinja2Templates:
+    return get_container(request).templates
+
+
+def get_notification_target_service(request: Request) -> NotificationTargetService:
+    return get_container(request).notification_target_service
+
+
+def get_notifier(request: Request) -> Notifier | None:
+    return get_container(request).notifier
+
+
+def get_photo_publish_service(request: Request) -> PhotoPublishService:
+    return get_container(request).photo_publish_service
+
+
+def get_photo_task_service(request: Request) -> PhotoTaskService:
+    return get_container(request).photo_task_service
+
+
+def get_photo_auto_upload_service(request: Request) -> PhotoAutoUploadService:
+    return get_container(request).photo_auto_upload_service
+
+
+def get_log_buffer(request: Request) -> LogBuffer | None:
+    return get_container(request).log_buffer
+
+
+def get_timing_buffer(request: Request) -> TimingBuffer | None:
+    return get_container(request).timing_buffer
+
+
+def is_shutting_down(request: Request) -> bool:
+    return get_container(request).shutting_down
+
+
+def get_agent_runtime_state(request: Request) -> AgentRuntimeState:
+    manager = getattr(request.app.state, "agent_manager", None)
+    if manager is not None:
+        return AgentRuntimeState("live", manager=manager)
+
+    embedded_worker = getattr(request.app.state, "embedded_worker", None)
+    embedded_container = getattr(embedded_worker, "container", None)
+    if embedded_container is not None:
+        agent_ready = getattr(embedded_worker, "agent_ready", None)
+        if agent_ready is None:
+            ready_event = getattr(embedded_worker, "_ready_event", None)
+            agent_ready = bool(ready_event is not None and ready_event.is_set())
+        if bool(agent_ready):
+            manager = getattr(embedded_container, "agent_manager", None)
+            if manager is not None:
+                return AgentRuntimeState("live", manager=manager)
+
+    startup_failed = bool(getattr(embedded_worker, "startup_failed", False))
+    if startup_failed:
+        return AgentRuntimeState(
+            "failed",
+            error=getattr(embedded_worker, "startup_error", None)
+            or "Embedded worker failed to start. Check server logs for details.",
+        )
+
+    if embedded_worker is not None or getattr(request.app.state, "embed_worker", False):
+        return AgentRuntimeState("starting")
+
+    return AgentRuntimeState("split_web")
+
+
+def get_agent_manager(request: Request) -> AgentManager | None:
+    return get_agent_runtime_state(request).manager
+
+
+def get_llm_provider_service(request: Request) -> RuntimeProviderRegistry:
+    svc = getattr(request.app.state, "llm_provider_service", None)
+    if svc is not None:
+        return svc
+    return get_container(request).llm_provider_service or RuntimeProviderRegistry(env=dict(os.environ))
+
+
+def channel_service(request: Request) -> ChannelService:
+    return _request_cached(
+        request,
+        "_channel_service",
+        lambda: ChannelService(get_db(request), cast(ClientPool, get_pool(request)), get_queue(request)),
+    )
+
+
+def collection_service(request: Request) -> CollectionService:
+    return _request_cached(
+        request,
+        "_collection_service",
+        lambda: CollectionService(
+            get_channel_bundle(request),
+            cast(Collector, get_collector(request)),
+            get_queue(request),
+        ),
+    )
+
+
+def telegram_command_service(request: Request) -> TelegramCommandService:
+    return _request_cached(
+        request,
+        "_telegram_command_service",
+        lambda: TelegramCommandService(get_db(request)),
+    )
+
+
+def search_service(request: Request) -> SearchService:
+    return _request_cached(
+        request,
+        "_search_service",
+        lambda: SearchService(get_search_engine(request), get_ai_search(request)),
+    )
+
+
+def notification_service(request: Request) -> NotificationService:
+    return _request_cached(
+        request,
+        "_notification_service",
+        lambda: NotificationService(
+            get_notification_bundle(request),
+            get_notification_target_service(request),
+            get_container(request).config.notifications.bot_name_prefix,
+            get_container(request).config.notifications.bot_username_prefix,
+        ),
+    )
+
+
+def search_query_service(request: Request) -> SearchQueryService:
+    return _request_cached(
+        request,
+        "_search_query_service",
+        lambda: SearchQueryService(get_search_query_bundle(request)),
+    )
+
+
+def pipeline_service(request: Request) -> PipelineService:
+    return _request_cached(
+        request,
+        "_pipeline_service",
+        lambda: PipelineService(get_pipeline_bundle(request)),
+    )
+
+
+def filter_deletion_service(request: Request) -> FilterDeletionService:
+    return _request_cached(
+        request,
+        "_filter_deletion_service",
+        lambda: FilterDeletionService(get_db(request), channel_service(request)),
+    )
+
+
+def scheduler_service(request: Request) -> WebScheduler:
+    return get_scheduler(request)

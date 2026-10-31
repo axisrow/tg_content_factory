@@ -4,12 +4,12 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tests.helpers import cli_ns, fake_asyncio_run, make_cli_config, make_cli_db
+from tests.helpers import cli_ns, fake_asyncio_run, fake_tg_tui_modules, make_cli_config, make_cli_db
 from tg_agent.agent.provider_registry import ZAI_DEFAULT_BASE_URL, ProviderRuntimeConfig
 from tg_agent.cli.commands.agent import _test_escaping, _test_tools, run
 from tg_agent.config import AppConfig
@@ -467,20 +467,11 @@ def test_run_chat_interactive_tui():
          patch("tg_agent.cli.commands.agent.runtime.redirect_logging_to_file", return_value=None), \
          patch("tg_agent.cli.commands.agent.runtime.restore_logging"), \
          patch("tg_agent.agent.manager.AgentManager", return_value=mgr), \
-         patch.dict(sys.modules, _fake_tg_tui(MagicMock(return_value=tui_app))), \
+         patch.dict(sys.modules, fake_tg_tui_modules(MagicMock(return_value=tui_app))), \
          patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="chat", prompt=None, thread_id=None, model=None))
 
     tui_app.run_async.assert_called_once()
-
-
-def _fake_tg_tui(app_cls) -> dict[str, ModuleType]:
-    """Stand-in for the optional tg_tui package (#1720): core tests must not need it installed."""
-    package = ModuleType("tg_tui")
-    app_module = ModuleType("tg_tui.app")
-    app_module.AgentTuiApp = app_cls
-    package.app = app_module
-    return {"tg_tui": package, "tg_tui.app": app_module}
 
 
 def test_run_chat_interactive_without_tg_tui_exits_before_opening_db(capsys):
