@@ -952,15 +952,10 @@ def patch_serve_create_app(**mock_kwargs):
     """Patch the web app factory ``serve`` loads lazily from tg_webui (#1720 wave 3).
 
     ``serve_web`` imports the optional web package through ``_load_web_surface``;
-    stub its ``create_app`` while keeping the real password policy.
+    stub it so the core CLI tests never need tg_webui installed.
     """
-    from tg_webui.password_policy import is_strong_password
-
     create_app = MagicMock(**mock_kwargs)
-    with patch(
-        "tg_agent.cli.commands.serve._load_web_surface",
-        return_value=(create_app, is_strong_password),
-    ):
+    with patch("tg_agent.cli.commands.serve._load_web_surface", return_value=create_app):
         yield create_app
 
 
@@ -974,3 +969,34 @@ def fake_tg_tui_modules(app_cls) -> dict[str, ModuleType]:
     app_module.AgentTuiApp = app_cls
     package.app = app_module
     return {"tg_tui": package, "tg_tui.app": app_module}
+
+
+@contextmanager
+def hide_packages(*names: str):
+    """Make ``names`` import as if they were not installed (#1720).
+
+    A ``None`` entry in ``sys.modules`` does not model a missing distribution:
+    ``import pkg.sub`` then fails with ``exc.name == "pkg.sub"``, whereas an
+    absent package fails with ``exc.name == "pkg"`` — the case the CLI's
+    optional-surface loaders (tg_webui, tg_tui) tell apart from a broken import
+    inside an installed package. This finder raises exactly that error.
+    """
+    import importlib.abc
+
+    class _Hider(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path=None, target=None):
+            top = fullname.partition(".")[0]
+            if top in names:
+                raise ModuleNotFoundError(f"No module named {top!r}", name=top)
+            return None
+
+    hidden = {key: None for key in list(sys.modules) if key.partition(".")[0] in names}
+    finder = _Hider()
+    with patch.dict(sys.modules):
+        for key in hidden:
+            del sys.modules[key]
+        sys.meta_path.insert(0, finder)
+        try:
+            yield
+        finally:
+            sys.meta_path.remove(finder)

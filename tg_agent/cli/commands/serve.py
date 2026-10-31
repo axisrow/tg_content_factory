@@ -13,6 +13,7 @@ from tg_agent.cli.process_control import (
     unregister_current_process,
 )
 from tg_agent.config import load_config
+from tg_agent.security.password_policy import is_strong_password
 
 # Loopback addresses that keep the web panel unreachable from the local
 # network by default. Anything else (0.0.0.0, a LAN IP, ...) is an
@@ -25,18 +26,24 @@ def _load_web_surface():
 
     Lazy so the rest of the CLI never imports FastAPI/Jinja2 app code; the
     core must not import ``tg_webui`` at module level (import-linter
-    ``runtime_no_web_imports``).
+    ``runtime_no_web_imports``). Only a missing ``tg_webui`` itself gets the
+    hint — a broken import inside an installed package (say, one of its own
+    dependencies missing) propagates with its real traceback.
     """
     try:
         from tg_webui.app import create_app
-        from tg_webui.password_policy import is_strong_password
-    except ImportError:
+    except ModuleNotFoundError as exc:
+        if exc.name != "tg_webui":
+            raise
         logging.error(
-            "The legacy web panel is a separate package now: pip install -e packages/tg_webui "
-            "(the worker daemon is `restart`/`worker` and needs no web panel)."
+            "The legacy web panel is the optional tg-webui package, which is not installed "
+            "(from a repository checkout: pip install -e packages/tg_webui). "
+            "The worker daemon (`restart`/`worker`) needs no web panel."
         )
         sys.exit(1)
-    return create_app, is_strong_password
+    return create_app
+
+
 def serve_web(config_path: str, *, web_pass: str | None = None, no_worker: bool = False) -> None:
     """Start the web server (and, by default, the embedded Telegram worker).
 
@@ -48,7 +55,7 @@ def serve_web(config_path: str, *, web_pass: str | None = None, no_worker: bool 
     another managed server is already running,
     matching the pre-migration behaviour.
     """
-    create_app, is_strong_password = _load_web_surface()
+    create_app = _load_web_surface()
     config = load_config(config_path)
     if web_pass:
         config.web.password = web_pass

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.helpers import cli_ns, patch_serve_create_app
+from tests.helpers import cli_ns, hide_packages, patch_serve_create_app
 from tg_agent.cli.commands.server_control import run_restart, run_stop
 
 
@@ -334,12 +334,11 @@ def test_restart_path_has_no_web_server():
 def test_serve_without_tg_webui_exits_with_install_hint(caplog):
     """The web panel is an optional package (#1720 wave 3): without it `serve`
     exits 1 with an install hint before loading the config or binding a port."""
-    import sys
 
     from tg_agent.cli.commands.serve import run
 
     load_config = MagicMock()
-    with patch.dict(sys.modules, {"tg_webui": None, "tg_webui.app": None}), \
+    with hide_packages("tg_webui"), \
          patch("tg_agent.cli.commands.serve.load_config", load_config), \
          patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv, \
          pytest.raises(SystemExit) as exc_info:
@@ -349,3 +348,20 @@ def test_serve_without_tg_webui_exits_with_install_hint(caplog):
     assert "pip install -e packages/tg_webui" in caplog.text
     load_config.assert_not_called()
     mock_uv.run.assert_not_called()
+
+
+def test_serve_propagates_broken_import_inside_installed_tg_webui():
+    """Only a missing tg_webui itself gets the install hint: a failing import inside an
+    installed package (e.g. one of its dependencies missing) keeps its real error."""
+    import sys
+
+    import tg_webui  # noqa: F401 — the package itself is present
+    from tg_agent.cli.commands.serve import run
+
+    with patch.dict(sys.modules, {"tg_webui.app": None}), \
+         patch("tg_agent.cli.commands.serve.load_config") as load_config, \
+         pytest.raises(ModuleNotFoundError) as exc_info:
+        run(_args(web_pass=None))
+
+    assert exc_info.value.name == "tg_webui.app"
+    load_config.assert_not_called()

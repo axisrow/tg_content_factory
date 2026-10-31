@@ -15,6 +15,15 @@ RAW_TELETHON_ALLOWED = {
     Path("tg_agent/telegram/auth.py"),
 }
 
+# Scanned source trees: the core plus the web panel, which lives in
+# packages/tg_webui since #1720 wave 3.
+SOURCE_ROOTS = (PROJECT_ROOT / "tg_agent", PROJECT_ROOT / "packages" / "tg_webui" / "src" / "tg_webui")
+
+
+def _iter_sources() -> list[Path]:
+    return sorted(p for root in SOURCE_ROOTS for p in root.rglob("*.py") if "__pycache__" not in p.parts)
+
+
 ENTRYPOINT_ROOTS = (
     Path("tg_agent/cli"),
     Path("packages/tg_webui/src/tg_webui"),
@@ -104,7 +113,7 @@ def _is_telegram_action_service_receiver(node: ast.AST) -> bool:
 
 def test_raw_telethon_function_imports_stay_in_backend_allowlist():
     offenders: list[str] = []
-    for path in sorted((PROJECT_ROOT / "tg_agent").rglob("*.py")):
+    for path in _iter_sources():
         relative = path.relative_to(PROJECT_ROOT)
         if relative in RAW_TELETHON_ALLOWED:
             continue
@@ -121,7 +130,7 @@ def test_raw_telethon_function_imports_stay_in_backend_allowlist():
 
 def test_raw_telethon_request_constructors_stay_in_backend_allowlist():
     offenders: list[str] = []
-    for path in sorted((PROJECT_ROOT / "tg_agent").rglob("*.py")):
+    for path in _iter_sources():
         relative = path.relative_to(PROJECT_ROOT)
         if relative in RAW_TELETHON_ALLOWED:
             continue
@@ -136,7 +145,7 @@ def test_raw_telethon_request_constructors_stay_in_backend_allowlist():
 
 def test_entrypoints_delegate_telegram_actions_to_service_contract():
     offenders: list[str] = []
-    for path in sorted((PROJECT_ROOT / "tg_agent").rglob("*.py")):
+    for path in _iter_sources():
         relative = path.relative_to(PROJECT_ROOT)
         if not _is_entrypoint_path(relative):
             continue

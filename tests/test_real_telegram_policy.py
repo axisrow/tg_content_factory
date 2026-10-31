@@ -51,6 +51,13 @@ from tg_agent.config import load_config
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _TESTS_DIR = _REPO_ROOT / "tests"
+# Package test roots (web/TUI tests moved there in #1720) follow the same policy.
+_PACKAGE_TESTS_GLOB = "packages/*/tests"
+
+
+def _iter_test_files() -> list[Path]:
+    roots = [_TESTS_DIR, *sorted(_REPO_ROOT.glob(_PACKAGE_TESTS_GLOB))]
+    return [path for root in roots for path in root.rglob("test_*.py")]
 _CLI_REAL_TG_DIR = _TESTS_DIR / "cli_real_tg_integration"
 _RUN_CLI_HELPERS = {"run_cli", "run_cli_popen", "cli_run_direct"}
 _MUTATING_PATTERNS = (
@@ -687,7 +694,7 @@ def test_real_tg_sandbox_config_parses_required_and_optional_fields():
 def test_real_tg_safe_marker_is_not_used_in_mutating_test_files():
     violations: list[str] = []
 
-    for path in _TESTS_DIR.rglob("test_*.py"):
+    for path in _iter_test_files():
         if path.name in _AUDIT_EXCLUDED_FILES:
             continue
         content = path.read_text(encoding="utf-8")
@@ -703,7 +710,7 @@ def test_real_tg_safe_marker_is_not_used_in_mutating_test_files():
 def test_real_tg_never_marker_does_not_request_live_fixture():
     violations: list[str] = []
 
-    for path in _TESTS_DIR.rglob("test_*.py"):
+    for path in _iter_test_files():
         if path.name in _AUDIT_EXCLUDED_FILES:
             continue
         content = path.read_text(encoding="utf-8")
@@ -718,7 +725,7 @@ def test_real_tg_never_marker_does_not_request_live_fixture():
 def test_live_fixture_is_not_used_without_real_tg_policy_marker():
     violations: list[str] = []
 
-    for path in _TESTS_DIR.rglob("test_*.py"):
+    for path in _iter_test_files():
         if path.name in _AUDIT_EXCLUDED_FILES:
             continue
         content = path.read_text(encoding="utf-8")

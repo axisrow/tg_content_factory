@@ -4,12 +4,12 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tests.helpers import cli_ns, fake_asyncio_run, fake_tg_tui_modules, make_cli_config, make_cli_db
+from tests.helpers import cli_ns, fake_asyncio_run, fake_tg_tui_modules, hide_packages, make_cli_config, make_cli_db
 from tg_agent.agent.provider_registry import ZAI_DEFAULT_BASE_URL, ProviderRuntimeConfig
 from tg_agent.cli.commands.agent import _test_escaping, _test_tools, run
 from tg_agent.config import AppConfig
@@ -481,7 +481,7 @@ def test_run_chat_interactive_without_tg_tui_exits_before_opening_db(capsys):
 
     with patch("tg_agent.cli.commands.agent.runtime.init_db", init_db), \
          patch("tg_agent.cli.commands.agent.runtime.init_pool", init_pool), \
-         patch.dict(sys.modules, {"tg_tui": None, "tg_tui.app": None}), \
+         hide_packages("tg_tui"), \
          patch("asyncio.run", fake_asyncio_run), \
          pytest.raises(SystemExit) as exc_info:
         run(_args(agent_action="chat", prompt=None, thread_id=None, model=None))
@@ -787,3 +787,16 @@ def test_run_chat_prompt_real_manager_uses_db_deepagents_provider(cli_db, capsys
     assert [msg["role"] for msg in messages] == ["user", "assistant"]
     assert messages[0]["content"] == "hello integration"
     assert messages[1]["content"] == "integration reply"
+
+
+def test_run_chat_interactive_propagates_broken_import_inside_tg_tui():
+    """A failing import inside an installed tg_tui is not disguised as 'not installed'."""
+    package = ModuleType("tg_tui")
+    with patch.dict(sys.modules, {"tg_tui": package, "tg_tui.app": None}), \
+         patch("tg_agent.cli.commands.agent.runtime.init_db", AsyncMock()) as init_db, \
+         patch("asyncio.run", fake_asyncio_run), \
+         pytest.raises(ModuleNotFoundError) as exc_info:
+        run(_args(agent_action="chat", prompt=None, thread_id=None, model=None))
+
+    assert exc_info.value.name == "tg_tui.app"
+    init_db.assert_not_awaited()

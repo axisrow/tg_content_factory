@@ -12,9 +12,10 @@ COPY pyproject.toml .
 RUN pip install --no-cache-dir .
 COPY . .
 # Monorepo packages the image needs (#1421, #1720): tg-shared for the runtime and
-# tg-webui for `serve` (the CMD below). Their third-party dependencies are already
-# installed with the core above; --no-deps keeps pip from resolving tg-agent on PyPI.
-RUN pip install --no-cache-dir --no-deps ./packages/tg_shared ./packages/tg_webui
+# tg-webui for `serve` (the CMD below). Installed with their own dependencies so
+# the image keeps working once the core stops carrying the web stack; their
+# `tg-agent` requirement is already satisfied by the install above.
+RUN pip install --no-cache-dir ./packages/tg_shared ./packages/tg_webui
 RUN mkdir -p /app/data
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

@@ -219,10 +219,13 @@ async def chat_impl(
         # before opening the DB, pool and agent manager.
         try:
             from tg_tui.app import AgentTuiApp
-        except ImportError:
+        except ModuleNotFoundError as exc:
+            if exc.name != "tg_tui":
+                raise
             print(
-                "Интерактивный TUI вынесен в отдельный пакет: pip install -e packages/tg_tui "
-                "(или передайте prompt для однократного режима).",
+                "Интерактивный TUI — опциональный пакет tg-tui, он не установлен "
+                "(из checkout репозитория: pip install -e packages/tg_tui). "
+                "Однократный режим работает без него: передайте prompt (-p).",
                 file=sys.stderr,
             )
             sys.exit(1)
