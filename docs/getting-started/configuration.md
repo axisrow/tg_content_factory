@@ -88,8 +88,10 @@ web:
 
 ## Первый запуск
 
+Веб-панель — устаревшая (legacy) поверхность в опциональном пакете `tg-webui` (#1720), его нет на PyPI и он не входит в `pip install tg-agent`. Установите его из checkout репозитория: `pip install -e packages/tg_shared -e packages/tg_webui`. Без пакета `serve` завершится с кодом 1 и подсказкой; фоновому воркеру (`restart` / `worker`) веб-панель не нужна.
+
 ```bash
-# Запустить Web UI
+# Запустить Web UI (нужен пакет tg-webui)
 python -m tg_agent.main serve
 
 # Или указать пароль напрямую

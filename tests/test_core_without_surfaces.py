@@ -1,10 +1,11 @@
 """The core runs without the legacy UI surfaces (#1720).
 
 The web panel (``tg_webui``) and the agent-chat TUI (``tg_tui``) are optional
-monorepo packages, and their third-party dependencies (jinja2, python-multipart,
+monorepo packages, and their UI-only third-party dependencies (jinja2,
 itsdangerous, qrcode, textual) are no longer core requirements. These tests run
-in a fresh interpreter where all of them are hidden by a meta-path finder that
-raises ``ModuleNotFoundError`` exactly as for an absent distribution, and pin:
+in a fresh interpreter where all of them are hidden by a meta-path finder
+(``tests/package_hider.py``) that raises ``ModuleNotFoundError`` exactly as for
+an absent distribution, and pin:
 
 * every ``tg_agent`` module imports — no core module reaches for a UI package;
 * the CLI starts (``--help``);
@@ -14,6 +15,7 @@ raises ``ModuleNotFoundError`` exactly as for an absent distribution, and pin:
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -24,32 +26,25 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-HIDDEN = (
-    "tg_webui",
-    "tg_tui",
-    "jinja2",
-    "textual",
-    "qrcode",
-    "itsdangerous",
-    "multipart",
-    "python_multipart",
-)
+
+def _load_smoke_script():
+    spec = importlib.util.spec_from_file_location("smoke_core_wheel", REPO_ROOT / "scripts" / "smoke_core_wheel.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# One list for this test and the CI core-wheel smoke (scripts/smoke_core_wheel.py).
+_SMOKE = _load_smoke_script()
+HIDDEN = _SMOKE.UI_ONLY_MODULES
 
 _HIDER = textwrap.dedent(
     f"""
-    import importlib.abc
     import sys
 
-    HIDDEN = {set(HIDDEN)!r}
+    from tests.package_hider import PackageHider
 
-    class _Hider(importlib.abc.MetaPathFinder):
-        def find_spec(self, fullname, path=None, target=None):
-            top = fullname.partition(".")[0]
-            if top in HIDDEN:
-                raise ModuleNotFoundError(f"No module named {{top!r}}", name=top)
-            return None
-
-    sys.meta_path.insert(0, _Hider())
+    sys.meta_path.insert(0, PackageHider({HIDDEN!r}))
     """
 )
 
@@ -85,13 +80,19 @@ _CLI = textwrap.dedent(
 pytestmark = pytest.mark.timeout(300)
 
 
+def _source_roots() -> list[str]:
+    return [str(REPO_ROOT), *(str(src) for src in sorted((REPO_ROOT / "packages").glob("*/src")))]
+
+
 def _run(tmp_path: Path, body: str, *args: str) -> subprocess.CompletedProcess[str]:
     script = tmp_path / "probe.py"
     script.write_text(_HIDER + body, encoding="utf-8")
     env = {
         **os.environ,
         "TG_AGENT_SECRET_STORE": "off",
-        "PYTHONPATH": os.pathsep.join(filter(None, [str(REPO_ROOT), os.environ.get("PYTHONPATH")])),
+        # Mirror the root conftest.py sys.path shim: the monorepo packages
+        # (tg_shared, ...) resolve from source even when not pip-installed.
+        "PYTHONPATH": os.pathsep.join(filter(None, [*_source_roots(), os.environ.get("PYTHONPATH")])),
     }
     return subprocess.run(  # noqa: S603 - fixed interpreter, test-owned script
         [sys.executable, str(script), *args],
@@ -119,7 +120,7 @@ def test_serve_without_tg_webui_exits_with_install_hint(tmp_path):
     result = _run(tmp_path, _CLI, "serve", "--web-pass", "unused")
     assert result.returncode == 1
     output = result.stdout + result.stderr
-    assert "pip install -e packages/tg_webui" in output
+    assert _SMOKE.SERVE_HINT in output
     assert "Traceback" not in output
 
 

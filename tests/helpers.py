@@ -975,23 +975,13 @@ def fake_tg_tui_modules(app_cls) -> dict[str, ModuleType]:
 def hide_packages(*names: str):
     """Make ``names`` import as if they were not installed (#1720).
 
-    A ``None`` entry in ``sys.modules`` does not model a missing distribution:
-    ``import pkg.sub`` then fails with ``exc.name == "pkg.sub"``, whereas an
-    absent package fails with ``exc.name == "pkg"`` — the case the CLI's
-    optional-surface loaders (tg_webui, tg_tui) tell apart from a broken import
-    inside an installed package. This finder raises exactly that error.
+    See ``tests/package_hider.py`` for why a ``None`` stub in ``sys.modules``
+    is not enough.
     """
-    import importlib.abc
-
-    class _Hider(importlib.abc.MetaPathFinder):
-        def find_spec(self, fullname, path=None, target=None):
-            top = fullname.partition(".")[0]
-            if top in names:
-                raise ModuleNotFoundError(f"No module named {top!r}", name=top)
-            return None
+    from tests.package_hider import PackageHider
 
     hidden = [key for key in sys.modules if key.partition(".")[0] in names]
-    finder = _Hider()
+    finder = PackageHider(names)
     with patch.dict(sys.modules):
         for key in hidden:
             del sys.modules[key]
