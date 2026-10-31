@@ -21,6 +21,9 @@ import sys
 from collections import defaultdict
 
 MARKER = "not aiosqlite_serial"  # keep in sync with the CI shard legs
+# Monorepo package test roots (tg_shared #1421, tg_tui #1720) — the shards must
+# collect them too, like the local `pytest tests/ packages/*/tests` run.
+PACKAGE_TEST_ROOTS = ("packages/tg_shared/tests", "packages/tg_tui/tests")
 
 
 def collect_files(marker: str) -> list[tuple[str, int]]:
@@ -30,7 +33,7 @@ def collect_files(marker: str) -> list[tuple[str, int]]:
     enter the shard lists.
     """
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests", "packages/tg_shared/tests", "--collect-only", "-q", "-m", marker],
+        [sys.executable, "-m", "pytest", "tests", *PACKAGE_TEST_ROOTS, "--collect-only", "-q", "-m", marker],
         capture_output=True,
         text=True,
     )

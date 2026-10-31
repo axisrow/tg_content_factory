@@ -90,7 +90,7 @@ You will receive a Telegram login code — enter it yourself. Verify with `tg-ag
 These still work but are **frozen**: development is paused indefinitely, and new capabilities must not be built on them. The CLI + skill is the only actively developed interface.
 
 - **Web dashboard** (FastAPI + Bootstrap 5) — `python -m tg_agent.main serve`, then http://localhost:8080 (password from `WEB_PASS`)
-- **TUI** and the **embedded agent chat** (`tg-agent agent chat`; `claude-agent-sdk` / `deepagents` backends)
+- **TUI** and the **embedded agent chat** (`tg-agent agent chat`; `claude-agent-sdk` / `deepagents` backends). The interactive TUI is the optional package `packages/tg_tui` (`pip install -e packages/tg_tui`); one-shot `agent chat -p "..."` works without it
 - **MCP server** (`python -m tg_agent.main mcp-server`)
 
 ### Legacy: split deployment (Docker / k8s)

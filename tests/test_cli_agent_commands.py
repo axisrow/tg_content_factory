@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -466,11 +467,38 @@ def test_run_chat_interactive_tui():
          patch("tg_agent.cli.commands.agent.runtime.redirect_logging_to_file", return_value=None), \
          patch("tg_agent.cli.commands.agent.runtime.restore_logging"), \
          patch("tg_agent.agent.manager.AgentManager", return_value=mgr), \
-         patch("tg_agent.cli.commands.agent_tui.AgentTuiApp", return_value=tui_app), \
+         patch.dict(sys.modules, _fake_tg_tui(MagicMock(return_value=tui_app))), \
          patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="chat", prompt=None, thread_id=None, model=None))
 
     tui_app.run_async.assert_called_once()
+
+
+def _fake_tg_tui(app_cls) -> dict[str, ModuleType]:
+    """Stand-in for the optional tg_tui package (#1720): core tests must not need it installed."""
+    package = ModuleType("tg_tui")
+    app_module = ModuleType("tg_tui.app")
+    app_module.AgentTuiApp = app_cls
+    package.app = app_module
+    return {"tg_tui": package, "tg_tui.app": app_module}
+
+
+def test_run_chat_interactive_without_tg_tui_exits_before_opening_db(capsys):
+    """Without the optional TUI package, interactive chat fails fast with an install hint."""
+    init_db = AsyncMock()
+    init_pool = AsyncMock()
+
+    with patch("tg_agent.cli.commands.agent.runtime.init_db", init_db), \
+         patch("tg_agent.cli.commands.agent.runtime.init_pool", init_pool), \
+         patch.dict(sys.modules, {"tg_tui": None, "tg_tui.app": None}), \
+         patch("asyncio.run", fake_asyncio_run), \
+         pytest.raises(SystemExit) as exc_info:
+        run(_args(agent_action="chat", prompt=None, thread_id=None, model=None))
+
+    assert exc_info.value.code == 1
+    assert "pip install -e packages/tg_tui" in capsys.readouterr().err
+    init_db.assert_not_awaited()
+    init_pool.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

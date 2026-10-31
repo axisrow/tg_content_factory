@@ -36,6 +36,11 @@ pip install -e ".[dev]"
 # tg-shared is published (#1424 wave).
 pip install -e packages/tg_shared
 
+# Optional legacy surfaces live in their own monorepo packages (#1720): the
+# interactive agent-chat TUI (`agent chat` without a prompt) needs tg-tui.
+# The core never imports them (import-linter contracts).
+pip install -e packages/tg_tui
+
 # Dependency-touching PRs must regenerate the lockfile: the committed uv.lock
 # is the full-closure graph the CI dependency-review gate diffs against
 # (#1706); a stale lock reds static-checks. Installs stay on pip.
@@ -70,8 +75,8 @@ ruff check --fix tg_agent/ tests/ conftest.py
 
 # Run parallel-safe tests (-n auto is capped at 4 workers by root conftest.py;
 # override via TGCF_PYTEST_XDIST_WORKERS; single-test runs with :: force 1 worker).
-# The tg_shared package tests (#1421 wave A) live outside tests/ — include both roots.
-pytest tests/ packages/tg_shared/tests -v -m "not aiosqlite_serial" -n auto
+# Package tests (tg_shared #1421, tg_tui #1720) live outside tests/ — include their roots.
+pytest tests/ packages/tg_shared/tests packages/tg_tui/tests -v -m "not aiosqlite_serial" -n auto
 
 # Run aiosqlite-backed tests sequentially within each file, with independent files in parallel
 pytest tests/ -q -m aiosqlite_serial -n auto --dist=loadfile
@@ -150,7 +155,7 @@ Three layers: **CLI (native surface; web/TUI/agent-chat/MCP are legacy)** → **
 - Parsers (`tg_agent/parsers.py`): identifier extraction for channel import — t.me links, @usernames, negative IDs; file parsing (txt/csv/xlsx)
 - Notification bot: personal bot created via BotFather through a connected account (`tg_agent/telegram/notifier.py`)
 - **Agent system**: four backends selected in `AgentManager.get_runtime_status()` (`tg_agent/agent/manager.py`) — auto-selection prefers `deepagents` when usable DB provider configs exist, then `claude-agent-sdk` (needs `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`), then `deepagents` again; the Codex SDK backend (`tg_agent/agent/codex_backend.py`) and the Google ADK backend (`tg_agent/agent/adk_backend.py`, Gemini models, needs `GOOGLE_API_KEY` / `GEMINI_API_KEY`) are intentionally NOT in the auto-fallback chain (each spawns a blocking out-of-process `mcp-server` subprocess) and are opt-in only via the dev-mode `agent_backend_override` setting. Both Codex and ADK reach the project tools over the same stdio MCP server (`python -m tg_agent.main mcp-server`) the in-process path serves
-- **Agent system is legacy** (2026-09, see Positioning): in-process agent chat (`agent chat`, TUI, web `/agent`), SDK backends and MCP — frozen: keep functional, no new features
+- **Agent system is legacy** (2026-09, see Positioning): in-process agent chat (`agent chat`, TUI, web `/agent`), SDK backends and MCP — frozen: keep functional, no new features. The interactive TUI is the optional package `packages/tg_tui` (`tg_tui.app.AgentTuiApp`, #1720 wave 2); `agent chat` without a prompt imports it lazily and exits 1 with an install hint when it is missing; the core must not import `tg_tui` (import-linter `core_no_tui_imports`)
 - **Provider system**: `ProviderService` auto-registers LLM providers from env vars (`OPENAI_API_KEY`, `COHERE_API_KEY`, `OLLAMA_BASE`, etc.); the text/LLM adapters in `tg_agent/services/provider_adapters.py` are lightweight HTTP wrappers (no heavy SDK deps). The image adapters in the same file use official SDKs where they are cheap and clearer (see Image generation below) — the principle is "no *heavy* SDK", not "no SDK at all"
 - **Content pipelines**: `PipelineService` + `ContentGenerationService` orchestrate generate → image → draft → notify → publish flow; tracked via `generation_runs` DB table
 - **Image generation**: `ImageGenerationService` routes to provider-specific adapters (Together/HuggingFace/OpenAI/Replicate/Codex) via `provider:model_id` convention; auto-registers from env vars; adapters defined in `tg_agent/services/provider_adapters.py`. Since #958 the OpenAI/Together/Replicate adapters drive official SDKs (`openai` for both OpenAI and Together's OpenAI-compatible endpoint; `replicate` `async_run` replacing the manual poll loop); HuggingFace stays on raw aiohttp on purpose (its SDK returns a `PIL.Image`, pulling Pillow, vs saving the raw bytes); Codex uses the `openai_codex` SDK. `openai` is a direct dep (already transitive via langchain-openai); `replicate` is lightweight (httpx+pydantic)

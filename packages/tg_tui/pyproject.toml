@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=77.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tg-tui"
+version = "0.1.0"
+description = "Legacy interactive agent-chat TUI for tg-agent (`tg-agent agent chat` without a prompt); frozen, optional"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    {name = "Axisrow"}
+]
+keywords = ["telegram", "agent", "tui", "textual"]
+classifiers = [
+    "Development Status :: 7 - Inactive",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+]
+dependencies = [
+    "tg-agent",
+    "textual[syntax]>=8.2.8",
+]
+
+# Points at the monorepo until the package is published.
+[project.urls]
+Homepage = "https://github.com/axisrow/tg_content_factory"
+Issues = "https://github.com/axisrow/tg_content_factory/issues"
+
+[tool.uv.sources]
+tg-agent = { workspace = true }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tg_tui = ["*.tcss", "py.typed"]

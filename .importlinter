@@ -1,5 +1,7 @@
 [importlinter]
-root_package = tg_agent
+root_packages =
+    tg_agent
+    tg_tui
 include_external_packages = True
 
 # #1720: the core (worker runtime, services, gateway, DB, ...) must not depend
@@ -52,3 +54,37 @@ allow_indirect_imports = True
 ignore_imports =
     tg_agent.services.pipeline_nodes.handlers -> telethon
     tg_agent.services.telegram_command_dispatcher -> telethon
+
+# #1720 wave 2: the interactive agent-chat TUI lives in the optional
+# packages/tg_tui; the core never imports it. Only the `agent chat` entry point
+# loads it lazily (and fails fast with an install hint when it is missing).
+[importlinter:contract:core_no_tui_imports]
+name = Core does not import the optional TUI package (only the agent chat entry point may)
+type = forbidden
+source_modules =
+    tg_agent.agent
+    tg_agent.cli
+    tg_agent.collection_queue
+    tg_agent.config
+    tg_agent.database
+    tg_agent.filters
+    tg_agent.gateway
+    tg_agent.live_runtime_pause
+    tg_agent.main
+    tg_agent.models
+    tg_agent.parsers
+    tg_agent.paths
+    tg_agent.plugin_api
+    tg_agent.runtime
+    tg_agent.scheduler
+    tg_agent.search
+    tg_agent.security
+    tg_agent.services
+    tg_agent.settings_utils
+    tg_agent.telegram
+    tg_agent.utils
+forbidden_modules =
+    tg_tui
+allow_indirect_imports = True
+ignore_imports =
+    tg_agent.cli.commands.agent -> tg_tui.**

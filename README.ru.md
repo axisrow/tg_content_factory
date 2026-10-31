@@ -88,7 +88,7 @@ tg-agent account add
 Они продолжают работать, но **заморожены**: разработка приостановлена на неопределённый срок, новые возможности на них не строятся. Активно развивается только CLI + скилл.
 
 - **Веб-панель** (FastAPI + Bootstrap 5) — `python -m tg_agent.main serve`, затем http://localhost:8080 (пароль из `WEB_PASS`)
-- **TUI** и **встроенный агент-чат** (`tg-agent agent chat`; бэкенды `claude-agent-sdk` / `deepagents`)
+- **TUI** и **встроенный агент-чат** (`tg-agent agent chat`; бэкенды `claude-agent-sdk` / `deepagents`). Интерактивный TUI — опциональный пакет `packages/tg_tui` (`pip install -e packages/tg_tui`); однократный `agent chat -p "..."` работает без него
 - **MCP-сервер** (`python -m tg_agent.main mcp-server`)
 
 ### Легаси: split-деплой (Docker / k8s)

@@ -19,7 +19,7 @@
 | 2 | **Web** (HTML/HTMX) | для **человека** в браузере | `tg_agent/web/routes/` — Jinja2/HTMX/SSE/формы | — |
 | 3 | **CLI** | команды терминала | `tg_agent/cli/commands/` (тела `*_impl`) + `tg_agent/cli/typer_commands.py` (Typer-объявления) | — |
 | 4 | **Agent-tools** | тулы AI-агента (MCP) | `tg_agent/agent/tools/` | — |
-| 5 | **TUI** (Textual) | интерактивный терминальный UI | `tg_agent/cli/commands/agent_tui.py` + `.tcss` | ✅ узкая |
+| 5 | **TUI** (Textual) | интерактивный терминальный UI | `packages/tg_tui/src/tg_tui/app.py` + `.tcss` (optional package `tg-tui`, #1720) | ✅ узкая |
 
 **Ключевое (NB из #1023):** `FastAPI ≠ Web` — разные потребители (программы vs человек). **TUI и FastAPI — узкие**: для них parity ≠ «всё везде», а «нет неоправданных пробелов». Пробел в узкой поверхности — это **«by design»**, не баг, если он осознан.
 
@@ -33,7 +33,7 @@
 | **Web** | 26 смонтированных роутеров, ~18 UI-страниц меню | `tg_agent/web/assembly.py` |
 | **CLI** | 26 top-level команд (`server_control` даёт `stop`+`restart`), ~214 leaf-команд | `tg_agent/cli/typer_commands.py` (приложение Typer `app`) |
 | **Agent-tools** | **188 tools**, **21 группа**, **80 read / 91 write / 17 delete** | `permissions.py` (`TOOL_CATEGORIES`, `MODULE_GROUPS`) |
-| **TUI** | 1 app (`AgentTuiApp`) — покрывает ровно 1 сервис («AI-агент») | `tg_agent/cli/commands/agent_tui.py` |
+| **TUI** | 1 app (`AgentTuiApp`) — покрывает ровно 1 сервис («AI-агент») | `packages/tg_tui/src/tg_tui/app.py` |
 
 > **21 группа agent-tools** (verbatim): Поиск (8), Каналы (18), Сбор (4), Пайплайны (20), Модерация (6), Поисковые запросы (8), Аккаунты (8), Фильтры (8), Аналитика (15), Планировщик (8), Уведомления (5), Фото (14), Диалоги (11), Сообщения (14), Управление чатом (8), Личные сообщения (DM) (7, #1580), Изображения (4), Экспорт (1), Настройки (6), Треды агента (5), Веб-поиск (2). **Нет групп** для Jobs, Providers-management, Calendar (одиночный `get_calendar` в Аналитике), Translation (одиночный `translate_message` в Сообщениях), Limits, A/B.
 
@@ -86,7 +86,7 @@
 | 26 | 🧪 **A/B Testing** | — | — | — | — | N/A |
 | 27 | ✉️ DM-цикл (#1580) | ✅ | ✅ | ✅ | ✅ | 🟦 |
 
-> **TUI-колонка:** ровно один сервис (#23 Agent) = ✅. Все остальные = 🟦 by design — `AgentTuiApp` (`tg_agent/cli/commands/agent_tui.py`) единственный Textual-app в проекте (подтверждено grep по `from textual`/`ComposeResult`/`.tcss`) и покрывает только AI-чат (треды + потоковый чат + диалог разрешений; модель жёстко `None`, выбора провайдера/настроек нет). Сервис #25 (Prod Limits) = 🟥 в Web/CLI/agent: нет выделенной поверхности нигде (config-only, off-by-default), FastAPI = «—» — это не parity-пробел, а вопрос «нужна ли поверхность» (Тир 3, D2). Сервис #26 = N/A: A/B не подключён ни к одной поверхности вообще.
+> **TUI-колонка:** ровно один сервис (#23 Agent) = ✅. Все остальные = 🟦 by design — `AgentTuiApp` (`packages/tg_tui/src/tg_tui/app.py`) единственный Textual-app в проекте (подтверждено grep по `from textual`/`ComposeResult`/`.tcss`) и покрывает только AI-чат (треды + потоковый чат + диалог разрешений; модель жёстко `None`, выбора провайдера/настроек нет). Сервис #25 (Prod Limits) = 🟥 в Web/CLI/agent: нет выделенной поверхности нигде (config-only, off-by-default), FastAPI = «—» — это не parity-пробел, а вопрос «нужна ли поверхность» (Тир 3, D2). Сервис #26 = N/A: A/B не подключён ни к одной поверхности вообще.
 
 ---
 
