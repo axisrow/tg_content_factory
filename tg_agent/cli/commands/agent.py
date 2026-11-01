@@ -224,7 +224,7 @@ async def chat_impl(
                 raise
             print(
                 "Интерактивный TUI — опциональный пакет tg-tui, он не установлен "
-                "(из checkout репозитория: pip install -e packages/tg_tui). "
+                "(pip install tg-tui). "
                 "Однократный режим работает без него: передайте prompt (-p).",
                 file=sys.stderr,
             )

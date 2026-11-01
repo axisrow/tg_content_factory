@@ -1,2 +1,0 @@
-"""Internal settings route helpers."""
-

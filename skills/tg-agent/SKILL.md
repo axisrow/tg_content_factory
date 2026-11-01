@@ -127,8 +127,8 @@ The web panel, TUI, embedded agent chat (`tg-agent agent chat`) and MCP server s
 but their development is paused indefinitely (bug fixes only). For coding agents the CLI
 above is the only supported interface.
 Interactive `tg-agent agent chat` (no prompt) needs the optional `tg-tui` package
-(`pip install -e packages/tg_tui`); without it the command exits 1 with an install hint.
+(`pip install tg-tui`); without it the command exits 1 with an install hint.
 One-shot `agent chat -p "..."` works without it. Likewise `tg-agent serve` needs the
-optional `tg-webui` package (`pip install -e packages/tg_webui`) and exits 1 with an
+optional `tg-webui` package (`pip install tg-webui`) and exits 1 with an
 install hint without it; the worker daemon (`restart`/`worker`) never needs it.
 

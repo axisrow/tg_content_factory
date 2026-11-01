@@ -87,8 +87,8 @@ tg-agent account add
 
 Они продолжают работать, но **заморожены**: разработка приостановлена на неопределённый срок, новые возможности на них не строятся. Активно развивается только CLI + скилл.
 
-- **Веб-панель** (FastAPI + Bootstrap 5) — `python -m tg_agent.main serve`, затем http://localhost:8080 (пароль из `WEB_PASS`). Это опциональный пакет `packages/tg_webui`, на PyPI его нет: из checkout репозитория `pip install -e packages/tg_shared -e packages/tg_webui`; один `pip install tg-agent` веб-панели не даёт
-- **TUI** и **встроенный агент-чат** (`tg-agent agent chat`; бэкенды `claude-agent-sdk` / `deepagents`). Интерактивный TUI — опциональный пакет `packages/tg_tui` (`pip install -e packages/tg_tui`); однократный `agent chat -p "..."` работает без него
+- **Веб-панель** (FastAPI + Bootstrap 5) — `python -m tg_agent.main serve`, затем http://localhost:8080 (пароль из `WEB_PASS`). Это опциональный пакет `tg-webui` ([github.com/axisrow/tg_webui](https://github.com/axisrow/tg_webui), PyPI: `pip install tg-webui`; требует `tg-shared`, его на PyPI пока нет); один `pip install tg-agent` веб-панели не даёт
+- **TUI** и **встроенный агент-чат** (`tg-agent agent chat`; бэкенды `claude-agent-sdk` / `deepagents`). Интерактивный TUI — опциональный пакет `tg-tui` ([github.com/axisrow/tg_tui](https://github.com/axisrow/tg_tui), PyPI: `pip install tg-tui`); однократный `agent chat -p "..."` работает без него
 - **MCP-сервер** (`python -m tg_agent.main mcp-server`)
 
 ### Легаси: split-деплой (Docker / k8s)
@@ -236,7 +236,7 @@ telethon-cli users get-me --output json
  pytest tests/ -q -m aiosqlite_serial -n auto --dist=loadfile
 
  # Один тест
- pytest packages/tg_webui/tests/test_web.py::test_health_endpoint -v
+ pytest tests/test_local_install_consistency.py -v
 
  # Сравнить serial и safe mixed-mode прогон всего suite
  python -m tg_agent.main test benchmark

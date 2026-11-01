@@ -1,15 +1,14 @@
 [importlinter]
 root_packages =
     tg_agent
-    tg_tui
-    tg_webui
 include_external_packages = True
 
-# #1720: the core (worker runtime, services, gateway, DB, CLI, ...) must not
-# depend on the legacy web panel, which lives in the optional packages/tg_webui
-# (wave 3). Only the `serve` entry point reaches it, lazily, and fails fast with
-# an install hint when it is missing. Direct edges are checked from every core
-# module, so indirect chains through `serve` (main -> cli -> serve) are fine.
+# The legacy UI surfaces moved out of the monorepo (published as the tg-webui
+# and tg-tui PyPI packages). The core-no-UI contracts keep guarding the import
+# direction even against an *installed* surface package: only the lazy, guarded
+# entry points (`serve`, `agent chat`) may reach them, and both fail fast with
+# an install hint when the package is absent.
+
 [importlinter:contract:runtime_no_web_imports]
 name = Core does not import the optional web panel package (only the serve entry point may)
 type = forbidden
@@ -18,15 +17,17 @@ source_modules =
 forbidden_modules =
     tg_webui
 allow_indirect_imports = True
+# The lazy serve import is inside a function; with the package out of the
+# monorepo the ignore entry may match nothing — alert, don't fail.
+unmatched_ignore_imports_alerting = warn
 ignore_imports =
-    tg_agent.cli.commands.serve -> tg_webui.**
+    tg_agent.cli.commands.serve -> tg_webui
 
 [importlinter:contract:telegram_actions_no_raw_telethon_functions_in_entrypoints]
 name = Telegram entrypoints do not import Telethon directly outside allowed pipeline errors
 type = forbidden
 source_modules =
     tg_agent.cli
-    tg_webui
     tg_agent.agent.tools
     tg_agent.services.pipeline_nodes
     tg_agent.services.telegram_command_dispatcher
@@ -37,9 +38,6 @@ ignore_imports =
     tg_agent.services.pipeline_nodes.handlers -> telethon
     tg_agent.services.telegram_command_dispatcher -> telethon
 
-# #1720 wave 2: the interactive agent-chat TUI lives in the optional
-# packages/tg_tui; the core never imports it. Only the `agent chat` entry point
-# loads it lazily (and fails fast with an install hint when it is missing).
 [importlinter:contract:core_no_tui_imports]
 name = Core does not import the optional TUI package (only the agent chat entry point may)
 type = forbidden
@@ -48,5 +46,6 @@ source_modules =
 forbidden_modules =
     tg_tui
 allow_indirect_imports = True
+unmatched_ignore_imports_alerting = warn
 ignore_imports =
-    tg_agent.cli.commands.agent -> tg_tui.**
+    tg_agent.cli.commands.agent -> tg_tui

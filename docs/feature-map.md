@@ -4,7 +4,7 @@
 
 > **Статус:** финальная документация (эпик #1022). Дополняет [`architecture.md`](architecture.md) — высокоуровневую трёхслойную схему — практической картой «что есть и через какие поверхности доступно».
 > **Что это:** инвентарь функциональных сервисов продукта + основа для системного баг-ханта (эпик #1024).
-> **Метод:** read-only анализ пяти поверхностей проекта (см. ниже) + сверка статуса по real-TG suite (`tests/cli_real_tg_integration/`) и e2e (`packages/tg_webui/tests/e2e/`).
+> **Метод:** read-only анализ пяти поверхностей проекта (см. ниже) + сверка статуса по real-TG suite (`tests/cli_real_tg_integration/`) и e2e (`axisrow/tg_webui: tests/e2e/`).
 
 ## Что такое «сервис» здесь
 
@@ -17,26 +17,26 @@
 | # | Поверхность | Для кого | Где живёт |
 |---|-------------|----------|-----------|
 | 1 | **FastAPI REST** (`/api/*`, JSON) | для **программ** | машинные JSON parity-эндпоинты внутри HTML-роутеров (CLI↔Web parity) |
-| 2 | **Web** (HTML/HTMX) | для **человека** в браузере | `packages/tg_webui/src/tg_webui/routes/` — Jinja2-шаблоны, HTMX-фрагменты, формы |
+| 2 | **Web** (HTML/HTMX) | для **человека** в браузере | `axisrow/tg_webui: src/tg_webui/routes/` — Jinja2-шаблоны, HTMX-фрагменты, формы |
 | 3 | **CLI** | команды терминала | `tg_agent/cli/commands/` (тела `*_impl`) + `tg_agent/cli/typer_commands.py` (Typer-приложение `app`, ~212 leaf-команд) |
 | 4 | **Agent-tools** | тулы AI-агента (MCP) | `tg_agent/agent/tools/` (173 tools в 20 группах) |
-| 5 | **TUI** (Textual) | интерактивный терминальный UI | `packages/tg_tui/src/tg_tui/app.py` + `.tcss` (optional package `tg-tui`, #1720) (dep `textual[syntax]`); запуск — `agent chat` без `--prompt`. **УЗКАЯ**: только AI-чат, см. ниже |
+| 5 | **TUI** (Textual) | интерактивный терминальный UI | `axisrow/tg_tui: src/tg_tui/app.py` + `.tcss` (optional package `tg-tui`, #1720) (dep `textual[syntax]`); запуск — `agent chat` без `--prompt`. **УЗКАЯ**: только AI-чат, см. ниже |
 
 ### Важно про FastAPI vs Web
 
-- **FastAPI REST** — JSON-эндпоинты, потребляемые **программами**. Отдельного REST-контура для внешних интеграций нет (interop-контур `/api/tasks` удалён в #1431). JSON-эндпоинты (`/jobs/api/list`, `/calendar/api/calendar`, `/messages/{identifier}`, `/pipelines/{id}/runs`, `/settings/flood-status`, `/rss.xml`…) — это **машинные parity-зеркала** внутри HTML-роутеров, дающие CLI↔Web паритет и доступ для скриптов. (Пути указаны с реальными префиксами роутеров из `packages/tg_webui/src/tg_webui/assembly.py`.)
+- **FastAPI REST** — JSON-эндпоинты, потребляемые **программами**. Отдельного REST-контура для внешних интеграций нет (interop-контур `/api/tasks` удалён в #1431). JSON-эндпоинты (`/jobs/api/list`, `/calendar/api/calendar`, `/messages/{identifier}`, `/pipelines/{id}/runs`, `/settings/flood-status`, `/rss.xml`…) — это **машинные parity-зеркала** внутри HTML-роутеров, дающие CLI↔Web паритет и доступ для скриптов. (Пути указаны с реальными префиксами роутеров из `axisrow/tg_webui: src/tg_webui/assembly.py`.)
 - **Web** — то, что видит человек: HTML-страницы, HTMX-частичные обновления, SSE-стримы (agent chat, generate-stream), формы. Это НЕ JSON и НЕ для программ.
 - Один и тот же роутер часто отдаёт **обе** поверхности (HTML-страница + JSON parity-эндпоинт). В таблицах ниже они разнесены.
 
 ### Важно про TUI
 
-TUI — это **единственный** Textual-app в проекте: `AgentTuiApp` (`packages/tg_tui/src/tg_tui/app.py`, стили в `agent_tui.tcss`; опциональный пакет `tg-tui`, #1720). Запускается через `python -m tg_agent.main agent chat` в интерактивном режиме (без `--prompt`). Проверено grep'ом по `tg_agent/`: больше нигде Textual/`.tcss`/`ComposeResult` не используется. Поэтому **TUI покрывает ровно один сервис — «AI-агент»**; во всех остальных строках TUF-колонка = «—».
+TUI — это **единственный** Textual-app в проекте: `AgentTuiApp` (`axisrow/tg_tui: src/tg_tui/app.py`, стили в `agent_tui.tcss`; опциональный пакет `tg-tui`, #1720). Запускается через `python -m tg_agent.main agent chat` в интерактивном режиме (без `--prompt`). Проверено grep'ом по `tg_agent/`: больше нигде Textual/`.tcss`/`ComposeResult` не используется. Поэтому **TUI покрывает ровно один сервис — «AI-агент»**; во всех остальных строках TUF-колонка = «—».
 
 ## Что означает «Статус»
 
 | Метка | Смысл |
 |-------|-------|
-| 🟢 **проверено вживую** | есть прошедшие real-TG тесты (`tests/cli_real_tg_integration/`) и/или e2e-панель (`packages/tg_webui/tests/e2e/console_smoke.py`) — доказано боем |
+| 🟢 **проверено вживую** | есть прошедшие real-TG тесты (`tests/cli_real_tg_integration/`) и/или e2e-панель (`axisrow/tg_webui: tests/e2e/console_smoke.py`) — доказано боем |
 | 🟡 **только код** | написано и покрыто unit/integration-тестами с фейками, но реальной работой (live Telegram / live provider / реальная нагрузка) не доказано |
 | 🔴 **заглушка/частично** | код есть, но не подключён к поверхностям, либо явно неполный/экспериментальный |
 
@@ -463,7 +463,7 @@ Rate/cost-лимиты на провайдеров, учёт дневных за
 
 Инвентарь поверхностей:
 - **FastAPI REST** — машинные JSON parity-эндпоинты в ~15 роутерах (interop-контур `/api/tasks` удалён в #1431)
-- **Web** (HTML/HTMX) — 26 смонтированных роутеров (`packages/tg_webui/src/tg_webui/assembly.py`), 18 UI-страниц меню
+- **Web** (HTML/HTMX) — 26 смонтированных роутеров (`axisrow/tg_webui: src/tg_webui/assembly.py`), 18 UI-страниц меню
 - **CLI** — 26 top-level команд, ~211 leaf-команд
 - **Agent-tools** — 21 группа, 188 tools (80 read / 91 write / 17 delete) — авторитетный счёт из `TOOL_CATEGORIES`/`MODULE_GROUPS` (`tg_agent/agent/tools/permissions.py`, инвариант `tests/test_agent_tools_permissions.py`)
 - **TUI** — 1 app (`AgentTuiApp`), покрывает только сервис «AI-агент»

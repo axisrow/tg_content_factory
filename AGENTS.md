@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Core code lives in `tg_agent/`. Use `tg_agent/cli/` for command-line entrypoints, `packages/tg_webui/` (import `tg_webui`, optional package) for the legacy FastAPI dashboard, `tg_agent/services/` for orchestration/business logic, `tg_agent/telegram/` for Telethon integrations, and `tg_agent/database/` plus `tg_agent/database/repositories/` for SQLite access. Tests live under `tests/` (repository coverage in `tests/repositories/`); the web panel's tests, including route coverage, live in `packages/tg_webui/tests/` (`routes/`, `e2e/`). Documentation lives in `docs/`; static web assets are in `packages/tg_webui/src/tg_webui/static/` and Jinja templates in `packages/tg_webui/src/tg_webui/templates/`.
+Core code lives in `tg_agent/`. Use `tg_agent/cli/` for command-line entrypoints, `tg_agent/services/` for orchestration/business logic, `tg_agent/telegram/` for Telethon integrations, and `tg_agent/database/` plus `tg_agent/database/repositories/` for SQLite access. Tests live under `tests/` (repository coverage in `tests/repositories/`). The legacy UI surfaces are separate repos/PyPI packages: the web panel ([github.com/axisrow/tg_webui](https://github.com/axisrow/tg_webui), import `tg_webui`; its tests, including route coverage, live in that repo under `tests/`) and the interactive TUI ([github.com/axisrow/tg_tui](https://github.com/axisrow/tg_tui)). Documentation lives in `docs/`; the web panel's static assets and Jinja templates live in the tg-webui repo.
 
 ## Build, Test, and Development Commands
 Install locally with `pip install -e .` from the repo root. Run `python -m tg_agent.main serve` — it spawns the embedded Telegram worker by default, so a single command gives you the web UI plus real collection, scheduler jobs, and `/agent` tools. Open `http://localhost:8080`. For Docker/k8s split deployments add `--no-worker` and run `python -m tg_agent.main worker` in a separate container. Start the Docker stack with `docker-compose up -d`.
@@ -11,7 +11,7 @@ Use these validation commands during development:
 - `ruff check tg_agent/ tests/ packages/ conftest.py` — lint Python code (core and monorepo packages).
 - `pytest tests/ -v -m "not aiosqlite_serial" -n auto` — run parallel-safe tests.
 - `pytest tests/ -q -m aiosqlite_serial -n auto --dist=loadfile` — run DB/thread-sensitive tests sequentially within each file, with independent files in parallel.
-- `pytest packages/tg_webui/tests/test_web.py::test_health_endpoint -v` — run one focused test.
+- `pytest tests/test_local_install_consistency.py -v` — run one focused test.
 
 ## Coding Style & Naming Conventions
 Target Python 3.11+ and keep code async-first. Ruff enforces imports, naming, and basic style with a `line-length` of `120`. Follow the existing naming pattern: `snake_case` for modules/functions, `PascalCase` for classes, and descriptive service names such as `content_generation_service.py`. Prefer thin CLI/web handlers that delegate to `tg_agent/services/` and `db.repos.*`.

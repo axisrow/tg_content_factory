@@ -345,7 +345,7 @@ def test_serve_without_tg_webui_exits_with_install_hint(caplog):
         run(_args(web_pass=None))
 
     assert exc_info.value.code == 1
-    assert "pip install -e packages/tg_webui" in caplog.text
+    assert "pip install tg-webui" in caplog.text
     load_config.assert_not_called()
     mock_uv.run.assert_not_called()
 

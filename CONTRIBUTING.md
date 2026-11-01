@@ -110,7 +110,7 @@ Advisory tools wired into CI: `bandit`, `pip-audit`. Optional: `mutmut`
 
 - skills and recipes (`skills/`), documentation (`docs/`)
 - individual CLI commands (the CLI is the contract — new capabilities land here)
-- web dashboard fixes (`packages/tg_webui`, frozen but accepting bug fixes)
+- web dashboard fixes (the [tg-webui](https://github.com/axisrow/tg_webui) repo, frozen but accepting bug fixes)
 
 **Higher-bar core** — read first, then propose:
 
