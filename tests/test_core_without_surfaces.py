@@ -81,6 +81,8 @@ pytestmark = pytest.mark.timeout(300)
 
 
 def _source_roots() -> list[str]:
+    # Only tg_shared remains under packages/ since the UI surfaces moved to
+    # their own repos; the glob keeps this list correct either way.
     return [str(REPO_ROOT), *(str(src) for src in sorted((REPO_ROOT / "packages").glob("*/src")))]
 
 
@@ -128,5 +130,5 @@ def test_interactive_agent_chat_without_tg_tui_exits_with_install_hint(tmp_path)
     result = _run(tmp_path, _CLI, "agent", "chat")
     assert result.returncode == 1
     output = result.stdout + result.stderr
-    assert "pip install -e packages/tg_tui" in output
+    assert "pip install tg-tui" in output
     assert "Traceback" not in output

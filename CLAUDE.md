@@ -36,14 +36,16 @@ pip install -e ".[dev]"
 # tg-shared is published (#1424 wave).
 pip install -e packages/tg_shared
 
-# Optional legacy surfaces live in their own monorepo packages (#1720): the
-# interactive agent-chat TUI (`agent chat` without a prompt) needs tg-tui, the
-# web panel (`serve`) needs tg-webui. The core never imports them
-# (import-linter contracts) and declares none of their deps (jinja2,
-# python-multipart, itsdangerous, qrcode, textual — they live in the packages'
-# pyproject); tests/test_core_without_surfaces.py and the CI core-wheel smoke
-# (scripts/smoke_core_wheel.py) pin that. Their tests live in packages/*/tests.
-pip install -e packages/tg_tui -e packages/tg_webui
+# Optional legacy surfaces moved to their own repos / PyPI packages (ex-#1720):
+# the interactive agent-chat TUI (`agent chat` without a prompt) needs
+# tg-tui (github.com/axisrow/tg_tui, PyPI 0.0.1), the web panel (`serve`) needs
+# tg-webui (github.com/axisrow/tg_webui, PyPI 0.0.1; needs tg-shared, not yet
+# on PyPI). The core never imports them (import-linter contracts) and declares
+# none of their deps (jinja2, python-multipart, itsdangerous, qrcode, textual);
+# tests/test_core_without_surfaces.py and the CI core-wheel smoke
+# (scripts/smoke_core_wheel.py) pin that. Their tests live in their own repos.
+pip install tg-tui   # or: pip install -e ../tg_tui
+pip install tg-webui  # or: pip install -e ../tg_webui
 
 # Dependency-touching PRs must regenerate the lockfile: the committed uv.lock
 # is the full-closure graph the CI dependency-review gate diffs against
@@ -79,14 +81,14 @@ ruff check --fix tg_agent/ tests/ packages/ conftest.py
 
 # Run parallel-safe tests (-n auto is capped at 4 workers by root conftest.py;
 # override via TGCF_PYTEST_XDIST_WORKERS; single-test runs with :: force 1 worker).
-# Package tests (tg_shared #1421, tg_tui + tg_webui #1720) live outside tests/ — include their roots.
-pytest tests/ packages/tg_shared/tests packages/tg_tui/tests packages/tg_webui/tests -v -m "not aiosqlite_serial" -n auto
+# The tg_shared package tests (#1421) live outside tests/ — include that root.
+pytest tests/ packages/tg_shared/tests -v -m "not aiosqlite_serial" -n auto
 
 # Run aiosqlite-backed tests sequentially within each file, with independent files in parallel
-pytest tests/ packages/tg_webui/tests -q -m aiosqlite_serial -n auto --dist=loadfile
+pytest tests/ -q -m aiosqlite_serial -n auto --dist=loadfile
 
 # Run a single test
-pytest packages/tg_webui/tests/test_web.py::test_health_endpoint -v
+pytest tests/test_local_install_consistency.py -v
 
 # Benchmark serial vs safe mixed-mode suite execution
 python -m tg_agent.main test benchmark
@@ -145,11 +147,11 @@ CLI command for Telegram dialogs management is `dialogs`.
 
 Three layers: **CLI (native surface; web/TUI/agent-chat/MCP are legacy)** → **Telegram + Search + Scheduler + Agent/Pipeline** → **SQLite**
 
-- **Runtime split (web ↔ worker)**: the worker runtime is assembled in `tg_agent/runtime/bootstrap.py` into `RuntimeContainer`; the legacy web panel is the optional package `packages/tg_webui` (import name `tg_webui`, #1720 wave 3), which adds presentation state through the `AppContainer` subclass in `tg_webui/container.py` and builds it in `tg_webui/bootstrap.py`. The core must not import `tg_webui` (import-linter `runtime_no_web_imports`; only `cli/commands/serve.py` loads it lazily and exits 1 with an install hint when it is missing): runtime data paths live in `tg_agent/paths.py`, request timing in `tg_agent/utils/timing.py`, the snapshot shims in `tg_agent/runtime/snapshots.py`. The **default daemon is worker-only** (automation-first): `restart`/`worker` run the standalone worker (`tg_agent/runtime/worker.py` — functionally identical to the embedded one) with the managed PID file and no web surface. `serve` is the legacy panel entry: it hosts uvicorn and spawns an `EmbeddedWorker` (`tg_webui/embedded_worker.py`) next to the web container; `--no-worker` runs only the web side (Docker/k8s split deployments).
+- **Runtime split (web ↔ worker)**: the worker runtime is assembled in `tg_agent/runtime/bootstrap.py` into `RuntimeContainer`; the legacy web panel is the optional package `tg-webui` ([github.com/axisrow/tg_webui](https://github.com/axisrow/tg_webui), PyPI 0.0.1; import name `tg_webui`), which adds presentation state through the `AppContainer` subclass in `tg_webui/container.py` and builds it in `tg_webui/bootstrap.py`. The core must not import `tg_webui` (import-linter `runtime_no_web_imports`; only `cli/commands/serve.py` loads it lazily and exits 1 with an install hint when it is missing): runtime data paths live in `tg_agent/paths.py`, request timing in `tg_agent/utils/timing.py`, the snapshot shims in `tg_agent/runtime/snapshots.py`. The **default daemon is worker-only** (automation-first): `restart`/`worker` run the standalone worker (`tg_agent/runtime/worker.py` — functionally identical to the embedded one) with the managed PID file and no web surface. `serve` is the legacy panel entry: it hosts uvicorn and spawns an `EmbeddedWorker` (`tg_webui/embedded_worker.py`) next to the web container; `--no-worker` runs only the web side (Docker/k8s split deployments).
   - Web container (`runtime_mode="web"`) uses snapshot shims (`SnapshotClientPool`, `SnapshotCollector`, `SnapshotSchedulerManager` in `tg_agent/runtime/snapshots.py`). It does NOT open Telegram connections; UI actions enqueue work into `collection_tasks` / `telegram_commands` / task tables and read `runtime_snapshots` to render status.
   - Worker container (`runtime_mode="worker"`, either embedded or standalone via `tg_agent/runtime/worker.py`) owns the live `ClientPool`, `CollectionQueue`, `UnifiedDispatcher`, `TelegramCommandDispatcher`, and `SchedulerManager`, and publishes `runtime_snapshots` (heartbeat, accounts_status, scheduler_status, …) that the web side reads.
   - In web-mode `collection_queue = None` and `CollectionService` falls back to writing a PENDING row — the worker picks those up at startup via `CollectionQueue.requeue_startup_tasks()`.
-- CLI (`tg_agent/main.py` → `tg_agent/cli/commands/`) is the primary entry point and the product contract for coding agents (see Positioning); Web (`packages/tg_webui`, optional package) is a legacy parallel entry to the same logic — keep it working, do not extend
+- CLI (`tg_agent/main.py` → `tg_agent/cli/commands/`) is the primary entry point and the product contract for coding agents (see Positioning); Web (the optional `tg-webui` package) is a legacy parallel entry to the same logic — keep it working, do not extend
 - Telegram layer: `ClientPool` manages multi-account connections, `Collector` fetches messages, `Notifier` sends alerts
 - Search layer: `SearchEngine` (local DB), `AISearchEngine` (LLM-powered)
 - Scheduler: APScheduler wrapper (`tg_agent/scheduler/manager.py`) triggers periodic collection
@@ -159,7 +161,7 @@ Three layers: **CLI (native surface; web/TUI/agent-chat/MCP are legacy)** → **
 - Parsers (`tg_agent/parsers.py`): identifier extraction for channel import — t.me links, @usernames, negative IDs; file parsing (txt/csv/xlsx)
 - Notification bot: personal bot created via BotFather through a connected account (`tg_agent/telegram/notifier.py`)
 - **Agent system**: four backends selected in `AgentManager.get_runtime_status()` (`tg_agent/agent/manager.py`) — auto-selection prefers `deepagents` when usable DB provider configs exist, then `claude-agent-sdk` (needs `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`), then `deepagents` again; the Codex SDK backend (`tg_agent/agent/codex_backend.py`) and the Google ADK backend (`tg_agent/agent/adk_backend.py`, Gemini models, needs `GOOGLE_API_KEY` / `GEMINI_API_KEY`) are intentionally NOT in the auto-fallback chain (each spawns a blocking out-of-process `mcp-server` subprocess) and are opt-in only via the dev-mode `agent_backend_override` setting. Both Codex and ADK reach the project tools over the same stdio MCP server (`python -m tg_agent.main mcp-server`) the in-process path serves
-- **Agent system is legacy** (2026-09, see Positioning): in-process agent chat (`agent chat`, TUI, web `/agent`), SDK backends and MCP — frozen: keep functional, no new features. The interactive TUI is the optional package `packages/tg_tui` (`tg_tui.app.AgentTuiApp`, #1720 wave 2); `agent chat` without a prompt imports it lazily and exits 1 with an install hint when it is missing; the core must not import `tg_tui` (import-linter `core_no_tui_imports`)
+- **Agent system is legacy** (2026-09, see Positioning): in-process agent chat (`agent chat`, TUI, web `/agent`), SDK backends and MCP — frozen: keep functional, no new features. The interactive TUI is the optional package `tg-tui` ([github.com/axisrow/tg_tui](https://github.com/axisrow/tg_tui), PyPI 0.0.1; `tg_tui.app.AgentTuiApp`); `agent chat` without a prompt imports it lazily and exits 1 with an install hint when it is missing; the core must not import `tg_tui` (import-linter `core_no_tui_imports`)
 - **Provider system**: `ProviderService` auto-registers LLM providers from env vars (`OPENAI_API_KEY`, `COHERE_API_KEY`, `OLLAMA_BASE`, etc.); the text/LLM adapters in `tg_agent/services/provider_adapters.py` are lightweight HTTP wrappers (no heavy SDK deps). The image adapters in the same file use official SDKs where they are cheap and clearer (see Image generation below) — the principle is "no *heavy* SDK", not "no SDK at all"
 - **Content pipelines**: `PipelineService` + `ContentGenerationService` orchestrate generate → image → draft → notify → publish flow; tracked via `generation_runs` DB table
 - **Image generation**: `ImageGenerationService` routes to provider-specific adapters (Together/HuggingFace/OpenAI/Replicate/Codex) via `provider:model_id` convention; auto-registers from env vars; adapters defined in `tg_agent/services/provider_adapters.py`. Since #958 the OpenAI/Together/Replicate adapters drive official SDKs (`openai` for both OpenAI and Together's OpenAI-compatible endpoint; `replicate` `async_run` replacing the manual poll loop); HuggingFace stays on raw aiohttp on purpose (its SDK returns a `PIL.Image`, pulling Pillow, vs saving the raw bytes); Codex uses the `openai_codex` SDK. `openai` is a direct dep (already transitive via langchain-openai); `replicate` is lightweight (httpx+pydantic)
@@ -190,7 +192,7 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 
 ### Web app wiring
 
-- `tg_webui/assembly.py` (in `packages/tg_webui/src/`) — `register_routes()` imports and mounts all routers; `configure_app()` binds the `AppContainer` to `app.state.*`
+- `tg_webui/assembly.py` (in the tg-webui repo, `src/`) — `register_routes()` imports and mounts all routers; `configure_app()` binds the `AppContainer` to `app.state.*`
 - `tg_webui/container.py` — `AppContainer` inherits shared services from `tg_agent/runtime/container.py` and adds templates/timing state; injected into FastAPI `app.state` at startup; accessed in routes via `tg_webui/deps.py` helpers (`deps.get_db()`, `deps.get_templates()`, etc.)
 
 ## Key Patterns
@@ -275,8 +277,8 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 ### Test levels (unit / integration / smoke / e2e)
 A second classification axis layered on top of the markers above, **auto-applied** at collection time by `_infer_test_level` in root `conftest.py` — no manual annotation needed. Run a level with `pytest -m <level>`. An explicit hand-written level marker on a test/module always wins over the heuristic.
 - `unit` — pure logic, **no DB at all**, no HTTP/file-IO/subprocess; fast. Default when nothing else matches.
-- `integration` — exercises a real in-process subsystem: **any `Database` including `:memory:`** (fixtures `db`/`cli_db`, or file-backed DB built inline), the FastAPI app over ASGI (`build_web_app`/`build_web_container`/`ASGITransport`, fixtures `client`/`base_app`/…), repositories (`tests/repositories/`), routes (`packages/tg_webui/tests/routes/`), or a real subprocess/session-file path.
+- `integration` — exercises a real in-process subsystem: **any `Database` including `:memory:`** (fixtures `db`/`cli_db`, or file-backed DB built inline), the FastAPI app over ASGI (`build_web_app`/`build_web_container`/`ASGITransport`, fixtures `client`/`base_app`/…), repositories (`tests/repositories/`), or a real subprocess/session-file path. (Web route tests live in the tg-webui repo since the extraction.)
 - `smoke` — curated fast **offline** preflight over real critical paths (`tests/test_smoke_preflight.py` + `@pytest.mark.smoke` spots); orthogonal to level (a smoke test is usually also `integration`). Live API smoke (`real_provider_smoke`/`codex_*`) also carries `smoke` but stays opt-in (skipped without its gate). CI runs `pytest -m smoke` first as a sub-second sanity gate.
-- `e2e` — long/full real-surface flows: `packages/tg_webui/tests/e2e/` (Playwright) plus all `real_tg_*` live CLI suites.
+- `e2e` — long/full real-surface flows: the tg-webui repo's `tests/e2e/` (Playwright) plus all `real_tg_*` live CLI suites.
 - **Classification is per-test, not per-file**: a file may hold both `unit` (mock-only) and `integration` (DB-touching) tests — each gets its level from its own fixtures/body. Detection order (first match wins): e2e path/marker → live-smoke marker → `tests/routes`|`tests/repositories` path → integration fixture → file-DB (`aiosqlite_serial`) signal → per-test AST source scan (`_INTEGRATION_SOURCE_TOKENS`) → else `unit`. Adding a new way to stand up a subsystem inline may need a token added to `_INTEGRATION_SOURCE_TOKENS`.
 - Invariant (enforced by `tests/test_test_levels.py`): every collected test carries exactly one level; `unit ∩ integration = ∅`; nothing is left unlevelled.

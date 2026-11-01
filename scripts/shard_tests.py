@@ -21,9 +21,10 @@ import sys
 from collections import defaultdict
 
 MARKER = "not aiosqlite_serial"  # keep in sync with the CI shard legs
-# Monorepo package test roots (tg_shared #1421, tg_tui + tg_webui #1720) — the shards must
-# collect them too, like the local `pytest tests/ packages/*/tests` run.
-PACKAGE_TEST_ROOTS = ("packages/tg_shared/tests", "packages/tg_tui/tests", "packages/tg_webui/tests")
+# Monorepo package test root (tg_shared #1421) — the shards must collect it too,
+# like the local `pytest tests/ packages/tg_shared/tests` run. The UI surfaces
+# moved to their own repos (tg-webui / tg-tui on PyPI) and are not collected here.
+PACKAGE_TEST_ROOTS = ("packages/tg_shared/tests",)
 
 
 def collect_files(marker: str) -> list[tuple[str, int]]:

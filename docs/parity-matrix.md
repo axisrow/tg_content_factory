@@ -16,10 +16,10 @@
 | # | Поверхность | Для кого | Где живёт | Узкая? |
 |---|-------------|----------|-----------|:------:|
 | 1 | **FastAPI REST** (`/api/*`, JSON) | для **программ** | машинные JSON parity-зеркала внутри HTML-роутеров (interop-контур `/api/tasks` удалён в #1431) | ✅ узкая |
-| 2 | **Web** (HTML/HTMX) | для **человека** в браузере | `packages/tg_webui/src/tg_webui/routes/` — Jinja2/HTMX/SSE/формы | — |
+| 2 | **Web** (HTML/HTMX) | для **человека** в браузере | `axisrow/tg_webui: src/tg_webui/routes/` — Jinja2/HTMX/SSE/формы | — |
 | 3 | **CLI** | команды терминала | `tg_agent/cli/commands/` (тела `*_impl`) + `tg_agent/cli/typer_commands.py` (Typer-объявления) | — |
 | 4 | **Agent-tools** | тулы AI-агента (MCP) | `tg_agent/agent/tools/` | — |
-| 5 | **TUI** (Textual) | интерактивный терминальный UI | `packages/tg_tui/src/tg_tui/app.py` + `.tcss` (optional package `tg-tui`, #1720) | ✅ узкая |
+| 5 | **TUI** (Textual) | интерактивный терминальный UI | `axisrow/tg_tui: src/tg_tui/app.py` + `.tcss` (optional package `tg-tui`, #1720) | ✅ узкая |
 
 **Ключевое (NB из #1023):** `FastAPI ≠ Web` — разные потребители (программы vs человек). **TUI и FastAPI — узкие**: для них parity ≠ «всё везде», а «нет неоправданных пробелов». Пробел в узкой поверхности — это **«by design»**, не баг, если он осознан.
 
@@ -30,10 +30,10 @@
 | Поверхность | Счётчик | Источник истины |
 |-------------|---------|-----------------|
 | **FastAPI REST** | JSON parity-зеркала в ~15 роутерах (interop-контур `/api/tasks` удалён, #1431) | `JSONResponse`-эндпоинты |
-| **Web** | 26 смонтированных роутеров, ~18 UI-страниц меню | `packages/tg_webui/src/tg_webui/assembly.py` |
+| **Web** | 26 смонтированных роутеров, ~18 UI-страниц меню | `axisrow/tg_webui: src/tg_webui/assembly.py` |
 | **CLI** | 26 top-level команд (`server_control` даёт `stop`+`restart`), ~214 leaf-команд | `tg_agent/cli/typer_commands.py` (приложение Typer `app`) |
 | **Agent-tools** | **188 tools**, **21 группа**, **80 read / 91 write / 17 delete** | `permissions.py` (`TOOL_CATEGORIES`, `MODULE_GROUPS`) |
-| **TUI** | 1 app (`AgentTuiApp`) — покрывает ровно 1 сервис («AI-агент») | `packages/tg_tui/src/tg_tui/app.py` |
+| **TUI** | 1 app (`AgentTuiApp`) — покрывает ровно 1 сервис («AI-агент») | `axisrow/tg_tui: src/tg_tui/app.py` |
 
 > **21 группа agent-tools** (verbatim): Поиск (8), Каналы (18), Сбор (4), Пайплайны (20), Модерация (6), Поисковые запросы (8), Аккаунты (8), Фильтры (8), Аналитика (15), Планировщик (8), Уведомления (5), Фото (14), Диалоги (11), Сообщения (14), Управление чатом (8), Личные сообщения (DM) (7, #1580), Изображения (4), Экспорт (1), Настройки (6), Треды агента (5), Веб-поиск (2). **Нет групп** для Jobs, Providers-management, Calendar (одиночный `get_calendar` в Аналитике), Translation (одиночный `translate_message` в Сообщениях), Limits, A/B.
 
@@ -86,7 +86,7 @@
 | 26 | 🧪 **A/B Testing** | — | — | — | — | N/A |
 | 27 | ✉️ DM-цикл (#1580) | ✅ | ✅ | ✅ | ✅ | 🟦 |
 
-> **TUI-колонка:** ровно один сервис (#23 Agent) = ✅. Все остальные = 🟦 by design — `AgentTuiApp` (`packages/tg_tui/src/tg_tui/app.py`) единственный Textual-app в проекте (подтверждено grep по `from textual`/`ComposeResult`/`.tcss`) и покрывает только AI-чат (треды + потоковый чат + диалог разрешений; модель жёстко `None`, выбора провайдера/настроек нет). Сервис #25 (Prod Limits) = 🟥 в Web/CLI/agent: нет выделенной поверхности нигде (config-only, off-by-default), FastAPI = «—» — это не parity-пробел, а вопрос «нужна ли поверхность» (Тир 3, D2). Сервис #26 = N/A: A/B не подключён ни к одной поверхности вообще.
+> **TUI-колонка:** ровно один сервис (#23 Agent) = ✅. Все остальные = 🟦 by design — `AgentTuiApp` (`axisrow/tg_tui: src/tg_tui/app.py`) единственный Textual-app в проекте (подтверждено grep по `from textual`/`ComposeResult`/`.tcss`) и покрывает только AI-чат (треды + потоковый чат + диалог разрешений; модель жёстко `None`, выбора провайдера/настроек нет). Сервис #25 (Prod Limits) = 🟥 в Web/CLI/agent: нет выделенной поверхности нигде (config-only, off-by-default), FastAPI = «—» — это не parity-пробел, а вопрос «нужна ли поверхность» (Тир 3, D2). Сервис #26 = N/A: A/B не подключён ни к одной поверхности вообще.
 
 ---
 
@@ -98,11 +98,11 @@
 Сервисы **только-HTML** (web есть, JSON-эндпоинта нет): **Collection** (`channel_collection.py` — HTMX-фрагменты), **Channels** (`channels.py` — теги тоже HTML), **Filter** (`filter.py`), **Moderation** (`moderation.py`), **Scheduler** (`scheduler.py`), **Translation** (`settings.py` — только HTML-формы). Это помечено 🟦 — FastAPI узкий, отсутствие JSON-зеркала для чисто-человеческих операций оправдано.
 
 ### Уточнения к карте #1022 (выявлено при верификации)
-- **Export (#21) web** — это НЕ HTML-страница: `POST /channels/{channel_id}/export` → `JSONResponse` (`packages/tg_webui/src/tg_webui/routes/export.py:24-34`, #834). Web UI = кнопка на `/channels`, дёргающая этот эндпоинт. Поэтому Export в FastAPI REST = ✅ (`/rss.xml`, `/atom.xml`, `POST .../export`), web = ✅ (кнопка).
-- **Providers refresh/probe/test-all** — это JSON-эндпоинты внутри settings-роутера (`packages/tg_webui/src/tg_webui/routes/settings.py:179-209`, `settings_json_response`), не отдельный REST-контур. FastAPI REST для Providers = ✅ через них.
+- **Export (#21) web** — это НЕ HTML-страница: `POST /channels/{channel_id}/export` → `JSONResponse` (`axisrow/tg_webui: src/tg_webui/routes/export.py:24-34`, #834). Web UI = кнопка на `/channels`, дёргающая этот эндпоинт. Поэтому Export в FastAPI REST = ✅ (`/rss.xml`, `/atom.xml`, `POST .../export`), web = ✅ (кнопка).
+- **Providers refresh/probe/test-all** — это JSON-эндпоинты внутри settings-роутера (`axisrow/tg_webui: src/tg_webui/routes/settings.py:179-209`, `settings_json_response`), не отдельный REST-контур. FastAPI REST для Providers = ✅ через них.
 
 ### Jobs (#19) — детально
-- Web: `GET /jobs` + `GET /jobs/fragments/list` (`packages/tg_webui/src/tg_webui/routes/jobs.py:46-88`), бэкенд `JobsReadModel` (`tg_agent/services/jobs_read_model.py`).
+- Web: `GET /jobs` + `GET /jobs/fragments/list` (`axisrow/tg_webui: src/tg_webui/routes/jobs.py:46-88`), бэкенд `JobsReadModel` (`tg_agent/services/jobs_read_model.py`).
 - FastAPI REST: `GET /jobs/api/list` (JSON, filterable по source/status — `jobs.py:57-66`).
 - CLI: **нет домена `jobs`** — подтверждено: в приложении Typer (`tg_agent/cli/typer_commands.py`) такой top-level команды нет. Косвенно видно через `scheduler status`, `dialogs queue status`, `pipeline runs`.
 - agent: **нет прямого tool** — только косвенно `get_telegram_queue_status` (группа «Сообщения») и `get_pipeline_queue` (группа «Пайплайны»). Нет агрегированного jobs-tool.
@@ -113,7 +113,7 @@
 - agent: **нет прямого tool управления** — только косвенно `list_image_providers` (READ, группа «Изображения», `tg_agent/agent/tools/images.py`). Нет `add_provider`/`probe_provider`/`test_all_providers`/`refresh_provider` для agent-провайдеров.
 
 ### Production Limits & Quality (#25) — детально
-- `QualityScoringService` — **подключён** (импортируется в `packages/tg_webui/src/tg_webui/pipelines/handlers.py:576`, `tg_agent/cli/commands/pipeline.py`, `tg_agent/services/task_handlers/base.py`), пишет `quality_score`.
+- `QualityScoringService` — **подключён** (импортируется в `axisrow/tg_webui: src/tg_webui/pipelines/handlers.py:576`, `tg_agent/cli/commands/pipeline.py`, `tg_agent/services/task_handlers/base.py`), пишет `quality_score`.
 - `ProductionLimitsService` — **подключён, но off-by-default**: `from_config()` возвращает `None` если `config.production_limits.enabled` ложно (`tg_agent/services/production_limits_service.py:387-391`, #814). Используется в `image_generation_service.py`, `task_handlers/base.py`.
 - `ErrorRecoveryService` — **сейчас не подключён**: импортов вне своего файла = 0 (только `tests/test_error_recovery_service.py`). По решению владельца (vulture-аудит #1044) — **подключить**, не удалять.
 - **Нет выделенной поверхности** ни в CLI, ни в Web, ни в agent — управление только через `config.yaml` / косвенно `settings`.

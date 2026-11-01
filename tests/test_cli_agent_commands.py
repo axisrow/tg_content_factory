@@ -487,7 +487,7 @@ def test_run_chat_interactive_without_tg_tui_exits_before_opening_db(capsys):
         run(_args(agent_action="chat", prompt=None, thread_id=None, model=None))
 
     assert exc_info.value.code == 1
-    assert "pip install -e packages/tg_tui" in capsys.readouterr().err
+    assert "pip install tg-tui" in capsys.readouterr().err
     init_db.assert_not_awaited()
     init_pool.assert_not_awaited()
 

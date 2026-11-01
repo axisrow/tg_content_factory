@@ -29,13 +29,14 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# The exact interleaving from the issue: a foreign-package file (notifier, in
-# tests/) splitting two web routes/ files (packages/tg_webui/tests/routes since
-# #1720). This ordering is what triggered the 26 setup errors before the fix.
+# The exact interleaving from the issue: a foreign-root file (notifier, in
+# tests/) splitting two foreign-root files (foreign-package test roots — today
+# packages/tg_shared/tests, before the extraction packages/tg_webui/tests).
+# This ordering is what triggered the 26 setup errors before the fix.
 _INTERLEAVED_ARGS = [
-    "packages/tg_webui/tests/routes/test_agent_lazyload.py",
+    "packages/tg_shared/tests/test_auth.py",
     "tests/test_notifier_delivery_paths.py",
-    "packages/tg_webui/tests/routes/test_analytics_routes_channel_trends.py",
+    "packages/tg_shared/tests/test_identity.py",
 ]
 
 

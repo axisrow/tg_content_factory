@@ -15,9 +15,9 @@ RAW_TELETHON_ALLOWED = {
     Path("tg_agent/telegram/auth.py"),
 }
 
-# Scanned source trees: the core plus the web panel, which lives in
-# packages/tg_webui since #1720 wave 3.
-SOURCE_ROOTS = (PROJECT_ROOT / "tg_agent", PROJECT_ROOT / "packages" / "tg_webui" / "src" / "tg_webui")
+# Scanned source tree: the core. The web-panel half of the guard moved with the
+# panel into the tg-webui repo (extraction after #1720 wave 3).
+SOURCE_ROOTS = (PROJECT_ROOT / "tg_agent",)
 
 
 def _iter_sources() -> list[Path]:
@@ -26,7 +26,6 @@ def _iter_sources() -> list[Path]:
 
 ENTRYPOINT_ROOTS = (
     Path("tg_agent/cli"),
-    Path("packages/tg_webui/src/tg_webui"),
     Path("tg_agent/agent/tools"),
     Path("tg_agent/services/pipeline_nodes"),
 )

@@ -11,13 +11,12 @@ RUN for i in 1 2 3 4 5; do npm install -g @anthropic-ai/claude-code@latest && br
 COPY pyproject.toml .
 RUN pip install --no-cache-dir .
 COPY . .
-# Monorepo packages the image needs (#1421, #1720): tg-shared for the runtime and
-# tg-webui for `serve` (the CMD below). Installed with their own dependencies so
-# the image keeps working once the core stops carrying the web stack; their
-# `tg-agent` requirement is already satisfied by the install above.
-RUN pip install --no-cache-dir ./packages/tg_shared ./packages/tg_webui
+# The only monorepo package the image needs (#1421): tg-shared for the runtime.
+# The legacy web panel lives in its own repo/PyPI (tg-webui) and is not part of
+# the image — `pip install tg-webui` cannot resolve yet anyway (tg-shared is
+# not on PyPI), so a panel image would need a hand-maintained dep list.
+RUN pip install --no-cache-dir ./packages/tg_shared
 RUN mkdir -p /app/data
-EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
-CMD ["python", "-m", "tg_agent.main", "serve"]
+# Worker-only image (automation-first): the Telegram worker runtime with the
+# managed PID file and no web surface — hence no EXPOSE and no HTTP healthcheck.
+CMD ["python", "-m", "tg_agent.main", "worker"]

@@ -27,7 +27,7 @@ from pathlib import Path
 # neither declares nor imports it.
 UI_ONLY_MODULES = ("tg_webui", "tg_tui", "jinja2", "textual", "qrcode", "itsdangerous")
 
-SERVE_HINT = "pip install -e packages/tg_webui"
+SERVE_HINT = "pip install tg-webui"
 
 
 def _core_wheels(dist: Path) -> list[str]:

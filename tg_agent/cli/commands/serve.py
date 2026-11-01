@@ -22,13 +22,13 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 def _load_web_surface():
-    """Import the optional web panel package (#1720 wave 3) or exit with an install hint.
+    """Import the optional web panel package (the published tg-webui PyPI package) or exit with an install hint.
 
     Lazy so the rest of the CLI never imports FastAPI/Jinja2 app code; the
-    core must not import ``tg_webui`` at module level (import-linter
-    ``runtime_no_web_imports``). Only a missing ``tg_webui`` itself gets the
-    hint — a broken import inside an installed package (say, one of its own
-    dependencies missing) propagates with its real traceback.
+    core must not import ``tg_webui`` at module level. Only a missing
+    ``tg_webui`` itself gets the hint — a broken import inside an installed
+    package (say, one of its own dependencies missing) propagates with its
+    real traceback.
     """
     try:
         from tg_webui.app import create_app
@@ -37,8 +37,7 @@ def _load_web_surface():
             raise
         logging.error(
             "The legacy web panel is the optional tg-webui package, which is not installed "
-            "(from a repository checkout: pip install -e packages/tg_webui). "
-            "The worker daemon (`restart`/`worker`) needs no web panel."
+            "(pip install tg-webui). The worker daemon (`restart`/`worker`) needs no web panel."
         )
         sys.exit(1)
     return create_app

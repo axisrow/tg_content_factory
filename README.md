@@ -89,8 +89,8 @@ You will receive a Telegram login code — enter it yourself. Verify with `tg-ag
 
 These still work but are **frozen**: development is paused indefinitely, and new capabilities must not be built on them. The CLI + skill is the only actively developed interface.
 
-- **Web dashboard** (FastAPI + Bootstrap 5) — `python -m tg_agent.main serve`, then http://localhost:8080 (password from `WEB_PASS`). It is the optional package `packages/tg_webui`, not published to PyPI: from a repository checkout `pip install -e packages/tg_shared -e packages/tg_webui`; `pip install tg-agent` alone has no web panel
-- **TUI** and the **embedded agent chat** (`tg-agent agent chat`; `claude-agent-sdk` / `deepagents` backends). The interactive TUI is the optional package `packages/tg_tui` (`pip install -e packages/tg_tui`); one-shot `agent chat -p "..."` works without it
+- **Web dashboard** (FastAPI + Bootstrap 5) — `python -m tg_agent.main serve`, then http://localhost:8080 (password from `WEB_PASS`). It is the optional `tg-webui` package ([github.com/axisrow/tg_webui](https://github.com/axisrow/tg_webui), PyPI: `pip install tg-webui`; requires `tg-shared`, currently not on PyPI); `pip install tg-agent` alone has no web panel
+- **TUI** and the **embedded agent chat** (`tg-agent agent chat`; `claude-agent-sdk` / `deepagents` backends). The interactive TUI is the optional `tg-tui` package ([github.com/axisrow/tg_tui](https://github.com/axisrow/tg_tui), PyPI: `pip install tg-tui`); one-shot `agent chat -p "..."` works without it
 - **MCP server** (`python -m tg_agent.main mcp-server`)
 
 ### Legacy: split deployment (Docker / k8s)
@@ -113,6 +113,12 @@ cp .env.example .env
 # fill in your credentials
 docker-compose up -d
 ```
+
+The image is **worker-only** (automation-first): it runs the Telegram worker
+runtime — collection, scheduler, queues — with the managed PID file and no web
+surface. The legacy web panel is not part of the image; it is the separate
+[tg-webui](https://github.com/axisrow/tg_webui) package (`pip install tg-webui`,
+needs `tg-shared` on PyPI).
 
 ## Semantic Search Roadmap Note
 
@@ -248,7 +254,7 @@ telethon-cli users get-me --output json
  pytest tests/ -q -m aiosqlite_serial -n auto --dist=loadfile
 
  # Run a single test
- pytest packages/tg_webui/tests/test_web.py::test_health_endpoint -v
+ pytest tests/test_local_install_consistency.py -v
 
  # Benchmark serial vs safe mixed-mode suite execution
  python -m tg_agent.main test benchmark

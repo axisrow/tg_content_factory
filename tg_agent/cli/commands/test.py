@@ -54,9 +54,10 @@ _TG_CHECKS_AFTER_POOL = [
 ]
 # tg_agent/cli/commands/test.py → tg_agent/cli/commands → tg_agent/cli → src → repo root
 REPO_ROOT = Path(__file__).resolve().parents[3]
-# Test roots of the whole monorepo: the core suite plus the package suites
-# (tg_shared #1421; tg_tui and tg_webui since #1720), like the CI shards.
-PYTEST_ROOTS = ("tests", "packages/tg_shared/tests", "packages/tg_tui/tests", "packages/tg_webui/tests")
+# Test roots of the monorepo: the core suite plus the shared package suite
+# (tg_shared #1421), like the CI shards. The UI surfaces moved to their own
+# repos (tg-webui / tg-tui on PyPI) and are not collected here.
+PYTEST_ROOTS = ("tests", "packages/tg_shared/tests")
 NON_LIVE_PYTEST_MARKER_EXPR = (
     "not real_tg_safe and not real_tg_mutation_safe and not real_tg_manual and not real_provider_smoke"
 )
