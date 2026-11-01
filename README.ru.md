@@ -112,6 +112,12 @@ cp .env.example .env
 docker-compose up -d
 ```
 
+Образ **только с воркером** (automation-first): запускается рантайм
+Telegram-воркера — сбор, планировщик, очереди — с PID-файлом и без веб-панели.
+Легаси-панель в образ не входит: это отдельный пакет
+[tg-webui](https://github.com/axisrow/tg_webui) (`pip install tg-webui`,
+требует `tg-shared` на PyPI).
+
 ## Важное замечание по roadmap semantic search
 
 Текущая реализация семантического и гибридного поиска исторически строилась

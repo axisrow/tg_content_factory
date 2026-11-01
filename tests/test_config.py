@@ -197,18 +197,20 @@ def test_shipped_config_yaml_web_host_defaults_to_loopback(monkeypatch):
     assert config.web.host == "127.0.0.1"
 
 
-def test_docker_compose_overrides_web_host_for_container_network():
-    """docker-compose.yml must set WEB_HOST=0.0.0.0 — otherwise the shared
-    config.yaml's loopback default (#1303) makes the panel unreachable via
-    the published port, while the in-container healthcheck still passes and
-    masks the outage (#1305 follow-up)."""
+def test_docker_compose_stack_is_worker_only():
+    """The Docker stack is worker-only (automation-first): the web panel is the
+    separate tg-webui package and is not part of the image, so the compose file
+    must not publish a web port nor set the web-only WEB_HOST knob (the old
+    panel-serving stack needed both, #1305 follow-up)."""
     compose_path = Path(__file__).resolve().parent.parent / "docker-compose.yml"
     compose = yaml.safe_load(compose_path.read_text())
     service = next(iter(compose["services"].values()))
-    env = service.get("environment", [])
-    assert "WEB_HOST=0.0.0.0" in env, (
-        "docker-compose.yml must export WEB_HOST=0.0.0.0 or the mounted "
-        "config.yaml's loopback default breaks the published port mapping"
+    assert not service.get("ports", []), (
+        "worker-only compose must not publish ports; the web panel ships "
+        "separately as tg-webui"
+    )
+    assert "WEB_HOST=0.0.0.0" not in service.get("environment", []), (
+        "WEB_HOST is a web-panel knob; the worker-only stack must not set it"
     )
 
 

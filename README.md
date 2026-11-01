@@ -114,6 +114,12 @@ cp .env.example .env
 docker-compose up -d
 ```
 
+The image is **worker-only** (automation-first): it runs the Telegram worker
+runtime — collection, scheduler, queues — with the managed PID file and no web
+surface. The legacy web panel is not part of the image; it is the separate
+[tg-webui](https://github.com/axisrow/tg_webui) package (`pip install tg-webui`,
+needs `tg-shared` on PyPI).
+
 ## Semantic Search Roadmap Note
 
 The current semantic and hybrid search implementation was originally built around
