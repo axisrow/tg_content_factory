@@ -5,7 +5,7 @@ import inspect
 import logging
 import time
 from contextlib import asynccontextmanager
-from datetime import timezone
+from datetime import datetime, timezone
 
 from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitedError, run_with_flood_wait
 
@@ -14,6 +14,7 @@ from tg_agent.search.persistence import SearchPersistence
 from tg_agent.search.transformers import TelegramMessageTransformer
 from tg_agent.telegram.backends import adapt_transport_session
 from tg_agent.telegram.client_pool import ClientPool
+from tg_agent.utils.datetime import normalize_utc
 from tg_agent.utils.safe_logging import elapsed_ms, mask_phone, query_log_fields
 
 try:
@@ -240,12 +241,28 @@ class TelegramSearch:
             return reason
         return "Нет аккаунтов с Telegram Premium. Добавьте Premium-аккаунт в настройках."
 
-    async def search_telegram(self, query: str, limit: int = 50) -> SearchResult:
+    async def search_telegram(
+        self,
+        query: str,
+        limit: int = 50,
+        min_date: datetime | None = None,
+        max_date: datetime | None = None,
+    ) -> SearchResult:
+        """Premium global search, windowed to ``min_date <= date < max_date`` (#1750).
+
+        The server-side RPC (``channels.searchPosts``) carries no date bounds
+        (schema layer 225), so the window is a client-side post-filter over the
+        relevance-ordered server output: it makes the result set well-defined,
+        it does NOT make coverage exhaustive — older posts the server never
+        returned stay invisible.
+        """
         search_started_at = time.monotonic()
         fields = query_log_fields(query)
         logger.info(
-            "premium_search start mode=telegram limit=%d query_hash=%s query_len=%d",
+            "premium_search start mode=telegram limit=%d window=%s..%s query_hash=%s query_len=%d",
             limit,
+            min_date.isoformat() if min_date else "-",
+            max_date.isoformat() if max_date else "-",
             fields["query_hash"],
             fields["query_len"],
         )
@@ -338,7 +355,7 @@ class TelegramSearch:
 
             rpc_started_at = time.monotonic()
             messages, seen_channels = await run_with_flood_wait(
-                self._search_posts_global(session, query, limit),
+                self._search_posts_global(session, query, limit, min_date=min_date, max_date=max_date),
                 operation="search_telegram",
                 phone=masked_phone,
                 pool=None,
@@ -425,12 +442,16 @@ class TelegramSearch:
         session,
         query: str,
         limit: int,
+        *,
+        min_date: datetime | None = None,
+        max_date: datetime | None = None,
     ) -> tuple[list[Message], dict[int, Channel]]:
         from telethon.tl.types import InputPeerEmpty, PeerChannel
         from telethon.utils import get_input_peer
 
         messages: list[Message] = []
         seen_channels: dict[int, Channel] = {}
+        filtered_out = 0
 
         offset_rate = 0
         offset_peer = InputPeerEmpty()
@@ -454,6 +475,18 @@ class TelegramSearch:
 
             for msg in search_response.messages:
                 if not isinstance(getattr(msg, "peer_id", None), PeerChannel):
+                    continue
+                # Client-side date window (#1750): the RPC has no date bounds,
+                # so out-of-window hits are dropped here and pagination keeps
+                # fetching until limit or server-side exhaustion. The server
+                # output is relevance/recency-ordered, so pagination cannot
+                # stop early — and coverage of the requested window stays
+                # best-effort, never exhaustive.
+                msg_date = normalize_utc(msg.date)
+                if (min_date and (msg_date is None or msg_date < min_date)) or (
+                    max_date and (msg_date is None or msg_date >= max_date)
+                ):
+                    filtered_out += 1
                     continue
                 chat_id = msg.peer_id.channel_id
 
@@ -511,6 +544,14 @@ class TelegramSearch:
                     break
             else:
                 break
+
+        if filtered_out:
+            logger.info(
+                "premium_search window_filter query_hash=%s filtered_out=%d kept=%d",
+                query_log_fields(query)["query_hash"],
+                filtered_out,
+                len(messages),
+            )
 
         return messages, seen_channels
 

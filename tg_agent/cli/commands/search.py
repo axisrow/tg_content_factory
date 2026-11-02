@@ -7,7 +7,7 @@ import io
 import logging
 
 from tg_agent.cli import runtime
-from tg_agent.search.engine import DB_SEARCH_MODES, TELEGRAM_SEARCH_MODES, SearchEngine
+from tg_agent.search.engine import DATE_BOUNDED_SEARCH_MODES, TELEGRAM_SEARCH_MODES, SearchEngine
 from tg_agent.services.embedding_service import EmbeddingService
 from tg_agent.utils.json import safe_json_dumps
 from tg_agent.utils.text_safety import csv_safe_cell
@@ -106,7 +106,7 @@ async def _run_search_query(
 ):
     """Dispatch one query to the SearchEngine method for *mode*."""
     if mode == "telegram":
-        return await engine.search_telegram(query, limit=limit)
+        return await engine.search_telegram(query, limit=limit, date_from=date_from, date_to=date_to)
     if mode == "my_chats":
         return await engine.search_my_chats(query, limit=limit)
     if mode == "channel":
@@ -188,12 +188,13 @@ async def search_impl(
             await db.close()
         return
 
-    # Date windows are a DB-mode feature — SearchEngine's live methods take no
-    # date bounds, so fail loudly instead of silently ignoring them (#1350 class).
-    if (date_from or date_to) and mode not in DB_SEARCH_MODES:
+    # Date windows: DB modes filter in SQL; --mode telegram filters the live
+    # output client-side (#1750 — the premium search RPC has no server-side
+    # date bounds). Other live modes have no window — fail loudly, not silently.
+    if (date_from or date_to) and mode not in DATE_BOUNDED_SEARCH_MODES:
         logging.error(
             "--date-from/--date-to are only supported with modes: %s (got '%s').",
-            ", ".join(sorted(DB_SEARCH_MODES)),
+            ", ".join(sorted(DATE_BOUNDED_SEARCH_MODES)),
             mode,
         )
         await db.close()

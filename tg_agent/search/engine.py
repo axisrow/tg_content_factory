@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from tg_agent.database import Database
 from tg_agent.database.bundles import SearchBundle
 from tg_agent.models import SearchParams, SearchResult
@@ -8,12 +10,42 @@ from tg_agent.search.persistence import SearchPersistence
 from tg_agent.search.telegram_search import TelegramSearch
 from tg_agent.services.embedding_service import EmbeddingService
 from tg_agent.telegram.client_pool import ClientPool
+from tg_agent.utils.datetime import normalize_utc, parse_date_bound, parse_datetime_bound
 
 #: Search modes backed by the local SQLite store — the only modes that accept
 #: ``date_from``/``date_to`` windows (no Telegram round-trip).
 DB_SEARCH_MODES = frozenset({"local", "semantic", "hybrid"})
-#: Search modes that need a live ClientPool (Telegram round-trip, no date bounds).
+#: Search modes that need a live ClientPool (Telegram round-trip). ``telegram``
+#: also accepts date bounds since #1750 — as a client-side window filter, not
+#: server-side bounds (the premium search RPC has no date parameters).
 TELEGRAM_SEARCH_MODES = frozenset({"telegram", "my_chats", "channel"})
+#: Modes that accept ``--date-from``/``--date-to`` (DB windows + live telegram filter).
+DATE_BOUNDED_SEARCH_MODES = DB_SEARCH_MODES | {"telegram"}
+
+
+def _live_date_bounds(
+    date_from: str | None, date_to: str | None
+) -> tuple[datetime | None, datetime | None]:
+    """Parse search date bounds into aware-UTC datetimes for the live filter.
+
+    Mirrors the DB-mode semantics (#1593): a date-only ``date_to`` is inclusive
+    (whole last day), a full ISO datetime keeps exact precision normalized to
+    UTC. Raises ValueError on anything neither — callers above the CLI already
+    validated, so garbage here is a programming error, not a user input case.
+    """
+
+    def bound(value: str | None, *, end_inclusive: bool) -> datetime | None:
+        if not value:
+            return None
+        try:
+            day = parse_date_bound(value)
+        except ValueError:
+            return normalize_utc(parse_datetime_bound(value))
+        if end_inclusive:
+            day += timedelta(days=1)
+        return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+
+    return bound(date_from, end_inclusive=False), bound(date_to, end_inclusive=True)
 
 _SEMANTIC_UNAVAILABLE = (
     "Семантический поиск недоступен: не установлен numpy и не загружено расширение "
@@ -157,8 +189,15 @@ class SearchEngine:
             include_filtered=include_filtered,
         )
 
-    async def search_telegram(self, query: str, limit: int = 50) -> SearchResult:
-        return await self._telegram.search_telegram(query, limit)
+    async def search_telegram(
+        self,
+        query: str,
+        limit: int = 50,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> SearchResult:
+        min_date, max_date = _live_date_bounds(date_from, date_to)
+        return await self._telegram.search_telegram(query, limit, min_date=min_date, max_date=max_date)
 
     async def search_my_chats(self, query: str, limit: int = 50) -> SearchResult:
         return await self._telegram.search_my_chats(query, limit)

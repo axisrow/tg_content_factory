@@ -923,3 +923,127 @@ async def test_runtime_config_plaintext_key_still_read(tmp_path):
         assert cfg.api_key == "sk-legacy-plain"
     finally:
         await database.close()
+
+
+# ---------------------------------------------------------------------------
+# Date-window filter on the premium global search (#1750)
+# ---------------------------------------------------------------------------
+
+
+def _fake_post(msg_id: int, date, *, channel: bool = True):
+    """A minimal Telethon-like channel post for _search_posts_global."""
+    from types import SimpleNamespace
+
+    from telethon.tl.types import PeerChannel
+
+    return SimpleNamespace(
+        id=msg_id,
+        date=date,
+        peer_id=PeerChannel(channel_id=100) if channel else None,
+        message=f"post {msg_id}",
+        from_id=None,
+        views=10,
+        forwards=1,
+        replies=None,
+        reactions=None,
+        media=None,
+    )
+
+
+class _FakeSearchSession:
+    """Serves queued batches from search_posts_batch, recording the raw calls."""
+
+    def __init__(self, batches):
+        from types import SimpleNamespace
+
+        # SUBCLASS_OF_ID = crc32(b'InputPeer') — makes telethon's get_input_peer
+        # accept the fake chat so pagination can build the offset peer.
+        chat = SimpleNamespace(id=100, title="Test", username="testch", SUBCLASS_OF_ID=0xC91C90B6)
+        self._batches = [SimpleNamespace(messages=b, chats=[chat], users=[], next_rate=i + 1)
+                         for i, b in enumerate(batches[:-1])]
+        self._batches.append(SimpleNamespace(messages=batches[-1], chats=[chat], users=[], next_rate=None))
+        self.calls: list[dict] = []
+
+    async def search_posts_batch(self, query, *, offset_rate, offset_peer, offset_id, limit):
+        self.calls.append({"offset_rate": offset_rate, "offset_id": offset_id, "limit": limit})
+        return self._batches.pop(0)
+
+
+@pytest.mark.anyio
+async def test_search_posts_global_window_filter_and_pagination():
+    from datetime import datetime
+    from datetime import timezone as tz
+
+    from tg_agent.search.telegram_search import TelegramSearch
+
+    def d(day, hour=0):
+        return datetime(2026, 11, day, hour, tzinfo=tz.utc)
+
+    # Batch sizes must match batch_limit (=limit - kept) so pagination continues.
+    session = _FakeSearchSession([
+        [_fake_post(1, d(1, 10), channel=False), _fake_post(2, d(1, 12))],  # both dropped
+        [_fake_post(3, d(3, 9))],
+    ])
+    search = TelegramSearch(None, None)
+    messages, _channels = await search._search_posts_global(
+        session, "key", limit=2, min_date=d(2), max_date=d(6),
+    )
+    assert [m.message_id for m in messages] == [3]
+    assert len(session.calls) == 2  # pagination continued after the fully-filtered batch
+
+
+@pytest.mark.anyio
+async def test_search_posts_global_without_window_keeps_everything():
+    from datetime import datetime
+    from datetime import timezone as tz
+
+    from tg_agent.search.telegram_search import TelegramSearch
+
+    d = lambda day: datetime(2026, 11, day, tzinfo=tz.utc)  # noqa: E731
+    session = _FakeSearchSession([[_fake_post(1, d(1)), _fake_post(2, d(9))]])
+    search = TelegramSearch(None, None)
+    messages, _ = await search._search_posts_global(session, "key", limit=10)
+    assert [m.message_id for m in messages] == [1, 2]
+
+
+def test_live_date_bounds_semantics():
+    from datetime import datetime
+    from datetime import timezone as tz
+
+    from tg_agent.search.engine import _live_date_bounds
+
+    min_d, max_d = _live_date_bounds("2026-10-19", "2026-11-2")
+    assert min_d == datetime(2026, 10, 19, tzinfo=tz.utc)
+    # date-only "to" is inclusive of the whole day (mirrors DB-mode #1593 semantics)
+    assert max_d == datetime(2026, 11, 3, tzinfo=tz.utc)
+
+    iso_min, iso_max = _live_date_bounds("2026-10-20T13:00:00+03:00", "2026-10-21T00:00:00Z")
+    assert iso_min == datetime(2026, 10, 20, 10, tzinfo=tz.utc)
+    assert iso_max == datetime(2026, 10, 21, tzinfo=tz.utc)
+
+    assert _live_date_bounds(None, None) == (None, None)
+    with pytest.raises(ValueError):
+        _live_date_bounds("not-a-date", None)
+
+
+@pytest.mark.anyio
+async def test_engine_search_telegram_routes_parsed_bounds(monkeypatch):
+    from datetime import datetime
+    from datetime import timezone as tz
+
+    from tg_agent.search.engine import SearchEngine
+
+    engine = object.__new__(SearchEngine)  # skip __init__: no DB/pool needed for routing
+    captured: dict = {}
+
+    async def fake_search(query, limit, min_date=None, max_date=None):
+        captured.update(query=query, limit=limit, min_date=min_date, max_date=max_date)
+
+    engine._telegram = SimpleNamespace(search_telegram=fake_search)  # routing target only
+    await engine.search_telegram("key", limit=7, date_from="2026-10-19", date_to="2026-11-02")
+    assert captured == {
+        "query": "key",
+        "limit": 7,
+        "min_date": datetime(2026, 10, 19, tzinfo=tz.utc),
+        "max_date": datetime(2026, 11, 3, tzinfo=tz.utc),
+    }

@@ -147,6 +147,11 @@ class Search(Payload):
     query: str = ""
     channel_id: int | None = None
     limit: int = Field(default=50, ge=1, le=1000)
+    # Client-side window filter (#1750): the premium global search RPC
+    # (channels.searchPosts, schema layer 225) carries no min_date/max_date,
+    # so the bounds travel the wire to the gateway-side filter instead.
+    min_date: datetime | None = None
+    max_date: datetime | None = None
 
 
 class DmHistory(Payload):

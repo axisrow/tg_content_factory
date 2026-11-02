@@ -28,6 +28,17 @@ Each sweep caches discovered channels into the DB as **inactive**
 (`is_active=0` — search is not an operator approval) and tags the cached
 messages with the keyword.
 
+### Sweep window (`--date-from/--date-to`) and its completeness limit
+
+`--mode telegram` accepts a date window (`--date-from 2026-10-19 --date-to 2026-11-02`).
+It is a **client-side filter, not server-side**: the premium global search RPC has
+no date parameters (schema layer 225), the server ranks by relevance/recency, so
+the window defines *what is kept*, not *what is fetched*. Coverage is best-effort:
+an empty result for an old window means "nothing in the window was returned",
+NOT "nothing was printed in that window" — never report a keyword as «не
+поднималась» based on a live search alone. First-printer questions are reliable
+only over collected channels (local DB), indicative over the rest (#1750).
+
 ## 3. Short-list
 
 ```bash
