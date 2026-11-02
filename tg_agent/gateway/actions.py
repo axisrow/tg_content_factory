@@ -16,9 +16,11 @@ logger = logging.getLogger(__name__)
 
 # Per-account TTL for the live premium re-check before refusing a
 # premium-gated gateway operation (#1749). Module-level: ScopedPool instances
-# are per-operation, the suppression must outlive them.
+# are per-operation, the suppression must outlive them. Value None = never
+# checked; 0.0 would read as "just checked" on hosts whose CLOCK_MONOTONIC
+# counts from a recent boot (fresh CI VMs).
 _PREMIUM_RECHECK_TTL_SEC = 300.0
-_premium_recheck_at: dict[str, float] = {}
+_premium_recheck_at: dict[str, float | None] = {}
 
 
 class ScopedPool:
@@ -45,7 +47,8 @@ class ScopedPool:
 
     async def _recheck_premium_live(self) -> bool:
         now = time.monotonic()
-        if now - _premium_recheck_at.get(self.account, 0.0) < _PREMIUM_RECHECK_TTL_SEC:
+        last = _premium_recheck_at.get(self.account)
+        if last is not None and now - last < _PREMIUM_RECHECK_TTL_SEC:
             return False
         _premium_recheck_at[self.account] = now
         session = self.pool.clients.get(self.account)

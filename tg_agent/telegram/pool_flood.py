@@ -60,7 +60,9 @@ class FloodRotationMixin:
     _db: Database
     _lease_pool: AccountLeasePool
     _premium_flood_wait_until: dict[str, datetime]
-    _premium_recheck_at: float = 0.0
+    # None = never checked; a plain 0.0 default reads as "just checked" on
+    # hosts whose CLOCK_MONOTONIC counts from a recent boot (fresh CI VMs).
+    _premium_recheck_at: float | None = None
     clients: dict[str, object]
 
     if TYPE_CHECKING:
@@ -196,7 +198,7 @@ class FloodRotationMixin:
         for ``PREMIUM_RECHECK_TTL_SEC`` so refusals stay cheap.
         """
         now = time.monotonic()
-        if now - self._premium_recheck_at < PREMIUM_RECHECK_TTL_SEC:
+        if self._premium_recheck_at is not None and now - self._premium_recheck_at < PREMIUM_RECHECK_TTL_SEC:
             return False
         self._premium_recheck_at = now
         healed = False
