@@ -82,10 +82,11 @@ def test_search_text_format_unchanged(cli_env, capsys):
     assert '"message_id"' not in out  # stays text, not json
 
 
-def test_search_date_window_rejected_for_live_modes(cli_env, caplog):
-    # telegram mode takes no date bounds — must fail loudly BEFORE any pool
+def test_search_date_window_rejected_for_windowless_live_modes(cli_env, caplog):
+    # my_chats/channel take no date bounds — must fail loudly BEFORE any pool
     # init (no accounts here), not silently ignore the window (#1350 class).
-    _run_search(mode="telegram", date_from="2025-01-01")
+    # --mode telegram accepts the window since #1750 (client-side filter).
+    _run_search(mode="my_chats", date_from="2025-01-01")
 
     assert "only supported" in caplog.text
 

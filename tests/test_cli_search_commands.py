@@ -1,6 +1,7 @@
 """Tests for src/cli/commands/search.py — CLI search subcommands."""
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from tests.helpers import cli_ns, fake_asyncio_run, make_cli_config, make_cli_db
@@ -147,6 +148,45 @@ def test_mode_tg_alias_dispatches_to_telegram(capsys):
         run(_args(mode="tg"))
     mock_engine.search_telegram.assert_awaited_once()
     assert "TG result" in capsys.readouterr().out
+
+
+def test_telegram_search_with_dates_reaches_engine(caplog):
+    # #1750: --mode telegram accepts the date window and forwards the raw
+    # strings to the engine (parsing happens in SearchEngine, not the CLI).
+    db = make_cli_db()
+    config = make_cli_config()
+    pool = _make_pool()
+    result = MagicMock(total=0, query="test", messages=[])
+    mock_engine = MagicMock()
+    mock_engine.search_telegram = AsyncMock(return_value=result)
+    with caplog.at_level(logging.ERROR), \
+         patch("tg_agent.cli.commands.search.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch("tg_agent.cli.commands.search.runtime.init_pool", AsyncMock(return_value=(MagicMock(), pool))), \
+         patch("tg_agent.cli.commands.search.SearchEngine", return_value=mock_engine), \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(mode="telegram", date_from="2026-10-19", date_to="2026-11-02"))
+    mock_engine.search_telegram.assert_awaited_once()
+    kwargs = mock_engine.search_telegram.await_args.kwargs
+    assert kwargs["date_from"] == "2026-10-19"
+    assert kwargs["date_to"] == "2026-11-02"
+    assert "only supported with modes" not in caplog.text
+
+
+def test_dates_rejected_on_windowless_live_mode(caplog):
+    # my_chats/channel have no window at all — the loud guard must stay.
+    db = make_cli_db()
+    config = make_cli_config()
+    pool = _make_pool()
+    mock_engine = MagicMock()
+    mock_engine.search_my_chats = AsyncMock()
+    with caplog.at_level(logging.ERROR), \
+         patch("tg_agent.cli.commands.search.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch("tg_agent.cli.commands.search.runtime.init_pool", AsyncMock(return_value=(MagicMock(), pool))), \
+         patch("tg_agent.cli.commands.search.SearchEngine", return_value=mock_engine), \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(mode="my_chats", date_from="2026-10-19"))
+    assert "only supported with modes" in caplog.text
+    mock_engine.search_my_chats.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

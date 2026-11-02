@@ -33,10 +33,16 @@ python -m tg_agent.main collect sample CHANNEL_ID [--limit N]
 ## search
 
 ```bash
-python -m tg_agent.main search "query" [--limit N] [--mode MODE]
+python -m tg_agent.main search "query" ["query2" ...] [--limit N] [--mode MODE] [--date-from YYYY-MM-DD] [--date-to YYYY-MM-DD] [--format text|json|csv]
 ```
 
 Modes (`--mode`): `local` (default), `semantic`, `hybrid`, `telegram`, `my_chats`, `channel`.
+
+`--date-from`/`--date-to` work on `local`/`semantic`/`hybrid` (SQL window) and
+`telegram`; `my_chats`/`channel` reject them. On `telegram` the window is a
+**client-side filter** over the premium global search output — the RPC itself
+carries no date bounds (schema layer 225), so period coverage is best-effort,
+not exhaustive (#1750).
 
 ## messages
 

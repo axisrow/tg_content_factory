@@ -11,14 +11,15 @@ class GatewaySearch:
         self.pool = pool
         self.persistence = persistence
 
-    async def _search(self, mode, query, limit=50, channel_id=None):
+    async def _search(self, mode, query, limit=50, channel_id=None, min_date=None, max_date=None):
         account = self.pool.select()
         if mode in {"telegram", "quota"}:
             premium = [row for row in self.pool.clients.values() if row.get("is_premium")]
             if premium:
                 account = self.pool.select(premium[0]["phone"])
         data = await self.pool.request(Search(kind="search", account_id=UUID(account["id"]), mode=mode,
-                                              query=query, channel_id=channel_id, limit=limit),
+                                              query=query, channel_id=channel_id, limit=limit,
+                                              min_date=min_date, max_date=max_date),
                                        f"search:{uuid4()}")
         if mode == "quota":
             return data["quota"]
@@ -34,8 +35,8 @@ class GatewaySearch:
     async def check_search_quota(self, query=""):
         return await self._search("quota", query)
 
-    async def search_telegram(self, query, limit=50):
-        return await self._search("telegram", query, limit)
+    async def search_telegram(self, query, limit=50, min_date=None, max_date=None):
+        return await self._search("telegram", query, limit, min_date=min_date, max_date=max_date)
 
     async def search_my_chats(self, query, limit=50):
         return await self._search("my_chats", query, limit)

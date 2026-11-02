@@ -173,15 +173,23 @@ search-query list | get | add | edit | delete | toggle | run | stats
 - `search --mode` picks local DB (FTS5), direct Telegram API, or AI-powered search.
   `tg` is an accepted alias for the `telegram` mode (#1753); consumers see `telegram`
   semantics either way.
-  `--date-from`/`--date-to` constrain the window on the DB modes only
-  (`local`/`semantic`/`hybrid`) and are rejected with an error on live modes;
-  both take `YYYY-MM-DD` — a relaxed `YYYY-M-D` (`2026-10-5`) is normalized to
+  `--date-from`/`--date-to` constrain the window on the DB modes (`local`/`semantic`/
+  `hybrid`) and on `--mode telegram`; they are rejected with an error on `my_chats`/
+  `channel`; both take `YYYY-MM-DD` — a relaxed `YYYY-M-D` (`2026-10-5`) is normalized to
   the canonical form, a full ISO datetime keeps exact precision and is
   normalized to UTC (an explicit offset like `2026-10-20T13:00:00+03:00` is
   converted to the same instant `2026-10-20T10:00:00+00:00`; naive datetimes
   are treated as UTC), so equivalent bounds match regardless of notation, and
   anything else is a usage error with exit 2, never a silently empty/oversized
   window (#1593, #1666);
+  **telegram-mode window is a client-side filter, not server-side (#1750)**: the
+  premium global-search RPC (`channels.searchPosts`, schema layer 225) carries no
+  date parameters, so out-of-window hits are dropped after retrieval and the page
+  loop keeps fetching until the limit or the server exhausts its output. The
+  server ranks by relevance/recency, so the window is well-defined but coverage is
+  NOT guaranteed — older posts the server never returned stay invisible ("first
+  printer across all of Telegram" is best-effort: reliable for collected channels,
+  indicative for the rest), and the Premium daily search quota still applies.
   `--format json|csv` renders the hits with `@username`/title attribution —
   the AI digest workflow ([digest.md](digest.md)) is built on these.
 - **Batch mode (#1668):** 2+ positional queries — `search "нейросети" "LLM" "OpenAI" …`
@@ -189,7 +197,7 @@ search-query list | get | add | edit | delete | toggle | run | stats
   single JSON object `{"queries": [<envelope>, ...]}`; each envelope carries the
   same `query/total/has_more/error/messages` contract (completeness is judged
   per keyword). Batch requires `--format json`; live modes follow the same
-  rules as single-query calls (no `--date-from/--date-to`).
+  rules as single-query calls (date windows work on `telegram`, not on `my_chats`/`channel`).
 
 ## dialogs — real actions in real chats
 

@@ -108,10 +108,16 @@ async def _read_dialogs(access, account, session, operation):
 async def _read_search(access, account, session, operation):
     projection = SearchProjection()
     search = TelegramSearch(ScopedPool(access, account), projection)
+    # The wire fields exist for the telegram-mode window filter (#1750); any
+    # other mode silently ignoring them would be the #1350 silent-ignore class
+    # the CLI already rejects loudly — refuse at the trust boundary instead.
+    if (operation.min_date or operation.max_date) and operation.mode != "telegram":
+        raise ValueError(f"search mode '{operation.mode}' takes no date bounds")
     if operation.mode == "quota":
         return {"quota": jsonable_encoder(await search.check_search_quota(operation.query))}
     if operation.mode == "telegram":
-        result = await search.search_telegram(operation.query, operation.limit)
+        result = await search.search_telegram(operation.query, operation.limit,
+                                              min_date=operation.min_date, max_date=operation.max_date)
     elif operation.mode == "channel":
         result = await search.search_in_channel(operation.channel_id, operation.query, operation.limit)
     else:

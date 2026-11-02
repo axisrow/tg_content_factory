@@ -249,10 +249,10 @@ def search(
         False, "--all", help="Search all channels including filtered ones"
     ),
     date_from: str | None = typer.Option(
-        None, "--date-from", help="Start date YYYY-MM-DD (DB modes: local/semantic/hybrid)"
+        None, "--date-from", help="Start date YYYY-MM-DD (modes: local/semantic/hybrid/telegram)"
     ),
     date_to: str | None = typer.Option(
-        None, "--date-to", help="End date YYYY-MM-DD (DB modes: local/semantic/hybrid)"
+        None, "--date-to", help="End date YYYY-MM-DD, inclusive (modes: local/semantic/hybrid/telegram)"
     ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--format", help="Output format (default: text)"
