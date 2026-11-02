@@ -185,8 +185,11 @@ class GatewayPool:
         result = await self.request(Profile(kind="profile", account_id=UUID(account["id"])), f"profile:{uuid4()}")
         return result["user_id"]
 
-    async def read_messages(self, peer, *, phone=None, limit=50, offset_id=0, topic_id=None,
+    async def read_messages(self, peer, *, phone=None, limit=50, offset_id: int | None = 0, topic_id=None,
                             include_reaction_users=False, reaction_users_limit=20, peer_type="auto"):
+        # CLI --offset-id is None when unspecified (#1752); the MessagePage
+        # contract requires a concrete int >= 0.
+        offset_id = offset_id or 0
         account = self.select(phone)
         result = {"messages": [], "reaction_users": {}, "forward_ids": [], "urls": {}}
         while len(result["messages"]) < limit:
