@@ -4,8 +4,8 @@ import logging
 from collections.abc import Awaitable, Callable, Iterable
 
 from tg_agent.database.bundles import SearchBundle
-from tg_agent.models import Channel, Message, StatsAllTaskPayload
-from tg_agent.services.channel_onboarding import channel_with_meta, enqueue_stats_for_new_channels
+from tg_agent.models import Channel, Message
+from tg_agent.services.channel_onboarding import channel_with_meta
 
 logger = logging.getLogger(__name__)
 
@@ -14,11 +14,9 @@ class SearchPersistence:
     def __init__(
         self,
         search: SearchBundle,
-        create_stats_task: Callable[[StatsAllTaskPayload], Awaitable[int]] | None = None,
         fetch_channel_meta: Callable[[int, str | None], Awaitable[dict | None]] | None = None,
     ):
         self._search = search
-        self._create_stats_task = create_stats_task
         self._fetch_channel_meta = fetch_channel_meta
 
     async def cache_search_results(
@@ -28,12 +26,7 @@ class SearchPersistence:
         phone: str,
         query: str,
     ) -> list[Message]:
-        new_channel_ids = await self._cache_channels(channels.values())
-        await enqueue_stats_for_new_channels(
-            self._create_stats_task,
-            new_channel_ids,
-            context="telegram search cache",
-        )
+        await self._cache_channels(channels.values())
 
         if messages:
             await self._search.insert_messages_batch(messages, premium_search_query=query)
@@ -46,18 +39,12 @@ class SearchPersistence:
         channels: dict[int, Channel],
         messages: list[Message],
     ) -> list[Message]:
-        new_channel_ids = await self._cache_channels(channels.values())
-        await enqueue_stats_for_new_channels(
-            self._create_stats_task,
-            new_channel_ids,
-            context="telegram chat search cache",
-        )
+        await self._cache_channels(channels.values())
         if messages:
             await self._search.insert_messages_batch(messages)
         return await self._load_persisted_messages(messages)
 
-    async def _cache_channels(self, channels: Iterable[Channel]) -> list[int]:
-        new_channel_ids: list[int] = []
+    async def _cache_channels(self, channels: Iterable[Channel]) -> None:
         for ch in channels:
             existing = await self._search.channels.get_channel_by_channel_id(ch.channel_id)
             channel = ch
@@ -70,7 +57,6 @@ class SearchPersistence:
                 # owner decides (replaces the temporary is_active=0 from #1308).
                 channel = channel.model_copy(update={"approval_state": "pending"})
             await self._search.add_channel(channel)
-        return new_channel_ids
 
     async def _fetch_meta(self, channel: Channel) -> dict | None:
         if self._fetch_channel_meta is None:

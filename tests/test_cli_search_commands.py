@@ -131,6 +131,24 @@ def test_telegram_search_with_results(capsys):
     assert "TG result" in capsys.readouterr().out
 
 
+def test_mode_tg_alias_dispatches_to_telegram(capsys):
+    # `--mode tg` must behave exactly like `telegram` (#1753)
+    db = make_cli_db()
+    config = make_cli_config()
+    pool = _make_pool()
+    msg = MagicMock(date="2024-01-01", channel_id=100, text="TG result")
+    result = MagicMock(total=1, query="test", messages=[msg])
+    mock_engine = MagicMock()
+    mock_engine.search_telegram = AsyncMock(return_value=result)
+    with patch("tg_agent.cli.commands.search.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch("tg_agent.cli.commands.search.runtime.init_pool", AsyncMock(return_value=(MagicMock(), pool))), \
+         patch("tg_agent.cli.commands.search.SearchEngine", return_value=mock_engine), \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(mode="tg"))
+    mock_engine.search_telegram.assert_awaited_once()
+    assert "TG result" in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------------------
 # semantic search
 # ---------------------------------------------------------------------------

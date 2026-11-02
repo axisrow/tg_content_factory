@@ -865,7 +865,9 @@ async def list_for_import_impl(config_path: str, *, as_json: bool) -> None:
         await db.close()
 
 
-async def candidates_impl(config_path: str, *, as_json: bool = False, limit: int = 50) -> None:
+async def candidates_impl(
+    config_path: str, *, as_json: bool = False, limit: int = 50, query: str = ""
+) -> None:
     """``channel candidates`` — search-discovered channels awaiting approval.
 
     Premium search (``search --mode telegram``) caches discovered channels as
@@ -874,6 +876,10 @@ async def candidates_impl(config_path: str, *, as_json: bool = False, limit: int
     candidates so a human can pick which ones to approve with ``channel
     toggle``. The INNER JOIN on tagged messages is the origin marker — a
     pending channel without premium-search messages is not a search candidate.
+
+    *query* filters by case-insensitive substring on title/username BEFORE the
+    limit is applied (#1753): without it, fresh one-post candidates get pushed
+    out of ``--limit`` by old high-volume channels.
     """
     _, db = await runtime.init_db(config_path)
     try:
@@ -887,10 +893,17 @@ async def candidates_impl(config_path: str, *, as_json: bool = False, limit: int
                 AND m.premium_search_query IS NOT NULL
                WHERE c.approval_state = 'pending' AND c.is_filtered = 0
                GROUP BY c.channel_id
-               ORDER BY n_msgs DESC, c.channel_id DESC
-               LIMIT ?""",
-            (limit,),
+               ORDER BY n_msgs DESC, c.channel_id DESC""",
         )
+        if query:
+            needle = query.lower()
+            rows = [
+                row
+                for row in rows
+                if needle in (row["title"] or "").lower()
+                or needle in (row["username"] or "").lower()
+            ]
+        rows = rows[:limit]
         if not rows:
             print("[]" if as_json else "No search-discovered candidate channels.")
             return
@@ -1362,6 +1375,7 @@ def run(args: argparse.Namespace) -> None:
             config_path,
             as_json=getattr(args, "json", False),
             limit=getattr(args, "limit", 50),
+            query=getattr(args, "query", ""),
         )
     elif action == "tag":
         coro = _tag_impl(
@@ -1595,10 +1609,13 @@ def channel_candidates(
     ctx: typer.Context,
     as_json: bool = typer.Option(False, "--json", help="Output as JSON instead of a table"),
     limit: int = typer.Option(50, "--limit", help="Max candidates to show"),
+    query: str = typer.Option(
+        "", "--query", help="Case-insensitive substring filter on title/username (applied before --limit)"
+    ),
 ) -> None:
     """List search-discovered channels awaiting activation (see ``channel toggle``)."""
     apply_startup(ctx)
-    run_async(candidates_impl(ctx.obj.config, as_json=as_json, limit=limit))
+    run_async(candidates_impl(ctx.obj.config, as_json=as_json, limit=limit, query=query))
 
 
 @channel_app.command("probe", context_settings=_NEG_ID_POSITIONAL)

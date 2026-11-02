@@ -390,6 +390,48 @@ class TestChannelCandidates:
         assert "802" in out
         assert "801" not in out
 
+    def test_query_filters_by_title_before_limit(self, cli_env, capsys):
+        # (#1753) The filter applies BEFORE the limit: a matching one-post
+        # candidate must not be displaced by non-matching high-volume channels.
+        _add_channel(cli_env, channel_id=810, title="Gemini News", approval_state="pending")
+        _seed_messages(cli_env, channel_id=810, n=1, query="gemini")
+        for cid in (811, 812):
+            _add_channel(cli_env, channel_id=cid, title=f"OldVolume{cid}", approval_state="pending")
+            _seed_messages(cli_env, channel_id=cid, n=50, query="gemini")
+        run(_ns(channel_action="candidates", limit=2, query="gemini"))
+        out = capsys.readouterr().out
+        assert "810" in out
+
+    def test_query_filters_by_username_case_insensitive(self, cli_env, capsys):
+        _add_channel(cli_env, channel_id=820, title="Заголовок", approval_state="pending")
+        asyncio.run(
+            cli_env.execute_write(
+                "UPDATE channels SET username = ? WHERE channel_id = ?", ("AI_News_Daily", 820)
+            )
+        )
+        _seed_messages(cli_env, channel_id=820, n=1, query="ai")
+        _add_channel(cli_env, channel_id=821, title="Другой", approval_state="pending")
+        _seed_messages(cli_env, channel_id=821, n=1, query="ai")
+        run(_ns(channel_action="candidates", query="news_daily"))
+        out = capsys.readouterr().out
+        assert "820" in out
+        assert "821" not in out
+
+    def test_query_no_match_prints_empty(self, cli_env, capsys):
+        _add_channel(cli_env, channel_id=830, title="Gemini Fan", approval_state="pending")
+        _seed_messages(cli_env, channel_id=830, n=1, query="gemini")
+        run(_ns(channel_action="candidates", query="nonexistent"))
+        assert "No search-discovered candidate channels." in capsys.readouterr().out
+
+    def test_query_json_output_filtered(self, cli_env, capsys):
+        _add_channel(cli_env, channel_id=840, title="JsonMatch", approval_state="pending")
+        _seed_messages(cli_env, channel_id=840, n=1, query="gpt")
+        _add_channel(cli_env, channel_id=841, title="JsonOther", approval_state="pending")
+        _seed_messages(cli_env, channel_id=841, n=1, query="gpt")
+        run(_ns(channel_action="candidates", json=True, query="match"))
+        payload = json.loads(capsys.readouterr().out.strip())
+        assert [row["channel_id"] for row in payload] == [840]
+
 
 # ---------------------------------------------------------------------------
 # channel pending-list / reject — approval queue surfaces (#1314)
