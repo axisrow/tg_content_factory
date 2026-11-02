@@ -671,6 +671,13 @@ class AccountsRepository:
         Operator decisions belong to the gateway in enrolled mode. This is a
         projection of those decisions, never an automatic activation policy.
         No other project account state is available through this catalog.
+
+        ``is_premium`` is the one exception (#1749): it is a cached Telegram
+        fact, not an operator decision, and the gateway-side catalog key is
+        only refreshed on a live profile read. Mirroring it verbatim let a
+        stale catalog flip a Premium account to No every pool start, so the
+        mirror may only raise it; a downgrade requires a live fetch_me check
+        (pool startup refresh / premium-gated re-check).
         """
         assert self._database is not None
         async with self._database.transaction() as conn:
@@ -689,7 +696,8 @@ class AccountsRepository:
                                    "is_premium) VALUES (?,'',?,?,?,?) ON CONFLICT(phone) "
                                    "DO UPDATE SET session_string='',"
                                    "is_primary=excluded.is_primary,is_active=excluded.is_active,"
-                                   "flood_wait_until=excluded.flood_wait_until,is_premium=excluded.is_premium",
+                                   "flood_wait_until=excluded.flood_wait_until,"
+                                   "is_premium=max(accounts.is_premium,excluded.is_premium)",
                                    (row["phone"], int(row.get("is_primary", False)), int(row["active"]), flood,
                                     int(row.get("is_premium", False))))
                 async with conn.execute("SELECT id FROM accounts WHERE phone=?", (row["phone"],)) as cursor:

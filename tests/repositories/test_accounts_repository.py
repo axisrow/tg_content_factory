@@ -630,3 +630,41 @@ async def test_migrate_sessions_empty_table(repo_with_cipher):
     """Test migrate_sessions returns 0 when no accounts exist."""
     count = await repo_with_cipher.migrate_sessions()
     assert count == 0
+
+
+# sync_gateway_catalog premium mirroring (#1749)
+
+
+def _catalog_row(phone: str, account_id: str, *, is_premium: bool) -> dict:
+    return {"id": account_id, "phone": phone, "active": True, "is_primary": True,
+            "flood_until": None, "is_premium": is_premium}
+
+
+async def test_sync_gateway_catalog_never_downgrades_premium(accounts_repo):
+    """A stale gateway catalog (is_premium=0) must not clear a live-verified
+    factory flag: the mirror may only raise the premium flag (#1749)."""
+    await accounts_repo.add_account(make_account("+1000", is_premium=True))
+
+    await accounts_repo.sync_gateway_catalog([_catalog_row("+1000", "uuid-a", is_premium=False)])
+
+    accounts = await accounts_repo.get_accounts()
+    assert accounts[0].is_premium is True
+
+
+async def test_sync_gateway_catalog_upgrades_premium(accounts_repo):
+    """The mirror may raise the flag when the gateway side learned Premium."""
+    await accounts_repo.add_account(make_account("+1000", is_premium=False))
+
+    await accounts_repo.sync_gateway_catalog([_catalog_row("+1000", "uuid-a", is_premium=True)])
+
+    accounts = await accounts_repo.get_accounts()
+    assert accounts[0].is_premium is True
+
+
+async def test_sync_gateway_catalog_new_account_takes_catalog_premium(accounts_repo):
+    """A brand-new account has no factory flag to protect; the catalog wins."""
+    await accounts_repo.sync_gateway_catalog([_catalog_row("+1000", "uuid-a", is_premium=False)])
+
+    accounts = await accounts_repo.get_accounts()
+    assert len(accounts) == 1
+    assert accounts[0].is_premium is False

@@ -63,8 +63,10 @@ class GatewayPoolStorage:
         await self.execute_write("UPDATE accounts SET flood_until=? WHERE id=?",
                                  (until.timestamp() if until else 0, phone))
 
-    async def update_account_premium(self, phone, value):
-        await self.set_setting(f"premium:{phone}", "1" if value else "0")
+    async def update_account_premium(self, account_id, value):
+        # In gateway storage `Account.phone` carries the gateway account UUID,
+        # so the settings key is `premium:<account-uuid>` (#1749 naming trap).
+        await self.set_setting(f"premium:{account_id}", "1" if value else "0")
 
     async def get_setting(self, key):
         async with self.transaction() as conn:

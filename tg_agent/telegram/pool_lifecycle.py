@@ -146,8 +146,6 @@ class ClientLifecycleMixin:
             allowed_phones = {str(phone) for phone in phones if str(phone)}
             accounts = [acc for acc in accounts if acc.phone in allowed_phones]
         new_accounts = [acc for acc in accounts if acc.phone not in self.clients]
-        if not new_accounts:
-            return
 
         async def _connect_one(acc: Account) -> BackendClientLease | None:
             try:
@@ -158,43 +156,65 @@ class ClientLifecycleMixin:
                 logger.error("Failed to connect %s: %s", acc.phone, e, exc_info=True)
                 return None
 
-        tasks = {asyncio.create_task(_connect_one(acc)): acc for acc in new_accounts}
-        done, pending = await asyncio.wait(tasks.keys(), timeout=self.init_timeout)
-        for task in done:
-            acc = tasks[task]
-            lease = task.result()
-            if lease is None:
-                continue
-            try:
-                me = await asyncio.wait_for(lease.session.fetch_me(), timeout=5.0)
-                is_premium = bool(getattr(me, "premium", False))
-                if is_premium != acc.is_premium:
-                    await self._db.update_account_premium(acc.phone, is_premium)
-            except Exception as e:
-                logger.warning("Failed to fetch premium status for %s: %s", acc.phone, e, exc_info=True)
-            finally:
-                await self._backend_router.release(lease)
-        if pending:
-            phones = []
-            for task in pending:
+        if new_accounts:
+            tasks = {asyncio.create_task(_connect_one(acc)): acc for acc in new_accounts}
+            done, pending = await asyncio.wait(tasks.keys(), timeout=self.init_timeout)
+            for task in done:
                 acc = tasks[task]
-                phones.append(acc.phone)
-                logger.warning("Account %s init timed out — skipping", acc.phone)
-                task.cancel()
-            await asyncio.wait(pending, timeout=3.0)
-            for phone in phones:
-                if phone in self.clients:
-                    try:
-                        session = cast(TelegramTransportSession, self.clients[phone])
-                        # close() is a no-op (disconnect_on_close=False), so
-                        # disconnect the underlying Telethon client directly to
-                        # cancel its background tasks (_send_loop, _recv_loop).
-                        await asyncio.wait_for(
-                            session.raw_client.disconnect(), timeout=3.0,
-                        )
-                    except Exception:
-                        pass
-                    del self.clients[phone]
+                lease = task.result()
+                if lease is None:
+                    continue
+                await self._backend_router.release(lease)
+            if pending:
+                phones = []
+                for task in pending:
+                    acc = tasks[task]
+                    phones.append(acc.phone)
+                    logger.warning("Account %s init timed out — skipping", acc.phone)
+                    task.cancel()
+                await asyncio.wait(pending, timeout=3.0)
+                for phone in phones:
+                    if phone in self.clients:
+                        try:
+                            session = cast(TelegramTransportSession, self.clients[phone])
+                            # close() is a no-op (disconnect_on_close=False), so
+                            # disconnect the underlying Telethon client directly to
+                            # cancel its background tasks (_send_loop, _recv_loop).
+                            await asyncio.wait_for(
+                                session.raw_client.disconnect(), timeout=3.0,
+                            )
+                        except Exception:
+                            pass
+                        del self.clients[phone]
+        # Premium flags are a cached Telegram fact (#1749): verified live with a
+        # cheap fetch_me for ALL connected accounts at every pool start — new
+        # and previously connected — so a stale stored flag cannot survive it.
+        await self._refresh_premium_flags(stored={acc.phone: acc.is_premium for acc in accounts})
+
+    async def _refresh_premium_flags(self, *, stored: dict[str, bool] | None = None) -> None:
+        """Live ``is_premium`` refresh via fetch_me for every connected account (#1749).
+
+        The stored flag is a cache of a Telegram fact; the gateway-catalog mirror
+        never downgrades it, so only this live check may change it. Best-effort
+        and parallel: a failed fetch keeps the previous value and logs a warning.
+        """
+        checks = [self._refresh_premium_flag(phone, stored.get(phone) if stored else None)
+                  for phone in sorted(self.clients)]
+        if checks:
+            await asyncio.gather(*checks)
+
+    async def _refresh_premium_flag(self, phone: str, stored_premium: bool | None) -> None:
+        session = self._direct_session(phone)
+        if session is None:
+            return
+        try:
+            me = await asyncio.wait_for(session.fetch_me(), timeout=5.0)
+            is_premium = bool(getattr(me, "premium", False))
+            if stored_premium == is_premium:
+                return
+            await self._db.update_account_premium(phone, is_premium)
+        except Exception as e:
+            logger.warning("Failed to fetch premium status for %s: %s", phone, e, exc_info=True)
 
     async def get_available_client(
         self, *, exclude_phones: set[str] | frozenset[str] = frozenset()

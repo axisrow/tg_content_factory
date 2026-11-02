@@ -1,7 +1,9 @@
 """Run the existing business-action facade on a project-scoped shared client."""
 
 import asyncio
+import logging
 import shutil
+import time
 from dataclasses import asdict, is_dataclass
 from uuid import uuid4
 
@@ -9,6 +11,14 @@ from fastapi.encoders import jsonable_encoder
 
 from tg_agent.gateway.action_protocol import PeerReference
 from tg_agent.gateway.artifacts import ArtifactStore
+
+logger = logging.getLogger(__name__)
+
+# Per-account TTL for the live premium re-check before refusing a
+# premium-gated gateway operation (#1749). Module-level: ScopedPool instances
+# are per-operation, the suppression must outlive them.
+_PREMIUM_RECHECK_TTL_SEC = 300.0
+_premium_recheck_at: dict[str, float] = {}
 
 
 class ScopedPool:
@@ -23,7 +33,32 @@ class ScopedPool:
 
     async def get_premium_client(self):
         account = await self.pool._get_account_for_phone(self.account)
-        return await self.get_available_client() if account and account.is_premium else None
+        if account is None or not account.is_premium:
+            # Stored flags go stale in the gateway catalog (#1749): one
+            # TTL-cached live re-check before refusing a premium-gated call;
+            # a healed flag is persisted so the project mirror picks it up.
+            if await self._recheck_premium_live():
+                account = await self.pool._get_account_for_phone(self.account)
+            if account is None or not account.is_premium:
+                return None
+        return await self.get_available_client()
+
+    async def _recheck_premium_live(self) -> bool:
+        now = time.monotonic()
+        if now - _premium_recheck_at.get(self.account, 0.0) < _PREMIUM_RECHECK_TTL_SEC:
+            return False
+        _premium_recheck_at[self.account] = now
+        session = self.pool.clients.get(self.account)
+        if session is None:
+            return False
+        try:
+            me = await asyncio.wait_for(session.fetch_me(), timeout=5.0)
+        except Exception as e:
+            logger.warning("Premium re-check failed for %s: %s", self.account, e, exc_info=True)
+            return False
+        is_premium = bool(getattr(me, "premium", False))
+        await self.pool._db.update_account_premium(self.account, is_premium)
+        return is_premium
 
     async def get_premium_unavailability_reason(self):
         return "This project's selected account does not have Telegram Premium"
