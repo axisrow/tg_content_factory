@@ -17,14 +17,14 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import typer
 from aiosqlite import IntegrityError
 from pydantic import TypeAdapter, ValidationError
 
 from tg_agent.cli import runtime
-from tg_agent.cli.commands.common import apply_startup, run_async
+from tg_agent.cli.commands.common import apply_startup, cli_error, run_async
 from tg_agent.models import SeedingMessage, SeedingThread, SeedingThreadStatus
 from tg_agent.services.seeding_composer import (
     ChatStatistics,
@@ -41,8 +41,7 @@ def _parse_start_at(value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value)
     except ValueError:
-        print(f"--start-at: не ISO datetime: {value!r}")
-        raise typer.Exit(1) from None
+        cli_error(f"--start-at: не ISO datetime: {value!r}")
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
@@ -50,18 +49,17 @@ def _read_json(path: str) -> Any:
     try:
         return json.loads(Path(path).read_text(encoding="utf-8"))
     except FileNotFoundError:
-        print(f"Файл не найден: {path}")
-        raise typer.Exit(1) from None
+        cli_error(f"Файл не найден: {path}")
     except json.JSONDecodeError as exc:
-        print(f"Файл {path} — не валидный JSON: {exc}")
-        raise typer.Exit(1) from None
+        cli_error(f"Файл {path} — не валидный JSON: {exc}")
 
 
-def _print_schema_errors(path: str, exc: ValidationError) -> None:
-    print(f"Схема в {path} нарушена — {exc.error_count()} ошибок:")
-    for err in exc.errors(include_url=False):
-        loc = ".".join(str(p) for p in err["loc"])
-        print(f"  {loc}: {err['msg']}")
+def _schema_error(path: str, exc: ValidationError) -> NoReturn:
+    message = f"Схема в {path} нарушена — {exc.error_count()} ошибок:\n" + "\n".join(
+        "  " + ".".join(str(p) for p in err["loc"]) + f": {err['msg']}"
+        for err in exc.errors(include_url=False)
+    )
+    cli_error(message)
 
 
 def _load_scenario(path: str) -> SeedingScenario:
@@ -69,8 +67,7 @@ def _load_scenario(path: str) -> SeedingScenario:
     try:
         return SeedingScenario.model_validate(raw)
     except ValidationError as exc:
-        _print_schema_errors(path, exc)
-        raise typer.Exit(1) from None
+        _schema_error(path, exc)
 
 
 def _load_personas(path: str) -> list[SeedingPersona]:
@@ -78,17 +75,21 @@ def _load_personas(path: str) -> list[SeedingPersona]:
     try:
         personas = TypeAdapter(list[SeedingPersona]).validate_python(raw)
     except ValidationError as exc:
-        _print_schema_errors(path, exc)
-        raise typer.Exit(1) from None
+        _schema_error(path, exc)
     names = [p.name for p in personas]
     dup_names = sorted({n for n in names if names.count(n) > 1})
     if dup_names:
-        print(f"Personas: дублирующиеся имена: {dup_names}")
-        raise typer.Exit(1)
+        cli_error(f"Personas: дублирующиеся имена: {dup_names}")
     if len({p.account_phone for p in personas}) != len(personas):
-        print("Personas: один аккаунт назначен нескольким персонам.")
-        raise typer.Exit(1)
+        cli_error("Personas: один аккаунт назначен нескольким персонам.")
     return personas
+
+
+def _violations_error(violations: list[str]) -> NoReturn:
+    message = f"Scenario INVALID — {len(violations)} violation(s):\n" + "\n".join(
+        f"  - {item}" for item in violations
+    )
+    cli_error(message)
 
 
 async def _load_chat_stats(config_path: str, *, chat: int, days: int) -> ChatStatistics:
@@ -116,13 +117,15 @@ async def validate_impl(
     start_at: datetime | None,
 ) -> list[str]:
     scenario = _load_scenario(scenario_path)
+    if scenario.chat_channel_id != chat:
+        cli_error(
+            f"Сценарий для чата {scenario.chat_channel_id} не совпадает с --chat {chat} — "
+            "валидация по чужому профилю даст неверный вердикт таймингов."
+        )
     stats = await _load_chat_stats(config_path, chat=chat, days=days)
     violations = validate_scenario(scenario, stats, start_at=start_at)
     if violations:
-        print(f"Scenario INVALID — {len(violations)} violation(s):")
-        for item in violations:
-            print(f"  - {item}")
-        raise typer.Exit(1)
+        _violations_error(violations)
     print("Scenario OK.")
     return violations
 
@@ -169,27 +172,23 @@ async def add_impl(
     try:
         thread = await db.repos.seeding.get_thread(thread_id)
         if thread is None:
-            print(f"Тред #{thread_id} не найден.")
-            raise typer.Exit(1)
+            cli_error(f"Тред #{thread_id} не найден.")
         if thread.status is not SeedingThreadStatus.DRAFT:
-            print(
+            cli_error(
                 f"Тред #{thread_id} в статусе '{thread.status.value}' — сценарий "
                 "пишется только в draft (апрув/планирование — у публикатора)."
             )
-            raise typer.Exit(1)
         if thread.chat_channel_id != scenario.chat_channel_id:
-            print(
+            cli_error(
                 f"Сценарий для чата {scenario.chat_channel_id} не совпадает с тредом "
                 f"#{thread_id} (чат {thread.chat_channel_id})."
             )
-            raise typer.Exit(1)
         scenario_map = {p.name: p.account_phone for p in scenario.personas}
         if scenario_map != thread.personas:
-            print(
+            cli_error(
                 "Personas сценария не совпадают с тредом — персоны треда "
                 f"{sorted(thread.personas)}, сценария {sorted(scenario_map)}."
             )
-            raise typer.Exit(1)
         messages = await db.repos.messages.get_recent_for_channels(
             [scenario.chat_channel_id], since_hours=days * 24.0
         )
@@ -198,10 +197,7 @@ async def add_impl(
         )
         violations = validate_scenario(scenario, stats, start_at=start_at)
         if violations:
-            print(f"Scenario INVALID — {len(violations)} violation(s):")
-            for item in violations:
-                print(f"  - {item}")
-            raise typer.Exit(1)
+            _violations_error(violations)
         planned = derive_planned_schedule(scenario, start_at)
         ordered = sorted(scenario.messages, key=lambda m: m.position)
         rows = [
@@ -219,11 +215,10 @@ async def add_impl(
         try:
             ids = await db.repos.seeding.create_messages(thread_id, rows)
         except IntegrityError:
-            print(
+            cli_error(
                 f"Тред #{thread_id} уже содержит реплики на этих позициях "
                 "(UNIQUE(thread_id, position)) — повторный add невозможен."
             )
-            raise typer.Exit(1) from None
     finally:
         await db.close()
     print(f"Записано {len(ids)} реплик в тред #{thread_id} (status=draft, planned_at по задержкам).")
@@ -232,11 +227,18 @@ async def add_impl(
 
 
 async def list_impl(config_path: str, *, status: str | None, limit: int) -> None:
+    status_enum: SeedingThreadStatus | None = None
+    if status is not None:
+        try:
+            status_enum = SeedingThreadStatus(status)
+        except ValueError:
+            cli_error(
+                f"--status: неизвестный статус {status!r} "
+                "(допустимо: draft|scheduled|active|done|cancelled)"
+            )
     _, db = await runtime.init_db(config_path)
     try:
-        threads = await db.repos.seeding.list_threads(limit=limit)
-        if status is not None:
-            threads = [t for t in threads if t.status.value == status]
+        threads = await db.repos.seeding.list_threads(limit=limit, status=status_enum)
         if not threads:
             print("No seeding threads.")
             return
@@ -263,8 +265,7 @@ async def show_impl(config_path: str, *, thread_id: int) -> None:
     try:
         thread = await db.repos.seeding.get_thread(thread_id)
         if thread is None:
-            print(f"Тред #{thread_id} не найден.")
-            raise typer.Exit(1)
+            cli_error(f"Тред #{thread_id} не найден.")
         messages = await db.repos.seeding.list_messages_for_thread(thread_id)
         progress = await db.repos.seeding.get_thread_progress(thread_id)
     finally:

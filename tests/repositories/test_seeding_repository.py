@@ -104,6 +104,18 @@ async def test_list_threads_newest_first(db):
 
 
 @pytest.mark.anyio
+async def test_list_threads_status_filter_in_sql_before_limit(db):
+    """--status фильтрует в SQL до LIMIT: старый draft не прячется за новыми тредами."""
+    draft = await _make_thread(db)
+    scheduled = await _make_thread(db)
+    assert await db.repos.seeding.set_thread_status(scheduled, SeedingThreadStatus.SCHEDULED)
+
+    ids = [t.id for t in await db.repos.seeding.list_threads(limit=1, status=SeedingThreadStatus.DRAFT)]
+    assert ids == [draft]
+    assert [t.id for t in await db.repos.seeding.list_threads(limit=1)] == [scheduled]
+
+
+@pytest.mark.anyio
 async def test_create_messages_transactional_with_positions(db):
     thread_id = await _make_thread(db)
     ids = await db.repos.seeding.create_messages(

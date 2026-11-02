@@ -178,10 +178,23 @@ class SeedingRepository:
         row = await cur.fetchone()
         return self._to_thread(row) if row else None
 
-    async def list_threads(self, limit: int = 50) -> list[SeedingThread]:
-        cur = await self._db.execute(
-            "SELECT * FROM seeding_threads ORDER BY id DESC LIMIT ?", (limit,)
-        )
+    async def list_threads(
+        self, limit: int = 50, *, status: SeedingThreadStatus | None = None
+    ) -> list[SeedingThread]:
+        """Треды свежими первыми; ``status`` фильтрует в SQL ДО LIMIT.
+
+        Пост-фильтрация по уже срезанному LIMIT молча прячет старые треды
+        запрошенного статуса (находка ревью #1763).
+        """
+        if status is None:
+            cur = await self._db.execute(
+                "SELECT * FROM seeding_threads ORDER BY id DESC LIMIT ?", (limit,)
+            )
+        else:
+            cur = await self._db.execute(
+                "SELECT * FROM seeding_threads WHERE status = ? ORDER BY id DESC LIMIT ?",
+                (status.value, limit),
+            )
         return [self._to_thread(row) for row in await cur.fetchall()]
 
     async def list_threads_for_chat(self, chat_channel_id: int) -> list[SeedingThread]:

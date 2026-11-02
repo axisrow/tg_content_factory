@@ -182,9 +182,24 @@ def test_validate_impl_invalid_scenario(cli_db, capsys, tmp_path):
             cli_db,
             capsys,
         )
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "Scenario INVALID" in out
     assert "машинно" in out
+
+
+def test_validate_impl_chat_mismatch(cli_db, capsys, tmp_path):
+    """Сценарий для другого чата не валидируется молча по чужому профилю (ревью #1763)."""
+    _seed_chat(cli_db)
+    path = _scenario_file(tmp_path, chat_id=-100888)
+
+    with pytest.raises(typer.Exit):
+        _run_impl(
+            lambda: seeding_cli.validate_impl("cfg", scenario_path=path, chat=CHAT_ID, days=14, start_at=None),
+            cli_db,
+            capsys,
+        )
+    err = capsys.readouterr().err
+    assert "не совпадает с --chat" in err
 
 
 def test_validate_impl_schema_error_exits(cli_db, capsys, tmp_path):
@@ -197,7 +212,7 @@ def test_validate_impl_schema_error_exits(cli_db, capsys, tmp_path):
             cli_db,
             capsys,
         )
-    assert "Схема" in capsys.readouterr().out
+    assert "Схема" in capsys.readouterr().err
 
 
 def test_validate_impl_missing_file(cli_db, capsys, tmp_path):
@@ -211,7 +226,7 @@ def test_validate_impl_missing_file(cli_db, capsys, tmp_path):
             cli_db,
             capsys,
         )
-    assert "не найден" in capsys.readouterr().out
+    assert "не найден" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------- #
@@ -247,7 +262,7 @@ def test_thread_create_personas_schema_error(cli_db, capsys, tmp_path):
             cli_db,
             capsys,
         )
-    assert "Схема" in capsys.readouterr().out
+    assert "Схема" in capsys.readouterr().err
 
 
 def test_thread_create_personas_duplicate_phone(cli_db, capsys, tmp_path):
@@ -267,7 +282,7 @@ def test_thread_create_personas_duplicate_phone(cli_db, capsys, tmp_path):
             cli_db,
             capsys,
         )
-    assert "нескольким персонам" in capsys.readouterr().out
+    assert "нескольким персонам" in capsys.readouterr().err
 
 
 def _add(cli_db, tmp_path, thread_id, capsys, base, **kwargs):
@@ -307,7 +322,7 @@ def test_add_impl_rejects_invalid_scenario_before_write(cli_db, capsys, tmp_path
     with pytest.raises(typer.Exit):
         _add(cli_db, tmp_path, thread_id, capsys, base, delays=[2, 300])
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "Scenario INVALID" in out
     _reopen(cli_db)
     assert asyncio.run(cli_db.repos.seeding.list_messages_for_thread(thread_id)) == []
@@ -318,7 +333,7 @@ def test_add_impl_unknown_thread(cli_db, capsys, tmp_path):
 
     with pytest.raises(typer.Exit):
         _add(cli_db, tmp_path, 999, capsys, base)
-    assert "не найден" in capsys.readouterr().out
+    assert "не найден" in capsys.readouterr().err
 
 
 def test_add_impl_chat_mismatch(cli_db, capsys, tmp_path):
@@ -327,7 +342,7 @@ def test_add_impl_chat_mismatch(cli_db, capsys, tmp_path):
 
     with pytest.raises(typer.Exit):
         _add(cli_db, tmp_path, thread_id, capsys, base)
-    assert "не совпадает" in capsys.readouterr().out
+    assert "не совпадает" in capsys.readouterr().err
 
 
 def test_add_impl_personas_mismatch(cli_db, capsys, tmp_path):
@@ -336,7 +351,7 @@ def test_add_impl_personas_mismatch(cli_db, capsys, tmp_path):
 
     with pytest.raises(typer.Exit):
         _add(cli_db, tmp_path, thread_id, capsys, base)
-    assert "не совпадают с тредом" in capsys.readouterr().out
+    assert "не совпадают с тредом" in capsys.readouterr().err
 
 
 def test_add_impl_refuses_non_draft_thread(cli_db, capsys, tmp_path):
@@ -347,7 +362,7 @@ def test_add_impl_refuses_non_draft_thread(cli_db, capsys, tmp_path):
 
     with pytest.raises(typer.Exit):
         _add(cli_db, tmp_path, thread_id, capsys, base)
-    assert "только в draft" in capsys.readouterr().out
+    assert "только в draft" in capsys.readouterr().err
 
 
 def test_add_impl_duplicate_positions_rejected(cli_db, capsys, tmp_path):
@@ -358,7 +373,7 @@ def test_add_impl_duplicate_positions_rejected(cli_db, capsys, tmp_path):
 
     with pytest.raises(typer.Exit):
         _add(cli_db, tmp_path, thread_id, capsys, base)
-    assert "позициях" in capsys.readouterr().out
+    assert "позициях" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------- #
@@ -375,6 +390,29 @@ def test_list_impl_prints_progress(cli_db, capsys, tmp_path):
     _, out = _run_impl(lambda: seeding_cli.list_impl("cfg", status=None, limit=50), cli_db, capsys)
     assert str(thread_id) in out
     assert "0/2" in out
+
+
+def test_list_impl_status_filter_before_limit(cli_db, capsys):
+    """--status фильтрует в SQL ДО LIMIT: старые draft-треды не прячутся (ревью #1763)."""
+    _seed_chat(cli_db)
+    draft_thread = _make_thread(cli_db)
+    scheduled_thread = _make_thread(cli_db)
+    _reopen(cli_db)
+    assert asyncio.run(
+        cli_db.repos.seeding.set_thread_status(scheduled_thread, SeedingThreadStatus.SCHEDULED)
+    )
+
+    _, out = _run_impl(
+        lambda: seeding_cli.list_impl("cfg", status="draft", limit=1), cli_db, capsys
+    )
+    assert str(draft_thread) in out
+    assert str(scheduled_thread) not in out
+
+    with pytest.raises(typer.Exit):
+        _run_impl(
+            lambda: seeding_cli.list_impl("cfg", status="bogus", limit=50), cli_db, capsys
+        )
+    assert "неизвестный статус" in capsys.readouterr().err
 
 
 def test_list_impl_empty(cli_db, capsys):
@@ -401,4 +439,4 @@ def test_show_impl_unknown_thread(cli_db, capsys):
 
     with pytest.raises(typer.Exit):
         _run_impl(lambda: seeding_cli.show_impl("cfg", thread_id=999), cli_db, capsys)
-    assert "не найден" in capsys.readouterr().out
+    assert "не найден" in capsys.readouterr().err
