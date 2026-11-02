@@ -239,7 +239,7 @@ def search(
     mode: SearchMode = typer.Option(
         SearchMode.local,
         "--mode",
-        help="Search mode: local, semantic, hybrid, telegram, my_chats, channel",
+        help="Search mode: local, semantic, hybrid, telegram (alias: tg), my_chats, channel",
     ),
     channel_id: int | None = typer.Option(None, "--channel-id", help="Channel ID for --mode=channel"),
     min_length: int | None = typer.Option(None, "--min-length", help="Min message length"),

@@ -59,6 +59,9 @@ class SearchMode(str, Enum):
     semantic = "semantic"
     hybrid = "hybrid"
     telegram = "telegram"
+    #: Accepted shorthand for ``telegram`` (#1753); ``search_impl`` normalizes
+    #: it to ``telegram`` before any mode dispatch, so no consumer sees "tg".
+    tg = "tg"
     my_chats = "my_chats"
     channel = "channel"
 

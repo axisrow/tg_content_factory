@@ -35,7 +35,10 @@ tg-agent channel candidates --json
 ```
 
 Lists inactive channels that carry keyword-tagged messages: channel_id, title,
-username, message count, query tags, last_seen. Pre-filter before showing:
+username, message count, query tags, last_seen. `--query` filters by
+case-insensitive substring on title/username before `--limit` (#1753) — use it
+when a large DB drowns fresh candidates in old high-volume channels.
+Pre-filter before showing:
 
 - keep candidates matching TODAY's keywords (the `queries` field);
 - prefer channels with a @username (resolvable) and a solid message count;

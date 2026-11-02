@@ -246,6 +246,19 @@ def test_search_limit_and_mode():
     assert kwargs["mode"] == "semantic"
 
 
+def test_search_mode_tg_alias_accepted():
+    """`--mode tg` must parse as an alias of telegram (#1753) — previously a
+    Click choice error (exit 2) before any dispatch."""
+    mock_impl = MagicMock()
+    with (
+        patch("tg_agent.cli.typer_commands.search_cmd.search_impl", mock_impl),
+        patch("tg_agent.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["search", "q", "--mode", "tg"])
+    assert result.exit_code == 0
+    assert mock_impl.call_args.kwargs["mode"] == "tg"
+
+
 def test_search_all_maps_to_include_filtered():
     mock_impl = MagicMock()
     with (

@@ -24,12 +24,11 @@ async def test_cache_search_results_queues_new_channels_for_approval():
     bundle.channels.get_channel_by_channel_id = AsyncMock(return_value=None)
     bundle.add_channel = AsyncMock(return_value=1)
     bundle.log_search = AsyncMock()
-    create_stats_task = AsyncMock(return_value=7)
     fetch_channel_meta = AsyncMock(
         return_value={"about": "about text", "linked_chat_id": 123, "has_comments": True}
     )
 
-    persistence = SearchPersistence(bundle, create_stats_task, fetch_channel_meta)
+    persistence = SearchPersistence(bundle, fetch_channel_meta)
 
     await persistence.cache_search_results(
         {
@@ -41,7 +40,6 @@ async def test_cache_search_results_queues_new_channels_for_approval():
         "query",
     )
 
-    create_stats_task.assert_not_awaited()
     added_channels = [call.args[0] for call in bundle.add_channel.await_args_list]
     assert [channel.approval_state for channel in added_channels] == ["pending", "pending"]
     assert [channel.about for channel in added_channels] == ["about text", "about text"]
@@ -49,17 +47,16 @@ async def test_cache_search_results_queues_new_channels_for_approval():
 
 
 @pytest.mark.anyio
-async def test_cache_search_results_skips_stats_for_existing_channels():
+async def test_cache_search_results_skips_meta_for_existing_channels():
     bundle = MagicMock()
     bundle.channels.get_channel_by_channel_id = AsyncMock(
         return_value=Channel(channel_id=100, title="Existing")
     )
     bundle.add_channel = AsyncMock(return_value=1)
     bundle.log_search = AsyncMock()
-    create_stats_task = AsyncMock(return_value=7)
     fetch_channel_meta = AsyncMock()
 
-    persistence = SearchPersistence(bundle, create_stats_task, fetch_channel_meta)
+    persistence = SearchPersistence(bundle, fetch_channel_meta)
 
     await persistence.cache_search_results(
         {100: Channel(channel_id=100, title="Existing")},
@@ -68,7 +65,6 @@ async def test_cache_search_results_skips_stats_for_existing_channels():
         "query",
     )
 
-    create_stats_task.assert_not_awaited()
     fetch_channel_meta.assert_not_awaited()
 
 
@@ -82,7 +78,7 @@ async def test_cache_search_results_tags_messages_with_query():
     bundle.insert_messages_batch = AsyncMock(return_value=1)
     bundle.messages.get_messages_by_channel_message_ids = AsyncMock(return_value=[])
 
-    persistence = SearchPersistence(bundle, AsyncMock(return_value=7), AsyncMock())
+    persistence = SearchPersistence(bundle, AsyncMock())
 
     await persistence.cache_search_results(
         {100: Channel(channel_id=100, title="X")},
@@ -105,7 +101,7 @@ async def test_cache_messages_and_channels_does_not_tag():
     bundle.insert_messages_batch = AsyncMock(return_value=1)
     bundle.messages.get_messages_by_channel_message_ids = AsyncMock(return_value=[])
 
-    persistence = SearchPersistence(bundle, AsyncMock(return_value=7), AsyncMock())
+    persistence = SearchPersistence(bundle, AsyncMock())
 
     await persistence.cache_messages_and_channels(
         {100: Channel(channel_id=100, title="X")},

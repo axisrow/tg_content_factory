@@ -94,10 +94,13 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
   oldest first, capped per run at `stats_all_max_channels_per_run` (10; `--max-channels N`
   overrides). The worker collects asynchronously; numbers land in DB — read them via
   `channel list` / `analytics channel`.
-- `channel candidates [--json] [--limit N]` — read-only list of channels discovered by
+- `channel candidates [--json] [--limit N] [--query TEXT]` — read-only list of channels discovered by
   premium search (`search --mode telegram`): pending-approval rows whose cached messages carry the
-  search-query tag. Pick ones worth collecting, then `channel toggle <identifier>`
-  (approves with human origin) + `channel collect <identifier>` for the first fetch.
+  search-query tag. `--query` filters by case-insensitive substring on title/username
+  BEFORE `--limit` is applied (#1753) — without it fresh one-post candidates get pushed
+  out of the limit by old high-volume channels. Pick ones worth collecting, then
+  `channel toggle <identifier>` (approves with human origin) + `channel collect <identifier>`
+  for the first fetch.
 - `channel list [--pending | --all]` — the regular table hides pending rows (#1313 gate).
   `--pending` shows only the approval queue; `--all` appends its rows marked in the
   Approval column (#1701).
@@ -168,6 +171,8 @@ search-query list | get | add | edit | delete | toggle | run | stats
 - Commands with an optional `--phone` default to the **primary account** (DB flag);
   if the primary is not connected, the first connected account is used (#1480).
 - `search --mode` picks local DB (FTS5), direct Telegram API, or AI-powered search.
+  `tg` is an accepted alias for the `telegram` mode (#1753); consumers see `telegram`
+  semantics either way.
   `--date-from`/`--date-to` constrain the window on the DB modes only
   (`local`/`semantic`/`hybrid`) and are rejected with an error on live modes;
   both take `YYYY-MM-DD` — a relaxed `YYYY-M-D` (`2026-10-5`) is normalized to

@@ -30,7 +30,7 @@ def _msg(channel_id: int, message_id: int) -> Message:
 
 
 def _search_persistence(db) -> SearchPersistence:
-    return SearchPersistence(SearchBundle.from_database(db), None, None)
+    return SearchPersistence(SearchBundle.from_database(db), None)
 
 
 async def test_search_does_not_autocollect_private_group(db):

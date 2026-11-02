@@ -173,6 +173,8 @@ async def search_impl(
     filters and prints one JSON object ``{"queries": [envelope, ...]}``
     (JSON output only).
     """
+    if mode == "tg":  # SearchMode.tg alias (#1753) — normalize before any dispatch
+        mode = "telegram"
     config, db = await runtime.init_db(config_path)
 
     if purge_cache:
