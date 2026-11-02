@@ -451,3 +451,48 @@ async def test_gateway_auth_preserves_two_factor_challenge(gateway, monkeypatch)
     with pytest.raises(TwoFactorRequiredError):
         await dispatcher._dispatch("auth.verify_code", payload)
     assert payload["password_2fa"] == payload["code"] == ""
+
+
+def _offset_probe_pool(monkeypatch, captured):
+    from tg_agent.gateway.pool import GatewayPool
+
+    pool = GatewayPool(None, None)
+    pool.clients = {"+100": {"id": str(UUID(int=1)), "phone": "+100", "active": True,
+                             "flood_until": 0.0, "is_primary": True}}
+
+    async def fake_read_request(operation, intent, *, rotate=False):
+        captured.append(operation)
+        # Short page stops the paging loop without touching the gateway client.
+        return {"messages": [{"message_id": 5}], "reaction_users": {}, "forward_ids": [], "urls": {}}
+
+    monkeypatch.setattr(pool, "read_request", fake_read_request)
+    return pool
+
+
+async def test_read_messages_treats_unspecified_offset_as_page_start(monkeypatch):
+    # #1752: `messages read --live` passes offset_id=None when --offset-id is
+    # omitted; the page collector must normalize it instead of failing the
+    # MessagePage int contract.
+    captured = []
+    pool = _offset_probe_pool(monkeypatch, captured)
+    data = await pool.read_messages(123, offset_id=None, limit=10)
+    assert captured[0].offset_id == 0
+    assert data["messages"] == [{"message_id": 5}]
+
+
+async def test_read_messages_explicit_offset_reaches_the_operation(monkeypatch):
+    captured = []
+    pool = _offset_probe_pool(monkeypatch, captured)
+    await pool.read_messages(123, offset_id=77, limit=10)
+    assert captured[0].offset_id == 77
+
+
+def test_message_page_keeps_rejecting_none_offset():
+    # The wire contract stays strict: "unspecified" is normalized by the
+    # caller-side collector, never shipped as null.
+    from pydantic import ValidationError
+
+    from tg_agent.gateway.protocol import MessagePage
+
+    with pytest.raises(ValidationError):
+        MessagePage(kind="message_page", account_id=UUID(int=1), peer=1, offset_id=None)
