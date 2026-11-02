@@ -89,6 +89,7 @@ from tg_agent.cli.commands.scheduler import scheduler_app
 from tg_agent.cli.commands.search_query import search_query_app
 from tg_agent.cli.commands.settings import settings_app
 from tg_agent.cli.commands.style import style_app
+from tg_agent.cli.commands.seeding import seeding_app
 from tg_agent.cli.commands.telegraph import telegraph_app
 from tg_agent.cli.commands.test import test_app
 from tg_agent.cli.commands.translate import translate_app
@@ -459,6 +460,13 @@ app.add_typer(key_app, name="key")
 # --------------------------------------------------------------------------- #
 
 app.add_typer(style_app, name="style")
+
+
+# --------------------------------------------------------------------------- #
+# seeding → stats / validate / thread-create / add / list / show — composer (#1756)
+# --------------------------------------------------------------------------- #
+
+app.add_typer(seeding_app, name="seeding")
 
 
 # --------------------------------------------------------------------------- #

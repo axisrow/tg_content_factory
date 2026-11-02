@@ -371,6 +371,24 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
         "external telegra.ph createAccount + local encrypted settings write; "
         "no Telegram, covered by offline CLI tests with a fake HTTP session (#1703)"
     ),
+    ("seeding", "stats"): (
+        "list-only chat-statistics profile read from collected messages; "
+        "DB-only, no live Telegram, covered by offline CLI tests (#1756)"
+    ),
+    ("seeding", "validate"): (
+        "file-only scenario validation against the learned chat stats; "
+        "no Telegram, covered by offline CLI tests (#1756)"
+    ),
+    ("seeding", "thread-create"): (
+        "local seeding_threads draft write; DB-only, no Telegram — "
+        "gated on the #1755 storage, covered by offline CLI tests (#1756)"
+    ),
+    ("seeding", "add"): (
+        "local seeding_messages draft write; DB-only, no Telegram — "
+        "gated on the #1755 storage, covered by offline CLI tests (#1756)"
+    ),
+    ("seeding", "list"): "list-only local seeding threads view; DB-only — gated on the #1755 storage (#1756)",
+    ("seeding", "show"): "list-only local seeding thread view; DB-only — gated on the #1755 storage (#1756)",
     ("test", "write"): "diagnostic aggregate with local DB writes",
     ("translate", "detect"): "local message backfill mutation",
     ("translate", "message"): "provider/network translation",
