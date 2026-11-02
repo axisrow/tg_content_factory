@@ -36,8 +36,10 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 # Легальные переходы: цель -> множество статусов, из которых она достижима.
-# Терминальные статусы (done/cancelled, sent/cancelled) нигде не фигурируют
-# как цель — гард на них пуст и возвращает False без обращения к БД.
+# Терминальные статусы (done/cancelled, sent/cancelled) не фигурируют как
+# ИСТОЧНИКИ: переход из них не матчит WHERE-гард и даёт 0 строк (False с
+# обращением к БД). Цель вне карты (например, обратно в draft) отсекается
+# раньше, без обращения к БД.
 _THREAD_SOURCES: dict[SeedingThreadStatus, frozenset[SeedingThreadStatus]] = {
     SeedingThreadStatus.SCHEDULED: frozenset({SeedingThreadStatus.DRAFT}),
     SeedingThreadStatus.ACTIVE: frozenset({SeedingThreadStatus.SCHEDULED}),
