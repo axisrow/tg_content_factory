@@ -43,6 +43,7 @@ from tg_agent.database.repositories.pipeline_templates import PipelineTemplatesR
 from tg_agent.database.repositories.runtime_snapshots import RuntimeSnapshotsRepository
 from tg_agent.database.repositories.search_log import SearchLogRepository
 from tg_agent.database.repositories.search_queries import SearchQueriesRepository
+from tg_agent.database.repositories.seeding import SeedingRepository
 from tg_agent.database.repositories.settings import SettingsRepository
 from tg_agent.database.repositories.telegram_commands import TelegramCommandsRepository
 from tg_agent.models import (
@@ -158,6 +159,7 @@ class Database:
         self._telegram_commands: TelegramCommandsRepository | None = None
         self._runtime_snapshots: RuntimeSnapshotsRepository | None = None
         self._pipeline_action_log: PipelineActionLogRepository | None = None
+        self._seeding: SeedingRepository | None = None
         self._repos: DatabaseRepositories | None = None
 
     async def initialize(self) -> None:
@@ -222,6 +224,7 @@ class Database:
         self._dm_messages = DmMessagesRepository(read_db, database=self)
         self._dm_reply_drafts = DmReplyDraftsRepository(read_db, database=self)
         self._ping_monitors = PingMonitorRepository(read_db, database=self)
+        self._seeding = SeedingRepository(read_db, database=self)
         self._repos = DatabaseRepositories(
             accounts=self._accounts,
             channels=self._channels,
@@ -250,6 +253,7 @@ class Database:
             dm_reply_drafts=self._dm_reply_drafts,
             ping_monitors=self._ping_monitors,
             decisions=self._decisions,
+            seeding=self._seeding,
         )
 
         await self._accounts.migrate_sessions()

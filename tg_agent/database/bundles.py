@@ -41,6 +41,7 @@ from tg_agent.database.repositories.pipeline_templates import PipelineTemplatesR
 from tg_agent.database.repositories.runtime_snapshots import RuntimeSnapshotsRepository
 from tg_agent.database.repositories.search_log import SearchLogRepository
 from tg_agent.database.repositories.search_queries import SearchQueriesRepository
+from tg_agent.database.repositories.seeding import SeedingRepository
 from tg_agent.database.repositories.settings import SettingsRepository
 from tg_agent.database.repositories.telegram_commands import TelegramCommandsRepository
 from tg_agent.models import (
@@ -107,6 +108,7 @@ class DatabaseRepositories:
     notified_messages: NotifiedMessagesRepository
     decisions: DecisionsRepository
     ping_monitors: PingMonitorRepository
+    seeding: SeedingRepository
 
 
 # ---------------------------------------------------------------------------

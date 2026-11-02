@@ -1217,3 +1217,84 @@ class PingMonitor(BaseModel):
     last_nudge_sent_at: datetime | None = None
     error: str | None = None
     created_at: datetime | None = None
+
+
+class SeedingThreadStatus(StrEnum):
+    """Жизненный цикл треда посева диалога (#1755, эпик #1751).
+
+    `draft` — сценарий сочинён композером, но не подтверждён; `scheduled` —
+    подтверждён и ждёт запуска; `active` — публикатор рассылает реплики;
+    `done`/`cancelled` — терминальные.
+    """
+
+    DRAFT = "draft"
+    SCHEDULED = "scheduled"
+    ACTIVE = "active"
+    DONE = "done"
+    CANCELLED = "cancelled"
+
+
+class SeedingMessageStatus(StrEnum):
+    """Жизненный цикл одной реплики посева (#1755).
+
+    `draft` — черновик композера; `approved` — подтверждён владельцем;
+    `scheduled` — поставлен в расписание (`planned_at`); `sent`/`failed` —
+    исход отправки; `failed` может быть перепланирован (`failed → scheduled`).
+    """
+
+    DRAFT = "draft"
+    APPROVED = "approved"
+    SCHEDULED = "scheduled"
+    SENT = "sent"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class SeedingThread(BaseModel):
+    """Тред посева: сеанс оживления одного чата (`chat_channel_id`).
+
+    `chat_channel_id` — Telegram channel_id чата (JOIN-конвенция `c.channel_id`).
+    `personas` — словарь «имя персоны → phone аккаунта», сериализуется в
+    `personas_json`; консистентность персон между сессиями держится в нём (#1756).
+    """
+
+    id: int | None = None
+    chat_channel_id: int
+    personas: dict[str, str] = Field(default_factory=dict)
+    status: SeedingThreadStatus = SeedingThreadStatus.DRAFT
+    composer_run_ref: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class SeedingMessage(BaseModel):
+    """Одна реплика сценария посева: позиция в диалоге, персона, текст, тайминг.
+
+    `position` уникален в треде (UNIQUE(thread_id, position)); `reply_to_position`
+    — связь в reply-цепочку по той же оси. `tg_message_id` — id сообщения в
+    Telegram после отправки.
+    """
+
+    id: int | None = None
+    thread_id: int
+    position: int
+    account_phone: str
+    persona_name: str
+    text: str
+    reply_to_position: int | None = None
+    planned_at: datetime | None = None
+    sent_at: datetime | None = None
+    tg_message_id: int | None = None
+    status: SeedingMessageStatus = SeedingMessageStatus.DRAFT
+    error_text: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class SeedingThreadProgress(BaseModel):
+    """Агрегат прогресса треда одним GROUP BY: отправлено из всего сценария."""
+
+    total: int = 0
+    sent: int = 0
+    failed: int = 0
+    cancelled: int = 0

@@ -715,4 +715,40 @@ CREATE TABLE IF NOT EXISTS channel_prefix_stats (
     cnt INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (channel_id, prefix)
 );
+
+-- Движок посева диалогов (#1755, эпик #1751): тред = один сеанс оживления чата.
+-- chat_channel_id — Telegram channel_id чата (JOIN-конвенция c.channel_id).
+CREATE TABLE IF NOT EXISTS seeding_threads (
+    id INTEGER PRIMARY KEY,
+    chat_channel_id INTEGER NOT NULL,
+    personas_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'draft',
+    composer_run_ref TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS seeding_messages (
+    id INTEGER PRIMARY KEY,
+    thread_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    account_phone TEXT NOT NULL,
+    persona_name TEXT NOT NULL,
+    text TEXT NOT NULL,
+    reply_to_position INTEGER,
+    planned_at TEXT,
+    sent_at TEXT,
+    tg_message_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'draft',
+    error_text TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT,
+    FOREIGN KEY (thread_id) REFERENCES seeding_threads(id) ON DELETE CASCADE,
+    UNIQUE(thread_id, position)
+);
+
+CREATE INDEX IF NOT EXISTS idx_seeding_messages_thread
+    ON seeding_messages(thread_id, position);
+CREATE INDEX IF NOT EXISTS idx_seeding_messages_due
+    ON seeding_messages(status, planned_at);
 """
