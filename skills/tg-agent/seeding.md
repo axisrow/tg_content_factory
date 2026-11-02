@@ -88,11 +88,16 @@ tg-agent seeding thread-create --chat <chat-id> --personas personas.json
 tg-agent seeding add scenario.json --thread <thread-id> --start-at "2026-11-02T18:00"
 ```
 
-Draft rows land in `seeding_messages` with `status=draft` and `planned_at`
-derived from the delays (the draft schedule is visible immediately via
-`seeding show <thread-id>`). While the storage layer (#1755) is not merged,
-these commands validate the input and refuse loudly at the write step —
-the record step activates on top of #1755.
+`thread-create` stores the persona map «name → account_phone» in
+`personas_json` (#1755) — the full persona styles stay in your local
+personas file; reuse the same file for the same chat across sessions
+(keep it outside the repo, like style specs). `add` validates the
+scenario against the learned stats and records draft rows in
+`seeding_messages` with `status=draft` and `planned_at` derived from the
+delays — the draft schedule is visible immediately via
+`seeding show <thread-id>`. Approve/schedule/cancel live in the publisher
+workflow, not here; a thread stops accepting scenario writes once it
+leaves `draft`.
 
 ## Safety
 

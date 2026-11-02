@@ -380,15 +380,15 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
         "no Telegram, covered by offline CLI tests (#1756)"
     ),
     ("seeding", "thread-create"): (
-        "local seeding_threads draft write; DB-only, no Telegram — "
-        "gated on the #1755 storage, covered by offline CLI tests (#1756)"
+        "local seeding_threads draft write; DB-only, no Telegram, "
+        "covered by offline CLI tests (#1756)"
     ),
     ("seeding", "add"): (
-        "local seeding_messages draft write; DB-only, no Telegram — "
-        "gated on the #1755 storage, covered by offline CLI tests (#1756)"
+        "local seeding_messages draft write; DB-only, no Telegram, "
+        "covered by offline CLI tests (#1756)"
     ),
-    ("seeding", "list"): "list-only local seeding threads view; DB-only — gated on the #1755 storage (#1756)",
-    ("seeding", "show"): "list-only local seeding thread view; DB-only — gated on the #1755 storage (#1756)",
+    ("seeding", "list"): "list-only local seeding threads view; DB-only, no live Telegram (#1756)",
+    ("seeding", "show"): "list-only local seeding thread view; DB-only, no live Telegram (#1756)",
     ("test", "write"): "diagnostic aggregate with local DB writes",
     ("translate", "detect"): "local message backfill mutation",
     ("translate", "message"): "provider/network translation",

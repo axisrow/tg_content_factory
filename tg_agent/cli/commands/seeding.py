@@ -1,49 +1,39 @@
 """``seeding`` CLI group — композер посевных диалогов (#1756, эпик #1751).
 
-Детерминированная часть работает сразу: ``seeding stats`` (профиль
-реального чата — вход промпта композера) и ``seeding validate``
-(валидация сценария по выученному распределению). Команды записи
-черновиков (``thread-create``/``add``/``list``/``show``) — контракт
-параллельного #1755 (``seeding_threads``/``seeding_messages`` +
-``SeedingRepository``): до его мержа они валидируют вход и громко
-отказывают на записи; запись включается следом поверх #1755.
+Детерминированная часть: ``seeding stats`` (профиль реального чата — вход
+промпта композера), ``seeding validate`` (валидация сценария по выученному
+распределению) и запись черновиков (``thread-create``/``add``/``list``/
+``show``) в таблицы ``seeding_threads``/``seeding_messages`` (#1755):
+сценарий ложится строками ``status=draft`` с ``planned_at`` из кумулятива
+задержек — черновое расписание видно сразу.
 
-LLM = Claude Code CLI поверх этих команд (skills/tg-agent/seeding.md,
-эталон — digest-воркфлоу); z.ai запрещён.
+Апрув/планирование/отмена — жизненный цикл публикатора (отдельный
+sub-issue); CLI пишет только в ``draft``. LLM = Claude Code CLI поверх
+этих команд (skills/tg-agent/seeding.md, эталон — digest-воркфлоу).
 """
 
 from __future__ import annotations
 
-import importlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import typer
+from aiosqlite import IntegrityError
 from pydantic import TypeAdapter, ValidationError
 
 from tg_agent.cli import runtime
 from tg_agent.cli.commands.common import apply_startup, run_async
+from tg_agent.models import SeedingMessage, SeedingThread, SeedingThreadStatus
 from tg_agent.services.seeding_composer import (
     ChatStatistics,
     SeedingPersona,
     SeedingScenario,
     compute_chat_statistics,
+    derive_planned_schedule,
     validate_scenario,
 )
-
-
-def _require_seeding_storage() -> None:
-    """Хранение черновиков — контракт #1755; до его мержа команды отказывают."""
-    # ponytail: gating-стаб — тела записи появятся в follow-up поверх #1755;
-    # контракт (сценарий → строки seeding_messages со status=draft) уже стабилен.
-    try:
-        importlib.import_module("tg_agent.database.repositories.seeding")
-    except ImportError:
-        print("Seeding storage is not available: seeding_threads/seeding_messages +")
-        print("SeedingRepository land with #1755; draft writes activate on top of it.")
-        raise typer.Exit(1) from None
 
 
 def _parse_start_at(value: str) -> datetime:
@@ -68,7 +58,7 @@ def _read_json(path: str) -> Any:
 
 
 def _print_schema_errors(path: str, exc: ValidationError) -> None:
-    print(f"Схема сценария в {path} нарушена — {exc.error_count()} ошибок:")
+    print(f"Схема в {path} нарушена — {exc.error_count()} ошибок:")
     for err in exc.errors(include_url=False):
         loc = ".".join(str(p) for p in err["loc"])
         print(f"  {loc}: {err['msg']}")
@@ -112,7 +102,9 @@ async def _load_chat_stats(config_path: str, *, chat: int, days: int) -> ChatSta
 
 
 async def stats_impl(config_path: str, *, chat: int, days: int) -> ChatStatistics:
-    return await _load_chat_stats(config_path, chat=chat, days=days)
+    stats = await _load_chat_stats(config_path, chat=chat, days=days)
+    print(stats.model_dump_json(indent=2))
+    return stats
 
 
 async def validate_impl(
@@ -125,26 +117,177 @@ async def validate_impl(
 ) -> list[str]:
     scenario = _load_scenario(scenario_path)
     stats = await _load_chat_stats(config_path, chat=chat, days=days)
-    return validate_scenario(scenario, stats, start_at=start_at)
-
-
-async def add_impl(
-    config_path: str,
-    *,
-    scenario_path: str,
-    thread: int,
-    days: int,
-    start_at: datetime,
-) -> None:
-    scenario = _load_scenario(scenario_path)
-    stats = await _load_chat_stats(config_path, chat=scenario.chat_channel_id, days=days)
     violations = validate_scenario(scenario, stats, start_at=start_at)
     if violations:
         print(f"Scenario INVALID — {len(violations)} violation(s):")
         for item in violations:
             print(f"  - {item}")
         raise typer.Exit(1)
-    _require_seeding_storage()
+    print("Scenario OK.")
+    return violations
+
+
+async def thread_create_impl(config_path: str, *, chat: int, personas_path: str, ref: str | None) -> int:
+    """Создать тред посева (status=draft); personas_json = «имя → phone».
+
+    Полные стили персон (словарь/пунктуация/окно активности) остаются в
+    локальном personas-файле композера — консистентность между сессиями
+    держится им; в БД хранится карта персон на аккаунты (контракт #1755).
+    """
+    personas = _load_personas(personas_path)
+    _, db = await runtime.init_db(config_path)
+    try:
+        thread_id = await db.repos.seeding.create_thread(
+            SeedingThread(
+                chat_channel_id=chat,
+                personas={p.name: p.account_phone for p in personas},
+                composer_run_ref=ref,
+            )
+        )
+    finally:
+        await db.close()
+    print(f"Тред посева #{thread_id} создан (status=draft).")
+    print(f"Дальше: seeding add scenario.json --thread {thread_id} --start-at ISO")
+    return thread_id
+
+
+async def add_impl(
+    config_path: str,
+    *,
+    scenario_path: str,
+    thread_id: int,
+    days: int,
+    start_at: datetime,
+) -> list[int]:
+    """Записать сценарий черновиком: строки seeding_messages со status=draft.
+
+    Тред должен существовать и быть в draft; personas сценария — тем же
+    набором, что у треда. Валидация по выученной статистике — до записи.
+    """
+    scenario = _load_scenario(scenario_path)
+    _, db = await runtime.init_db(config_path)
+    try:
+        thread = await db.repos.seeding.get_thread(thread_id)
+        if thread is None:
+            print(f"Тред #{thread_id} не найден.")
+            raise typer.Exit(1)
+        if thread.status is not SeedingThreadStatus.DRAFT:
+            print(
+                f"Тред #{thread_id} в статусе '{thread.status.value}' — сценарий "
+                "пишется только в draft (апрув/планирование — у публикатора)."
+            )
+            raise typer.Exit(1)
+        if thread.chat_channel_id != scenario.chat_channel_id:
+            print(
+                f"Сценарий для чата {scenario.chat_channel_id} не совпадает с тредом "
+                f"#{thread_id} (чат {thread.chat_channel_id})."
+            )
+            raise typer.Exit(1)
+        scenario_map = {p.name: p.account_phone for p in scenario.personas}
+        if scenario_map != thread.personas:
+            print(
+                "Personas сценария не совпадают с тредом — персоны треда "
+                f"{sorted(thread.personas)}, сценария {sorted(scenario_map)}."
+            )
+            raise typer.Exit(1)
+        messages = await db.repos.messages.get_recent_for_channels(
+            [scenario.chat_channel_id], since_hours=days * 24.0
+        )
+        stats = compute_chat_statistics(
+            messages, chat_channel_id=scenario.chat_channel_id, window_days=days
+        )
+        violations = validate_scenario(scenario, stats, start_at=start_at)
+        if violations:
+            print(f"Scenario INVALID — {len(violations)} violation(s):")
+            for item in violations:
+                print(f"  - {item}")
+            raise typer.Exit(1)
+        planned = derive_planned_schedule(scenario, start_at)
+        ordered = sorted(scenario.messages, key=lambda m: m.position)
+        rows = [
+            SeedingMessage(
+                thread_id=thread_id,
+                position=m.position,
+                account_phone=scenario_map[m.persona],
+                persona_name=m.persona,
+                text=m.text,
+                reply_to_position=m.reply_to_position,
+                planned_at=planned[i],
+            )
+            for i, m in enumerate(ordered)
+        ]
+        try:
+            ids = await db.repos.seeding.create_messages(thread_id, rows)
+        except IntegrityError:
+            print(
+                f"Тред #{thread_id} уже содержит реплики на этих позициях "
+                "(UNIQUE(thread_id, position)) — повторный add невозможен."
+            )
+            raise typer.Exit(1) from None
+    finally:
+        await db.close()
+    print(f"Записано {len(ids)} реплик в тред #{thread_id} (status=draft, planned_at по задержкам).")
+    print(f"Просмотр: seeding show {thread_id}; апрув/планирование — в публикаторе.")
+    return ids
+
+
+async def list_impl(config_path: str, *, status: str | None, limit: int) -> None:
+    _, db = await runtime.init_db(config_path)
+    try:
+        threads = await db.repos.seeding.list_threads(limit=limit)
+        if status is not None:
+            threads = [t for t in threads if t.status.value == status]
+        if not threads:
+            print("No seeding threads.")
+            return
+        fmt = "{:<5} {:<16} {:<10} {:<12} {:<20}"
+        print(fmt.format("ID", "Chat", "Status", "Sent/Total", "Personas"))
+        print("-" * 70)
+        for t in threads:
+            progress = await db.repos.seeding.get_thread_progress(t.id or 0)
+            print(
+                fmt.format(
+                    str(t.id),
+                    str(t.chat_channel_id),
+                    t.status.value,
+                    f"{progress.sent}/{progress.total}",
+                    ",".join(t.personas) or "-",
+                )
+            )
+    finally:
+        await db.close()
+
+
+async def show_impl(config_path: str, *, thread_id: int) -> None:
+    _, db = await runtime.init_db(config_path)
+    try:
+        thread = await db.repos.seeding.get_thread(thread_id)
+        if thread is None:
+            print(f"Тред #{thread_id} не найден.")
+            raise typer.Exit(1)
+        messages = await db.repos.seeding.list_messages_for_thread(thread_id)
+        progress = await db.repos.seeding.get_thread_progress(thread_id)
+    finally:
+        await db.close()
+    personas = ", ".join(f"{name}({phone})" for name, phone in thread.personas.items()) or "-"
+    print(f"Тред #{thread.id}: chat={thread.chat_channel_id} status={thread.status.value}")
+    print(f"  personas: {personas}")
+    if thread.composer_run_ref:
+        print(f"  composer_run_ref: {thread.composer_run_ref}")
+    extras = (
+        f", {progress.failed} failed, {progress.cancelled} cancelled"
+        if progress.failed or progress.cancelled
+        else ""
+    )
+    print(f"  прогресс: {progress.sent}/{progress.total} sent{extras}")
+    if not messages:
+        print("  Реплик нет — сценарий ещё не записан (seeding add).")
+        return
+    for m in messages:
+        planned = m.planned_at.strftime("%Y-%m-%d %H:%M") if m.planned_at else "-"
+        reply = f" reply→#{m.reply_to_position}" if m.reply_to_position is not None else ""
+        text = m.text[:60] + ("…" if len(m.text) > 60 else "")
+        print(f"  #{m.position:>2} [{m.status.value}] {m.persona_name} @ {planned}{reply}  {text}")
 
 
 seeding_app = typer.Typer(
@@ -163,8 +306,7 @@ def stats_command(
 ) -> None:
     """Learn the real-chat statistics profile (JSON; composer prompt input + validation base)."""
     apply_startup(ctx)
-    stats = run_async(stats_impl(ctx.obj.config, chat=chat, days=days))
-    print(stats.model_dump_json(indent=2))
+    run_async(stats_impl(ctx.obj.config, chat=chat, days=days))
 
 
 @seeding_app.command("validate")
@@ -179,7 +321,7 @@ def validate_command(
 ) -> None:
     """Validate a scenario against the learned chat profile; exit 1 on violations."""
     apply_startup(ctx)
-    violations = run_async(
+    run_async(
         validate_impl(
             ctx.obj.config,
             scenario_path=scenario_path,
@@ -188,12 +330,6 @@ def validate_command(
             start_at=_parse_start_at(start_at) if start_at else None,
         )
     )
-    if violations:
-        print(f"Scenario INVALID — {len(violations)} violation(s):")
-        for item in violations:
-            print(f"  - {item}")
-        raise typer.Exit(1)
-    print("Scenario OK.")
 
 
 @seeding_app.command("thread-create")
@@ -203,30 +339,28 @@ def thread_create_command(
     personas_path: str = typer.Option(..., "--personas", metavar="personas.json"),
     ref: str | None = typer.Option(None, "--ref", help="Composer run reference (provenance)"),
 ) -> None:
-    """Create a draft seeding thread (write activates with the #1755 storage)."""
+    """Create a draft seeding thread (personas map «name → phone»)."""
     apply_startup(ctx)
-    _load_personas(personas_path)
-    print("Personas OK (validated, not stored).")
-    _require_seeding_storage()
+    run_async(thread_create_impl(ctx.obj.config, chat=chat, personas_path=personas_path, ref=ref))
 
 
 @seeding_app.command("add")
 def add_command(
     ctx: typer.Context,
     scenario_path: str = typer.Argument(..., metavar="scenario.json"),
-    thread: int = typer.Option(..., "--thread", help="Seeding thread id from `seeding thread-create`"),
+    thread_id: int = typer.Option(..., "--thread", help="Seeding thread id from `seeding thread-create`"),
     days: int = typer.Option(14, "--days", min=1, help="Stats window for scenario validation"),
     start_at: str = typer.Option(
         ..., "--start-at", help="ISO datetime (naive = UTC): base of the planned_at schedule"
     ),
 ) -> None:
-    """Validate and record a scenario as draft rows (write activates with #1755)."""
+    """Validate the scenario and record it as draft rows with a planned schedule."""
     apply_startup(ctx)
     run_async(
         add_impl(
             ctx.obj.config,
             scenario_path=scenario_path,
-            thread=thread,
+            thread_id=thread_id,
             days=days,
             start_at=_parse_start_at(start_at),
         )
@@ -237,18 +371,18 @@ def add_command(
 def list_command(
     ctx: typer.Context,
     status: str | None = typer.Option(None, "--status", help="Filter by thread status"),
-    limit: int = typer.Option(100, "--limit", help="Max rows"),
+    limit: int = typer.Option(50, "--limit", help="Max rows"),
 ) -> None:
-    """List seeding threads with sent/total progress (read activates with #1755)."""
+    """List seeding threads with sent/total progress (fresh first)."""
     apply_startup(ctx)
-    _require_seeding_storage()
+    run_async(list_impl(ctx.obj.config, status=status, limit=limit))
 
 
 @seeding_app.command("show")
 def show_command(
     ctx: typer.Context,
-    thread: int = typer.Argument(..., metavar="thread-id"),
+    thread_id: int = typer.Argument(..., metavar="thread-id"),
 ) -> None:
-    """Show a seeding thread with its draft messages (read activates with #1755)."""
+    """Show a seeding thread with its scheduled draft messages."""
     apply_startup(ctx)
-    _require_seeding_storage()
+    run_async(show_impl(ctx.obj.config, thread_id=thread_id))

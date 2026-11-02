@@ -24,11 +24,16 @@ from tg_agent.services.seeding_composer import (
 CHAT_ID = -100999
 
 
+def _naive(hour: int, minute: int = 0) -> datetime:
+    """Naive-UTC (формат сбора) через fromisoformat — обход DTZ001 по конвенции репо."""
+    return datetime.fromisoformat(f"2026-10-20T{hour:02d}:{minute:02d}")
+
+
 def _msg(text: str, *, hour: int, minute: int = 0, sender_id: int = 1, sender_name: str = "Аня") -> Message:
     return Message(
         channel_id=CHAT_ID,
         message_id=hour * 100 + minute + len(sender_name),
-        date=datetime(2026, 10, 20, hour, minute),
+        date=_naive(hour, minute),
         text=text,
         sender_id=sender_id,
         sender_name=sender_name,
@@ -63,7 +68,12 @@ def test_stats_counts(chat_stats: ChatStatistics) -> None:
 def test_stats_length_distribution() -> None:
     # ASCII-строки заведомых длин: перцентили считаются без ручного подсчёта кириллицы.
     msgs = [
-        Message(channel_id=CHAT_ID, message_id=i + 1, date=datetime(2026, 10, 20, 10, i * 3), text=text)
+        Message(
+            channel_id=CHAT_ID,
+            message_id=i + 1,
+            date=_naive(10, i * 3),
+            text=text,
+        )
         for i, text in enumerate(["aaaa", "aaaaaaa", "aaaaaaaaaa"])
     ]
     stats = compute_chat_statistics(msgs, chat_channel_id=CHAT_ID, window_days=7)
@@ -109,7 +119,7 @@ def test_stats_per_sender(chat_stats: ChatStatistics) -> None:
 
 
 def test_stats_ignores_empty_and_service_messages() -> None:
-    base = datetime(2026, 10, 20, 10, 0)
+    base = _naive(10)
     msgs = [
         Message(channel_id=CHAT_ID, message_id=1, date=base, text="текст один"),
         Message(channel_id=CHAT_ID, message_id=2, date=base + timedelta(minutes=2), text=None),
@@ -281,7 +291,7 @@ def test_validate_quiet_hour_landing(chat_stats: ChatStatistics) -> None:
 def test_validate_naive_start_at_treated_as_utc(chat_stats: ChatStatistics) -> None:
     scenario = _scenario([400], texts=["реплика"], personas=["Аня"])
     aware = datetime(2026, 10, 20, 10, 0, tzinfo=timezone.utc)
-    naive = datetime(2026, 10, 20, 10, 0)
+    naive = _naive(10)
     assert validate_scenario(scenario, chat_stats, start_at=naive) == validate_scenario(
         scenario, chat_stats, start_at=aware
     )

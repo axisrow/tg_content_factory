@@ -87,9 +87,9 @@ from tg_agent.cli.commands.plugin import plugin_app
 from tg_agent.cli.commands.provider import provider_app
 from tg_agent.cli.commands.scheduler import scheduler_app
 from tg_agent.cli.commands.search_query import search_query_app
+from tg_agent.cli.commands.seeding import seeding_app
 from tg_agent.cli.commands.settings import settings_app
 from tg_agent.cli.commands.style import style_app
-from tg_agent.cli.commands.seeding import seeding_app
 from tg_agent.cli.commands.telegraph import telegraph_app
 from tg_agent.cli.commands.test import test_app
 from tg_agent.cli.commands.translate import translate_app
