@@ -271,6 +271,33 @@ explicitly if the journal row was already pruned; creating a draft marks the
 journal row processed. Approve after send is a no-op — a delivered draft
 cannot be re-queued.
 
+## seeding — chat seeding composer (stats, validation, drafts) (#1756)
+
+```
+seeding stats <chat-id> [--days N]
+seeding validate <scenario.json> --chat <chat-id> [--days N] [--start-at ISO]
+seeding thread-create --chat <chat-id> --personas personas.json [--ref REF]
+seeding add <scenario.json> --thread <thread-id> --start-at ISO [--days N]
+seeding list [--status draft|scheduled|active|done|cancelled] [--limit N]
+seeding show <thread-id>
+```
+
+Composer half of the chat-seeding engine (epic #1751): `stats` returns the
+learned real-chat profile JSON (length/gap distributions, active/quiet
+hours UTC, emoji and style habits, per-sender stats) — the prompt input for
+the composing LLM (Claude Code CLI, workflow in
+[seeding.md](seeding.md)) and the base `validate`/`add` check timings and
+anti-patterns against (no links, no echo, no equal-length runs, no
+machine-like pauses, no messages landing in `quiet_hours`).
+
+`thread-create` stores the draft thread (status `draft`, persona map
+«name → account_phone» in `personas_json`); `add` records the scenario as
+`seeding_messages` rows with `status=draft` and `planned_at` = `--start-at`
++ cumulative `delay_seconds` (draft schedule visible immediately).
+Scenario writes are accepted only while the thread is in `draft` —
+approve/schedule/cancel belong to the publisher workflow; every publish
+run needs the owner's explicit consent (target chat + content).
+
 ## ping — friendly pings for dormant DM chats (#1415)
 
 ```
