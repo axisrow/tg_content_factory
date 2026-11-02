@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
@@ -42,6 +43,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# How long a failed premium live re-check suppresses further re-checks (#1749).
+PREMIUM_RECHECK_TTL_SEC = 300.0
+
 
 class FloodRotationMixin:
     """Flood-wait reporting, premium-flood tracking, and availability queries.
@@ -56,11 +60,16 @@ class FloodRotationMixin:
     _db: Database
     _lease_pool: AccountLeasePool
     _premium_flood_wait_until: dict[str, datetime]
+    # None = never checked; a plain 0.0 default reads as "just checked" on
+    # hosts whose CLOCK_MONOTONIC counts from a recent boot (fresh CI VMs).
+    _premium_recheck_at: float | None = None
     clients: dict[str, object]
 
     if TYPE_CHECKING:
 
         def _connected_phones(self) -> set[str]: ...
+
+        def _direct_session(self, phone: str) -> TelegramTransportSession | None: ...
 
         async def _acquire_from_lease(
             self,
@@ -159,12 +168,19 @@ class FloodRotationMixin:
         Premium-only flood waits are tracked separately from generic account flood waits.
         """
         blocked_phones = self._premium_flooded_phones()
-        for _ in range(max(1, len(self.clients))):
+        # +1: a healed stale flag (#1749) gets its own acquisition attempt.
+        for _ in range(max(1, len(self.clients)) + 1):
             lease = await self._lease_pool.acquire_premium(
                 self._connected_phones(),
                 blocked_phones=blocked_phones,
             )
             if lease is None:
+                # Stored is_premium flags go stale (#1749): the mirror never
+                # downgrades them, but nothing refreshed them live either. One
+                # TTL-cached fetch_me pass over connected accounts before
+                # refusing a premium-gated operation.
+                if await self._recheck_stale_premium_flags(blocked_phones):
+                    continue
                 return None
             result = await self._acquire_from_lease(
                 lease,
@@ -173,6 +189,37 @@ class FloodRotationMixin:
             if result is not None:
                 return result
         return None
+
+    async def _recheck_stale_premium_flags(self, blocked_phones: set[str]) -> bool:
+        """Live re-check of stored-False premium flags over connected accounts (#1749).
+
+        Returns True when a flag healed so the caller can retry acquisition.
+        TTL-cached: when a pass finds no Premium, further passes are suppressed
+        for ``PREMIUM_RECHECK_TTL_SEC`` so refusals stay cheap.
+        """
+        now = time.monotonic()
+        if self._premium_recheck_at is not None and now - self._premium_recheck_at < PREMIUM_RECHECK_TTL_SEC:
+            return False
+        self._premium_recheck_at = now
+        healed = False
+        accounts = await load_live_usable_accounts(self._db, active_only=True)
+        for account in accounts:
+            if account.is_premium or account.phone not in self.clients:
+                continue
+            if account.phone in blocked_phones:
+                continue
+            session = self._direct_session(account.phone)
+            if session is None:
+                continue
+            try:
+                me = await asyncio.wait_for(session.fetch_me(), timeout=5.0)
+            except Exception as e:
+                logger.warning("Premium re-check failed for %s: %s", account.phone, e, exc_info=True)
+                continue
+            if bool(getattr(me, "premium", False)):
+                await self._db.update_account_premium(account.phone, True)
+                healed = True
+        return healed
 
     async def get_premium_unavailability_reason(self) -> str:
         accounts = await load_live_usable_accounts(self._db, active_only=True)

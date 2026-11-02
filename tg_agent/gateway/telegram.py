@@ -106,6 +106,13 @@ class LiveTelegramAccess:
                 accounts = await self._pool._db.get_live_usable_accounts(active_only=True)
                 record = next(row for row in accounts if row.phone == account)
                 await self._pool._connect_account(record)
+                # Gateway accounts connect lazily, so this is the gateway-side
+                # pool startup: re-verify the cached premium flag live (#1749)
+                # and persist it into the gateway catalog for the project mirror.
+                refresh = asyncio.create_task(self._pool._refresh_premium_flags(),
+                                              name=f"gateway-premium-refresh:{account}")
+                self._startup.add(refresh)
+                refresh.add_done_callback(self._startup.discard)
                 raw = self.sessions[account].raw_client
                 async def incoming(event):
                     await self._incoming(account, event)
