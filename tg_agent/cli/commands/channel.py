@@ -7,7 +7,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import typer
-from telethon_floodgate import HandledFloodWaitError, run_with_flood_wait
+from telethon_floodgate import (
+    TRANSIENT_FLOOD_WAIT_MAX_SEC,
+    HandledFloodWaitError,
+    TelegramRateLimitedError,
+    run_with_flood_wait,
+)
 
 from tg_agent.cli import runtime, worker_handoff
 from tg_agent.cli.commands.common import (
@@ -18,7 +23,7 @@ from tg_agent.cli.commands.common import (
 )
 from tg_agent.database.bundles import ChannelBundle
 from tg_agent.filters.probe import ProbeMessage, probe_channel_snapshots
-from tg_agent.gateway.pool import GatewayPool
+from tg_agent.gateway.pool import GatewayPool, GatewayReadDeferredError
 from tg_agent.models import Channel, CollectionTaskStatus, StatsAllTaskPayload
 from tg_agent.parsers import deduplicate_identifiers, parse_file, parse_identifiers
 from tg_agent.services.account_service import resolve_default_phone
@@ -39,6 +44,7 @@ from tg_agent.telegram.collector import (
     UsernameResolveFloodWaitDeferredError,
     UsernameResolveRateLimitedError,
 )
+from tg_agent.telegram.collector_types import NoActiveCollectionClientsError
 from tg_agent.utils.json import safe_json_dumps
 
 
@@ -788,11 +794,9 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
     """
     numeric = str(ch.channel_id)
     if isinstance(pool, GatewayPool):
-        resolve_kwargs: dict = {"channel_type": ch.channel_type, "phone": phone}
-        meta_kwargs: dict = {"phone": phone}
+        resolve_kwargs: dict = {"channel_type": ch.channel_type, "phone": phone, "wait_for_limits": True}
     else:
-        resolve_kwargs = {"channel_type": ch.channel_type}
-        meta_kwargs = {}
+        resolve_kwargs = {"channel_type": ch.channel_type, "propagate_throttle": True}
     info = await pool.resolve_channel(
         numeric, signal_gone=True, numeric_fallback=numeric, **resolve_kwargs
     )
@@ -814,7 +818,9 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
     # entity fields never hit the DB without their about/linked companions
     # being decided too (single-statement write below, #1765 review point 3).
     partial = False
-    meta = await fetch_channel_meta(pool, ch.channel_id, new_type or ch.channel_type, **meta_kwargs)
+    meta = info if isinstance(pool, GatewayPool) else await fetch_channel_meta(
+        pool, ch.channel_id, new_type or ch.channel_type, propagate_throttle=True,
+    )
     meta_present = meta is not None
     if meta_present:
         assert meta is not None  # narrows the dict for the readers below
@@ -862,7 +868,7 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
     pool = None
     try:
         _, pool = await runtime.init_pool(config, db)
-        if not pool.clients:
+        if not pool.clients and not isinstance(pool, GatewayPool):
             logging.error("No connected accounts.")
             return
         if all_channels:
@@ -876,18 +882,51 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
         else:
             print("Please provide --all or a channel identifier")
             return
-        print(f"Channels to refresh: {len(channels)}")
+        print(f"Channels to refresh: {len(channels)}", flush=True)
         # Gateway accounts are shared: route each channel to the account it was
         # collected by instead of the project primary (#1765 review point 2).
         # The direct pool routes internally via its owner map / preferred_phone.
         gateway_pool = isinstance(pool, GatewayPool)
         updated = partial_count = skipped = failed = 0
-        for ch in channels:
+        for index, ch in enumerate(channels):
             phone = None
             if gateway_pool:
                 phone = await db.repos.channels.get_preferred_phone(ch.channel_id)
             try:
-                status, changes = await _refresh_channel_card(db, pool, ch, phone=phone)
+                while True:
+                    try:
+                        status, changes = await _refresh_channel_card(db, pool, ch, phone=phone)
+                        break
+                    except TelegramRateLimitedError as exc:
+                        delay = max(0.1, exc.retry_after_sec)
+                        print(f"WAIT: {ch.channel_id} — local {exc.category}; retry in {delay:.1f}s", flush=True)
+                        await asyncio.sleep(delay)
+                    except NoActiveCollectionClientsError:
+                        if not gateway_pool:
+                            raise
+                        if pool.gateway_status.get("http_available") and not any(
+                            row.get("active") for row in pool.accounts
+                        ):
+                            print("STOP: no active accounts granted to this project", flush=True)
+                            raise typer.Exit(1) from None
+                        print(f"WAIT: {ch.channel_id} — gateway reconnecting; retry in 5s", flush=True)
+                        await asyncio.sleep(5)
+                        await pool.initialize()
+                    except (HandledFloodWaitError, AllCollectionClientsFloodedError) as exc:
+                        delay = exc.info.wait_seconds if isinstance(exc, HandledFloodWaitError) else exc.retry_after_sec
+                        wait_seconds = getattr(exc, "wait_seconds", delay)
+                        local = isinstance(exc, GatewayReadDeferredError) and exc.local
+                        if not local and wait_seconds > TRANSIENT_FLOOD_WAIT_MAX_SEC:
+                            print(f"STOP: {ch.channel_id} — {exc}", flush=True)
+                            print(f"Updated: {updated} (partial: {partial_count}), "
+                                  f"Skipped: {skipped}, Failed: {failed}", flush=True)
+                            print(f"Unprocessed: {len(channels) - index}; IDs: "
+                                  + ", ".join(str(row.channel_id) for row in channels[index:]), flush=True)
+                            raise typer.Exit(1) from exc
+                        print(f"WAIT: {ch.channel_id} — retry in {delay:.1f}s", flush=True)
+                        await asyncio.sleep(max(0.1, delay) + 1)
+            except typer.Exit:
+                raise
             except Exception as e:
                 logging.warning(
                     "refresh-card: failed to fetch card for %s (%s): %s",
@@ -896,26 +935,28 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
                     e,
                     exc_info=True,
                 )
-                print(f"FAILED: {ch.title} ({ch.channel_id}) — {e}; row untouched")
+                print(f"FAILED: {ch.title} ({ch.channel_id}) — {e}; row untouched", flush=True)
                 failed += 1
                 continue
             if status == "unavailable":
                 print(
                     f"SKIP: {ch.title} ({ch.channel_id}) — "
-                    "no fresh data (gone/uncertain/transient); row untouched"
+                    "no fresh data (gone/uncertain/transient); row untouched",
+                    flush=True,
                 )
                 skipped += 1
             elif status == "partial":
                 print(
                     f"OK (partial): {ch.title} ({ch.channel_id}) — "
                     f"{', '.join(changes) if changes else 'no changes'}; "
-                    "about/linked unavailable, kept as stored"
+                    "about/linked unavailable, kept as stored",
+                    flush=True,
                 )
                 partial_count += 1
                 updated += 1
             else:
                 detail = f"changed: {', '.join(changes)}" if changes else "already current"
-                print(f"OK: {ch.title} ({ch.channel_id}) — {detail}")
+                print(f"OK: {ch.title} ({ch.channel_id}) — {detail}", flush=True)
                 updated += 1
         print(
             f"\nUpdated: {updated} (partial: {partial_count}), "

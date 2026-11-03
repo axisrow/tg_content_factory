@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import TypeAdapter
 from telethon.errors import FloodWaitError
-from telethon_floodgate import HandledFloodWaitError
+from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitedError
 
 from tg_agent.gateway.artifacts import ArtifactStore
 from tg_agent.gateway.auth import GatewayLogins
@@ -98,15 +98,26 @@ class Dispatcher:
                 result = await self.operation_task
             except GatewayDeferredError as exc:
                 await self.store.transition(project, request, "running", "deferred", {"retry_at": exc.until})
+            except TelegramRateLimitedError as exc:
+                state = "deferred" if is_read_operation(operation) else "uncertain"
+                await self.store.transition(project, request, "running", state, {
+                    "retry_at": time.time() + max(0.1, exc.retry_after_sec),
+                    "reason": type(exc).__name__,
+                    "category": exc.category,
+                })
             except HandledFloodWaitError as exc:
                 await self.store.transition(project, request, "running", "deferred", {
                     "retry_at": exc.info.next_available_at_utc.timestamp(),
+                    "reason": "FloodWaitError",
+                    "wait_seconds": exc.info.wait_seconds,
                 })
             except FloodWaitError as exc:
                 until = time.time() + max(1, exc.seconds)
                 await self.store.flood(str(operation.account_id), until)
                 state = "deferred" if is_read_operation(operation) else "uncertain"
-                await self.store.transition(project, request, "running", state, {"retry_at": until})
+                await self.store.transition(project, request, "running", state, {
+                    "retry_at": until, "reason": "FloodWaitError", "wait_seconds": max(1, exc.seconds),
+                })
             except Exception as exc:
                 from tg_agent.services.telegram_actions import TelegramActionClientUnavailableError
 

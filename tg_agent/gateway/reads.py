@@ -131,7 +131,9 @@ async def _inspect_peer(access, account, session, operation):
     peer = operation.peer
     if isinstance(peer, int) and operation.peer_type != "auto":
         peer = {"channel": PeerChannel, "chat": PeerChat, "user": PeerUser}[operation.peer_type](abs(peer))
-    entity = await pool.resolve_entity_with_warm(session, account, peer, operation="gateway_inspect_peer")
+    entity = await pool.resolve_entity_with_warm(
+        session, account, peer, operation="gateway_inspect_peer", reuse_warm_cache=True,
+    )
     kind, deactivated = pool._classify_entity(entity)
     if hasattr(entity, "first_name"):
         kind = "bot" if getattr(entity, "bot", False) else "user"

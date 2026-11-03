@@ -366,6 +366,122 @@ async def test_shared_flood_defers_both_projects_without_sending(gateway):
     assert transport.sends == []
 
 
+@pytest.mark.parametrize("kind,seconds", [("local", 17), ("breaker", 300), ("telegram", 17)])
+@pytest.mark.aiosqlite_serial
+async def test_refresh_card_waits_and_finishes_through_gateway(gateway, db, monkeypatch, capsys, kind, seconds):
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from telethon_floodgate import (
+        FloodWaitInfo,
+        HandledFloodWaitError,
+        TelegramOperationSuspendedError,
+        TelegramRateLimitedError,
+    )
+
+    from tg_agent.cli import runtime
+    from tg_agent.cli.commands.channel import refresh_card_impl
+    from tg_agent.config import AppConfig
+    from tg_agent.gateway import pool as pool_module
+    from tg_agent.gateway import server
+    from tg_agent.models import Channel
+
+    store, transport, account, clients = gateway
+    for cid in (901, 902):
+        await db.add_channel(Channel(channel_id=cid, title="Old", channel_type="channel"))
+    clock = [time.time()]
+    seen, sleeps = [], []
+
+    async def execute(project, operation):
+        seen.append(operation.peer)
+        if len(seen) == 1:
+            if kind == "telegram":
+                raise HandledFloodWaitError(FloodWaitInfo(
+                    operation="inspect", wait_seconds=seconds,
+                    next_available_at_utc=datetime.fromtimestamp(clock[0], timezone.utc) + timedelta(seconds=seconds),
+                    detail="must not cross the gateway",
+                ))
+            error_type = TelegramOperationSuspendedError if kind == "breaker" else TelegramRateLimitedError
+            raise error_type(account, "dialogs", seconds)
+        return {"channel_id": operation.peer, "title": f"Fresh {operation.peer}", "username": None,
+                "channel_type": "channel", "about": "fresh", "linked_chat_id": None, "has_comments": False}
+
+    async def sleep(delay):
+        sleeps.append(delay)
+        # A different project's read must finish while this project is waiting.
+        other = uuid4()
+        await clients[1].submit(other, History(kind="history", account_id=UUID(account), peer=999))
+        receipt = await clients[1].wait(other, timeout=5)
+        assert receipt["state"] == "succeeded"
+        clock[0] += delay + 0.01
+
+    monkeypatch.setattr(transport, "execute", execute)
+    monkeypatch.setattr(server, "time", SimpleNamespace(time=lambda: clock[0]))
+    monkeypatch.setattr(pool_module, "time", SimpleNamespace(time=lambda: clock[0]))
+    monkeypatch.setattr(pool_module, "asyncio", SimpleNamespace(sleep=sleep))
+    pool = pool_module.GatewayPool(AppConfig(), db, client=clients[0])
+    pool.clients = {"+100": {"id": account, "active": True, "phone": "+100", "flood_until": 0}}
+    await pool.outbox.initialize()
+    monkeypatch.setattr(runtime, "init_db", AsyncMock(return_value=(AppConfig(), db)))
+    monkeypatch.setattr(runtime, "init_pool", AsyncMock(return_value=(None, pool)))
+    # Keep the fixture's DB open so the assertions inspect the actual writes.
+    with patch.object(db, "close", new_callable=AsyncMock):
+        await refresh_card_impl("unused", all_channels=True, identifier=None)
+    assert (await db.get_channel_by_channel_id(901)).title == "Fresh 901"
+    assert (await db.get_channel_by_channel_id(902)).title == "Fresh 902"
+    assert sleeps == pytest.approx([seconds])
+    assert seen == [901, 999, 901, 902]
+    assert "Updated: 2" in capsys.readouterr().out
+    async with db.db.execute("SELECT count(*) FROM gateway_outbox") as cursor:
+        assert (await cursor.fetchone())[0] == 2  # deferred read reused the original request
+
+
+@pytest.mark.parametrize("seconds", [17, 61200])
+async def test_gateway_preserves_original_telegram_wait(gateway, monkeypatch, seconds):
+    from datetime import datetime, timedelta, timezone
+
+    from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError
+
+    _, transport, account, clients = gateway
+
+    async def execute(project, operation):
+        raise HandledFloodWaitError(FloodWaitInfo(
+            operation="inspect", wait_seconds=seconds,
+            next_available_at_utc=datetime.now(timezone.utc) + timedelta(seconds=seconds),
+            detail="sensitive upstream detail",
+        ))
+
+    monkeypatch.setattr(transport, "execute", execute)
+    request = uuid4()
+    await clients[0].submit(request, History(kind="history", account_id=UUID(account), peer=123))
+    receipt = await clients[0].wait(request, timeout=5)
+    assert receipt["state"] == "deferred"
+    assert receipt["result"]["wait_seconds"] == seconds
+    assert receipt["result"]["reason"] == "FloodWaitError"
+    assert "sensitive" not in str(receipt)
+
+
+async def test_inflight_gateway_read_survives_client_reference_refresh(db):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tg_agent.config import AppConfig
+    from tg_agent.gateway.pool import GatewayPool
+
+    pool = GatewayPool(AppConfig(), db)
+    await pool.outbox.initialize()
+
+    async def submit(request, operation):
+        pool.client = None  # account-status refresh replaces the connection reference
+
+    pool.client = SimpleNamespace(submit=submit, wait=AsyncMock(
+        return_value={"state": "succeeded", "result": {"title": "Still available"}},
+    ))
+    result = await pool.request(History(kind="history", account_id=uuid4(), peer=123), "inflight")
+    assert result == {"title": "Still available"}
+
+
 async def test_large_result_pages_remain_project_scoped(gateway, monkeypatch):
     from tg_agent.gateway.protocol import Dialogs
 

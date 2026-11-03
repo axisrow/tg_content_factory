@@ -88,6 +88,15 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
   values (SKIP/partial, row untouched). Operator settings (active/filtered/approval) are
   preserved. Per-channel result + Updated/Skipped/Failed counters. Refused while the daemon
   runs (no worker hand-off).
+  Bulk refresh waits and retries the same channel for local rate limits, circuit-breaker
+  cooldowns (including 300s), and Telegram FloodWaits up to 60s. The gateway tries other
+  granted accounts first; if none can continue after a longer Telegram wait, the command
+  exits 1 and prints the remaining channel IDs. Local cooldowns are never classified as
+  long Telegram waits. Progress is flushed immediately, including when redirected to a file.
+  Cache warming resumes from the last dialog page after a short wait or a productive
+  timeout, and a completed warm is reused until its existing cache TTL expires.
+  A temporary gateway disconnect also pauses the current channel until reconnection;
+  it does not mark the remaining channels as failed.
 - `channel probe <id|@username> [--limit 300] [--json]` — quality card from a LIVE
   sample of the last N posts, WITHOUT adding the channel: flags use the analyzer's own
   thresholds (engagement vs subscribers, forwards share, auto-feed, uniqueness,

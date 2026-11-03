@@ -5,7 +5,10 @@ import logging
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
+from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitedError
+
 from tg_agent.models import Channel, StatsAllTaskPayload
+from tg_agent.telegram.collector_types import AllCollectionClientsFloodedError
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,10 @@ async def fetch_channel_meta(
         return None
     try:
         return await fetcher(channel_id, channel_type, **kwargs)
+    except (HandledFloodWaitError, TelegramRateLimitedError, AllCollectionClientsFloodedError):
+        if kwargs.get("propagate_throttle"):
+            raise
+        return None
     except Exception as exc:
         logger.warning("Failed to fetch channel metadata for %s: %s", channel_id, exc, exc_info=True)
         return None
