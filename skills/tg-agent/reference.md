@@ -88,6 +88,10 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
   values (SKIP/partial, row untouched). Operator settings (active/filtered/approval) are
   preserved. Per-channel result + Updated/Skipped/Failed counters. Refused while the daemon
   runs (no worker hand-off).
+  When the stored numeric id is unknown to every account's entity cache (no granted account
+  is a member), the refresh falls back to the channel's stored @username — resolving by name
+  needs no membership — and writes only after the resolved id matches the stored channel; a
+  username reoccupied by a different channel is reported as skipped, leaving the row untouched.
   Bulk refresh waits and retries the same channel for local rate limits, circuit-breaker
   cooldowns (including 300s), and Telegram FloodWaits up to 60s. The gateway tries other
   granted accounts first; if none can continue after a longer Telegram wait, the command

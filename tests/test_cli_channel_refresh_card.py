@@ -83,15 +83,22 @@ class FakeDirectPool:
 
     clients = {"+10000000001": object()}
 
-    def __init__(self, resolve_by_id, meta_by_id):
+    def __init__(self, resolve_by_id, meta_by_id, resolve_by_username=None):
         self._resolve_by_id = resolve_by_id
+        self._resolve_by_username = resolve_by_username or {}
         self._meta_by_id = meta_by_id
         self.resolve_calls: list[tuple[str, dict]] = []
         self.meta_calls: list[tuple[int, str | None]] = []
 
     async def resolve_channel(self, identifier, **kwargs):
-        self.resolve_calls.append((str(identifier), kwargs))
-        result = self._resolve_by_id[int(identifier)]
+        ident = str(identifier)
+        self.resolve_calls.append((ident, kwargs))
+        if ident.lstrip("-").isdigit():
+            result = self._resolve_by_id[int(ident)]
+        else:
+            # Username fallback (#1768): unknown username mirrors the real
+            # pool's gone sentinel for a not-occupied name.
+            result = self._resolve_by_username.get(ident, {"gone": True})
         if isinstance(result, Exception):
             raise result
         return result
@@ -463,6 +470,34 @@ def test_refresh_card_gateway_error_is_a_failure_not_a_wipe(cli_env, capsys):
     assert "FAILED" in capsys.readouterr().out
 
 
+def test_refresh_card_gateway_numeric_miss_falls_back_to_username(cli_env, capsys):
+    """#1768: a numeric PeerChannel miss on every granted account (accounts are
+    not members) is not the end — the stored @username resolves without
+    membership; the card is written only after the resolved id matches."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=900, title="Old GW", username="fallback900")
+
+    pool, stub = _make_gateway_pool(
+        db, {"state": "failed", "result": {"error": "ValueError"}}
+    )
+
+    async def wait(request, timeout=None):
+        peer = stub.submitted[-1].peer
+        if isinstance(peer, int):  # numeric inspect: absent from entity caches
+            return {"state": "failed", "result": {"error": "ValueError"}}
+        return {"state": "succeeded", "result": {**_GATEWAY_CARD, "channel_id": 900}}
+
+    stub.wait = wait
+    _run_refresh_card(db, pool, identifier="900")
+
+    ch = _get_channel(db, 900)
+    assert ch.title == "GW Title"
+    assert ch.username == "gwname"
+    assert ch.about == "gw about"
+    assert "OK" in capsys.readouterr().out
+    assert stub.submitted[-1].peer == "fallback900"  # fallback used the stored name
+
+
 async def test_gateway_pool_routes_owner_account_and_group_peer_type(db):
     """Real GatewayPool contract (#1765 review points 1+2).
 
@@ -624,9 +659,11 @@ def test_refresh_card_gone_and_error_leave_rows_untouched(cli_env, capsys):
     db = cli_env
     _add_stale_channel(db, channel_id=704, title="KeepMe", username="keepme")
     _add_stale_channel(db, channel_id=705, title="KeepMe2", username="keepme2")
+    _add_stale_channel(db, channel_id=706, title="Nameless", username=None)
 
     pool = FakeDirectPool(
-        resolve_by_id={704: {"gone": True}, 705: RuntimeError("no_client")},
+        resolve_by_id={704: {"gone": True}, 705: RuntimeError("no_client"),
+                       706: {"gone": True}},
         meta_by_id={},
     )
     _run_refresh_card(db, pool, identifier="704")
@@ -643,6 +680,71 @@ def test_refresh_card_gone_and_error_leave_rows_untouched(cli_env, capsys):
     out = capsys.readouterr().out
     assert "SKIP" in out
     assert "FAILED" in out
+
+    # A username-less row cannot fall back: gone stays a SKIP, no second call.
+    _run_refresh_card(db, pool, identifier="706")
+    assert "SKIP" in capsys.readouterr().out
+    assert _get_channel(db, 706).title == "Nameless"
+    assert [call[0] for call in pool.resolve_calls if call[0] == "706"] == ["706"]
+
+
+def test_refresh_card_direct_numeric_miss_falls_back_to_username(cli_env, capsys):
+    """#1768 direct contract: a numeric miss (review sentinel — this account is
+    not a member) falls back to the stored @username before giving up."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=902, title="Old", username="fallback902")
+
+    pool = FakeDirectPool(
+        resolve_by_id={902: {"review": True, "reason": "numeric_unresolved"}},
+        meta_by_id={902: {"about": "fresh", "linked_chat_id": None, "has_comments": False}},
+        resolve_by_username={"fallback902": {
+            "channel_id": 902, "title": "Fresh", "username": "fallback902",
+            "channel_type": "channel", "deactivate": False, "created_at": None,
+        }},
+    )
+    _run_refresh_card(db, pool, identifier="902")
+
+    ch = _get_channel(db, 902)
+    assert ch.title == "Fresh"
+    assert ch.about == "fresh"
+    assert [call[0] for call in pool.resolve_calls] == ["902", "fallback902"]
+    # Both attempts keep the pool-call contract: numeric tries the gone/review
+    # sentinel with the numeric fallback, the username attempt signals gone so a
+    # dead name reports honestly instead of returning None.
+    assert pool.resolve_calls[0][1]["signal_gone"] is True
+    assert pool.resolve_calls[0][1]["numeric_fallback"] == "902"
+    assert pool.resolve_calls[1][1]["signal_gone"] is True
+    assert pool.resolve_calls[1][1]["propagate_throttle"] is True
+    assert "OK" in capsys.readouterr().out
+
+
+def test_refresh_card_username_mismatch_leaves_row_untouched(cli_env, capsys, caplog):
+    """#1768 guard: a username reoccupied by a DIFFERENT channel must not leak
+    the foreign card onto our row — untouched, reported as skipped."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=903, title="Keep", username="hijacked")
+
+    pool = FakeDirectPool(
+        resolve_by_id={903: {"gone": True}},
+        meta_by_id={},
+        resolve_by_username={"hijacked": {
+            "channel_id": 555555, "title": "Other", "username": "hijacked",
+            "channel_type": "channel", "deactivate": False, "created_at": None,
+        }},
+    )
+    with caplog.at_level("WARNING"):
+        _run_refresh_card(db, pool, identifier="903")
+
+    ch = _get_channel(db, 903)
+    assert ch.title == "Keep"
+    assert ch.username == "hijacked"
+    assert ch.is_active is True  # refresh-card never deactivates
+    assert len(pool.resolve_calls) == 2  # numeric attempt + username fallback
+    assert "SKIP" in capsys.readouterr().out
+    assert any(
+        record.message.startswith("refresh-card:") and "resolves to channel" in record.message
+        for record in caplog.records
+    )
 
 
 # ---------------------------------------------------------------------------

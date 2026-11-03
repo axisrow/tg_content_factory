@@ -23,7 +23,7 @@ from tg_agent.cli.commands.common import (
 )
 from tg_agent.database.bundles import ChannelBundle
 from tg_agent.filters.probe import ProbeMessage, probe_channel_snapshots
-from tg_agent.gateway.pool import GatewayPool, GatewayReadDeferredError
+from tg_agent.gateway.pool import GatewayOperationError, GatewayPool, GatewayReadDeferredError
 from tg_agent.models import Channel, CollectionTaskStatus, StatsAllTaskPayload
 from tg_agent.parsers import deduplicate_identifiers, parse_file, parse_identifiers
 from tg_agent.services.account_service import resolve_default_phone
@@ -787,6 +787,10 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
       values are kept, not erased;
     - ``"unavailable"`` — nothing fresh could be obtained (gone sentinel,
       uncertain resolution, transient failure): the row is left untouched.
+      A numeric-miss falls back to the stored @username (resolving by name
+      needs no account membership), written only when the resolved id matches
+      the stored channel; a username reoccupied by another channel leaves the
+      row untouched.
 
     Confirmed absence IS written (e.g. a dropped @username → NULL). Operator
     settings (active/filtered/approval) are never modified. Unexpected
@@ -797,11 +801,36 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
         resolve_kwargs: dict = {"channel_type": ch.channel_type, "phone": phone, "wait_for_limits": True}
     else:
         resolve_kwargs = {"channel_type": ch.channel_type, "propagate_throttle": True}
-    info = await pool.resolve_channel(
-        numeric, signal_gone=True, numeric_fallback=numeric, **resolve_kwargs
-    )
-    if not info or info.get("gone") or info.get("review"):
-        return "unavailable", []
+    info = None
+    try:
+        info = await pool.resolve_channel(
+            numeric, signal_gone=True, numeric_fallback=numeric, **resolve_kwargs
+        )
+    except GatewayOperationError as exc:
+        if exc.code != "ValueError":  # peer-miss only; timeout/uncertain propagate
+            raise
+    miss = not info or info.get("gone") or info.get("review")
+    if miss:
+        if not ch.username:
+            return "unavailable", []
+        # Numeric-miss fallback on the stored @username: ResolveUsername needs no
+        # account membership, unlike a bare PeerChannel lookup (#1768). Write only
+        # after the resolved id matches the stored one — a username reoccupied by
+        # another channel must never leak a foreign card onto this row.
+        info = await pool.resolve_channel(ch.username, signal_gone=True, **resolve_kwargs)
+        resolved = (
+            abs(int(info.get("channel_id") or 0))
+            if info and not info.get("gone") and not info.get("review") else 0
+        )
+        if not resolved:
+            return "unavailable", []
+        if resolved != abs(ch.channel_id):
+            logging.warning(
+                "refresh-card: @%s now resolves to channel %d, not stored %d; row untouched",
+                ch.username, resolved, ch.channel_id,
+            )
+            return "unavailable", []
+    assert info is not None  # every miss path returned above
 
     changes: list[str] = []
     new_username = info.get("username")
