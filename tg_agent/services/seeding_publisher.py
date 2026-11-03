@@ -58,6 +58,11 @@ _RESTART_ERROR_TEXT = (
 )
 
 
+def _error_text(exc: Exception) -> str:
+    """Текст для error_text: пустой str() исключения подменяется классом."""
+    return str(exc).strip()[:500] or type(exc).__name__
+
+
 async def validate_schedule_rails(
     db: "Database",
     thread_id: int,
@@ -216,7 +221,7 @@ class SeedingPublisherService:
             await self._db.repos.seeding.set_message_status(
                 msg.id,
                 SeedingMessageStatus.FAILED,
-                error_text=str(exc)[:500],
+                error_text=_error_text(exc),
             )
             return False
         await self._db.repos.seeding.set_message_status(

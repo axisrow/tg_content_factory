@@ -216,6 +216,29 @@ async def test_send_failure_marks_failed_with_error_and_rest_continue(db):
 
 
 @pytest.mark.anyio
+async def test_send_failure_with_empty_message_falls_back_to_class_name(db):
+    """Пустой str() исключения не даёт пустого error_text (класс исключения)."""
+
+    class SilentError(Exception):
+        pass
+
+    now = datetime.now(timezone.utc)
+    past = now - timedelta(minutes=5)
+    thread_id = await _armed_thread(db, [_row(1, planned_at=past, phone=PHONE_B)])
+    actions = FakeActions(fail_phones=frozenset({PHONE_B}))
+
+    async def raise_silent(**kwargs):
+        raise SilentError()
+
+    actions.send_message = raise_silent
+    await SeedingPublisherService(db, actions).run_due(now=now)
+
+    msg = (await db.repos.seeding.list_messages_for_thread(thread_id))[0]
+    assert msg.status is SeedingMessageStatus.FAILED
+    assert msg.error_text == "SilentError"
+
+
+@pytest.mark.anyio
 async def test_reply_chain_uses_sibling_tg_message_id(db):
     now = datetime.now(timezone.utc)
     past = now - timedelta(minutes=5)
