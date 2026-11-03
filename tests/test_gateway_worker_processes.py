@@ -18,7 +18,11 @@ from tg_agent.database import Database
 from tg_agent.gateway.runtime import configure, endpoint
 from tg_agent.models import Account, Channel
 
-pytestmark = [pytest.mark.aiosqlite_serial]
+# mutmut_skip: every test here spawns real CLI workers as subprocesses; under
+# mutation runs the trampoline inside the spawned worker cannot resolve the
+# mutmut config (FileNotFoundError on source_paths) — a sandbox artifact, not
+# a regression.
+pytestmark = [pytest.mark.aiosqlite_serial, pytest.mark.mutmut_skip]
 ROOT = Path(__file__).resolve().parents[1]
 
 
