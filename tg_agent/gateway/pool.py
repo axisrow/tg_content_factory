@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Literal
 from uuid import UUID, uuid4
 
 import httpx
@@ -158,9 +159,16 @@ class GatewayPool:
 
     async def inspect_peer(self, peer, *, channel_type=None, phone=None, statistics=False, topics=False):
         account = self.select(phone)
-        return await self.request(InspectPeer(kind="inspect_peer", account_id=UUID(account["id"]), peer=peer,
-                                             peer_type="chat" if channel_type == "group" else "channel",
-                                             statistics=statistics, topics=topics), f"inspect:{uuid4()}")
+        # Rotate across the project's connected accounts when the first pick
+        # cannot resolve the peer: a private channel may be visible only to the
+        # account that collected it, and preferred_phone is often unknown
+        # (#1765 review). Entity-resolution/ChannelPrivate misses are retryable
+        # read errors, so read_request walks the remaining usable accounts.
+        peer_kind: Literal["chat", "channel"] = "chat" if channel_type == "group" else "channel"
+        return await self.read_request(InspectPeer(kind="inspect_peer", account_id=UUID(account["id"]), peer=peer,
+                                                   peer_type=peer_kind,
+                                                   statistics=statistics, topics=topics), f"inspect:{uuid4()}",
+                                       rotate=True)
 
     async def fetch_channel_meta(self, channel_id, channel_type=None, phone=None):
         return await self.inspect_peer(channel_id, channel_type=channel_type, phone=phone)

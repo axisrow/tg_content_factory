@@ -1158,15 +1158,15 @@ class DialogsMixin:
     async def fetch_channel_meta(
         self, channel_id: int, channel_type: str | None
     ) -> dict | None:
-        """Fetch about, linked_chat_id, has_comments for a channel.
+        """Fetch about, linked_chat_id, has_comments for a channel or group.
 
-        Only works for channel/supergroup/gigagroup/forum/monoforum types.
-        Returns dict with keys: about, linked_chat_id, has_comments.
-        Returns None on failure.
+        Channels/supergroups go through GetFullChannel; legacy basic groups go
+        through GetFullChat (PeerChat peer, #1765 review) — their ``about`` is
+        real data, while linked_chat_id/has_comments don't apply and come back
+        as None/False. Returns dict with keys: about, linked_chat_id,
+        has_comments. Returns None on failure.
         """
-        # Group type has no linked_chat_id, so skip the expensive API call
-        if channel_type == "group":
-            return None
+        is_group = channel_type == "group"
 
         # Route to the account that can actually see this (possibly private)
         # channel instead of a random available one (#808). Mirrors
@@ -1235,10 +1235,16 @@ class DialogsMixin:
                     return None
 
             entity = await self.resolve_entity_with_warm(
-                session, phone, PeerChannel(channel_id), operation="fetch_channel_meta"
+                session,
+                phone,
+                PeerChat(abs(channel_id)) if is_group else PeerChannel(channel_id),
+                operation="fetch_channel_meta",
             )
+            resolved = cast(_ChannelEntity, entity)
             full = await run_with_flood_wait(
-                session.fetch_full_channel(entity),
+                session.fetch_full_chat(resolved.id)
+                if is_group
+                else session.fetch_full_channel(resolved),
                 operation="fetch_channel_meta_full",
                 phone=phone,
                 pool=self,
@@ -1246,8 +1252,11 @@ class DialogsMixin:
                 timeout=30.0,
             )
             about = full.full_chat.about if full and full.full_chat else None
+            # ChatFull has no linked_chat_id — getattr keeps groups at None/False.
             linked_chat_id = (
-                full.full_chat.linked_chat_id if full and full.full_chat else None
+                getattr(full.full_chat, "linked_chat_id", None)
+                if full and full.full_chat and not is_group
+                else None
             )
             has_comments = linked_chat_id is not None
             # Self-heal the channel→phone map on success: remember which account

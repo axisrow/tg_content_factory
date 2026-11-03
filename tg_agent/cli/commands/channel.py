@@ -828,9 +828,9 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
             if old != new
         ]
         changes.extend(meta_changes)
-    elif (new_type or ch.channel_type) != "group":
-        # The direct pool returns None for groups by design (no full-channel
-        # part there) — not an outage, so groups don't count as partial.
+    else:
+        # Both pools now return a group's about via GetFullChat, so a None here
+        # is a genuine partial fetch for every channel type (#1767 review).
         partial = True
 
     # Backfill-only created_at (COALESCE in SQL); an existing value is never

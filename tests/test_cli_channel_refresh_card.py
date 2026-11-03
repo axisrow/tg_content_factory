@@ -275,7 +275,9 @@ def test_refresh_card_preserves_user_settings(cli_env, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_refresh_card_group_channel_passes_type_hint(cli_env, capsys):
+def test_refresh_card_group_channel_updates_about(cli_env, capsys):
+    """Group card: entity fields AND the description are refreshed via the
+    type-hinted resolve + GetFullChat meta (#1765 review 1, #1767 review 1)."""
     db = cli_env
     _add_stale_channel(db, channel_id=-850, title="Legacy Group", username=None,
                        channel_type="group")
@@ -292,15 +294,47 @@ def test_refresh_card_group_channel_passes_type_hint(cli_env, capsys):
 
     pool = FakeDirectPool(
         resolve_by_id={-850: _card(-850)},
-        meta_by_id={-850: None},  # direct pool has no full-channel part for groups
+        meta_by_id={-850: {"about": "group about", "linked_chat_id": None,
+                           "has_comments": False}},
     )
     _run_refresh_card(db, pool, identifier="-850")
 
     assert pool.resolve_calls[0][0] == "-850"
     assert pool.resolve_calls[0][1]["channel_type"] == "group"
-    # Group + no full-channel part is NOT a partial outage: entity fields applied.
-    assert _get_channel(db, -850).title == "Renamed Group"
-    assert "OK" in capsys.readouterr().out
+    ch = _get_channel(db, -850)
+    assert ch.title == "Renamed Group"
+    assert ch.about == "group about"  # description actually refreshed
+    out = capsys.readouterr().out
+    assert "OK: " in out  # full update, not the partial marker
+    assert "OK (partial)" not in out
+
+
+def test_refresh_card_group_unavailable_about_is_partial(cli_env, capsys):
+    """A group whose full-chat part could not be fetched counts as partial —
+    the stored about stays, the confirmed entity fields still apply (#1767)."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=-851, title="Legacy Group", username=None,
+                       channel_type="group")
+
+    pool = FakeDirectPool(
+        resolve_by_id={
+            -851: {
+                "channel_id": -851,
+                "title": "Renamed Group",
+                "username": None,
+                "channel_type": "group",
+                "deactivate": False,
+                "created_at": None,
+            }
+        },
+        meta_by_id={-851: None},  # GetFullChat part unavailable
+    )
+    _run_refresh_card(db, pool, identifier="-851")
+
+    ch = _get_channel(db, -851)
+    assert ch.title == "Renamed Group"
+    assert ch.about == "old about"  # kept, not erased
+    assert "partial" in capsys.readouterr().out.lower()
 
 
 async def test_resolve_channel_group_hint_builds_peerchat(real_pool_harness_factory, db):
@@ -350,6 +384,41 @@ async def test_resolve_channel_without_hint_keeps_peerchannel(real_pool_harness_
 
     assert result is not None
     assert any(isinstance(p, PeerChannel) for p in seen_peers)
+
+
+async def test_fetch_channel_meta_group_reads_about_via_full_chat(real_pool_harness_factory, db):
+    """Real ClientPool contract (#1767 review 1): a group's meta goes through
+    GetFullChat with a PeerChat peer and returns the live about."""
+    from telethon.tl.functions.messages import GetFullChatRequest
+
+    harness = real_pool_harness_factory()
+    seen_peers: list = []
+
+    def resolver(peer):
+        seen_peers.append(peer)
+        return SimpleNamespace(id=850, title="Legacy Group", username=None, date=None)
+
+    def invoke(request):
+        assert isinstance(request, GetFullChatRequest)
+        return SimpleNamespace(
+            full_chat=SimpleNamespace(about="group about", participants=None,
+                                      participants_count=3)
+        )
+
+    harness.queue_cli_client(
+        phone="+70000000001",
+        client=FakeCliTelethonClient(entity_resolver=resolver, invoke_side_effect=invoke),
+    )
+    await harness.add_account("+70000000001", session_string="s1", is_primary=True)
+    await harness.initialize_connected_accounts()
+
+    meta = await harness.pool.fetch_channel_meta(850, "group")
+
+    assert meta is not None
+    assert meta["about"] == "group about"
+    assert meta["linked_chat_id"] is None  # not applicable for basic groups
+    assert meta["has_comments"] is False
+    assert any(isinstance(p, PeerChat) and p.chat_id == 850 for p in seen_peers)
 
 
 # ---------------------------------------------------------------------------
@@ -433,6 +502,62 @@ async def test_gateway_pool_routes_owner_account_and_group_peer_type(db):
     await pool.resolve_channel("444", channel_type="channel", phone=None)
     assert stub.submitted[-1].peer_type == "channel"
     assert stub.submitted[-1].account_id == UUID(primary["id"])
+
+
+async def test_gateway_inspect_peer_rotates_to_visible_account(db):
+    """Real GatewayPool contract (#1767 review 2): without a preferred_phone the
+    project primary is tried first; when it cannot resolve the peer, the read
+    rotates to the account that can — the update no longer fails while a
+    suitable connected account exists."""
+    pool = GatewayPool(AppConfig(), db)
+    primary = {"id": str(uuid4()), "phone": "+70000000001", "active": True,
+               "flood_until": 0.0, "is_primary": True}
+    owner = {"id": str(uuid4()), "phone": "+70000000002", "active": True,
+             "flood_until": 0.0, "is_primary": False}
+    pool.clients = {primary["phone"]: primary, owner["phone"]: owner}
+    stub = StubGatewayClient({"state": "succeeded",
+                              "result": {"channel_id": 444, "title": "Seen Elsewhere",
+                                         "channel_type": "channel", "deactivate": False}})
+    wait_calls = {"n": 0}
+
+    async def wait(request, timeout=None):
+        wait_calls["n"] += 1
+        if wait_calls["n"] == 1:  # first pick (primary) cannot resolve the peer
+            return {"state": "failed", "result": {"error": "TelegramActionEntityResolutionError"}}
+        return stub.receipt
+
+    stub.wait = wait
+    pool.client = stub
+    await pool.outbox.initialize()
+
+    info = await pool.resolve_channel("444")  # no preferred phone on purpose
+
+    assert info["title"] == "Seen Elsewhere"
+    assert [op.account_id for op in stub.submitted] == [
+        UUID(primary["id"]),  # primary tried first…
+        UUID(owner["id"]),    # …then rotated to the account that sees the channel
+    ]
+
+
+async def test_gateway_inspect_peer_preferred_phone_no_rotation_needed(db):
+    """When preferred_phone is given and usable, exactly one account is queried."""
+    pool = GatewayPool(AppConfig(), db)
+    primary = {"id": str(uuid4()), "phone": "+70000000001", "active": True,
+               "flood_until": 0.0, "is_primary": True}
+    owner = {"id": str(uuid4()), "phone": "+70000000002", "active": True,
+             "flood_until": 0.0, "is_primary": False}
+    pool.clients = {primary["phone"]: primary, owner["phone"]: owner}
+    stub = StubGatewayClient({"state": "succeeded",
+                              "result": {"channel_id": 444, "title": "Owner Sees",
+                                         "channel_type": "channel", "deactivate": False}})
+    pool.client = stub
+    await pool.outbox.initialize()
+
+    info = await pool.resolve_channel("444", phone="+70000000002")
+
+    assert info["title"] == "Owner Sees"
+    assert len(stub.submitted) == 1
+    assert stub.submitted[0].account_id == UUID(owner["id"])
 
 
 # ---------------------------------------------------------------------------
