@@ -20,7 +20,7 @@ path instead).
 
 Commands without a queue equivalent (`messages read --live`, `dialogs read`,
 `dialogs download-media`, `account info`, `search --mode telegram|my_chats|channel`,
-`notification …`, `photo-loader …`, `channel add|import|add-bulk|list-for-import|refresh-types|refresh-meta|probe`,
+`notification …`, `photo-loader …`, `channel add|import|add-bulk|list-for-import|refresh-types|refresh-meta|refresh-card|probe`,
 `collect sample`, `pipeline publish`, `ping create --username`, `test telegram`)
 are **refused before any connection is attempted** while the daemon runs (#1521) — exit 1,
 message on stderr:
@@ -73,11 +73,18 @@ daemon status          # read-only: daemon up/down, PID, PID file, project/store
 ## channels / collection
 
 ```
-channel list | add | delete | toggle | collect | stats | refresh-types | refresh-meta | probe
+channel list | add | delete | toggle | collect | stats | refresh-types | refresh-meta | refresh-card | probe
 channel import | add-bulk | list-for-import | candidates | pending-list | reject | tag (list|add|delete|set|get)
 filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | purge-messages | hard-delete
 ```
 
+- `channel refresh-card <id|@username>` / `channel refresh-card --all` — refresh ALL open
+  channel metadata from Telegram by the stable numeric ID: title, username, channel type,
+  about, linked chat, comments flag (+ created_at backfill when empty). A confirmed absence
+  is written (dropped @username → NULL); unavailable/partial answers NEVER erase stored
+  values (SKIP/partial, row untouched). Operator settings (active/filtered/approval) are
+  preserved. Per-channel result + Updated/Skipped/Failed counters. Refused while the daemon
+  runs (no worker hand-off).
 - `channel probe <id|@username> [--limit 300] [--json]` — quality card from a LIVE
   sample of the last N posts, WITHOUT adding the channel: flags use the analyzer's own
   thresholds (engagement vs subscribers, forwards share, auto-feed, uniqueness,

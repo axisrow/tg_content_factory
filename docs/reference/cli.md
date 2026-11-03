@@ -61,6 +61,7 @@ python -m tg_agent.main channel collect IDENTIFIER
 python -m tg_agent.main channel stats [IDENTIFIER] [--all]
 python -m tg_agent.main channel refresh-types
 python -m tg_agent.main channel refresh-meta [IDENTIFIER] [--all]
+python -m tg_agent.main channel refresh-card [IDENTIFIER] [--all]
 python -m tg_agent.main channel import FILE_OR_TEXT
 python -m tg_agent.main channel add-bulk --phone PHONE --dialog-ids ID1,ID2,...
 python -m tg_agent.main channel tag list

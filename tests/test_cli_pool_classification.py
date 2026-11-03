@@ -59,6 +59,7 @@ REFUSED_WHILE_DAEMON = {
     ("commands/test.py", "_run_tg_pool_init_step"),
     ("commands/channel.py", "refresh_types_impl"),
     ("commands/channel.py", "refresh_meta_impl"),
+    ("commands/channel.py", "refresh_card_impl"),
     ("commands/channel.py", "add_impl"),
     ("commands/channel.py", "import_impl"),
     ("commands/channel.py", "add_bulk_impl"),
