@@ -762,6 +762,146 @@ async def refresh_meta_impl(config_path: str, *, all_channels: bool, identifier:
         await db.close()
 
 
+async def _refresh_channel_card(db, pool, ch) -> tuple[str, list[str]]:
+    """Refresh one channel row's open metadata from Telegram (#1764).
+
+    Resolves by the STABLE numeric ID (a stale @username must never be the
+    lookup key — its staleness is the reason the command exists). Returns
+    ``(status, changed_fields)`` where status is:
+
+    - ``"updated"`` — full confirmed card applied;
+    - ``"partial"`` — entity fields (title/username/type) confirmed and
+      applied, but the about/linked/comments part was unavailable: stored
+      values are kept, not erased;
+    - ``"unavailable"`` — nothing fresh could be obtained (gone sentinel,
+      uncertain resolution, transient failure): the row is left untouched.
+
+    Confirmed absence IS written (e.g. a dropped @username → NULL). Operator
+    settings (active/filtered/approval) are never modified. Unexpected
+    transport errors propagate — the caller counts a failure.
+    """
+    numeric = str(ch.channel_id)
+    info = await pool.resolve_channel(numeric, signal_gone=True, numeric_fallback=numeric)
+    if not info or info.get("gone") or info.get("review"):
+        return "unavailable", []
+
+    changes: list[str] = []
+    new_username = info.get("username")
+    new_title = info.get("title") or None
+    new_type = info.get("channel_type") or None
+    if new_username != ch.username:
+        changes.append("username")
+    if new_title != (ch.title or None):
+        changes.append("title")
+    if new_type and new_type != ch.channel_type:
+        changes.append("type")
+    if "username" in changes or "title" in changes:
+        await db.repos.channels.update_channel_meta(
+            ch.channel_id, username=new_username, title=new_title
+        )
+    if "type" in changes:
+        await db.set_channel_type(ch.channel_id, new_type)
+    # Backfill-only (NULL → entity.date); an existing value is never overwritten.
+    await db.repos.channels.update_channel_created_at(ch.channel_id, info.get("created_at"))
+
+    partial = False
+    meta = await fetch_channel_meta(pool, ch.channel_id, new_type or ch.channel_type)
+    if meta:
+        meta_changes = [
+            field
+            for field, old, new in (
+                ("about", ch.about, meta.get("about")),
+                ("linked_chat_id", ch.linked_chat_id, meta.get("linked_chat_id")),
+                ("has_comments", ch.has_comments, bool(meta.get("has_comments"))),
+            )
+            if old != new
+        ]
+        if meta_changes:
+            await db.repos.channels.update_channel_full_meta(
+                ch.channel_id,
+                about=meta.get("about"),
+                linked_chat_id=meta.get("linked_chat_id"),
+                has_comments=bool(meta.get("has_comments")),
+            )
+            changes.extend(meta_changes)
+    elif (new_type or ch.channel_type) != "group":
+        # The direct pool returns None for groups by design (no full-channel
+        # part there) — not an outage, so groups don't count as partial.
+        partial = True
+    return ("partial" if partial else "updated"), changes
+
+
+async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier: str | None) -> None:
+    """``channel refresh-card`` — refresh all open channel metadata (#1764).
+
+    Per channel: title, username, type, about, linked chat, comments flag and
+    a created_at backfill — everything Telegram reliably returns for the
+    stored fields. Counters: updated (incl. partial), skipped (nothing fresh
+    obtained), failed (transport error); one channel's error never stops or
+    hides the others.
+    """
+    config, db = await runtime.init_db(config_path)
+    pool = None
+    try:
+        _, pool = await runtime.init_pool(config, db)
+        if not pool.clients:
+            logging.error("No connected accounts.")
+            return
+        if all_channels:
+            channels = await db.get_channels(active_only=True)
+        elif identifier:
+            found = resolve_channel(await db.get_channels(), identifier)
+            if not found:
+                print(f"Channel '{identifier}' not found")
+                return
+            channels = [found]
+        else:
+            print("Please provide --all or a channel identifier")
+            return
+        print(f"Channels to refresh: {len(channels)}")
+        updated = partial_count = skipped = failed = 0
+        for ch in channels:
+            try:
+                status, changes = await _refresh_channel_card(db, pool, ch)
+            except Exception as e:
+                logging.warning(
+                    "refresh-card: failed to fetch card for %s (%s): %s",
+                    ch.title,
+                    ch.channel_id,
+                    e,
+                    exc_info=True,
+                )
+                print(f"FAILED: {ch.title} ({ch.channel_id}) — {e}; row untouched")
+                failed += 1
+                continue
+            if status == "unavailable":
+                print(
+                    f"SKIP: {ch.title} ({ch.channel_id}) — "
+                    "no fresh data (gone/uncertain/transient); row untouched"
+                )
+                skipped += 1
+            elif status == "partial":
+                print(
+                    f"OK (partial): {ch.title} ({ch.channel_id}) — "
+                    f"{', '.join(changes) if changes else 'no changes'}; "
+                    "about/linked unavailable, kept as stored"
+                )
+                partial_count += 1
+                updated += 1
+            else:
+                detail = f"changed: {', '.join(changes)}" if changes else "already current"
+                print(f"OK: {ch.title} ({ch.channel_id}) — {detail}")
+                updated += 1
+        print(
+            f"\nUpdated: {updated} (partial: {partial_count}), "
+            f"Skipped: {skipped}, Failed: {failed}"
+        )
+    finally:
+        if pool:
+            await pool.disconnect_all()
+        await db.close()
+
+
 async def add_bulk_impl(config_path: str, *, phone: str, dialog_ids: str) -> None:
     """``channel add-bulk`` — add channels from an account's dialogs by id list."""
     config, db = await runtime.init_db(config_path)
@@ -1526,6 +1666,19 @@ def channel_refresh_meta(
     apply_startup(ctx)
     run_async(
         refresh_meta_impl(ctx.obj.config, all_channels=all_channels, identifier=identifier)
+    )
+
+
+@channel_app.command("refresh-card", context_settings=_NEG_ID_POSITIONAL)
+def channel_refresh_card(
+    ctx: typer.Context,
+    identifier: str | None = typer.Argument(None, help="Channel pk, channel_id, or @username (omit for all)"),
+    all_channels: bool = typer.Option(False, "--all", help="Refresh metadata for all active channels"),
+) -> None:
+    """Refresh all open channel metadata from Telegram (title, username, about, type, linked chat, comments)."""
+    apply_startup(ctx)
+    run_async(
+        refresh_card_impl(ctx.obj.config, all_channels=all_channels, identifier=identifier)
     )
 
 

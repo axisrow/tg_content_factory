@@ -240,6 +240,12 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("channel", "review-keep"): "local channel state mutation; DB-only, no Telegram",
     ("channel", "review-list"): "list-only local quarantine view; DB-only, no Telegram",
     ("channel", "pending-list"): "list-only local approval queue view; DB-only, no Telegram",
+    ("channel", "refresh-card"): (
+        "refreshes local channel metadata from live Telegram reads (title/username/"
+        "about/type/linked/comments); DB-only writes, covered by integration tests "
+        "with fake pools (test_cli_channel_refresh_card.py); live run is a separate "
+        "owner-approved step (#1764)"
+    ),
     ("channel", "reject"): "local approval-queue rejection mutation; DB-only, no Telegram",
     ("channel", "tag", "add"): "local tag write",
     ("channel", "tag", "delete"): "local tag delete mutation",

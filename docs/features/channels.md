@@ -38,6 +38,7 @@
     python -m tg_agent.main channel stats --channel-id ID
     python -m tg_agent.main channel refresh-types
     python -m tg_agent.main channel refresh-meta         # about, linked_chat_id
+    python -m tg_agent.main channel refresh-card         # все открытые метаданные: title, username, type, about, linked_chat_id, has_comments
     ```
 
 === "Web"
