@@ -51,6 +51,8 @@ async def test_startup_continues_after_pool_initialize_timeout(tmp_path, db, cap
         ai_search=ai_search,
         agent_manager=None,
         scheduler=scheduler,
+        # Chat-seeding publisher (#1757): startup reconcile stub (no-op).
+        seeding_publisher=SimpleNamespace(reconcile_on_startup=AsyncMock(return_value=0)),
     )
 
     with caplog.at_level("WARNING"):

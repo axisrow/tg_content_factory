@@ -40,8 +40,9 @@ _EMOJI_RE = re.compile(
 )
 
 #: Ссылки в посевах запрещены эпиком (#1751): spam-reportable — риск для
-#: аккаунтов сбора, которые тем же пулом и сеются.
-_LINK_RE = re.compile(r"https?://|www\.|t\.me/", re.IGNORECASE)
+#: аккаунтов сбора, которые тем же пулом и сеются. Публичное имя: rails-валидатор
+#: публикатора (#1757) переиспользует тот же паттерн.
+LINK_RE = re.compile(r"https?://|www\.|t\.me/", re.IGNORECASE)
 
 #: Токены для top_tokens (слова от 4 букв; латиница+кириллица).
 _TOKEN_RE = re.compile(r"[а-яёa-z]{4,}", re.IGNORECASE)
@@ -55,9 +56,10 @@ _STOPWORDS = frozenset({
 })
 
 #: Анти-паттерны эпика #1751: машинный пол паузы и минимальный зазор при
-#: смене аккаунта («два аккаунта не пишут подряд с малым зазором»).
+#: смене аккаунта («два аккаунта не пишут подряд с малым зазором»). Публичные:
+#: rails-валидатор публикатора (#1757) применяет тот же зазор к planned_at.
 _MIN_GAP_FLOOR_SECONDS = 5
-_CROSS_PERSONA_MIN_GAP_SECONDS = 20
+CROSS_PERSONA_MIN_GAP_SECONDS = 20
 
 _MAX_TEXT_LEN = 4096  # лимит Telegram на одно сообщение
 _PER_SENDER_TOP = 8
@@ -252,7 +254,7 @@ def compute_chat_statistics(
         first = text.strip()[:1]
         if first and first.isalpha() and first.islower():
             lowercase_starts += 1
-        if _LINK_RE.search(text):
+        if LINK_RE.search(text):
             links += 1
         tokens = _TOKEN_RE.findall(text)
         word_total += len(tokens)
@@ -344,7 +346,7 @@ def validate_scenario(
             violations.append(f"#{m.position}: пустой текст")
         elif len(text) > _MAX_TEXT_LEN:
             violations.append(f"#{m.position}: текст длиннее лимита Telegram ({len(text)} > {_MAX_TEXT_LEN})")
-        if _LINK_RE.search(text):
+        if LINK_RE.search(text):
             violations.append(f"#{m.position}: ссылки в посевах запрещены (spam-reportable) — убери URL")
         text_key = text.lower()
         if text_key in seen_texts:
@@ -367,11 +369,11 @@ def validate_scenario(
         if (
             prev is not None
             and m.persona != prev.persona
-            and m.delay_seconds < _CROSS_PERSONA_MIN_GAP_SECONDS
+            and m.delay_seconds < CROSS_PERSONA_MIN_GAP_SECONDS
         ):
             violations.append(
                 f"#{m.position}: смена персоны {prev.persona} → {m.persona} с зазором "
-                f"{m.delay_seconds}s (< {_CROSS_PERSONA_MIN_GAP_SECONDS}s) — признак координации"
+                f"{m.delay_seconds}s (< {CROSS_PERSONA_MIN_GAP_SECONDS}s) — признак координации"
             )
 
         cur_len = len(text)

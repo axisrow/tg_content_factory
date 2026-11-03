@@ -395,6 +395,21 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ),
     ("seeding", "list"): "list-only local seeding threads view; DB-only, no live Telegram (#1756)",
     ("seeding", "show"): "list-only local seeding thread view; DB-only, no live Telegram (#1756)",
+    ("seeding", "approve"): (
+        "local seeding status transitions draft→scheduled/approved; DB-only, no Telegram, "
+        "covered by offline CLI tests (#1757)"
+    ),
+    ("seeding", "schedule"): (
+        "local safety rails + status transitions + SEED_DUE task row; DB-only, no Telegram, "
+        "covered by offline CLI tests (#1757)"
+    ),
+    ("seeding", "cancel"): (
+        "local seeding status transitions to cancelled; DB-only, no Telegram, "
+        "covered by offline CLI tests (#1757)"
+    ),
+    ("seeding", "status"): (
+        "list-only local seeding publisher summary; DB-only, no live Telegram (#1757)"
+    ),
     ("test", "write"): "diagnostic aggregate with local DB writes",
     ("translate", "detect"): "local message backfill mutation",
     ("translate", "message"): "provider/network translation",

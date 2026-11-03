@@ -32,6 +32,10 @@ def _make_container(db: Database) -> MagicMock:
     container.photo_task_service.recover_running = AsyncMock(return_value=0)
     container.db.repos.generation_runs.reset_running_on_startup = AsyncMock(return_value=0)
     container.db.repos.dm_reply_drafts.reset_sending_on_startup = AsyncMock(return_value=0)
+    # Chat-seeding publisher (#1757): MagicMock-атрибут контейнера правдив,
+    # но его методы не awaitable — ставим явный AsyncMock, как соседям выше.
+    container.seeding_publisher = AsyncMock()
+    container.seeding_publisher.reconcile_on_startup = AsyncMock(return_value=0)
     return container
 
 

@@ -59,8 +59,11 @@ _MESSAGE_SOURCES: dict[SeedingMessageStatus, frozenset[SeedingMessageStatus]] = 
         # Перепланирование после неудачной отправки.
         SeedingMessageStatus.FAILED,
     }),
-    SeedingMessageStatus.SENT: frozenset({SeedingMessageStatus.SCHEDULED}),
-    SeedingMessageStatus.FAILED: frozenset({SeedingMessageStatus.SCHEDULED}),
+    # Claim публикатора (#1757): RPC в полёте; повторный due-прогон не может
+    # захватить строку повторно — она уже не в `scheduled`.
+    SeedingMessageStatus.SENDING: frozenset({SeedingMessageStatus.SCHEDULED}),
+    SeedingMessageStatus.SENT: frozenset({SeedingMessageStatus.SCHEDULED, SeedingMessageStatus.SENDING}),
+    SeedingMessageStatus.FAILED: frozenset({SeedingMessageStatus.SCHEDULED, SeedingMessageStatus.SENDING}),
     SeedingMessageStatus.CANCELLED: frozenset({
         SeedingMessageStatus.DRAFT,
         SeedingMessageStatus.APPROVED,
@@ -228,6 +231,83 @@ class SeedingRepository:
         )
         return (cur.rowcount or 0) > 0
 
+    async def approve_thread(self, thread_id: int) -> int | None:
+        """Атомарный апрув владельца (#1757): тред draft→scheduled + все draft-реплики → approved.
+
+        Один транзакционный блок: либо оба перехода, либо ни одного —
+        «наполовину апрувнутый» тред недопустим. ``None`` — тред не найден
+        или не в draft; иначе число переведённых реплик.
+        """
+        assert self._database is not None, (
+            "SeedingRepository.approve_thread requires a Database reference"
+        )
+        now_iso = datetime.now(timezone.utc).isoformat()
+        async with self._database.transaction() as conn:
+            cur = await conn.execute(
+                "UPDATE seeding_threads SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+                (
+                    SeedingThreadStatus.SCHEDULED.value,
+                    now_iso,
+                    thread_id,
+                    SeedingThreadStatus.DRAFT.value,
+                ),
+            )
+            if (cur.rowcount or 0) == 0:
+                return None
+            cur = await conn.execute(
+                "UPDATE seeding_messages SET status = ?, updated_at = ? "
+                "WHERE thread_id = ? AND status = ?",
+                (
+                    SeedingMessageStatus.APPROVED.value,
+                    now_iso,
+                    thread_id,
+                    SeedingMessageStatus.DRAFT.value,
+                ),
+            )
+            return cur.rowcount or 0
+
+    async def cancel_thread(self, thread_id: int) -> tuple[bool, int]:
+        """Отмена треда (#1757): тред → cancelled (из draft/scheduled/active),
+        реплики draft/approved/scheduled/failed → cancelled одним блоком.
+
+        Реплики в ``sending``/``sent`` не трогаются: отправка в полёте или уже
+        случилась — отменить факт нельзя. ``False`` — тред не найден или уже
+        терминален (done/cancelled).
+        """
+        assert self._database is not None, (
+            "SeedingRepository.cancel_thread requires a Database reference"
+        )
+        now_iso = datetime.now(timezone.utc).isoformat()
+        async with self._database.transaction() as conn:
+            cur = await conn.execute(
+                "UPDATE seeding_threads SET status = ?, updated_at = ? "
+                "WHERE id = ? AND status IN (?, ?, ?)",
+                (
+                    SeedingThreadStatus.CANCELLED.value,
+                    now_iso,
+                    thread_id,
+                    SeedingThreadStatus.DRAFT.value,
+                    SeedingThreadStatus.SCHEDULED.value,
+                    SeedingThreadStatus.ACTIVE.value,
+                ),
+            )
+            if (cur.rowcount or 0) == 0:
+                return False, 0
+            cur = await conn.execute(
+                "UPDATE seeding_messages SET status = ?, updated_at = ? "
+                "WHERE thread_id = ? AND status IN (?, ?, ?, ?)",
+                (
+                    SeedingMessageStatus.CANCELLED.value,
+                    now_iso,
+                    thread_id,
+                    SeedingMessageStatus.DRAFT.value,
+                    SeedingMessageStatus.APPROVED.value,
+                    SeedingMessageStatus.SCHEDULED.value,
+                    SeedingMessageStatus.FAILED.value,
+                ),
+            )
+            return True, cur.rowcount or 0
+
     # ---- messages ----------------------------------------------------------
 
     async def get_message(self, message_id: int) -> SeedingMessage | None:
@@ -313,6 +393,133 @@ class SeedingRepository:
             tuple(params),
         )
         return (cur.rowcount or 0) > 0
+
+    async def get_message_by_position(self, thread_id: int, position: int) -> SeedingMessage | None:
+        cur = await self._db.execute(
+            "SELECT * FROM seeding_messages WHERE thread_id = ? AND position = ?",
+            (thread_id, position),
+        )
+        row = await cur.fetchone()
+        return self._to_message(row) if row else None
+
+    async def claim_next_due_message(self, now: datetime) -> SeedingMessage | None:
+        """Атомарный claim самой ранней due-реплики (#1757): scheduled → sending.
+
+        Один транзакционный блок SELECT+UPDATE…WHERE status='scheduled': гонка
+        двух потребителей исключена — второй по тому же гарду получит следующую
+        строку или ``None``, повторная отправка невозможна. Реплика без
+        ``planned_at`` не берётся; порядок — ``planned_at`` ASC, id ASC
+        (диалог идёт по расписанию).
+        """
+        assert self._database is not None, (
+            "SeedingRepository.claim_next_due_message requires a Database reference"
+        )
+        now_iso = now.astimezone(timezone.utc).isoformat()
+        async with self._database.transaction() as conn:
+            cur = await conn.execute(
+                """
+                SELECT id FROM seeding_messages
+                WHERE status = ? AND planned_at IS NOT NULL AND planned_at <= ?
+                ORDER BY planned_at ASC, id ASC
+                LIMIT 1
+                """,
+                (SeedingMessageStatus.SCHEDULED.value, now_iso),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return None
+            cur = await conn.execute(
+                """
+                UPDATE seeding_messages
+                SET status = ?, updated_at = ?
+                WHERE id = ? AND status = ? AND planned_at IS NOT NULL AND planned_at <= ?
+                RETURNING *
+                """,
+                (
+                    SeedingMessageStatus.SENDING.value,
+                    now_iso,
+                    row["id"],
+                    SeedingMessageStatus.SCHEDULED.value,
+                    now_iso,
+                ),
+            )
+            claimed = await cur.fetchone()
+        return self._to_message(claimed) if claimed else None
+
+    async def schedule_thread_messages(self, thread_id: int) -> int:
+        """approved → scheduled для всех реплик треда с ``planned_at``; вернуть число."""
+        assert self._database is not None, (
+            "SeedingRepository.schedule_thread_messages requires a Database reference"
+        )
+        cur = await self._database.execute_write(
+            "UPDATE seeding_messages SET status = ?, updated_at = ? "
+            "WHERE thread_id = ? AND status = ? AND planned_at IS NOT NULL",
+            (
+                SeedingMessageStatus.SCHEDULED.value,
+                datetime.now(timezone.utc).isoformat(),
+                thread_id,
+                SeedingMessageStatus.APPROVED.value,
+            ),
+        )
+        return cur.rowcount or 0
+
+    async def count_account_messages_by_day(
+        self, phone: str, *, exclude_thread_id: int | None = None
+    ) -> dict[str, int]:
+        """Реплики аккаунта по UTC-дням (status in approved/scheduled/sent).
+
+        День = первые 10 символов ISO ``planned_at``/``sent_at`` (UTC при записи).
+        ``exclude_thread_id`` исключает тред планируемого сценария — валидатор
+        рельсов прибавляет его вклад сам.
+        """
+        sql = (
+            "SELECT COALESCE(substr(planned_at, 1, 10), substr(sent_at, 1, 10)) AS day, "
+            "COUNT(*) AS n FROM seeding_messages "
+            "WHERE account_phone = ? AND COALESCE(planned_at, sent_at) IS NOT NULL AND status IN (?, ?, ?)"
+        )
+        params: list[object] = [
+            phone,
+            SeedingMessageStatus.APPROVED.value,
+            SeedingMessageStatus.SCHEDULED.value,
+            SeedingMessageStatus.SENT.value,
+        ]
+        if exclude_thread_id is not None:
+            sql += " AND thread_id != ?"
+            params.append(exclude_thread_id)
+        sql += " GROUP BY day"
+        cur = await self._db.execute(sql, tuple(params))
+        return {row["day"]: int(row["n"]) for row in await cur.fetchall()}
+
+    async def fail_stuck_sending(self, error_text: str) -> int:
+        """reconcile старта воркера (#1757): все ``sending`` → ``failed``.
+
+        Воркер умер с RPC в полёте: исход неизвестен, автоматическая повторная
+        отправка могла бы задублировать сообщение — реплика честно падает с
+        ``error_text``, владелец сверяет чат и перепланирует осознанно.
+        """
+        assert self._database is not None, (
+            "SeedingRepository.fail_stuck_sending requires a Database reference"
+        )
+        now_iso = datetime.now(timezone.utc).isoformat()
+        cur = await self._database.execute_write(
+            "UPDATE seeding_messages SET status = ?, updated_at = ?, error_text = ? WHERE status = ?",
+            (
+                SeedingMessageStatus.FAILED.value,
+                now_iso,
+                error_text,
+                SeedingMessageStatus.SENDING.value,
+            ),
+        )
+        return cur.rowcount or 0
+
+    async def earliest_scheduled_planned_at(self) -> datetime | None:
+        """Ближайший ``planned_at`` среди scheduled (глобально) — для цепочки SEED_DUE."""
+        cur = await self._db.execute(
+            "SELECT MIN(planned_at) AS next_at FROM seeding_messages WHERE status = ?",
+            (SeedingMessageStatus.SCHEDULED.value,),
+        )
+        row = await cur.fetchone()
+        return parse_datetime(row["next_at"]) if row and row["next_at"] else None
 
     # ---- агрегаты ----------------------------------------------------------
 

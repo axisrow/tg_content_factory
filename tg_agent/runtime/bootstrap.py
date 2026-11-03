@@ -39,6 +39,7 @@ from tg_agent.services.photo_auto_upload_service import PhotoAutoUploadService
 from tg_agent.services.photo_publish_service import PhotoPublishService
 from tg_agent.services.photo_task_service import PhotoTaskService
 from tg_agent.services.ping_monitor_service import PingMonitorService
+from tg_agent.services.seeding_publisher import SeedingPublisherService
 from tg_agent.services.task_enqueuer import TaskEnqueuer
 from tg_agent.services.telegram_actions import TelegramActionService
 from tg_agent.services.telegram_command_dispatcher import TelegramCommandDispatcher
@@ -291,6 +292,7 @@ async def build_runtime_container(
     dm_catchup = None
     agent_manager = None
     ping_monitor_service: PingMonitorService | None = None
+    seeding_publisher: SeedingPublisherService | None = None
     live_runtime_pause_gate = LiveRuntimePauseGate() if runtime_mode == "worker" else None
     collector: RuntimeCollector
     if runtime_mode == "worker":
@@ -298,10 +300,14 @@ async def build_runtime_container(
         # Dormant-DM pings (#1415): live history reads + sends through the same
         # TelegramActionService path as `dialogs read/send` — worker-only,
         # web snapshots never open Telegram connections.
+        live_actions = TelegramActionService(live_pool)
         ping_monitor_service = PingMonitorService(
             db.repos.ping_monitors,
-            TelegramActionService(live_pool),
+            live_actions,
         )
+        # Chat-seeding publisher (#1757): SEED_DUE sends through the same
+        # TelegramActionService path (`dialogs send`) — worker-only.
+        seeding_publisher = SeedingPublisherService(db, live_actions)
         notifier = Notifier(
             notification_target_service, config.notifications.admin_chat_id, notification_bundle
         )
@@ -352,6 +358,7 @@ async def build_runtime_container(
             photo_task_service=photo_task_service,
             photo_auto_upload_service=photo_auto_upload_service,
             ping_monitor_service=ping_monitor_service,
+            seeding_publisher=seeding_publisher,
             search_engine=search_engine,
             pipeline_bundle=pipeline_bundle,
             db=db,
@@ -448,6 +455,7 @@ async def build_runtime_container(
         dm_listener=dm_listener,
         dm_catchup=dm_catchup,
         ping_monitor_service=ping_monitor_service,
+        seeding_publisher=seeding_publisher,
         search_engine=search_engine,
         ai_search=ai_search,
         scheduler=scheduler,
@@ -490,6 +498,13 @@ async def _recover_startup_state(
             logger.warning(
                 "Reset %d stuck telegram_commands from RUNNING to PENDING on startup", tc_recovered
             )
+        if container.seeding_publisher is not None:
+            seed_stuck = await container.seeding_publisher.reconcile_on_startup()
+            if seed_stuck:
+                logger.warning(
+                    "Seeding reconcile: %d replicas stuck in 'sending' failed on startup",
+                    seed_stuck,
+                )
     logger.info("startup: recovery done (%.1fs)", time.monotonic() - t_start)
 
 

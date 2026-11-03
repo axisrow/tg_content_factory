@@ -278,7 +278,7 @@ explicitly if the journal row was already pruned; creating a draft marks the
 journal row processed. Approve after send is a no-op — a delivered draft
 cannot be re-queued.
 
-## seeding — chat seeding composer (stats, validation, drafts) (#1756)
+## seeding — chat seeding composer + publisher (epic #1751; composer #1756, publisher #1757)
 
 ```
 seeding stats <chat-id> [--days N]
@@ -287,6 +287,10 @@ seeding thread-create --chat <chat-id> --personas personas.json [--ref REF]
 seeding add <scenario.json> --thread <thread-id> --start-at ISO [--days N]
 seeding list [--status draft|scheduled|active|done|cancelled] [--limit N]
 seeding show <thread-id>
+seeding approve <thread-id>
+seeding schedule <thread-id> [--days N]
+seeding cancel <thread-id>
+seeding status <thread-id>
 ```
 
 Composer half of the chat-seeding engine (epic #1751): `stats` returns the
@@ -301,9 +305,28 @@ machine-like pauses, no messages landing in `quiet_hours`).
 «name → account_phone» in `personas_json`); `add` records the scenario as
 `seeding_messages` rows with `status=draft` and `planned_at` = `--start-at`
 + cumulative `delay_seconds` (draft schedule visible immediately).
-Scenario writes are accepted only while the thread is in `draft` —
-approve/schedule/cancel belong to the publisher workflow; every publish
-run needs the owner's explicit consent (target chat + content).
+Scenario writes are accepted only while the thread is in `draft`.
+
+Publisher half (#1757), each publish run gated on explicit owner consent:
+
+- `seeding approve <thread-id>` — the owner's YES: thread `draft→scheduled`,
+  messages `draft→approved` (atomic). Not sending yet.
+- `seeding schedule <thread-id>` — safety rails, then messages
+  `approved→scheduled` and a SEED_DUE worker task on the earliest `planned_at`.
+  Rails REJECT the whole scheduling on: any link in any text (spam-reportable),
+  a gap < 20s between consecutive messages of different accounts, any message
+  planned more than 5 minutes in the past (an overdue prefix would fire as one
+  burst — the machine pattern the rails exist to prevent; re-record the
+  scenario with a future `--start-at`), a per-account daily total > 12 replicas
+  (UTC day, all threads), or any message landing in the chat's learned quiet
+  hours. There is NO scheduler automation: SEED_DUE is created only by `seeding schedule`, by the resume chain of an already
+  approved schedule, or by worker-startup reconcile (stuck `sending` replicas
+  fail with an error instead of re-sending — a restart mid-send never
+  duplicates; sent replicas are idempotent by `tg_message_id`).
+- `seeding cancel <thread-id>` — thread → `cancelled`, unsent messages →
+  `cancelled` (in-flight `sending`/already `sent` untouched).
+- `seeding status <thread-id>` — message status counts, due-now count, next
+  planned send, whether a SEED_DUE task is active.
 
 ## ping — friendly pings for dormant DM chats (#1415)
 

@@ -1,15 +1,18 @@
-"""``seeding`` CLI group — композер посевных диалогов (#1756, эпик #1751).
+"""``seeding`` CLI group — композер и публикатор посевных диалогов (#1756/#1757, эпик #1751).
 
-Детерминированная часть: ``seeding stats`` (профиль реального чата — вход
-промпта композера), ``seeding validate`` (валидация сценария по выученному
+Композер: ``seeding stats`` (профиль реального чата — вход промпта
+композера), ``seeding validate`` (валидация сценария по выученному
 распределению) и запись черновиков (``thread-create``/``add``/``list``/
 ``show``) в таблицы ``seeding_threads``/``seeding_messages`` (#1755):
 сценарий ложится строками ``status=draft`` с ``planned_at`` из кумулятива
 задержек — черновое расписание видно сразу.
 
-Апрув/планирование/отмена — жизненный цикл публикатора (отдельный
-sub-issue); CLI пишет только в ``draft``. LLM = Claude Code CLI поверх
-этих команд (skills/tg-agent/seeding.md, эталон — digest-воркфлоу).
+Публикатор (#1757): ``approve`` (явное «да» владельца) → ``schedule``
+(рельсы безопасности + постановка в расписание + SEED_DUE) → воркер
+рассылает due-реплики через UnifiedDispatcher; ``cancel``/``status`` —
+управление и наблюдение. Автоматизации планировщика НЕТ (manual-first до
+2–3 чистых прогонов). LLM = Claude Code CLI поверх этих команд
+(skills/tg-agent/seeding.md, эталон — digest-воркфлоу).
 """
 
 from __future__ import annotations
@@ -25,7 +28,13 @@ from pydantic import TypeAdapter, ValidationError
 
 from tg_agent.cli import runtime
 from tg_agent.cli.commands.common import apply_startup, cli_error, run_async
-from tg_agent.models import SeedingMessage, SeedingThread, SeedingThreadStatus
+from tg_agent.models import (
+    CollectionTaskType,
+    SeedingMessage,
+    SeedingMessageStatus,
+    SeedingThread,
+    SeedingThreadStatus,
+)
 from tg_agent.services.seeding_composer import (
     ChatStatistics,
     SeedingPersona,
@@ -34,6 +43,7 @@ from tg_agent.services.seeding_composer import (
     derive_planned_schedule,
     validate_scenario,
 )
+from tg_agent.services.seeding_publisher import validate_schedule_rails
 
 
 def _parse_start_at(value: str) -> datetime:
@@ -293,8 +303,139 @@ async def show_impl(config_path: str, *, thread_id: int) -> None:
 
 seeding_app = typer.Typer(
     no_args_is_help=True,
-    help="Chat seeding composer: real-chat stats, scenario validation, draft threads (#1756)",
+    help="Chat seeding: composer (stats/validate/drafts, #1756) + publisher (approve/schedule/cancel, #1757)",
 )
+
+
+# --------------------------------------------------------------------------- #
+# Публикатор (#1757): approve / schedule / cancel / status
+# --------------------------------------------------------------------------- #
+
+
+async def approve_impl(config_path: str, *, thread_id: int) -> int:
+    """Явное «да» владельца: тред draft→scheduled, реплики draft→approved.
+
+    Атомарно (репозиторий): наполовину апрувнутого треда не бывает. Отправка
+    ещё НЕ включается — расписание ставит отдельный ``schedule``.
+    """
+    _, db = await runtime.init_db(config_path)
+    try:
+        thread = await db.repos.seeding.get_thread(thread_id)
+        if thread is None:
+            cli_error(f"Тред #{thread_id} не найден.")
+        if thread.status is not SeedingThreadStatus.DRAFT:
+            cli_error(
+                f"Тред #{thread_id} в статусе '{thread.status.value}' — approve "
+                "применим только к draft."
+            )
+        approved = await db.repos.seeding.approve_thread(thread_id)
+        if approved is None:
+            cli_error(
+                f"Тред #{thread_id} не в draft — approve не применён (гонка или уже апрувнут)."
+            )
+        if approved == 0:
+            cli_error(
+                f"Тред #{thread_id} без реплик — нечего утверждать "
+                "(запиши сценарий: seeding add)."
+            )
+    finally:
+        await db.close()
+    print(f"Тред #{thread_id} апрувнут: {approved} реплик approved, тред scheduled.")
+    print("Дальше: явное расписание владельца — seeding schedule.")
+    return approved
+
+
+async def schedule_impl(config_path: str, *, thread_id: int, days: int) -> int:
+    """Рельсы безопасности + постановка в расписание + enqueue SEED_DUE.
+
+    Рельсы (publishing-rails #1757): ссылки запрещены, минимальный зазор
+    между аккаунтами, дневной лимит на аккаунт, тихие часы чата. Нарушение —
+    отклонение всей постановки (CLI не надеется на валидацию композера).
+    """
+    _, db = await runtime.init_db(config_path)
+    try:
+        violations = await validate_schedule_rails(db, thread_id, days=days)
+        if violations:
+            _violations_error(violations)
+        scheduled = await db.repos.seeding.schedule_thread_messages(thread_id)
+        if scheduled == 0:
+            cli_error(
+                f"Тред #{thread_id}: ни одной реплики не поставлено в расписание "
+                "(approved без planned_at — расписание строит seeding add)."
+            )
+        next_at = await db.repos.seeding.earliest_scheduled_planned_at()
+        task_id = await db.repos.tasks.create_generic_task_if_inactive(
+            CollectionTaskType.SEED_DUE,
+            title="Отправка посевных реплик (SEED_DUE)",
+            run_after=next_at,
+        )
+    finally:
+        await db.close()
+    when = next_at.strftime("%Y-%m-%d %H:%M UTC") if next_at else "-"
+    print(f"Запланировано {scheduled} реплик; первая отправка ~ {when}.")
+    if task_id is None:
+        print("SEED_DUE-задача уже активна — воркер подхватит расписание.")
+    else:
+        print(f"SEED_DUE-задача #{task_id} поставлена (воркер отправит по planned_at).")
+    return scheduled
+
+
+async def cancel_impl(config_path: str, *, thread_id: int) -> int:
+    """Отмена треда: тред → cancelled, не-отправленные реплики → cancelled."""
+    _, db = await runtime.init_db(config_path)
+    try:
+        thread = await db.repos.seeding.get_thread(thread_id)
+        if thread is None:
+            cli_error(f"Тред #{thread_id} не найден.")
+        cancelled_thread, cancelled_messages = await db.repos.seeding.cancel_thread(thread_id)
+    finally:
+        await db.close()
+    if not cancelled_thread:
+        cli_error(
+            f"Тред #{thread_id} в статусе '{thread.status.value}' — терминальный, отмена невозможна."
+        )
+    print(f"Тред #{thread_id} отменён; реплик отменено: {cancelled_messages}.")
+    print("Реплики в 'sending'/'sent' не тронуты: полёт или уже свершившийся факт.")
+    return cancelled_messages
+
+
+async def status_impl(config_path: str, *, thread_id: int) -> None:
+    """Сводка публикатора по треду: статусы реплик, due/next, SEED_DUE-задача."""
+    _, db = await runtime.init_db(config_path)
+    try:
+        thread = await db.repos.seeding.get_thread(thread_id)
+        if thread is None:
+            cli_error(f"Тред #{thread_id} не найден.")
+        messages = await db.repos.seeding.list_messages_for_thread(thread_id)
+        progress = await db.repos.seeding.get_thread_progress(thread_id)
+        counts: dict[str, int] = {}
+        for m in messages:
+            counts[m.status.value] = counts.get(m.status.value, 0) + 1
+        now = datetime.now(timezone.utc)
+        due = sum(
+            1
+            for m in messages
+            if m.status is SeedingMessageStatus.SCHEDULED
+            and m.planned_at is not None
+            and m.planned_at.astimezone(timezone.utc) <= now
+        )
+        next_planned = min(
+            (
+                m.planned_at.astimezone(timezone.utc)
+                for m in messages
+                if m.status is SeedingMessageStatus.SCHEDULED and m.planned_at is not None
+            ),
+            default=None,
+        )
+        seed_task_active = await db.repos.tasks.has_active_task(CollectionTaskType.SEED_DUE)
+    finally:
+        await db.close()
+    parts = ", ".join(f"{name}: {count}" for name, count in sorted(counts.items())) or "-"
+    print(f"Тред #{thread.id}: chat={thread.chat_channel_id} status={thread.status.value}")
+    print(f"  прогресс: {progress.sent}/{progress.total} sent, {progress.failed} failed")
+    print(f"  статусы реплик: {parts}")
+    print(f"  due сейчас: {due}; следующая отправка: {next_planned or '-'}")
+    print(f"  SEED_DUE-задача: {'активна' if seed_task_active else 'нет'}")
 
 
 @seeding_app.command("stats")
@@ -387,3 +528,44 @@ def show_command(
     """Show a seeding thread with its scheduled draft messages."""
     apply_startup(ctx)
     run_async(show_impl(ctx.obj.config, thread_id=thread_id))
+
+
+@seeding_app.command("approve")
+def approve_command(
+    ctx: typer.Context,
+    thread_id: int = typer.Argument(..., metavar="thread-id"),
+) -> None:
+    """Owner's explicit YES: thread draft→scheduled, messages draft→approved (no sending yet)."""
+    apply_startup(ctx)
+    run_async(approve_impl(ctx.obj.config, thread_id=thread_id))
+
+
+@seeding_app.command("schedule")
+def schedule_command(
+    ctx: typer.Context,
+    thread_id: int = typer.Argument(..., metavar="thread-id"),
+    days: int = typer.Option(14, "--days", min=1, help="Stats window for the quiet-hours rail"),
+) -> None:
+    """Safety rails + put the approved scenario on the schedule (enqueues SEED_DUE)."""
+    apply_startup(ctx)
+    run_async(schedule_impl(ctx.obj.config, thread_id=thread_id, days=days))
+
+
+@seeding_app.command("cancel")
+def cancel_command(
+    ctx: typer.Context,
+    thread_id: int = typer.Argument(..., metavar="thread-id"),
+) -> None:
+    """Cancel a thread: unsent messages → cancelled (sending/sent untouched)."""
+    apply_startup(ctx)
+    run_async(cancel_impl(ctx.obj.config, thread_id=thread_id))
+
+
+@seeding_app.command("status")
+def status_command(
+    ctx: typer.Context,
+    thread_id: int = typer.Argument(..., metavar="thread-id"),
+) -> None:
+    """Publisher summary: message statuses, due-now count, next send, SEED_DUE task."""
+    apply_startup(ctx)
+    run_async(status_impl(ctx.obj.config, thread_id=thread_id))

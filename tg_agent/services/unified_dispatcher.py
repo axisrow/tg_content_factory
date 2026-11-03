@@ -17,6 +17,7 @@ from tg_agent.services.task_handlers import (
     PhotoTaskHandler,
     PingTaskHandler,
     PipelineTaskHandler,
+    SeedingTaskHandler,
     StatsTaskHandler,
     TaskHandlerContext,
     TranslationTaskHandler,
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     from tg_agent.services.photo_auto_upload_service import PhotoAutoUploadService
     from tg_agent.services.photo_task_service import PhotoTaskService
     from tg_agent.services.ping_monitor_service import PingMonitorService
+    from tg_agent.services.seeding_publisher import SeedingPublisherService
     from tg_agent.telegram.client_pool import ClientPool
     from tg_agent.telegram.notifier import Notifier
 
@@ -48,6 +50,7 @@ _HANDLER_CLASSES = (
     ContentTaskHandler,
     TranslationTaskHandler,
     ExportTaskHandler,
+    SeedingTaskHandler,
 )
 
 HANDLED_TYPES = [
@@ -89,6 +92,7 @@ class UnifiedDispatcher:
         photo_task_service: PhotoTaskService | None = None,
         photo_auto_upload_service: PhotoAutoUploadService | None = None,
         ping_monitor_service: PingMonitorService | None = None,
+        seeding_publisher: SeedingPublisherService | None = None,
         poll_interval_sec: float = 5.0,
         channel_timeout_sec: float = 120.0,
         search_engine: "SearchEngine" | None = None,
@@ -107,6 +111,7 @@ class UnifiedDispatcher:
         self._photo_task_service = photo_task_service
         self._photo_auto_upload_service = photo_auto_upload_service
         self._ping_monitor_service = ping_monitor_service
+        self._seeding_publisher = seeding_publisher
         self._poll_interval_sec = poll_interval_sec
         self._channel_timeout_sec = channel_timeout_sec
         self._search_engine = search_engine
@@ -130,6 +135,7 @@ class UnifiedDispatcher:
             photo_task_service=self._photo_task_service,
             photo_auto_upload_service=self._photo_auto_upload_service,
             ping_monitor_service=self._ping_monitor_service,
+            seeding_publisher=self._seeding_publisher,
             poll_interval_sec=self._poll_interval_sec,
             channel_timeout_sec=self._channel_timeout_sec,
             search_engine=self._search_engine,
@@ -274,6 +280,7 @@ class UnifiedDispatcher:
                 CollectionTaskType.PHOTO_DUE: self._handle_photo_due,
                 CollectionTaskType.PHOTO_AUTO: self._handle_photo_auto,
                 CollectionTaskType.PING_DUE: self._handle_ping_due,
+                CollectionTaskType.SEED_DUE: self._handle_seed_due,
                 CollectionTaskType.PIPELINE_RUN: self._handle_pipeline_run,
                 CollectionTaskType.CONTENT_GENERATE: self._handle_content_generate,
                 CollectionTaskType.CONTENT_PUBLISH: self._handle_content_publish,
@@ -311,6 +318,9 @@ class UnifiedDispatcher:
 
     async def _handle_ping_due(self, task: CollectionTask) -> None:
         await self._handler(PingTaskHandler).handle(task)
+
+    async def _handle_seed_due(self, task: CollectionTask) -> None:
+        await self._handler(SeedingTaskHandler).handle(task)
 
     async def _handle_pipeline_run(self, task: CollectionTask) -> None:
         await self._handler(PipelineTaskHandler).handle_pipeline_run(task)

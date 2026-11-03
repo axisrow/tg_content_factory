@@ -54,7 +54,7 @@ Task → group (details in [reference.md](reference.md)):
 | Task | Group |
 |------|-------|
 | AI news digest (structured, schema-first) | [digest.md](digest.md) — window search → schema JSON → format per request → publish on approval |
-| Chat seeding composer: compose dialogues for own chats (stats → scenario → validate → drafts) | [seeding.md](seeding.md) — learned real-chat profile is the prompt input; drafts only, publish needs owner consent |
+| Chat seeding: compose dialogues for own chats, then publish on explicit approval | [seeding.md](seeding.md) — learned real-chat profile is the prompt input; drafts (`stats → scenario → validate → add`), then `seeding approve` + `seeding schedule` per run — each publish run needs the owner's explicit consent |
 | Per-channel posting style specs (local-only, never committed) | `style init|list|show --channel <id>` — voice specs live in `~/.tg-agent/designs/`; bootstrap a missing one, read it before rendering for a channel |
 | Publish an article as a telegra.ph page (long-form behind a TG post) | `telegraph login --short-name N` once (stores the account token in settings), then `telegraph create --title "..." --file article.md [--format json]` — prints the page URL to pair with `dialogs send` |
 | Channel discovery by keywords (premium search) | [discovery.md](discovery.md) — keyword sweep → candidates short-list → toggle on explicit approval |
