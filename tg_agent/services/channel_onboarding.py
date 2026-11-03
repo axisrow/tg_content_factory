@@ -31,12 +31,14 @@ def clean_channel_meta(meta: dict | None) -> dict:
     }
 
 
-async def fetch_channel_meta(pool: Any, channel_id: int, channel_type: str | None) -> dict | None:
-    fetcher = getattr(pool, "fetch_channel_meta", None)
+async def fetch_channel_meta(
+    pool: Any, channel_id: int, channel_type: str | None, **kwargs: Any
+) -> dict | None:
+    fetcher: Any = getattr(pool, "fetch_channel_meta", None)
     if not callable(fetcher):
         return None
     try:
-        return await fetcher(channel_id, channel_type)
+        return await fetcher(channel_id, channel_type, **kwargs)
     except Exception as exc:
         logger.warning("Failed to fetch channel metadata for %s: %s", channel_id, exc, exc_info=True)
         return None

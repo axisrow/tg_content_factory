@@ -162,12 +162,12 @@ class GatewayPool:
                                              peer_type="chat" if channel_type == "group" else "channel",
                                              statistics=statistics, topics=topics), f"inspect:{uuid4()}")
 
-    async def fetch_channel_meta(self, channel_id, channel_type=None):
-        return await self.inspect_peer(channel_id, channel_type=channel_type)
+    async def fetch_channel_meta(self, channel_id, channel_type=None, phone=None):
+        return await self.inspect_peer(channel_id, channel_type=channel_type, phone=phone)
 
-    async def resolve_channel(self, identifier, **kwargs):
+    async def resolve_channel(self, identifier, *, phone=None, channel_type=None, **kwargs):
         peer = int(identifier) if str(identifier).lstrip("-").isdigit() else identifier
-        return await self.inspect_peer(peer)
+        return await self.inspect_peer(peer, channel_type=channel_type, phone=phone)
 
     async def resolve_any_entity(self, identifier, phone=None):
         peer = int(identifier) if str(identifier).lstrip("-").isdigit() else identifier

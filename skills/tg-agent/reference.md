@@ -80,7 +80,10 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
 
 - `channel refresh-card <id|@username>` / `channel refresh-card --all` — refresh ALL open
   channel metadata from Telegram by the stable numeric ID: title, username, channel type,
-  about, linked chat, comments flag (+ created_at backfill when empty). A confirmed absence
+  about, linked chat, comments flag (+ created_at backfill when empty). Legacy basic groups
+  resolve as PeerChat via the stored type; on the gateway path each channel is routed to its
+  preferred (collecting) account, not the project primary. Confirmed fields are written in
+  one atomic statement. A confirmed absence
   is written (dropped @username → NULL); unavailable/partial answers NEVER erase stored
   values (SKIP/partial, row untouched). Operator settings (active/filtered/approval) are
   preserved. Per-channel result + Updated/Skipped/Failed counters. Refused while the daemon

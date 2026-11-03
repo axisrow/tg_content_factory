@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import aiosqlite
 
@@ -939,6 +939,53 @@ class ChannelsRepository:
         await self._database.execute_write(
             "UPDATE channels SET about = ?, linked_chat_id = ?, has_comments = ? WHERE channel_id = ?",
             (about, linked_chat_id, int(has_comments), channel_id),
+        )
+
+    async def update_channel_card(
+        self,
+        channel_id: int,
+        *,
+        username: str | None,
+        title: str | None,
+        channel_type: str | None,
+        created_at: Any = None,
+        about: str | None = None,
+        linked_chat_id: int | None = None,
+        has_comments: bool = False,
+        meta_present: bool = False,
+    ) -> None:
+        """Атомарно записать подтверждённую карточку канала (#1764, #1765 review).
+
+        Один ``execute_write`` — либо все подтверждённые поля применяются, либо
+        ничего: сбой записи не оставляет частичную карточку, которую команда
+        могла бы ошибочно отчитать как ``row untouched``. ``username``/``title``
+        пишутся как есть (None = подтверждённое отсутствие);
+        ``channel_type`` сохраняется при NULL-входе (COALESCE); ``created_at``
+        только бэкфиллится (COALESCE по столбцу); ``about``/``linked_chat_id``/
+        ``has_comments`` пишутся только при ``meta_present`` (получена полная
+        часть карточки), иначе хранятся значения остаются нетронутыми.
+        """
+        assert self._database is not None, (
+            "ChannelsRepository.update_channel_card requires a Database reference"
+        )
+        iso_created = (
+            created_at.isoformat() if hasattr(created_at, "isoformat") else created_at
+        )
+        sets = [
+            "username = ?",
+            "username_state = 'known'",
+            "title = ?",
+            "channel_type = COALESCE(?, channel_type)",
+            "created_at = COALESCE(created_at, ?)",
+        ]
+        params: list = [username, title, channel_type, iso_created]
+        if meta_present:
+            sets.extend(["about = ?", "linked_chat_id = ?", "has_comments = ?"])
+            params.extend([about, linked_chat_id, int(has_comments)])
+        params.append(channel_id)
+        await self._database.execute_write(
+            f"UPDATE channels SET {', '.join(sets)} WHERE channel_id = ?",
+            tuple(params),
         )
 
     async def update_channel_preferred_phone(

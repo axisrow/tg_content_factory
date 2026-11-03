@@ -1,23 +1,31 @@
 """`channel refresh-card` — refresh all open channel metadata from Telegram (#1764).
 
-Integration tests over the real :memory: DB with fake pools. Both Telegram
-access paths are covered: the direct ClientPool contract (``resolve_channel`` +
-``fetch_channel_meta``) and the GatewayPool contract (both delegating to
-``inspect_peer`` and returning the full card dict).
+Integration tests over the real :memory: DB. Pool-contract coverage follows the
+#1765 review: the direct ClientPool contract is exercised through a real
+ClientPool (``real_pool_harness_factory``) proving the group→PeerChat peer
+rule, and the GatewayPool contract through a real GatewayPool with a stub HTTP
+client proving preferred-account routing and the group peer_type. CLI-level
+fakes cover the command flow over both contracts.
 """
 
 from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from uuid import UUID, uuid4
 
 import pytest
 import typer
+from telethon.tl.types import PeerChannel, PeerChat
 
+from tests.helpers import FakeCliTelethonClient
 from tg_agent.cli.commands.channel import refresh_card_impl
 from tg_agent.cli.commands.messages import messages_read_impl
 from tg_agent.config import AppConfig
+from tg_agent.gateway.pool import GatewayPool
+from tg_agent.gateway.protocol import InspectPeer
 from tg_agent.models import Channel, Message
 
 
@@ -27,14 +35,22 @@ def _reopen(db):
         asyncio.run(db.initialize())
 
 
-def _add_stale_channel(db, *, channel_id: int, title: str, username: str | None) -> None:
+def _add_stale_channel(
+    db,
+    *,
+    channel_id: int,
+    title: str,
+    username: str | None,
+    channel_type: str = "channel",
+) -> None:
+    _reopen(db)
     asyncio.run(
         db.add_channel(
             Channel(
                 channel_id=channel_id,
                 title=title,
                 username=username,
-                channel_type="channel",
+                channel_type=channel_type,
                 about="old about",
                 linked_chat_id=None,
                 has_comments=False,
@@ -44,6 +60,7 @@ def _add_stale_channel(db, *, channel_id: int, title: str, username: str | None)
 
 
 def _seed_messages(db, *, channel_id: int, n: int = 2) -> None:
+    _reopen(db)
     msgs = [
         Message(
             channel_id=channel_id,
@@ -69,17 +86,17 @@ class FakeDirectPool:
     def __init__(self, resolve_by_id, meta_by_id):
         self._resolve_by_id = resolve_by_id
         self._meta_by_id = meta_by_id
-        self.resolve_calls: list[str] = []
+        self.resolve_calls: list[tuple[str, dict]] = []
         self.meta_calls: list[tuple[int, str | None]] = []
 
     async def resolve_channel(self, identifier, **kwargs):
-        self.resolve_calls.append(str(identifier))
+        self.resolve_calls.append((str(identifier), kwargs))
         result = self._resolve_by_id[int(identifier)]
         if isinstance(result, Exception):
             raise result
         return result
 
-    async def fetch_channel_meta(self, channel_id, channel_type=None):
+    async def fetch_channel_meta(self, channel_id, channel_type=None, **kwargs):
         self.meta_calls.append((channel_id, channel_type))
         result = self._meta_by_id[channel_id]
         if isinstance(result, Exception):
@@ -90,14 +107,51 @@ class FakeDirectPool:
         pass
 
 
-class FakeGatewayPool(FakeDirectPool):
-    """GatewayPool contract: both calls delegate to inspect_peer and return the
-    full card dict (title/username/type/about/linked/comments/created_at)."""
+class StubGatewayClient:
+    """Captures submitted InspectPeer operations; replays one fixed receipt."""
 
-    def __init__(self, cards_by_id):
-        # resolve_channel ignores kwargs and returns the full inspect_peer card;
-        # fetch_channel_meta returns the same full card (about/linked/comments keys).
-        super().__init__(dict(cards_by_id), dict(cards_by_id))
+    def __init__(self, receipt: dict):
+        self.receipt = receipt
+        self.submitted: list = []
+
+    async def submit(self, request, operation):
+        self.submitted.append(operation)
+
+    async def wait(self, request, timeout=None):
+        return self.receipt
+
+    async def close(self):
+        pass
+
+
+def _make_gateway_pool(db, receipt: dict) -> tuple[GatewayPool, StubGatewayClient]:
+    """Real GatewayPool over a stub HTTP client; two shared project accounts.
+
+    Account rows mirror the gateway status JSON payload (id is a string).
+    """
+    pool = GatewayPool(AppConfig(), db, client=StubGatewayClient(receipt))
+    primary = {"id": str(uuid4()), "phone": "+70000000001", "active": True,
+               "flood_until": 0.0, "is_primary": True}
+    owner = {"id": str(uuid4()), "phone": "+70000000002", "active": True,
+             "flood_until": 0.0, "is_primary": False}
+    pool.clients = {primary["phone"]: primary, owner["phone"]: owner}
+    asyncio.run(pool.outbox.initialize())
+    stub = pool.client
+    assert isinstance(stub, StubGatewayClient)
+    return pool, stub
+
+
+_GATEWAY_CARD = {
+    "channel_id": 821,
+    "title": "GW Title",
+    "username": "gwname",
+    "channel_type": "channel",
+    "deactivate": False,
+    "about": "gw about",
+    "linked_chat_id": 999,
+    "has_comments": True,
+    "created_at": "2020-01-01T00:00:00+00:00",
+}
 
 
 def _run_refresh_card(db, pool, *, identifier=None, all_channels=False):
@@ -161,8 +215,10 @@ def test_refresh_card_updates_stale_fields_and_messages_follow_new_username(cli_
     )
     _run_refresh_card(db, pool, identifier="700")
 
-    # Telegram side was queried by the STABLE numeric id, never the stale username.
-    assert pool.resolve_calls == ["700"]
+    # Telegram side was queried by the STABLE numeric id with the stored type
+    # hint, never the stale username.
+    assert pool.resolve_calls[0][0] == "700"
+    assert pool.resolve_calls[0][1]["channel_type"] == "channel"
     assert pool.meta_calls == [(700, "channel")]
 
     ch = _get_channel(db, 700)
@@ -211,6 +267,172 @@ def test_refresh_card_preserves_user_settings(cli_env, capsys):
     assert fresh.is_filtered is True  # operator decision preserved
     assert fresh.filtered_origin == "human"
     assert "OK" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Legacy basic groups: known channel_type must reach the pool so the entity is
+# resolved as PeerChat, not PeerChannel (#1765 review point 1)
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_card_group_channel_passes_type_hint(cli_env, capsys):
+    db = cli_env
+    _add_stale_channel(db, channel_id=-850, title="Legacy Group", username=None,
+                       channel_type="group")
+
+    def _card(cid: int) -> dict:
+        return {
+            "channel_id": cid,
+            "title": "Renamed Group",
+            "username": None,
+            "channel_type": "group",
+            "deactivate": False,
+            "created_at": None,
+        }
+
+    pool = FakeDirectPool(
+        resolve_by_id={-850: _card(-850)},
+        meta_by_id={-850: None},  # direct pool has no full-channel part for groups
+    )
+    _run_refresh_card(db, pool, identifier="-850")
+
+    assert pool.resolve_calls[0][0] == "-850"
+    assert pool.resolve_calls[0][1]["channel_type"] == "group"
+    # Group + no full-channel part is NOT a partial outage: entity fields applied.
+    assert _get_channel(db, -850).title == "Renamed Group"
+    assert "OK" in capsys.readouterr().out
+
+
+async def test_resolve_channel_group_hint_builds_peerchat(real_pool_harness_factory, db):
+    """Real ClientPool contract: a stored group row resolves via PeerChat.
+
+    Resolving a legacy group's numeric id as PeerChannel raises even on a
+    member account (#1765 review point 1) — the stored channel_type must pick
+    the peer kind.
+    """
+    harness = real_pool_harness_factory()
+    seen_peers: list = []
+
+    def resolver(peer):
+        seen_peers.append(peer)
+        return SimpleNamespace(id=850, title="Legacy Group", username=None, date=None)
+
+    harness.queue_cli_client(phone="+70000000001", client=FakeCliTelethonClient(entity_resolver=resolver))
+    await harness.add_account("+70000000001", session_string="s1", is_primary=True)
+    await harness.initialize_connected_accounts()
+
+    result = await harness.pool.resolve_channel(
+        "-850", signal_gone=True, numeric_fallback="-850", channel_type="group"
+    )
+
+    assert result is not None
+    assert result["channel_type"] == "group"
+    assert result["title"] == "Legacy Group"
+    assert any(isinstance(p, PeerChat) and p.chat_id == 850 for p in seen_peers)
+
+
+async def test_resolve_channel_without_hint_keeps_peerchannel(real_pool_harness_factory, db):
+    """Default (no type hint) still resolves channels/supergroups via PeerChannel."""
+    harness = real_pool_harness_factory()
+    seen_peers: list = []
+
+    def resolver(peer):
+        seen_peers.append(peer)
+        return SimpleNamespace(id=1970788983, title="Chan", username="chan", date=None)
+
+    harness.queue_cli_client(phone="+70000000001", client=FakeCliTelethonClient(entity_resolver=resolver))
+    await harness.add_account("+70000000001", session_string="s1", is_primary=True)
+    await harness.initialize_connected_accounts()
+
+    result = await harness.pool.resolve_channel(
+        "1970788983", signal_gone=True, numeric_fallback="1970788983"
+    )
+
+    assert result is not None
+    assert any(isinstance(p, PeerChannel) for p in seen_peers)
+
+
+# ---------------------------------------------------------------------------
+# Gateway path (real GatewayPool over a stub HTTP client, #1765 review point 4):
+# full card updates + preferred-account routing + group peer_type
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_card_gateway_path_updates_full_card(cli_env, capsys):
+    db = cli_env
+    _add_stale_channel(db, channel_id=821, title="Old GW", username="oldgw")
+    _seed_messages(db, channel_id=821)
+
+    pool, _stub = _make_gateway_pool(
+        db, {"state": "succeeded", "result": dict(_GATEWAY_CARD)}
+    )
+    _run_refresh_card(db, pool, identifier="821")
+
+    ch = _get_channel(db, 821)
+    assert ch.title == "GW Title"
+    assert ch.username == "gwname"
+    assert ch.about == "gw about"
+    assert ch.linked_chat_id == 999
+    assert ch.has_comments is True
+
+    _run_messages_read(db, "@gwname")
+    assert "post 1" in capsys.readouterr().out
+
+
+def test_refresh_card_gateway_error_is_a_failure_not_a_wipe(cli_env, capsys):
+    db = cli_env
+    _add_stale_channel(db, channel_id=822, title="GW Keep", username="gwkeep")
+
+    pool, _stub = _make_gateway_pool(
+        db, {"state": "failed", "result": {"error": "ChannelPrivateError"}}
+    )
+    _run_refresh_card(db, pool, identifier="822")
+
+    ch = _get_channel(db, 822)
+    assert ch.title == "GW Keep"
+    assert ch.username == "gwkeep"
+    assert "FAILED" in capsys.readouterr().out
+
+
+async def test_gateway_pool_routes_owner_account_and_group_peer_type(db):
+    """Real GatewayPool contract (#1765 review points 1+2).
+
+    resolve_channel must forward the channel's preferred (owner) account —
+    a private chat visible only to that account would otherwise fail on the
+    project primary — and map a group row to peer_type "chat" so the server
+    side builds PeerChat, not PeerChannel.
+    """
+    await db.add_channel(
+        Channel(channel_id=444, title="Old", username="g444", channel_type="group")
+    )
+    await db.repos.channels.update_channel_preferred_phone(444, "+70000000002")
+
+    pool = GatewayPool(AppConfig(), db)
+    primary = {"id": str(uuid4()), "phone": "+70000000001", "active": True,
+               "flood_until": 0.0, "is_primary": True}
+    owner = {"id": str(uuid4()), "phone": "+70000000002", "active": True,
+             "flood_until": 0.0, "is_primary": False}
+    pool.clients = {primary["phone"]: primary, owner["phone"]: owner}
+    stub = StubGatewayClient({"state": "succeeded",
+                              "result": {"channel_id": 444, "title": "New Group",
+                                         "username": "g444", "channel_type": "group",
+                                         "deactivate": False}})
+    pool.client = stub
+    await pool.outbox.initialize()
+
+    info = await pool.resolve_channel("444", channel_type="group", phone="+70000000002")
+
+    assert info["title"] == "New Group"
+    assert len(stub.submitted) == 1
+    op = stub.submitted[0]
+    assert isinstance(op, InspectPeer)
+    assert op.account_id == UUID(owner["id"])  # owner account, NOT the primary
+    assert op.peer_type == "chat"  # group → PeerChat on the server side
+
+    # Non-group rows keep the channel peer type.
+    await pool.resolve_channel("444", channel_type="channel", phone=None)
+    assert stub.submitted[-1].peer_type == "channel"
+    assert stub.submitted[-1].account_id == UUID(primary["id"])
 
 
 # ---------------------------------------------------------------------------
@@ -359,60 +581,7 @@ def test_refresh_card_bulk_covers_only_active_channels(cli_env):
         meta_by_id={811: {"about": "a", "linked_chat_id": None, "has_comments": False}},
     )
     _run_refresh_card(db, pool, all_channels=True)
-    assert pool.resolve_calls == ["811"]  # inactive channel never queried
-
-
-# ---------------------------------------------------------------------------
-# Gateway path: GatewayPool.resolve_channel / fetch_channel_meta both return the
-# full inspect_peer card — same update flow, no data loss
-# ---------------------------------------------------------------------------
-
-
-def test_refresh_card_gateway_path_updates_full_card(cli_env, capsys):
-    db = cli_env
-    _add_stale_channel(db, channel_id=821, title="Old GW", username="oldgw")
-    _seed_messages(db, channel_id=821)
-
-    card = {
-        "channel_id": 821,
-        "title": "GW Title",
-        "username": "gwname",
-        "channel_type": "channel",
-        "deactivate": False,
-        "about": "gw about",
-        "linked_chat_id": 999,
-        "has_comments": True,
-        "created_at": "2020-01-01T00:00:00+00:00",
-    }
-    pool = FakeGatewayPool({821: card})
-    _run_refresh_card(db, pool, identifier="821")
-
-    ch = _get_channel(db, 821)
-    assert ch.title == "GW Title"
-    assert ch.username == "gwname"
-    assert ch.about == "gw about"
-    assert ch.linked_chat_id == 999
-    assert ch.has_comments is True
-
-    _run_messages_read(db, "@gwname")
-    assert "post 1" in capsys.readouterr().out
-
-
-def test_refresh_card_gateway_error_is_a_failure_not_a_wipe(cli_env, capsys):
-    db = cli_env
-    _add_stale_channel(db, channel_id=822, title="GW Keep", username="gwkeep")
-
-    pool = FakeGatewayPool({822: GatewayResolveError()})
-    _run_refresh_card(db, pool, identifier="822")
-
-    ch = _get_channel(db, 822)
-    assert ch.title == "GW Keep"
-    assert ch.username == "gwkeep"
-    assert "FAILED" in capsys.readouterr().out
-
-
-class GatewayResolveError(Exception):
-    pass
+    assert [call[0] for call in pool.resolve_calls] == ["811"]  # inactive never queried
 
 
 def test_refresh_card_single_channel_not_found(cli_env, capsys):
@@ -450,3 +619,57 @@ def test_refresh_card_backfills_created_at_only_when_missing(cli_env):
 
     assert _get_channel(db, 831).created_at == created  # NULL → backfilled
     assert _get_channel(db, 832).created_at == existing  # never overwritten
+
+
+# ---------------------------------------------------------------------------
+# update_channel_card repo semantics: one atomic statement (#1765 review pt 3)
+# ---------------------------------------------------------------------------
+
+
+async def test_update_channel_card_meta_absent_keeps_stored_about(db):
+    await db.repos.channels.add_channel(
+        Channel(channel_id=860, title="T", username="u", channel_type="channel",
+                about="old about", linked_chat_id=7, has_comments=True)
+    )
+    created = datetime(2020, 1, 2, tzinfo=timezone.utc)
+
+    await db.repos.channels.update_channel_card(
+        860, username=None, title="New T", channel_type=None,
+        created_at=created, meta_present=False,
+    )
+
+    row = await db.repos.channels.get_channel_by_channel_id(860)
+    assert row.username is None  # confirmed absence written
+    assert row.username_state == "known"
+    assert row.title == "New T"
+    assert row.channel_type == "channel"  # NULL type hint keeps stored value
+    assert row.about == "old about"  # meta part absent → untouched
+    assert row.linked_chat_id == 7
+    assert row.has_comments is True
+    assert row.created_at == created  # NULL → backfilled
+
+
+async def test_update_channel_card_meta_present_overwrites_and_backfill_never_downgrades(db):
+    await db.repos.channels.add_channel(
+        Channel(channel_id=861, title="T", username="u", channel_type="channel")
+    )
+    created = datetime(2020, 1, 2, tzinfo=timezone.utc)
+    await db.repos.channels.update_channel_card(
+        861, username="u", title="T", channel_type="supergroup",
+        created_at=created, meta_present=False,
+    )
+    row = await db.repos.channels.get_channel_by_channel_id(861)
+    assert row.created_at == created
+    assert row.channel_type == "supergroup"
+
+    # meta part present: confirmed absence in the full-channel payload is written.
+    await db.repos.channels.update_channel_card(
+        861, username="u", title="T", channel_type="supergroup",
+        created_at=datetime(1999, 1, 1, tzinfo=timezone.utc),  # older — must NOT overwrite
+        about=None, linked_chat_id=None, has_comments=False, meta_present=True,
+    )
+    row = await db.repos.channels.get_channel_by_channel_id(861)
+    assert row.about is None
+    assert row.linked_chat_id is None
+    assert row.has_comments is False
+    assert row.created_at == created  # COALESCE: existing value never downgraded

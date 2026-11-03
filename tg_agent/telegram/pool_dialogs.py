@@ -792,6 +792,7 @@ class DialogsMixin:
         *,
         signal_gone: bool = False,
         numeric_fallback: str | None = None,
+        channel_type: str | None = None,
     ) -> dict | None:
         """Resolve channel by @username or t.me/ link. Returns dict with channel info.
 
@@ -832,6 +833,7 @@ class DialogsMixin:
             signal_gone=signal_gone,
             gone_phone=owner_phone,
             review_on_uncertain=primary_numeric,
+            channel_type=channel_type,
         )
         # Stale-username guard: a gone-by-username verdict is not proof the channel is
         # dead — retry by the stable numeric id before signalling gone (#858 review).
@@ -858,6 +860,7 @@ class DialogsMixin:
                 signal_gone=signal_gone,
                 gone_phone=retry_owner,
                 review_on_uncertain=True,
+                channel_type=channel_type,
             )
         return result
 
@@ -886,6 +889,7 @@ class DialogsMixin:
         signal_gone: bool = False,
         gone_phone: str | None = None,
         review_on_uncertain: bool = False,
+        channel_type: str | None = None,
     ) -> dict | None:
         gone: dict | None = {"gone": True} if signal_gone else None
         # When ``review_on_uncertain`` is set, an ambiguous numeric not-found (cache-miss
@@ -906,7 +910,13 @@ class DialogsMixin:
         # channel_id is bare-positive, but a caller may still pass a -100-style string.
         numeric_peer = identifier.lstrip("-").isdigit()
         if numeric_peer:
-            peer: str | PeerChannel = PeerChannel(bare_channel_id(int(identifier)))
+            if channel_type == "group":
+                # Legacy small groups are PeerChat, not PeerChannel (same rule as
+                # collector_resolve._peer_for_channel_type) — resolving their id
+                # as PeerChannel raises even for a member account (#1765 review).
+                peer = PeerChat(abs(int(identifier)))
+            else:
+                peer = PeerChannel(bare_channel_id(int(identifier)))
         else:
             peer = identifier
 
