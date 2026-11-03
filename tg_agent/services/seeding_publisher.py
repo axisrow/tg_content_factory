@@ -22,7 +22,7 @@ SEED_DUE-ран (#1757): воркер атомарно захватывает du
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from tg_agent.models import (
@@ -48,6 +48,11 @@ logger = logging.getLogger(__name__)
 #: консервативные ставки. Публичное имя: тесты пинят значение.
 PER_ACCOUNT_DAILY_LIMIT = 12
 
+#: Допуск past-рельса: planned_at старше этого от текущего момента отклоняется.
+#: Просроченный префикс SEED_DUE отправил бы залпом (зазор = RPC-латентность),
+#: поэтому запоздавший schedule требует пере-create с будущим --start-at.
+PAST_SCHEDULE_TOLERANCE_SECONDS = 300
+
 #: Потолок claims за один SEED_DUE-ран (repлика отправляется синхронно,
 #: цикл не должен крутиться вечно при потоке due-строк).
 _RUN_CLAIM_LIMIT = 50
@@ -68,13 +73,16 @@ async def validate_schedule_rails(
     thread_id: int,
     *,
     days: int = 14,
+    now: datetime | None = None,
 ) -> list[str]:
     """Рельсы безопасности на этапе ``seeding schedule``; пустой список = проход.
 
     Применяются к апрувнутому (``scheduled`` тред, ``approved`` реплики)
     сценарию с уже проставленным ``planned_at`` (#1756 add): ссылки,
-    межаккаунтный зазор, дневной лимит на аккаунт (по всем тредам), тихие
-    часы выученного профиля чата. CLI отклоняет запуск по непустому списку.
+    межаккаунтный зазор, просроченные planned_at (залповый префикс — ровно
+    машинный паттерн, от которого рельсы защищают), дневной лимит на аккаунт
+    (по всем тредам), тихие часы выученного профиля чата. CLI отклоняет
+    запуск по непустому списку. ``now`` — точка отсчёта past-рельса (тесты).
     """
     repo = db.repos.seeding
     thread = await repo.get_thread(thread_id)
@@ -98,6 +106,8 @@ async def validate_schedule_rails(
 
     violations: list[str] = []
     ordered = sorted(messages, key=lambda m: m.position)
+    now = now or datetime.now(timezone.utc)
+    past_cutoff = now - timedelta(seconds=PAST_SCHEDULE_TOLERANCE_SECONDS)
 
     # 1. Ссылки запрещены эпиком (spam-reportable) — ретроспективная проверка:
     # композер мог быть обойдён прямой записью в БД.
@@ -107,7 +117,9 @@ async def validate_schedule_rails(
                 f"#{m.position}: ссылки в посевах запрещены (spam-reportable) — убери URL"
             )
 
-    # 2. Минимальный зазор между репликами разных аккаунтов.
+    # 2. Просроченные planned_at и минимальный зазор между аккаунтами.
+    # Просроченный префикс SEED_DUE забрал бы залпом: реальный межаккаунтный
+    # зазор стал бы RPC-латентностью (< 20s) — машинный паттерн.
     prev: SeedingMessage | None = None
     for m in ordered:
         if m.planned_at is None:
@@ -116,6 +128,12 @@ async def validate_schedule_rails(
             )
             prev = m
             continue
+        if m.planned_at < past_cutoff:
+            violations.append(
+                f"#{m.position}: planned_at {m.planned_at.astimezone(timezone.utc):%Y-%m-%d %H:%M} UTC "
+                f"в прошлом (больше {PAST_SCHEDULE_TOLERANCE_SECONDS // 60} мин от текущего времени) — "
+                "записи уйдут залпом; пере-create тред с будущим --start-at"
+            )
         if (
             prev is not None
             and prev.planned_at is not None

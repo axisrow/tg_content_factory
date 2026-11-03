@@ -117,7 +117,9 @@ tg-agent seeding cancel <thread-id>
 - `schedule` runs the safety rails and puts the scenario on the schedule +
   enqueues a SEED_DUE worker task (earliest `planned_at`). The rails reject
   the WHOLE scheduling on: any link in any text (spam-reportable), a gap < 20s
-  between consecutive messages of different accounts, a per-account daily
+  between consecutive messages of different accounts, any message planned more
+  than 5 minutes in the past (an overdue prefix would fire as one burst —
+  re-record the scenario with a future `--start-at`), a per-account daily
   total > 12 replicas (UTC day, all threads counted), or any message landing
   in the chat's learned quiet hours — fix the schedule (re-record the
   scenario in a fresh draft thread) and come back.

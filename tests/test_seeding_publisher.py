@@ -401,7 +401,7 @@ async def test_rails_happy_path_passes(db):
             _row(2, planned_at=_at(10, 35), phone=PHONE_B, reply_to_position=1),
         ],
     )
-    assert await validate_schedule_rails(db, thread_id) == []
+    assert await validate_schedule_rails(db, thread_id, now=base) == []
 
 
 @pytest.mark.anyio
@@ -411,7 +411,7 @@ async def test_rails_reject_links(db):
     thread_id = await _approved_thread(
         db, [_row(1, planned_at=_at(10, 30), text="смотри https://example.com/post")]
     )
-    violations = await validate_schedule_rails(db, thread_id)
+    violations = await validate_schedule_rails(db, thread_id, now=base)
     assert len(violations) == 1
     assert "ссылки" in violations[0] and "#1" in violations[0]
 
@@ -428,9 +428,30 @@ async def test_rails_reject_cross_account_gap(db):
             _row(2, planned_at=_at(10, 30, 10), phone=PHONE_B),
         ],
     )
-    violations = await validate_schedule_rails(db, thread_id)
+    violations = await validate_schedule_rails(db, thread_id, now=base)
     assert len(violations) == 1
     assert "зазор" in violations[0]
+
+
+@pytest.mark.anyio
+async def test_rails_reject_overdue_planned_at(db):
+    """Past-рельс: просроченный префикс уйдёт залпом (зазор = RPC-латентность)."""
+    await _seed_chat_profile(db, base=_at(10))
+    # now = 10:30; профиль активен в часах 10..12 → просроченные реплики не
+    # задевают рельсу тишины, срабатывает только past-рельс.
+    now = _at(10, 30)
+    thread_id = await _approved_thread(
+        db,
+        [
+            # 10 минут назад — за пределами допуска 5 минут.
+            _row(1, planned_at=_at(10, 20)),
+            # 2 минуты назад — в допуске: schedule с небольшим опозданием ок.
+            _row(2, planned_at=_at(10, 28)),
+        ],
+    )
+    violations = await validate_schedule_rails(db, thread_id, now=now)
+    assert len(violations) == 1
+    assert "в прошлом" in violations[0] and "#1" in violations[0]
 
 
 @pytest.mark.anyio
@@ -442,7 +463,7 @@ async def test_rails_reject_daily_limit(db):
         for i in range(PER_ACCOUNT_DAILY_LIMIT + 1)
     ]
     thread_id = await _approved_thread(db, rows)
-    violations = await validate_schedule_rails(db, thread_id)
+    violations = await validate_schedule_rails(db, thread_id, now=base)
     assert any("дневного лимита" in v for v in violations)
 
 
@@ -463,7 +484,7 @@ async def test_rails_daily_limit_counts_other_threads(db):
         for i in range(4)
     ]
     thread_id = await _approved_thread(db, own_rows)
-    violations = await validate_schedule_rails(db, thread_id)
+    violations = await validate_schedule_rails(db, thread_id, now=base)
     assert any("дневного лимита" in v and "13" in v for v in violations)
 
 
@@ -471,8 +492,12 @@ async def test_rails_daily_limit_counts_other_threads(db):
 async def test_rails_reject_quiet_hours(db):
     base = _at(10)
     await _seed_chat_profile(db, base=base)
-    thread_id = await _approved_thread(db, [_row(1, planned_at=_at(3, 15))])
-    violations = await validate_schedule_rails(db, thread_id)
+    # +14:15 от now=10:00 → 00:15 следующего дня: всегда в будущем и в тихих
+    # часах (профиль активен только 10..12 UTC), не зависит от времени прогона.
+    thread_id = await _approved_thread(
+        db, [_row(1, planned_at=base + timedelta(hours=14, minutes=15))]
+    )
+    violations = await validate_schedule_rails(db, thread_id, now=base)
     assert len(violations) == 1
     assert "тихие часы" in violations[0]
 

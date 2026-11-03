@@ -307,10 +307,12 @@ Publisher half (#1757), each publish run gated on explicit owner consent:
 - `seeding schedule <thread-id>` — safety rails, then messages
   `approved→scheduled` and a SEED_DUE worker task on the earliest `planned_at`.
   Rails REJECT the whole scheduling on: any link in any text (spam-reportable),
-  a gap < 20s between consecutive messages of different accounts, a per-account
-  daily total > 12 replicas (UTC day, all threads), or any message landing in
-  the chat's learned quiet hours. There is NO scheduler automation: SEED_DUE is
-  created only by `seeding schedule`, by the resume chain of an already
+  a gap < 20s between consecutive messages of different accounts, any message
+  planned more than 5 minutes in the past (an overdue prefix would fire as one
+  burst — the machine pattern the rails exist to prevent; re-record the
+  scenario with a future `--start-at`), a per-account daily total > 12 replicas
+  (UTC day, all threads), or any message landing in the chat's learned quiet
+  hours. There is NO scheduler automation: SEED_DUE is created only by `seeding schedule`, by the resume chain of an already
   approved schedule, or by worker-startup reconcile (stuck `sending` replicas
   fail with an error instead of re-sending — a restart mid-send never
   duplicates; sent replicas are idempotent by `tg_message_id`).

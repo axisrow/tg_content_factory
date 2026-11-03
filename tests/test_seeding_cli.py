@@ -291,11 +291,15 @@ def test_thread_create_personas_duplicate_phone(cli_db, capsys, tmp_path):
     assert "нескольким персонам" in capsys.readouterr().err
 
 
-def _add(cli_db, tmp_path, thread_id, capsys, base, **kwargs):
+def _add(cli_db, tmp_path, thread_id, capsys, base, start=None, **kwargs):
     path = _scenario_file(tmp_path, **kwargs)
     return _run_impl(
         lambda: seeding_cli.add_impl(
-            "cfg", scenario_path=path, thread_id=thread_id, days=14, start_at=_start_at(base)
+            "cfg",
+            scenario_path=path,
+            thread_id=thread_id,
+            days=14,
+            start_at=start if start is not None else _start_at(base),
         ),
         cli_db,
         capsys,
@@ -453,6 +457,38 @@ def test_show_impl_unknown_thread(cli_db, capsys):
 # --------------------------------------------------------------------------- #
 
 
+def _seed_round_clock_chat(db) -> datetime:
+    """Чат с активностью в каждом UTC-часе (по 3 сообщения с паузами 5/6 мин):
+    quiet_hours=[] и p10 пауз ~300s — тихий рельс не мешает schedule-тестам,
+    а валидация композера на add пропускает задержки сценария 400/600s."""
+    _reopen(db)
+    base = datetime.now(timezone.utc).replace(tzinfo=None, minute=0, second=0, microsecond=0) - timedelta(hours=48)
+    asyncio.run(
+        db.repos.channels.add_channel(
+            Channel(channel_id=CHAT_ID, title="Круглосуточный чат", channel_type="supergroup")
+        )
+    )
+    message_id = 1
+    for i in range(24):
+        for minute in (0, 5, 11):
+            msg = Message(
+                channel_id=CHAT_ID,
+                message_id=message_id,
+                date=base + timedelta(hours=i, minutes=minute),
+                text=f"сообщение номер {message_id} в час {i}",
+                sender_id=(message_id % 2) + 1,
+                sender_name="Аня" if message_id % 2 else "Борис",
+            )
+            asyncio.run(db.repos.messages.insert_message(msg))
+            message_id += 1
+    return base
+
+
+def _future_start(minutes: int = 5) -> datetime:
+    """Будущий старт посева: past-рельс публикатора отклоняет просроченные планы."""
+    return datetime.now(timezone.utc) + timedelta(minutes=minutes)
+
+
 def test_approve_impl_flows_draft_to_scheduled(cli_db, capsys, tmp_path):
     base = _seed_chat(cli_db)
     thread_id = _make_thread(cli_db)
@@ -502,17 +538,18 @@ def test_approve_impl_empty_thread(cli_db, capsys):
     assert "нечего утверждать" in capsys.readouterr().err
 
 
-def _approve(cli_db, tmp_path, thread_id, capsys, base):
-    _add(cli_db, tmp_path, thread_id, capsys, base)
+def _approve(cli_db, tmp_path, thread_id, capsys, base, start=None):
+    _add(cli_db, tmp_path, thread_id, capsys, base, start=start)
     capsys.readouterr()
     _run_impl(lambda: seeding_cli.approve_impl("cfg", thread_id=thread_id), cli_db, capsys)
     capsys.readouterr()
 
 
 def test_schedule_impl_schedules_and_enqueues_seed_due(cli_db, capsys, tmp_path):
-    base = _seed_chat(cli_db)
+    # Круглосуточный профиль + будущий старт: рельсы тишины и past-рельс не мешают.
+    base = _seed_round_clock_chat(cli_db)
     thread_id = _make_thread(cli_db)
-    _approve(cli_db, tmp_path, thread_id, capsys, base)
+    _approve(cli_db, tmp_path, thread_id, capsys, base, start=_future_start())
 
     scheduled, out = _run_impl(
         lambda: seeding_cli.schedule_impl("cfg", thread_id=thread_id, days=14), cli_db, capsys
@@ -535,7 +572,7 @@ def test_schedule_impl_schedules_and_enqueues_seed_due(cli_db, capsys, tmp_path)
 
 def test_schedule_impl_rejects_link_text(cli_db, capsys, tmp_path):
     """Рельсы на этапе schedule: ссылка отклоняет постановку, не надеемся на композер."""
-    base = _seed_chat(cli_db)
+    _seed_round_clock_chat(cli_db)
     thread_id = _make_thread(cli_db)
     _reopen(cli_db)
     asyncio.run(
@@ -548,7 +585,7 @@ def test_schedule_impl_rejects_link_text(cli_db, capsys, tmp_path):
                     account_phone="+79990000001",
                     persona_name="Аня",
                     text="гляди https://example.com",
-                    planned_at=_start_at(base),
+                    planned_at=_future_start(),
                 ),
             ],
         )
@@ -581,10 +618,10 @@ def test_schedule_impl_rejects_draft_thread(cli_db, capsys, tmp_path):
 
 def test_schedule_impl_rejects_cross_account_gap(cli_db, capsys, tmp_path):
     """Зазор 10s между аккаунтами < 20s — отклонение."""
-    base = _seed_chat(cli_db)
+    _seed_round_clock_chat(cli_db)
     thread_id = _make_thread(cli_db)
     _reopen(cli_db)
-    start = _start_at(base)
+    start = _future_start()
     asyncio.run(
         cli_db.repos.seeding.create_messages(
             thread_id,
@@ -649,9 +686,9 @@ def test_cancel_impl_unknown_thread(cli_db, capsys):
 
 
 def test_status_impl_prints_summary(cli_db, capsys, tmp_path):
-    base = _seed_chat(cli_db)
+    base = _seed_round_clock_chat(cli_db)
     thread_id = _make_thread(cli_db)
-    _approve(cli_db, tmp_path, thread_id, capsys, base)
+    _approve(cli_db, tmp_path, thread_id, capsys, base, start=_future_start())
     _run_impl(
         lambda: seeding_cli.schedule_impl("cfg", thread_id=thread_id, days=14), cli_db, capsys
     )
