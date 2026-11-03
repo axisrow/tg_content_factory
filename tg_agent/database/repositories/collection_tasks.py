@@ -927,6 +927,7 @@ class CollectionTasksRepository:
         ) = None,
         payload_filter_key: str | None = None,
         payload_filter_value: str | int | None = None,
+        run_after: datetime | None = None,
     ) -> int | None:
         """Atomically enqueue a task unless an active (pending/running) one exists.
 
@@ -942,16 +943,18 @@ class CollectionTasksRepository:
         )
         tt = task_type
         task_type_value = tt.value if isinstance(tt, CollectionTaskType) else tt
+        run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
         sql = (
             "INSERT INTO collection_tasks "
             "(channel_id, channel_title, channel_username, task_type, run_after, payload, parent_task_id, created_at) "
-            "SELECT NULL, NULL, NULL, ?, NULL, ?, NULL, ? "
+            "SELECT NULL, NULL, NULL, ?, ?, ?, NULL, ? "
             "WHERE NOT EXISTS ("
             "    SELECT 1 FROM collection_tasks "
             "    WHERE task_type = ? AND status IN (?, ?)"
         )
         params: list[Any] = [
             task_type_value,
+            run_after_iso,
             self._serialize_payload(payload),
             datetime.now(timezone.utc).isoformat(),
             task_type_value,

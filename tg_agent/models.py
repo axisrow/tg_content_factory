@@ -271,6 +271,7 @@ class CollectionTaskType(StrEnum):
     CONTENT_PUBLISH = "content_publish"
     TRANSLATE_BATCH = "translate_batch"
     EXPORT = "export"
+    SEED_DUE = "seed_due"
 
 
 class TelegramCommandStatus(StrEnum):
@@ -1235,16 +1236,18 @@ class SeedingThreadStatus(StrEnum):
 
 
 class SeedingMessageStatus(StrEnum):
-    """Жизненный цикл одной реплики посева (#1755).
+    """Жизненный цикл одной реплики посева (#1755, публикатор #1757).
 
     `draft` — черновик композера; `approved` — подтверждён владельцем;
-    `scheduled` — поставлен в расписание (`planned_at`); `sent`/`failed` —
-    исход отправки; `failed` может быть перепланирован (`failed → scheduled`).
+    `scheduled` — поставлен в расписание (`planned_at`); `sending` — захвачен
+    публикатором, RPC в полёте; `sent`/`failed` — исход отправки; `failed`
+    может быть перепланирован (`failed → scheduled`).
     """
 
     DRAFT = "draft"
     APPROVED = "approved"
     SCHEDULED = "scheduled"
+    SENDING = "sending"
     SENT = "sent"
     FAILED = "failed"
     CANCELLED = "cancelled"

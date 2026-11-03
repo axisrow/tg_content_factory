@@ -35,6 +35,7 @@ from tg_agent.services.photo_publish_service import PhotoPublishService
 from tg_agent.services.photo_task_service import PhotoTaskService
 from tg_agent.services.ping_monitor_service import PingMonitorService
 from tg_agent.services.provider_service import RuntimeProviderRegistry
+from tg_agent.services.seeding_publisher import SeedingPublisherService
 from tg_agent.services.task_enqueuer import TaskEnqueuer
 from tg_agent.services.telegram_command_dispatcher import TelegramCommandDispatcher
 from tg_agent.services.translation_service import TranslationService
@@ -95,5 +96,7 @@ class RuntimeContainer:
     # Dormant-DM ping monitors (#1415): needs the live pool for history reads
     # and sends — worker-only, like the listener.
     ping_monitor_service: PingMonitorService | None = None
+    # Chat-seeding publisher (#1757): live sends through the pool — worker-only.
+    seeding_publisher: SeedingPublisherService | None = None
     plugins: PluginRuntime | None = None
     shutting_down: bool = False

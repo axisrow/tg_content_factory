@@ -442,12 +442,19 @@ class TelegramActionService:
         recipient: Any,
         text: str,
         link_preview: bool = False,
+        reply_to: int | None = None,
     ) -> SendMessageResult:
         # Operator channels never render web previews on links (#1584-adjacent
         # digest flow: a bare URL silently produced one); opt in explicitly.
+        # reply_to (seeding publisher #1757): message id of the replica this
+        # one answers; omitted for a top-level message so existing callers'
+        # RPC shape is unchanged.
         async with self._client(phone=phone, native=True) as (client, acquired_phone):
             entity = await self._resolve_entity(client, phone=acquired_phone, identifier=recipient)
-            message = await client.send_message(entity, text, link_preview=link_preview)
+            options: dict[str, Any] = {"link_preview": link_preview}
+            if reply_to is not None:
+                options["reply_to"] = reply_to
+            message = await client.send_message(entity, text, **options)
             return SendMessageResult(phone=acquired_phone, message_id=getattr(message, "id", None))
 
     async def edit_message(

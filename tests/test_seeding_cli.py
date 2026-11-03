@@ -1,10 +1,10 @@
-"""CLI-тесты композера посевных диалогов (#1756): stats/validate/черновики.
+"""CLI-тесты посевных диалогов: композер (#1756: stats/validate/черновики) и
+публикатор (#1757: approve/schedule/cancel/status).
 
-``stats``/``validate``/запись черновиков работают на реальной SQLite
-(cli_db) с засеянными сообщениями; жизненный цикл статусов #1755 тестируется
-в репозиторных тестах — здесь CLI-поверхность. Живой LLM и живые аккаунты
-не участвуют: сценарий — фикстура-файл, композер по контракту — внешний
-Claude Code CLI.
+Оба работают на реальной SQLite (cli_db) с засеянными сообщениями; жизненный
+цикл статусов #1755 тестируется в репозиторных тестах, механика SEED_DUE-рана
+— в test_seeding_publisher.py. Живой LLM и живые аккаунты не участвуют:
+сценарий — фикстура-файл, отправка — за пределами этих тестов.
 """
 
 from __future__ import annotations
@@ -19,7 +19,13 @@ import typer
 
 from tg_agent.cli.commands import seeding as seeding_cli
 from tg_agent.config import AppConfig
-from tg_agent.models import Channel, Message, SeedingThread, SeedingThreadStatus
+from tg_agent.models import (
+    Channel,
+    Message,
+    SeedingMessage,
+    SeedingThread,
+    SeedingThreadStatus,
+)
 
 CHAT_ID = -100999
 
@@ -439,4 +445,231 @@ def test_show_impl_unknown_thread(cli_db, capsys):
 
     with pytest.raises(typer.Exit):
         _run_impl(lambda: seeding_cli.show_impl("cfg", thread_id=999), cli_db, capsys)
+    assert "не найден" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- #
+# publisher (#1757): approve / schedule / cancel / status
+# --------------------------------------------------------------------------- #
+
+
+def test_approve_impl_flows_draft_to_scheduled(cli_db, capsys, tmp_path):
+    base = _seed_chat(cli_db)
+    thread_id = _make_thread(cli_db)
+    _add(cli_db, tmp_path, thread_id, capsys, base)
+    capsys.readouterr()
+
+    approved, out = _run_impl(
+        lambda: seeding_cli.approve_impl("cfg", thread_id=thread_id), cli_db, capsys
+    )
+
+    assert approved == 2
+    assert "апрувнут" in out and "scheduled" in out
+    _reopen(cli_db)
+    thread = asyncio.run(cli_db.repos.seeding.get_thread(thread_id))
+    assert thread.status is SeedingThreadStatus.SCHEDULED
+    rows = asyncio.run(cli_db.repos.seeding.list_messages_for_thread(thread_id))
+    assert all(r.status.value == "approved" for r in rows)
+
+
+def test_approve_impl_refuses_non_draft(cli_db, capsys, tmp_path):
+    base = _seed_chat(cli_db)
+    thread_id = _make_thread(cli_db)
+    _add(cli_db, tmp_path, thread_id, capsys, base)
+    capsys.readouterr()
+    _run_impl(lambda: seeding_cli.approve_impl("cfg", thread_id=thread_id), cli_db, capsys)
+    capsys.readouterr()
+
+    with pytest.raises(typer.Exit):
+        _run_impl(lambda: seeding_cli.approve_impl("cfg", thread_id=thread_id), cli_db, capsys)
+    assert "только к draft" in capsys.readouterr().err
+
+
+def test_approve_impl_unknown_thread(cli_db, capsys):
+    _seed_chat(cli_db)
+
+    with pytest.raises(typer.Exit):
+        _run_impl(lambda: seeding_cli.approve_impl("cfg", thread_id=999), cli_db, capsys)
+    assert "не найден" in capsys.readouterr().err
+
+
+def test_approve_impl_empty_thread(cli_db, capsys):
+    _seed_chat(cli_db)
+    thread_id = _make_thread(cli_db)
+
+    with pytest.raises(typer.Exit):
+        _run_impl(lambda: seeding_cli.approve_impl("cfg", thread_id=thread_id), cli_db, capsys)
+    assert "нечего утверждать" in capsys.readouterr().err
+
+
+def _approve(cli_db, tmp_path, thread_id, capsys, base):
+    _add(cli_db, tmp_path, thread_id, capsys, base)
+    capsys.readouterr()
+    _run_impl(lambda: seeding_cli.approve_impl("cfg", thread_id=thread_id), cli_db, capsys)
+    capsys.readouterr()
+
+
+def test_schedule_impl_schedules_and_enqueues_seed_due(cli_db, capsys, tmp_path):
+    base = _seed_chat(cli_db)
+    thread_id = _make_thread(cli_db)
+    _approve(cli_db, tmp_path, thread_id, capsys, base)
+
+    scheduled, out = _run_impl(
+        lambda: seeding_cli.schedule_impl("cfg", thread_id=thread_id, days=14), cli_db, capsys
+    )
+
+    assert scheduled == 2
+    assert "SEED_DUE" in out
+    _reopen(cli_db)
+    rows = asyncio.run(cli_db.repos.seeding.list_messages_for_thread(thread_id))
+    assert all(r.status.value == "scheduled" for r in rows)
+
+    async def _count_seed_due() -> int:
+        cur = await cli_db.db.execute(
+            "SELECT COUNT(*) AS n FROM collection_tasks WHERE task_type = 'seed_due'"
+        )
+        return (await cur.fetchone())["n"]
+
+    assert asyncio.run(_count_seed_due()) == 1
+
+
+def test_schedule_impl_rejects_link_text(cli_db, capsys, tmp_path):
+    """Рельсы на этапе schedule: ссылка отклоняет постановку, не надеемся на композер."""
+    base = _seed_chat(cli_db)
+    thread_id = _make_thread(cli_db)
+    _reopen(cli_db)
+    asyncio.run(
+        cli_db.repos.seeding.create_messages(
+            thread_id,
+            [
+                SeedingMessage(
+                    thread_id=thread_id,
+                    position=1,
+                    account_phone="+79990000001",
+                    persona_name="Аня",
+                    text="гляди https://example.com",
+                    planned_at=_start_at(base),
+                ),
+            ],
+        )
+    )
+    asyncio.run(cli_db.repos.seeding.approve_thread(thread_id))
+
+    with pytest.raises(typer.Exit):
+        _run_impl(
+            lambda: seeding_cli.schedule_impl("cfg", thread_id=thread_id, days=14), cli_db, capsys
+        )
+    err = capsys.readouterr().err
+    assert "Scenario INVALID" in err and "ссылки" in err
+    _reopen(cli_db)
+    rows = asyncio.run(cli_db.repos.seeding.list_messages_for_thread(thread_id))
+    assert rows[0].status.value == "approved"  # постановка не случилась
+
+
+def test_schedule_impl_rejects_draft_thread(cli_db, capsys, tmp_path):
+    base = _seed_chat(cli_db)
+    thread_id = _make_thread(cli_db)
+    _add(cli_db, tmp_path, thread_id, capsys, base)
+    capsys.readouterr()
+
+    with pytest.raises(typer.Exit):
+        _run_impl(
+            lambda: seeding_cli.schedule_impl("cfg", thread_id=thread_id, days=14), cli_db, capsys
+        )
+    assert "после approve" in capsys.readouterr().err
+
+
+def test_schedule_impl_rejects_cross_account_gap(cli_db, capsys, tmp_path):
+    """Зазор 10s между аккаунтами < 20s — отклонение."""
+    base = _seed_chat(cli_db)
+    thread_id = _make_thread(cli_db)
+    _reopen(cli_db)
+    start = _start_at(base)
+    asyncio.run(
+        cli_db.repos.seeding.create_messages(
+            thread_id,
+            [
+                SeedingMessage(
+                    thread_id=thread_id, position=1, account_phone="+79990000001",
+                    persona_name="Аня", text="первая реплика", planned_at=start,
+                ),
+                SeedingMessage(
+                    thread_id=thread_id, position=2, account_phone="+79990000002",
+                    persona_name="Боря", text="вторая реплика",
+                    planned_at=start + timedelta(seconds=10),
+                ),
+            ],
+        )
+    )
+    asyncio.run(cli_db.repos.seeding.approve_thread(thread_id))
+
+    with pytest.raises(typer.Exit):
+        _run_impl(
+            lambda: seeding_cli.schedule_impl("cfg", thread_id=thread_id, days=14), cli_db, capsys
+        )
+    assert "зазор" in capsys.readouterr().err
+
+
+def test_cancel_impl_cancels_unsent(cli_db, capsys, tmp_path):
+    base = _seed_chat(cli_db)
+    thread_id = _make_thread(cli_db)
+    _approve(cli_db, tmp_path, thread_id, capsys, base)
+
+    cancelled, out = _run_impl(
+        lambda: seeding_cli.cancel_impl("cfg", thread_id=thread_id), cli_db, capsys
+    )
+
+    assert cancelled == 2
+    assert "отменён" in out
+    _reopen(cli_db)
+    thread = asyncio.run(cli_db.repos.seeding.get_thread(thread_id))
+    assert thread.status is SeedingThreadStatus.CANCELLED
+    rows = asyncio.run(cli_db.repos.seeding.list_messages_for_thread(thread_id))
+    assert all(r.status.value == "cancelled" for r in rows)
+
+
+def test_cancel_impl_refuses_terminal(cli_db, capsys, tmp_path):
+    base = _seed_chat(cli_db)
+    thread_id = _make_thread(cli_db)
+    _approve(cli_db, tmp_path, thread_id, capsys, base)
+    _run_impl(lambda: seeding_cli.cancel_impl("cfg", thread_id=thread_id), cli_db, capsys)
+    capsys.readouterr()
+
+    with pytest.raises(typer.Exit):
+        _run_impl(lambda: seeding_cli.cancel_impl("cfg", thread_id=thread_id), cli_db, capsys)
+    assert "терминальный" in capsys.readouterr().err
+
+
+def test_cancel_impl_unknown_thread(cli_db, capsys):
+    _seed_chat(cli_db)
+
+    with pytest.raises(typer.Exit):
+        _run_impl(lambda: seeding_cli.cancel_impl("cfg", thread_id=999), cli_db, capsys)
+    assert "не найден" in capsys.readouterr().err
+
+
+def test_status_impl_prints_summary(cli_db, capsys, tmp_path):
+    base = _seed_chat(cli_db)
+    thread_id = _make_thread(cli_db)
+    _approve(cli_db, tmp_path, thread_id, capsys, base)
+    _run_impl(
+        lambda: seeding_cli.schedule_impl("cfg", thread_id=thread_id, days=14), cli_db, capsys
+    )
+    capsys.readouterr()
+
+    _, out = _run_impl(
+        lambda: seeding_cli.status_impl("cfg", thread_id=thread_id), cli_db, capsys
+    )
+
+    assert f"Тред #{thread_id}" in out
+    assert "scheduled: 2" in out
+    assert "SEED_DUE-задача: активна" in out
+    assert "0/2 sent" in out
+
+
+def test_status_impl_unknown_thread(cli_db, capsys):
+    _seed_chat(cli_db)
+
+    with pytest.raises(typer.Exit):
+        _run_impl(lambda: seeding_cli.status_impl("cfg", thread_id=999), cli_db, capsys)
     assert "не найден" in capsys.readouterr().err

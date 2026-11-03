@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from tg_agent.services.photo_auto_upload_service import PhotoAutoUploadService
     from tg_agent.services.photo_task_service import PhotoTaskService
     from tg_agent.services.ping_monitor_service import PingMonitorService
+    from tg_agent.services.seeding_publisher import SeedingPublisherService
     from tg_agent.telegram.client_pool import ClientPool
     from tg_agent.telegram.notifier import Notifier
 
@@ -41,6 +42,8 @@ class TaskHandlerContext:
     photo_task_service: PhotoTaskService | None = None
     photo_auto_upload_service: PhotoAutoUploadService | None = None
     ping_monitor_service: PingMonitorService | None = None
+    # Chat-seeding publisher (#1757): worker-only (live sends through the pool).
+    seeding_publisher: SeedingPublisherService | None = None
     poll_interval_sec: float = 5.0
     channel_timeout_sec: float = 120.0
     search_engine: "SearchEngine | None" = None

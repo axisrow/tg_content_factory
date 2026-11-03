@@ -1,11 +1,11 @@
-# Chat seeding — dialogue composer workflow (#1756)
+# Chat seeding — composer + publisher workflow (#1756, #1757)
 
 Compose realistic multi-participant dialogues for the owner's own chats
 (epic #1751). The learned statistics are the prompt input; the scenario JSON
 is the contract; validation is a loop; drafts are recorded through the CLI.
-The composing LLM is Claude Code itself (z.ai is banned). Publishing is NOT
-part of this workflow — approve/schedule/cancel live in the publisher, and
-every publish run needs the owner's explicit consent (chat + content).
+The composing LLM is Claude Code itself (z.ai is banned). The publisher
+(approve/schedule/cancel/status, #1757) turns an approved draft into a
+worker-run send — gated on explicit owner consent (chat + content).
 
 ## 1. Learn the chat profile
 
@@ -98,6 +98,42 @@ delays — the draft schedule is visible immediately via
 `seeding show <thread-id>`. Approve/schedule/cancel live in the publisher
 workflow, not here; a thread stops accepting scenario writes once it
 leaves `draft`.
+
+## 5. Publisher: approve → schedule → watch (#1757)
+
+Publishing is a separate explicit run — every publish run needs the owner's
+consent (chat + content). NEVER run approve/schedule without an owner request
+naming the chat. Manual-first: no scheduler automation until 2–3 clean runs.
+
+```bash
+tg-agent seeding approve <thread-id>
+tg-agent seeding schedule <thread-id> [--days 14]
+tg-agent seeding status <thread-id>
+tg-agent seeding cancel <thread-id>
+```
+
+- `approve` is the owner's YES: thread `draft→scheduled`, messages
+  `draft→approved` (atomic). It does NOT send anything.
+- `schedule` runs the safety rails and puts the scenario on the schedule +
+  enqueues a SEED_DUE worker task (earliest `planned_at`). The rails reject
+  the WHOLE scheduling on: any link in any text (spam-reportable), a gap < 20s
+  between consecutive messages of different accounts, a per-account daily
+  total > 12 replicas (UTC day, all threads counted), or any message landing
+  in the chat's learned quiet hours — fix the schedule (re-record the
+  scenario in a fresh draft thread) and come back.
+- The worker claims due replicas one by one (atomic `scheduled→sending`
+  claim — a re-run never double-sends), sends them from each message's own
+  account with the reply chain (`reply_to` = previous replica's
+  `tg_message_id`), and records `sent` (+ id) or `failed` (+ error). The
+  next SEED_DUE is chained automatically on the remaining `planned_at` —
+  no cron. A worker restart mid-send fails the in-flight replica honestly
+  (`sending→failed`, verify the chat manually) instead of re-sending.
+- `status` shows message status counts, how many are due now, the next
+  planned send and whether a SEED_DUE task is active — run it instead of
+  guessing. `cancel` stops a thread (unsent messages cancelled; in-flight
+  or already-sent are untouched).
+- Escalate `failed` replicas to the owner: check the chat, then decide —
+  cancel the thread or re-record. There is no CLI reschedule verb (yet).
 
 ## Safety
 

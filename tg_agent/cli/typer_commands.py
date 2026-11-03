@@ -463,7 +463,8 @@ app.add_typer(style_app, name="style")
 
 
 # --------------------------------------------------------------------------- #
-# seeding → stats / validate / thread-create / add / list / show — composer (#1756)
+# seeding → stats / validate / thread-create / add / list / show — composer
+# (#1756); approve / schedule / cancel / status — publisher (#1757)
 # --------------------------------------------------------------------------- #
 
 app.add_typer(seeding_app, name="seeding")

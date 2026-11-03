@@ -12,6 +12,7 @@ from tg_agent.services.task_handlers import (
     PhotoTaskHandler,
     PingTaskHandler,
     PipelineTaskHandler,
+    SeedingTaskHandler,
     StatsTaskHandler,
     TaskHandlerContext,
     TranslationTaskHandler,
@@ -46,6 +47,7 @@ def test_handled_types_are_derived_from_task_handlers():
             ContentTaskHandler,
             TranslationTaskHandler,
             ExportTaskHandler,
+            SeedingTaskHandler,
         )
         for task_type in handler_cls.task_types
     ]
@@ -71,6 +73,7 @@ async def test_dispatcher_routes_each_handled_type_to_compatibility_shim():
         (CollectionTaskType.PHOTO_DUE, "_handle_photo_due"),
         (CollectionTaskType.PHOTO_AUTO, "_handle_photo_auto"),
         (CollectionTaskType.PING_DUE, "_handle_ping_due"),
+        (CollectionTaskType.SEED_DUE, "_handle_seed_due"),
         (CollectionTaskType.PIPELINE_RUN, "_handle_pipeline_run"),
         (CollectionTaskType.CONTENT_GENERATE, "_handle_content_generate"),
         (CollectionTaskType.CONTENT_PUBLISH, "_handle_content_publish"),
@@ -103,6 +106,7 @@ def test_task_handler_metadata_covers_only_supported_task_types():
         ContentTaskHandler(context),
         TranslationTaskHandler(context),
         ExportTaskHandler(context),
+        SeedingTaskHandler(context),
     ]
 
     handled = [task_type for handler in handlers for task_type in handler.task_types]
