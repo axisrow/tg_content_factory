@@ -18,6 +18,7 @@ from tg_agent.cli.commands.common import (
 )
 from tg_agent.database.bundles import ChannelBundle
 from tg_agent.filters.probe import ProbeMessage, probe_channel_snapshots
+from tg_agent.gateway.pool import GatewayPool
 from tg_agent.models import Channel, CollectionTaskStatus, StatsAllTaskPayload
 from tg_agent.parsers import deduplicate_identifiers, parse_file, parse_identifiers
 from tg_agent.services.account_service import resolve_default_phone
@@ -762,12 +763,17 @@ async def refresh_meta_impl(config_path: str, *, all_channels: bool, identifier:
         await db.close()
 
 
-async def _refresh_channel_card(db, pool, ch) -> tuple[str, list[str]]:
-    """Refresh one channel row's open metadata from Telegram (#1764).
+async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tuple[str, list[str]]:
+    """Refresh one channel row's open metadata from Telegram (#1764, #1765 review).
 
     Resolves by the STABLE numeric ID (a stale @username must never be the
-    lookup key — its staleness is the reason the command exists). Returns
-    ``(status, changed_fields)`` where status is:
+    lookup key — its staleness is the reason the command exists) and passes the
+    stored channel type so legacy groups resolve as PeerChat; on the gateway
+    path the channel's preferred account is selected instead of the primary.
+    Both sources are fetched BEFORE any write; confirmed fields then go to the
+    DB in ONE atomic ``update_channel_card`` statement — a write failure can
+    never leave a half-updated row. Returns ``(status, changed_fields)`` where
+    status is:
 
     - ``"updated"`` — full confirmed card applied;
     - ``"partial"`` — entity fields (title/username/type) confirmed and
@@ -781,7 +787,15 @@ async def _refresh_channel_card(db, pool, ch) -> tuple[str, list[str]]:
     transport errors propagate — the caller counts a failure.
     """
     numeric = str(ch.channel_id)
-    info = await pool.resolve_channel(numeric, signal_gone=True, numeric_fallback=numeric)
+    if isinstance(pool, GatewayPool):
+        resolve_kwargs: dict = {"channel_type": ch.channel_type, "phone": phone}
+        meta_kwargs: dict = {"phone": phone}
+    else:
+        resolve_kwargs = {"channel_type": ch.channel_type}
+        meta_kwargs = {}
+    info = await pool.resolve_channel(
+        numeric, signal_gone=True, numeric_fallback=numeric, **resolve_kwargs
+    )
     if not info or info.get("gone") or info.get("review"):
         return "unavailable", []
 
@@ -795,18 +809,15 @@ async def _refresh_channel_card(db, pool, ch) -> tuple[str, list[str]]:
         changes.append("title")
     if new_type and new_type != ch.channel_type:
         changes.append("type")
-    if "username" in changes or "title" in changes:
-        await db.repos.channels.update_channel_meta(
-            ch.channel_id, username=new_username, title=new_title
-        )
-    if "type" in changes:
-        await db.set_channel_type(ch.channel_id, new_type)
-    # Backfill-only (NULL → entity.date); an existing value is never overwritten.
-    await db.repos.channels.update_channel_created_at(ch.channel_id, info.get("created_at"))
 
+    # Fetch the full-channel part before writing anything, so the confirmed
+    # entity fields never hit the DB without their about/linked companions
+    # being decided too (single-statement write below, #1765 review point 3).
     partial = False
-    meta = await fetch_channel_meta(pool, ch.channel_id, new_type or ch.channel_type)
-    if meta:
+    meta = await fetch_channel_meta(pool, ch.channel_id, new_type or ch.channel_type, **meta_kwargs)
+    meta_present = meta is not None
+    if meta_present:
+        assert meta is not None  # narrows the dict for the readers below
         meta_changes = [
             field
             for field, old, new in (
@@ -816,18 +827,25 @@ async def _refresh_channel_card(db, pool, ch) -> tuple[str, list[str]]:
             )
             if old != new
         ]
-        if meta_changes:
-            await db.repos.channels.update_channel_full_meta(
-                ch.channel_id,
-                about=meta.get("about"),
-                linked_chat_id=meta.get("linked_chat_id"),
-                has_comments=bool(meta.get("has_comments")),
-            )
-            changes.extend(meta_changes)
-    elif (new_type or ch.channel_type) != "group":
-        # The direct pool returns None for groups by design (no full-channel
-        # part there) — not an outage, so groups don't count as partial.
+        changes.extend(meta_changes)
+    else:
+        # Both pools now return a group's about via GetFullChat, so a None here
+        # is a genuine partial fetch for every channel type (#1767 review).
         partial = True
+
+    # Backfill-only created_at (COALESCE in SQL); an existing value is never
+    # overwritten. One atomic write for every confirmed field.
+    await db.repos.channels.update_channel_card(
+        ch.channel_id,
+        username=new_username,
+        title=new_title,
+        channel_type=new_type,
+        created_at=info.get("created_at"),
+        about=meta.get("about") if meta_present else None,
+        linked_chat_id=meta.get("linked_chat_id") if meta_present else None,
+        has_comments=bool(meta.get("has_comments")) if meta_present else False,
+        meta_present=meta_present,
+    )
     return ("partial" if partial else "updated"), changes
 
 
@@ -859,10 +877,17 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
             print("Please provide --all or a channel identifier")
             return
         print(f"Channels to refresh: {len(channels)}")
+        # Gateway accounts are shared: route each channel to the account it was
+        # collected by instead of the project primary (#1765 review point 2).
+        # The direct pool routes internally via its owner map / preferred_phone.
+        gateway_pool = isinstance(pool, GatewayPool)
         updated = partial_count = skipped = failed = 0
         for ch in channels:
+            phone = None
+            if gateway_pool:
+                phone = await db.repos.channels.get_preferred_phone(ch.channel_id)
             try:
-                status, changes = await _refresh_channel_card(db, pool, ch)
+                status, changes = await _refresh_channel_card(db, pool, ch, phone=phone)
             except Exception as e:
                 logging.warning(
                     "refresh-card: failed to fetch card for %s (%s): %s",
