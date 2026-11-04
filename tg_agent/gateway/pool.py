@@ -22,6 +22,12 @@ from tg_agent.telegram.collector_types import AllCollectionClientsFloodedError, 
 
 logger = logging.getLogger(__name__)
 
+# Cap on consecutive wait_for_limits rounds in one read_request (#1769 review):
+# a gateway account persistently returning short deferred receipts must not
+# spin here forever — past the cap the flood error propagates so the caller's
+# stop/error path bounds the loop.
+READ_WAIT_LIMIT_ROUNDS = 12
+
 
 class GatewayUncertainError(TimeoutError):
     """A write may have reached Telegram; never automatically create another intent."""
@@ -293,6 +299,7 @@ class GatewayPool:
         if not is_read_operation(operation):
             raise ValueError("Account rotation is only allowed for read operations")
         excluded, floods, unavailable = set(), [], set()
+        wait_rounds = 0
         while True:
             account = str(operation.account_id)
             try:
@@ -321,6 +328,9 @@ class GatewayPool:
                             or getattr(item[1], "wait_seconds", item[1].retry_after_sec) <= TRANSIENT_FLOOD_WAIT_MAX_SEC
                         ]
                         if wait_for_limits and retryable_waits:
+                            wait_rounds += 1
+                            if wait_rounds > READ_WAIT_LIMIT_ROUNDS:
+                                raise min(floods, key=lambda item: item[1].next_available_at)[1] from exc
                             operation, delay = min(retryable_waits, key=lambda item: item[1].next_available_at)
                             seconds = max(0.1, delay.next_available_at.timestamp() - time.time())
                             logger.info("Gateway read waiting: kind=%s reason=%s retry_in=%.1fs",

@@ -820,7 +820,9 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
         info = None
         try:
             info = await pool.resolve_channel(ch.username, signal_gone=True, **resolve_kwargs)
-        except GatewayOperationError:
+        except GatewayOperationError as exc:
+            if exc.code not in {"ValueError", "UsernameNotOccupiedError", "UsernameInvalidError"}:
+                raise  # TimeoutError/uncertain/etc. propagate — never a silent SKIP
             # The stored name resolves for nobody on the gateway either
             # (UsernameNotOccupiedError and friends): nothing fresh — SKIP,
             # parity with the direct pool's gone sentinel.

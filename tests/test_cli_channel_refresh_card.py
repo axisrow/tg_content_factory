@@ -11,6 +11,7 @@ fakes cover the command flow over both contracts.
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -1215,3 +1216,91 @@ def test_refresh_card_reconnects_without_losing_channels(cli_env, capsys, outage
     assert _get_channel(db, 821).title == "Fresh 821"
     assert _get_channel(db, 822).title == "Fresh 822"
     assert "Failed: 0" in capsys.readouterr().out
+
+
+def test_refresh_card_gateway_username_timeout_propagates(cli_env, capsys):
+    """#1769 review: the username fallback's except is narrowed to the
+    username-miss codes — a TimeoutError (120s server op timeout) surfaces as
+    FAILED, never as a silent SKIP."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=901, title="GW TO", username="gone901")
+
+    pool, stub = _make_gateway_pool(
+        db, {"state": "failed", "result": {"error": "ValueError"}}
+    )
+
+    async def wait(request, timeout=None):
+        peer = stub.submitted[-1].peer
+        if isinstance(peer, int):  # numeric inspect: absent from entity caches
+            return {"state": "failed", "result": {"error": "ValueError"}}
+        return {"state": "failed", "result": {"error": "TimeoutError"}}
+
+    stub.wait = wait
+    _run_refresh_card(db, pool, identifier="901")
+
+    out = capsys.readouterr().out
+    assert "FAILED" in out
+    assert "SKIP" not in out
+    ch = _get_channel(db, 901)
+    assert ch.title == "GW TO"
+    assert ch.username == "gone901"  # row untouched
+
+
+def test_refresh_card_gateway_username_miss_is_a_skip(cli_env, capsys):
+    """#1769 review: UsernameNotOccupiedError on the stored name stays a SKIP —
+    parity with the direct pool's gone sentinel."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=902, title="GW Miss", username="dead902")
+
+    pool, stub = _make_gateway_pool(
+        db, {"state": "failed", "result": {"error": "ValueError"}}
+    )
+
+    async def wait(request, timeout=None):
+        peer = stub.submitted[-1].peer
+        if isinstance(peer, int):
+            return {"state": "failed", "result": {"error": "ValueError"}}
+        return {"state": "failed", "result": {"error": "UsernameNotOccupiedError"}}
+
+    stub.wait = wait
+    _run_refresh_card(db, pool, identifier="902")
+
+    out = capsys.readouterr().out
+    assert "SKIP" in out
+    assert "FAILED" not in out
+    ch = _get_channel(db, 902)
+    assert ch.title == "GW Miss"
+    assert ch.username == "dead902"
+
+
+async def test_gateway_read_request_wait_for_limits_is_capped(db, monkeypatch):
+    """#1769 review: an account persistently returning short deferred receipts
+    must not spin read_request forever — past READ_WAIT_LIMIT_ROUNDS the flood
+    error escapes so the caller's stop path bounds the loop."""
+    from tg_agent.gateway.pool import GatewayReadDeferredError
+
+    monkeypatch.setattr("tg_agent.gateway.pool.READ_WAIT_LIMIT_ROUNDS", 2)
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("tg_agent.gateway.pool.asyncio.sleep", fake_sleep)
+
+    pool = GatewayPool(AppConfig(), db)
+    primary = {"id": str(uuid4()), "phone": "+70000000001", "active": True,
+               "flood_until": 0.0, "is_primary": True}
+    owner = {"id": str(uuid4()), "phone": "+70000000002", "active": True,
+             "flood_until": 0.0, "is_primary": False}
+    pool.clients = {primary["phone"]: primary, owner["phone"]: owner}
+    stub = StubGatewayClient({"state": "deferred", "result": {
+        "retry_at": time.time() + 1, "reason": "TelegramActionClientUnavailableError",
+        "wait_seconds": 1}})
+    pool.client = stub
+    await pool.outbox.initialize()
+
+    operation = InspectPeer(kind="inspect_peer", account_id=UUID(primary["id"]),
+                            peer="chan", peer_type="channel")
+    with pytest.raises(GatewayReadDeferredError):
+        await pool.read_request(operation, "cap-test", rotate=True, wait_for_limits=True)
+    assert len(sleeps) == 2  # exactly READ_WAIT_LIMIT_ROUNDS waits, then the raise
