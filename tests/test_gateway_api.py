@@ -366,7 +366,7 @@ async def test_shared_flood_defers_both_projects_without_sending(gateway):
     assert transport.sends == []
 
 
-@pytest.mark.parametrize("kind,seconds", [("local", 17), ("breaker", 300), ("telegram", 17)])
+@pytest.mark.parametrize("kind,seconds", [("local", 17), ("breaker", 300), ("telegram", 17), ("resolve", 17)])
 @pytest.mark.aiosqlite_serial
 async def test_refresh_card_waits_and_finishes_through_gateway(gateway, db, monkeypatch, capsys, kind, seconds):
     from datetime import datetime, timedelta, timezone
@@ -378,6 +378,7 @@ async def test_refresh_card_waits_and_finishes_through_gateway(gateway, db, monk
         HandledFloodWaitError,
         TelegramOperationSuspendedError,
         TelegramRateLimitedError,
+        UsernameResolveRateLimitedError,
     )
 
     from tg_agent.cli import runtime
@@ -402,6 +403,10 @@ async def test_refresh_card_waits_and_finishes_through_gateway(gateway, db, monk
                     next_available_at_utc=datetime.fromtimestamp(clock[0], timezone.utc) + timedelta(seconds=seconds),
                     detail="must not cross the gateway",
                 ))
+            if kind == "resolve":
+                # #1774: the account-local username budget must defer the read,
+                # not surface as a failed receipt the client fast-fails on.
+                raise UsernameResolveRateLimitedError(account, seconds)
             error_type = TelegramOperationSuspendedError if kind == "breaker" else TelegramRateLimitedError
             raise error_type(account, "dialogs", seconds)
         return {"channel_id": operation.peer, "title": f"Fresh {operation.peer}", "username": None,

@@ -959,6 +959,16 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
                         delay = max(0.1, exc.retry_after_sec)
                         print(f"WAIT: {ch.channel_id} — local {exc.category}; retry in {delay:.1f}s", flush=True)
                         await asyncio.sleep(delay)
+                    except (UsernameResolveRateLimitedError, UsernameResolveFloodWaitDeferredError) as exc:
+                        # #1774: account-local username budget. Short waits retry
+                        # in place; long budgets stop the run with the remaining
+                        # IDs instead of failing every channel one by one.
+                        delay = (exc.retry_after_sec if isinstance(exc, UsernameResolveRateLimitedError)
+                                 else exc.wait_seconds)
+                        if delay > TRANSIENT_FLOOD_WAIT_MAX_SEC:
+                            raise _stop_with_unprocessed(index, f"{ch.channel_id} — {exc}") from exc
+                        print(f"WAIT: {ch.channel_id} — username resolve budget; retry in {delay:.1f}s", flush=True)
+                        await asyncio.sleep(delay + 1)
                     except NoActiveCollectionClientsError:
                         if not gateway_pool:
                             raise
