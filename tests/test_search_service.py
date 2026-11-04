@@ -50,7 +50,22 @@ async def test_search_telegram_mode():
     service = SearchService(engine)
     _result = await service.search(mode="telegram", query="test", limit=10)
 
-    engine.search_telegram.assert_called_once_with("test", limit=10)
+    engine.search_telegram.assert_called_once_with("test", limit=10, date_from=None, date_to=None)
+
+
+async def test_search_telegram_mode_forwards_date_window():
+    """#1750: telegram mode forwards date_from/date_to to the engine like DB modes do."""
+    engine = MagicMock()
+    engine.search_telegram = AsyncMock(return_value=_make_search_result())
+    service = SearchService(engine)
+
+    await service.search(
+        mode="telegram", query="test", limit=10, date_from="2026-10-19", date_to="2026-11-02"
+    )
+
+    engine.search_telegram.assert_called_once_with(
+        "test", limit=10, date_from="2026-10-19", date_to="2026-11-02"
+    )
 
 
 @pytest.mark.anyio

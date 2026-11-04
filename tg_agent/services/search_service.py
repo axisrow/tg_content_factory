@@ -27,7 +27,9 @@ class SearchService:
         if mode == "ai" and self._ai_search:
             return await self._ai_search.search(query)
         if mode == "telegram":
-            return await self._engine.search_telegram(query, limit=limit)
+            return await self._engine.search_telegram(
+                query, limit=limit, date_from=date_from, date_to=date_to
+            )
         if mode == "my_chats":
             return await self._engine.search_my_chats(query, limit=limit)
         if mode == "channel":
