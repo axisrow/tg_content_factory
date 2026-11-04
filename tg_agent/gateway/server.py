@@ -17,7 +17,12 @@ from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import TypeAdapter
 from telethon.errors import FloodWaitError
-from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitedError
+from telethon_floodgate import (
+    HandledFloodWaitError,
+    TelegramRateLimitedError,
+    UsernameResolveFloodWaitDeferredError,
+    UsernameResolveRateLimitedError,
+)
 
 from tg_agent.gateway.artifacts import ArtifactStore
 from tg_agent.gateway.auth import GatewayLogins
@@ -104,6 +109,20 @@ class Dispatcher:
                     "retry_at": time.time() + max(0.1, exc.retry_after_sec),
                     "reason": type(exc).__name__,
                     "category": exc.category,
+                })
+            except (UsernameResolveRateLimitedError, UsernameResolveFloodWaitDeferredError) as exc:
+                # Account-local username budgets (#1774): defer the read so the
+                # client's retry machinery paces itself instead of fast-failing
+                # the request through every granted account.
+                retry_at = (
+                    exc.next_available_at.timestamp()
+                    if isinstance(exc, UsernameResolveFloodWaitDeferredError)
+                    else time.time() + max(0.1, exc.retry_after_sec)
+                )
+                state = "deferred" if is_read_operation(operation) else "uncertain"
+                await self.store.transition(project, request, "running", state, {
+                    "retry_at": retry_at,
+                    "reason": type(exc).__name__,
                 })
             except HandledFloodWaitError as exc:
                 await self.store.transition(project, request, "running", "deferred", {

@@ -1034,6 +1034,50 @@ def test_refresh_card_retries_local_limit(cli_env, capsys, delay):
     assert "Failed: 0" in capsys.readouterr().out
 
 
+def test_refresh_card_retries_short_username_resolve_budget(cli_env, capsys):
+    """#1774 direct path: the bare UsernameResolveRateLimitedError must get the
+    same wait-and-retry as local pacing — pre-fix it fell out of the retry loop
+    as a FAILED entry."""
+    from unittest.mock import AsyncMock
+
+    from tg_agent.telegram.collector import UsernameResolveRateLimitedError
+
+    db = cli_env
+    _add_stale_channel(db, channel_id=907, title="Old", username="budget907")
+    pool = FakeDirectPool({}, {907: {"about": "fresh", "linked_chat_id": None, "has_comments": False}})
+    pool.resolve_channel = AsyncMock(side_effect=[
+        UsernameResolveRateLimitedError("+10000000001", 17),
+        {"title": "Fresh", "username": "budget907", "channel_type": "channel",
+         "deactivate": False, "created_at": None},
+    ])
+    with patch("tg_agent.cli.commands.channel.asyncio.sleep", new_callable=AsyncMock):
+        _run_refresh_card(db, pool, identifier="907")
+    out = capsys.readouterr().out
+    assert _get_channel(db, 907).title == "Fresh"
+    assert "Failed: 0" in out
+    assert "WAIT" in out
+
+
+def test_refresh_card_stops_on_long_username_resolve_budget(cli_env, capsys):
+    """#1774: a multi-hour username budget must STOP the run with the
+    remaining IDs instead of failing every channel one by one."""
+    from unittest.mock import AsyncMock
+
+    from tg_agent.telegram.collector import UsernameResolveRateLimitedError
+
+    db = cli_env
+    _add_stale_channel(db, channel_id=908, title="Old", username=None)
+    pool = FakeDirectPool({}, {})
+    pool.resolve_channel = AsyncMock(side_effect=UsernameResolveRateLimitedError("+10000000001", 61200))
+    with pytest.raises(typer.Exit) as error:
+        _run_refresh_card(db, pool, identifier="908")
+    assert error.value.exit_code == 1
+    out = capsys.readouterr().out
+    assert "STOP" in out
+    assert "Unprocessed: 1" in out
+    assert _get_channel(db, 908).title == "Old"
+
+
 def test_refresh_card_retries_short_telegram_wait_and_continues(cli_env, capsys):
     from unittest.mock import AsyncMock
 
