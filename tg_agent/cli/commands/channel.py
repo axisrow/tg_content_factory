@@ -817,12 +817,28 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
         # account membership, unlike a bare PeerChannel lookup (#1768). Write only
         # after the resolved id matches the stored one — a username reoccupied by
         # another channel must never leak a foreign card onto this row.
-        info = await pool.resolve_channel(ch.username, signal_gone=True, **resolve_kwargs)
+        info = None
+        try:
+            info = await pool.resolve_channel(ch.username, signal_gone=True, **resolve_kwargs)
+        except GatewayOperationError:
+            # The stored name resolves for nobody on the gateway either
+            # (UsernameNotOccupiedError and friends): nothing fresh — SKIP,
+            # parity with the direct pool's gone sentinel.
+            info = None
         resolved = (
             abs(int(info.get("channel_id") or 0))
             if info and not info.get("gone") and not info.get("review") else 0
         )
         if not resolved:
+            return "unavailable", []
+        if info.get("channel_type") in ("user", "bot"):
+            # Telegram id ranges overlap: a username reoccupied by a USER can
+            # collide with the stored channel id. Never write a person's card
+            # onto a channel row (#1769 review).
+            logging.warning(
+                "refresh-card: @%s now belongs to a %s, not a channel; row untouched",
+                ch.username, info.get("channel_type"),
+            )
             return "unavailable", []
         if resolved != abs(ch.channel_id):
             logging.warning(
@@ -917,6 +933,16 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
         # The direct pool routes internally via its owner map / preferred_phone.
         gateway_pool = isinstance(pool, GatewayPool)
         updated = partial_count = skipped = failed = 0
+        reconnect_waits = 0
+
+        def _stop_with_unprocessed(at_index: int, reason: str) -> typer.Exit:
+            print(f"STOP: {reason}", flush=True)
+            print(f"Updated: {updated} (partial: {partial_count}), "
+                  f"Skipped: {skipped}, Failed: {failed}", flush=True)
+            print(f"Unprocessed: {len(channels) - at_index}; IDs: "
+                  + ", ".join(str(row.channel_id) for row in channels[at_index:]), flush=True)
+            return typer.Exit(1)
+
         for index, ch in enumerate(channels):
             phone = None
             if gateway_pool:
@@ -925,6 +951,7 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
                 while True:
                     try:
                         status, changes = await _refresh_channel_card(db, pool, ch, phone=phone)
+                        reconnect_waits = 0
                         break
                     except TelegramRateLimitedError as exc:
                         delay = max(0.1, exc.retry_after_sec)
@@ -936,8 +963,16 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
                         if pool.gateway_status.get("http_available") and not any(
                             row.get("active") for row in pool.accounts
                         ):
-                            print("STOP: no active accounts granted to this project", flush=True)
-                            raise typer.Exit(1) from None
+                            raise _stop_with_unprocessed(
+                                index, "no active accounts granted to this project"
+                            ) from None
+                        reconnect_waits += 1
+                        if reconnect_waits > 12:
+                            raise _stop_with_unprocessed(
+                                index,
+                                f"{ch.channel_id} — gateway unreachable after "
+                                f"{reconnect_waits} reconnect attempts (~1 min)",
+                            ) from None
                         print(f"WAIT: {ch.channel_id} — gateway reconnecting; retry in 5s", flush=True)
                         await asyncio.sleep(5)
                         await pool.initialize()
@@ -946,12 +981,7 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
                         wait_seconds = getattr(exc, "wait_seconds", delay)
                         local = isinstance(exc, GatewayReadDeferredError) and exc.local
                         if not local and wait_seconds > TRANSIENT_FLOOD_WAIT_MAX_SEC:
-                            print(f"STOP: {ch.channel_id} — {exc}", flush=True)
-                            print(f"Updated: {updated} (partial: {partial_count}), "
-                                  f"Skipped: {skipped}, Failed: {failed}", flush=True)
-                            print(f"Unprocessed: {len(channels) - index}; IDs: "
-                                  + ", ".join(str(row.channel_id) for row in channels[index:]), flush=True)
-                            raise typer.Exit(1) from exc
+                            raise _stop_with_unprocessed(index, f"{ch.channel_id} — {exc}") from exc
                         print(f"WAIT: {ch.channel_id} — retry in {delay:.1f}s", flush=True)
                         await asyncio.sleep(max(0.1, delay) + 1)
             except typer.Exit:

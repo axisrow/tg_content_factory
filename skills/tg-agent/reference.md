@@ -100,7 +100,8 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
   Cache warming resumes from the last dialog page after a short wait or a productive
   timeout, and a completed warm is reused until its existing cache TTL expires.
   A temporary gateway disconnect also pauses the current channel until reconnection;
-  it does not mark the remaining channels as failed.
+  it does not mark the remaining channels as failed. If the gateway stays unreachable
+  for about a minute, the run stops and prints the remaining channel IDs.
 - `channel probe <id|@username> [--limit 300] [--json]` — quality card from a LIVE
   sample of the last N posts, WITHOUT adding the channel: flags use the analyzer's own
   thresholds (engagement vs subscribers, forwards share, auto-feed, uniqueness,

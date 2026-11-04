@@ -42,9 +42,11 @@ async def fetch_channel_meta(
         return None
     try:
         return await fetcher(channel_id, channel_type, **kwargs)
-    except (HandledFloodWaitError, TelegramRateLimitedError, AllCollectionClientsFloodedError):
+    except (HandledFloodWaitError, TelegramRateLimitedError, AllCollectionClientsFloodedError) as exc:
         if kwargs.get("propagate_throttle"):
             raise
+        # A throttle skip must never be silent (#1769 review, no-silent-errors).
+        logger.warning("fetch_channel_meta throttled for %s: %s", channel_id, exc)
         return None
     except Exception as exc:
         logger.warning("Failed to fetch channel metadata for %s: %s", channel_id, exc, exc_info=True)

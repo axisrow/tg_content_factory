@@ -747,6 +747,86 @@ def test_refresh_card_username_mismatch_leaves_row_untouched(cli_env, capsys, ca
     )
 
 
+def test_refresh_card_gateway_username_miss_is_skip_not_failed(cli_env, capsys):
+    """#1769 review: on the gateway a dead stored username fails the inspect
+    (UsernameNotOccupiedError receipt) — that is nothing fresh, a SKIP with the
+    row untouched, not a FAILED counter entry like on pre-fix code."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=904, title="Old GW", username="deadgw904")
+
+    pool, stub = _make_gateway_pool(db, {})
+
+    async def wait(request, timeout=None):
+        error = "ValueError" if isinstance(stub.submitted[-1].peer, int) else "UsernameNotOccupiedError"
+        return {"state": "failed", "result": {"error": error}}
+
+    stub.wait = wait
+    _run_refresh_card(db, pool, identifier="904")
+
+    out = capsys.readouterr().out
+    assert "SKIP" in out
+    assert "FAILED" not in out
+    assert _get_channel(db, 904).title == "Old GW"
+
+
+def test_refresh_card_gateway_username_owned_by_user_is_skip(cli_env, capsys):
+    """#1769 review guard: Telegram id ranges overlap, so a username reoccupied
+    by a USER can collide with the stored channel id. The gateway resolves the
+    person's card — it must never be written onto the channel row."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=905, title="Old GW", username="hijacked905")
+
+    pool, stub = _make_gateway_pool(db, {})
+
+    async def wait(request, timeout=None):
+        if isinstance(stub.submitted[-1].peer, int):
+            return {"state": "failed", "result": {"error": "ValueError"}}
+        return {"state": "succeeded", "result": {
+            "channel_id": 905, "title": "Some Person", "username": "hijacked905",
+            "channel_type": "user", "deactivate": False, "about": "personal bio",
+            "linked_chat_id": None, "has_comments": False, "created_at": None,
+        }}
+
+    stub.wait = wait
+    _run_refresh_card(db, pool, identifier="905")
+
+    ch = _get_channel(db, 905)
+    assert ch.title == "Old GW"
+    assert ch.username == "hijacked905"
+    assert ch.about == "old about"
+    assert "SKIP" in capsys.readouterr().out
+
+
+@pytest.mark.timeout(15)
+def test_refresh_card_stops_after_reconnect_deadline_with_counters(cli_env, capsys):
+    """#1769 review: reconnect waits are bounded — a long gateway outage stops
+    the run with the full counters + Unprocessed output instead of spinning
+    forever (pre-fix code loops indefinitely, hence the tight timeout)."""
+    from unittest.mock import AsyncMock
+
+    from tg_agent.gateway.pool import NoActiveCollectionClientsError
+
+    db = cli_env
+    _add_stale_channel(db, channel_id=906, title="Old", username=None)
+
+    pool, stub = _make_gateway_pool(db, {})
+
+    async def wait(request, timeout=None):
+        raise NoActiveCollectionClientsError("gateway down")
+
+    stub.wait = wait
+    pool.initialize = AsyncMock()
+    with patch("tg_agent.cli.commands.channel.asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(typer.Exit) as error:
+            _run_refresh_card(db, pool, identifier="906")
+    assert error.value.exit_code == 1
+    out = capsys.readouterr().out
+    assert "STOP" in out
+    assert "Updated: 0" in out
+    assert "Unprocessed: 1" in out
+    assert "906" in out
+
+
 # ---------------------------------------------------------------------------
 # Bulk mode: per-channel result + counters, one failure hides nothing
 # ---------------------------------------------------------------------------
@@ -900,6 +980,38 @@ async def test_update_channel_card_meta_present_overwrites_and_backfill_never_do
     assert row.linked_chat_id is None
     assert row.has_comments is False
     assert row.created_at == created  # COALESCE: existing value never downgraded
+
+
+async def test_direct_pool_single_owner_flood_falls_back_to_review(real_pool_harness_factory, db, monkeypatch):
+    """#1769 review: one unavailable owner account must NOT abort a bulk run
+    with AllCollectionClientsFloodedError — that raise is reserved for an
+    all-flooded pool, so the caller keeps the review sentinel and can still
+    resolve by other means (the username fallback needs no membership)."""
+    from unittest.mock import AsyncMock
+
+    from tg_agent.telegram.collector_types import AllCollectionClientsFloodedError
+
+    harness = real_pool_harness_factory()
+    monkeypatch.setattr(harness.pool, "get_phone_for_channel", lambda cid: "+70000000001")
+    monkeypatch.setattr(harness.pool, "get_client_by_phone", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        harness.pool._lease_pool, "snapshot_stats_availability",
+        AsyncMock(return_value=("all_flooded", 300, datetime.now(timezone.utc))),
+    )
+
+    def _availability(state: str):
+        return AsyncMock(return_value=SimpleNamespace(
+            state=state, retry_after_sec=300, next_available_at_utc=datetime.now(timezone.utc),
+        ))
+
+    monkeypatch.setattr(harness.pool, "get_stats_availability", _availability("available"))
+    info = await harness.pool.resolve_channel("850", signal_gone=True, propagate_throttle=True)
+    assert info == {"review": True, "reason": "numeric_unresolved"}
+
+    # The whole pool flooded is still a hard throttle signal for the caller.
+    monkeypatch.setattr(harness.pool, "get_stats_availability", _availability("all_flooded"))
+    with pytest.raises(AllCollectionClientsFloodedError):
+        await harness.pool.resolve_channel("850", signal_gone=True, propagate_throttle=True)
 
 
 @pytest.mark.parametrize("delay", [17, 300])

@@ -965,9 +965,16 @@ class DialogsMixin:
                 result = await self.get_client_by_phone(gone_phone)
                 if not result:
                     if propagate_throttle:
-                        state, seconds, until = await self._lease_pool.snapshot_stats_availability({gone_phone})
-                        if state == "all_flooded":
-                            raise AllCollectionClientsFloodedError(seconds, until)
+                        # Abort only when the WHOLE pool is flooded; a single
+                        # unavailable owner must fall through to the review
+                        # sentinel so the caller can still resolve by other
+                        # means (e.g. a username fallback that needs no
+                        # membership — #1769 review).
+                        availability = await self.get_stats_availability()
+                        if availability.state == "all_flooded":
+                            raise AllCollectionClientsFloodedError(
+                                availability.retry_after_sec, availability.next_available_at_utc,
+                            )
                     # The owning account is unavailable (flood/disconnected): we cannot
                     # trustworthily confirm gone, so do NOT deactivate. Flag for review
                     # (uncertain) instead of a silent skip when asked (#875 redesign).
@@ -1270,8 +1277,7 @@ class DialogsMixin:
                     )
                     self.mark_dialogs_fetched(phone)
                 except HandledFloodWaitError as exc:
-                    if propagate_throttle:
-                        raise
+                    # The block only runs with propagate_throttle False — no raise here.
                     logger.info(
                         "fetch_channel_meta: flood wait warming %s for channel_id %s: %s",
                         phone,
@@ -1280,8 +1286,6 @@ class DialogsMixin:
                     )
                     return None
                 except TelegramRateLimitedError as exc:
-                    if propagate_throttle:
-                        raise
                     logger.info(
                         "fetch_channel_meta: proactive %s rate limit warming %s for channel_id %s; retry in %.1fs",
                         exc.category,
