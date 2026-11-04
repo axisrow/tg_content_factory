@@ -39,5 +39,12 @@ class SearchCommandsMixin(_Base):
                 int(channel_id) if channel_id is not None else None, query, limit=limit
             )
         else:
-            result = await self._search_engine.search_telegram(query, limit=limit)
+            # Date window (#1750): the web form may carry date_from/date_to for the
+            # telegram mode; empty strings normalize to None (no window).
+            result = await self._search_engine.search_telegram(
+                query,
+                limit=limit,
+                date_from=payload.get("date_from") or None,
+                date_to=payload.get("date_to") or None,
+            )
         return {"result": result.model_dump(mode="json")}

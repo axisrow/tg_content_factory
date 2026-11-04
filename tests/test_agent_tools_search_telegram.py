@@ -144,6 +144,31 @@ class TestSearchTelegramTool:
         assert "Premium required" in text
 
     @pytest.mark.anyio
+    async def test_date_window_passed_to_engine(self, mock_db, mock_pool):
+        """#1750: date_from/date_to args are forwarded to the engine."""
+        fake_result = SimpleNamespace(query="x", messages=[], total=0, error=None)
+
+        with (
+            patch("tg_agent.services.embedding_service.EmbeddingService"),
+            patch("tg_agent.search.engine.SearchEngine") as mock_se,
+        ):
+            se_instance = mock_se.return_value
+            se_instance.search_telegram = AsyncMock(return_value=fake_result)
+
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            await handlers["search_telegram"]({
+                "query": "gemini 4 carbon",
+                "limit": 30,
+                "date_from": "2026-10-19",
+                "date_to": "2026-11-02",
+            })
+
+        call_kwargs = se_instance.search_telegram.await_args.kwargs
+        assert call_kwargs["limit"] == 30
+        assert call_kwargs["date_from"] == "2026-10-19"
+        assert call_kwargs["date_to"] == "2026-11-02"
+
+    @pytest.mark.anyio
     async def test_exception_returns_error_text(self, mock_db, mock_pool):
         with (
             patch("tg_agent.services.embedding_service.EmbeddingService"),

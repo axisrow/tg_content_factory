@@ -2981,7 +2981,7 @@ async def test_search_telegram_handler_routes_premium():
 
     out = await d._handle_search_telegram({"mode": "telegram", "query": "q", "limit": 25})
 
-    engine.search_telegram.assert_awaited_once_with("q", limit=25)
+    engine.search_telegram.assert_awaited_once_with("q", limit=25, date_from=None, date_to=None)
     assert out["result"]["total"] == 1
     assert out["result"]["messages"][0]["text"] == "hit"
     # result_payload must round-trip back into a SearchResult
@@ -3007,6 +3007,30 @@ async def test_search_telegram_handler_without_engine_raises():
     d = _dispatcher(search_engine=None)
     with pytest.raises(RuntimeError, match="Search engine unavailable"):
         await d._handle_search_telegram({"mode": "telegram", "query": "q"})
+
+
+async def test_search_telegram_handler_passes_date_window():
+    """#1750: the web proxy payload may carry date_from/date_to — forwarded to the engine."""
+    from tg_agent.models import SearchResult
+
+    engine = MagicMock()
+    engine.search_telegram = AsyncMock(return_value=SearchResult(messages=[], total=0, query="q"))
+    d = _dispatcher(search_engine=engine)
+
+    await d._handle_search_telegram({
+        "mode": "telegram", "query": "q", "limit": 30,
+        "date_from": "2026-10-19", "date_to": "2026-11-02",
+    })
+
+    engine.search_telegram.assert_awaited_once_with(
+        "q", limit=30, date_from="2026-10-19", date_to="2026-11-02"
+    )
+
+    # Empty strings mean "no window" — normalized to None, not passed through.
+    await d._handle_search_telegram({
+        "mode": "telegram", "query": "q", "limit": 30, "date_from": "", "date_to": "",
+    })
+    engine.search_telegram.assert_awaited_with("q", limit=30, date_from=None, date_to=None)
 
 
 async def test_run_loop_logs_search_telegram_command_context(caplog):

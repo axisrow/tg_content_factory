@@ -202,8 +202,14 @@ def register(db: Any, client_pool: Any, embedding_service: Any, **kwargs: Any) -
     @tool(
         "search_telegram",
         "Search messages across all public Telegram channels via Telegram API. Requires a connected "
-        "Premium account. Use for discovering content beyond collected channels.",
-        {"query": Annotated[str, "Поисковый запрос"], "limit": Annotated[int, "Максимальное количество результатов"]},
+        "Premium account. Use for discovering content beyond collected channels. "
+        "Supports date_from/date_to (YYYY-MM-DD) as a client-side window over the premium results (#1750).",
+        {
+            "query": Annotated[str, "Поисковый запрос"],
+            "limit": Annotated[int, "Максимальное количество результатов"],
+            "date_from": Annotated[str, "Начало периода в формате YYYY-MM-DD"],
+            "date_to": Annotated[str, "Конец периода в формате YYYY-MM-DD"],
+        },
     )
     async def search_telegram(args):
         pool_gate = require_pool(client_pool, "Telegram-поиск")
@@ -212,7 +218,12 @@ def register(db: Any, client_pool: Any, embedding_service: Any, **kwargs: Any) -
         query = args.get("query", "")
         limit = int(args.get("limit", 50))
         try:
-            result = await _get_engine().search_telegram(query, limit=limit)
+            result = await _get_engine().search_telegram(
+                query,
+                limit=limit,
+                date_from=args.get("date_from"),
+                date_to=args.get("date_to"),
+            )
             text = _render_search_response(result)
         except Exception as e:
             text = f"Ошибка Telegram-поиска: {e}"
