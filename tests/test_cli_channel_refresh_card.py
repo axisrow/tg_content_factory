@@ -1034,19 +1034,34 @@ def test_refresh_card_retries_local_limit(cli_env, capsys, delay):
     assert "Failed: 0" in capsys.readouterr().out
 
 
-def test_refresh_card_retries_short_username_resolve_budget(cli_env, capsys):
-    """#1774 direct path: the bare UsernameResolveRateLimitedError must get the
-    same wait-and-retry as local pacing — pre-fix it fell out of the retry loop
+@pytest.mark.parametrize("budget,seconds", [
+    ("rate_limited", 17),
+    ("rate_limited", 60),   # boundary: exactly the transient cap still waits
+    ("deferred", 17),
+])
+def test_refresh_card_retries_short_username_resolve_budget(cli_env, capsys, budget, seconds):
+    """#1774 direct path: both username-budget exceptions get the same
+    wait-and-retry as local pacing — pre-fix they fell out of the retry loop
     as a FAILED entry."""
+    from datetime import datetime, timedelta, timezone
     from unittest.mock import AsyncMock
 
-    from tg_agent.telegram.collector import UsernameResolveRateLimitedError
+    from tg_agent.telegram.collector import (
+        UsernameResolveFloodWaitDeferredError,
+        UsernameResolveRateLimitedError,
+    )
 
     db = cli_env
     _add_stale_channel(db, channel_id=907, title="Old", username="budget907")
     pool = FakeDirectPool({}, {907: {"about": "fresh", "linked_chat_id": None, "has_comments": False}})
+    if budget == "rate_limited":
+        throttled = UsernameResolveRateLimitedError("+10000000001", seconds)
+    else:
+        throttled = UsernameResolveFloodWaitDeferredError(
+            seconds, datetime.now(timezone.utc) + timedelta(seconds=seconds),
+        )
     pool.resolve_channel = AsyncMock(side_effect=[
-        UsernameResolveRateLimitedError("+10000000001", 17),
+        throttled,
         {"title": "Fresh", "username": "budget907", "channel_type": "channel",
          "deactivate": False, "created_at": None},
     ])
@@ -1073,7 +1088,7 @@ def test_refresh_card_stops_on_long_username_resolve_budget(cli_env, capsys):
         _run_refresh_card(db, pool, identifier="908")
     assert error.value.exit_code == 1
     out = capsys.readouterr().out
-    assert "STOP" in out
+    assert "STOP: 908 —" in out  # the reason names the channel, not None
     assert "Unprocessed: 1" in out
     assert _get_channel(db, 908).title == "Old"
 
