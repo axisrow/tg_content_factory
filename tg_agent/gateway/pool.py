@@ -6,10 +6,12 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
+from math import ceil
 from typing import Literal
 from uuid import UUID, uuid4
 
 import httpx
+from telethon_floodgate import TRANSIENT_FLOOD_WAIT_MAX_SEC
 
 from tg_agent.gateway.catalog import ProjectAccountCatalog
 from tg_agent.gateway.client import TelegramGatewayClient
@@ -20,6 +22,12 @@ from tg_agent.telegram.collector_types import AllCollectionClientsFloodedError, 
 
 logger = logging.getLogger(__name__)
 
+# Cap on consecutive wait_for_limits rounds in one read_request (#1769 review):
+# a gateway account persistently returning short deferred receipts must not
+# spin here forever — past the cap the flood error propagates so the caller's
+# stop/error path bounds the loop.
+READ_WAIT_LIMIT_ROUNDS = 12
+
 
 class GatewayUncertainError(TimeoutError):
     """A write may have reached Telegram; never automatically create another intent."""
@@ -29,6 +37,21 @@ class GatewayOperationError(RuntimeError):
     def __init__(self, state, result):
         self.code = (result or {}).get("error")
         super().__init__(f"Gateway operation {state}: {self.code or state}")
+
+
+class GatewayReadDeferredError(AllCollectionClientsFloodedError):
+    """A receipt's retry deadline, preserving local pacing versus Telegram waits."""
+
+    def __init__(self, result):
+        super().__init__(max(1, ceil(result["retry_at"] - time.time())),
+                         datetime.fromtimestamp(result["retry_at"], timezone.utc))
+        self.reason = result.get("reason", "account_unavailable")
+        self.wait_seconds = result.get("wait_seconds", self.retry_after_sec)
+        self.local = self.reason in {
+            "TelegramRateLimitedError", "TelegramOperationSuspendedError", "TelegramPeerRateLimitedError",
+        }
+        self.args = (f"{self.reason}; retry at {self.next_available_at.isoformat()} "
+                     f"(in {self.retry_after_sec}s)",)
 
 
 class GatewayAuth:
@@ -157,7 +180,8 @@ class GatewayPool:
             rows.extend(await self.get_dialogs_for_phone(phone, **kwargs))
         return rows
 
-    async def inspect_peer(self, peer, *, channel_type=None, phone=None, statistics=False, topics=False):
+    async def inspect_peer(self, peer, *, channel_type=None, phone=None, statistics=False, topics=False,
+                           wait_for_limits=False):
         account = self.select(phone)
         # Rotate across the project's connected accounts when the first pick
         # cannot resolve the peer: a private channel may be visible only to the
@@ -168,14 +192,14 @@ class GatewayPool:
         return await self.read_request(InspectPeer(kind="inspect_peer", account_id=UUID(account["id"]), peer=peer,
                                                    peer_type=peer_kind,
                                                    statistics=statistics, topics=topics), f"inspect:{uuid4()}",
-                                       rotate=True)
+                                       rotate=True, wait_for_limits=wait_for_limits)
 
     async def fetch_channel_meta(self, channel_id, channel_type=None, phone=None):
         return await self.inspect_peer(channel_id, channel_type=channel_type, phone=phone)
 
-    async def resolve_channel(self, identifier, *, phone=None, channel_type=None, **kwargs):
+    async def resolve_channel(self, identifier, *, phone=None, channel_type=None, wait_for_limits=False, **kwargs):
         peer = int(identifier) if str(identifier).lstrip("-").isdigit() else identifier
-        return await self.inspect_peer(peer, channel_type=channel_type, phone=phone)
+        return await self.inspect_peer(peer, channel_type=channel_type, phone=phone, wait_for_limits=wait_for_limits)
 
     async def resolve_any_entity(self, identifier, phone=None):
         peer = int(identifier) if str(identifier).lstrip("-").isdigit() else identifier
@@ -231,12 +255,13 @@ class GatewayPool:
                     next((row for row in usable if row.get("is_primary")), usable[0]))
 
     async def request(self, operation, intent_key):
-        if self.client is None:
+        client = self.client
+        if client is None:
             raise NoActiveCollectionClientsError("Shared gateway is unavailable")
         request = await self.outbox.prepare(intent_key, operation)
         try:
-            await self.client.submit(request, operation)
-            receipt = await self.client.wait(request)
+            await client.submit(request, operation)
+            receipt = await client.wait(request)
         except httpx.HTTPError as exc:
             raise NoActiveCollectionClientsError("Shared gateway is unavailable; request remains persisted") from exc
         except TimeoutError as exc:
@@ -245,13 +270,15 @@ class GatewayPool:
                     "Gateway receipt deadline expired; original request remains persisted") from exc
             raise NoActiveCollectionClientsError("Gateway read deadline expired; retry the saved request") from exc
         except asyncio.CancelledError:
-            await self.client.cancel(request)
+            await client.cancel(request)
+            raise
+        except RuntimeError as exc:
+            if getattr(getattr(client, "http", None), "is_closed", False):
+                raise NoActiveCollectionClientsError("Shared gateway client was reconnected; retry the read") from exc
             raise
         state = receipt["state"]
         if state == "deferred":
-            until = receipt["result"]["retry_at"]
-            raise AllCollectionClientsFloodedError(max(1, int(until - time.time())),
-                                                   datetime.fromtimestamp(until, timezone.utc))
+            raise GatewayReadDeferredError(receipt["result"])
         if state == "uncertain":
             raise GatewayUncertainError("Telegram delivery is unconfirmed; verify before creating another intent")
         if state != "succeeded":
@@ -266,12 +293,13 @@ class GatewayPool:
             raise GatewayOperationError(state, receipt.get("result"))
         return receipt["result"]
 
-    async def read_request(self, operation, intent, *, rotate=False):
+    async def read_request(self, operation, intent, *, rotate=False, wait_for_limits=False):
         from tg_agent.services.telegram_actions import TelegramActionEntityResolutionError
 
         if not is_read_operation(operation):
             raise ValueError("Account rotation is only allowed for read operations")
-        excluded, floods = set(), []
+        excluded, floods, unavailable = set(), [], set()
+        wait_rounds = 0
         while True:
             account = str(operation.account_id)
             try:
@@ -287,12 +315,30 @@ class GatewayPool:
                     raise
                 excluded.add(account)
                 if isinstance(exc, AllCollectionClientsFloodedError):
-                    floods.append(exc)
+                    floods.append((operation, exc))
+                else:
+                    unavailable.add(account)
                 try:
                     replacement = self.select(exclude=excluded)
                 except (NoActiveCollectionClientsError, AllCollectionClientsFloodedError):
                     if floods:
-                        raise min(floods, key=lambda error: error.retry_after_sec) from exc
+                        retryable_waits = [
+                            item for item in floods
+                            if (isinstance(item[1], GatewayReadDeferredError) and item[1].local)
+                            or getattr(item[1], "wait_seconds", item[1].retry_after_sec) <= TRANSIENT_FLOOD_WAIT_MAX_SEC
+                        ]
+                        if wait_for_limits and retryable_waits:
+                            wait_rounds += 1
+                            if wait_rounds > READ_WAIT_LIMIT_ROUNDS:
+                                raise min(floods, key=lambda item: item[1].next_available_at)[1] from exc
+                            operation, delay = min(retryable_waits, key=lambda item: item[1].next_available_at)
+                            seconds = max(0.1, delay.next_available_at.timestamp() - time.time())
+                            logger.info("Gateway read waiting: kind=%s reason=%s retry_in=%.1fs",
+                                        operation.kind, getattr(delay, "reason", "account_unavailable"), seconds)
+                            await asyncio.sleep(seconds)
+                            excluded, floods = set(unavailable), []
+                            continue
+                        raise min(floods, key=lambda item: item[1].next_available_at)[1] from exc
                     raise exc from None
                 operation = operation.model_copy(update={"account_id": UUID(replacement["id"])})
 

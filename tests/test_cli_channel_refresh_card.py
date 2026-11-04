@@ -11,6 +11,7 @@ fakes cover the command flow over both contracts.
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -83,15 +84,22 @@ class FakeDirectPool:
 
     clients = {"+10000000001": object()}
 
-    def __init__(self, resolve_by_id, meta_by_id):
+    def __init__(self, resolve_by_id, meta_by_id, resolve_by_username=None):
         self._resolve_by_id = resolve_by_id
+        self._resolve_by_username = resolve_by_username or {}
         self._meta_by_id = meta_by_id
         self.resolve_calls: list[tuple[str, dict]] = []
         self.meta_calls: list[tuple[int, str | None]] = []
 
     async def resolve_channel(self, identifier, **kwargs):
-        self.resolve_calls.append((str(identifier), kwargs))
-        result = self._resolve_by_id[int(identifier)]
+        ident = str(identifier)
+        self.resolve_calls.append((ident, kwargs))
+        if ident.lstrip("-").isdigit():
+            result = self._resolve_by_id[int(ident)]
+        else:
+            # Username fallback (#1768): unknown username mirrors the real
+            # pool's gone sentinel for a not-occupied name.
+            result = self._resolve_by_username.get(ident, {"gone": True})
         if isinstance(result, Exception):
             raise result
         return result
@@ -463,6 +471,34 @@ def test_refresh_card_gateway_error_is_a_failure_not_a_wipe(cli_env, capsys):
     assert "FAILED" in capsys.readouterr().out
 
 
+def test_refresh_card_gateway_numeric_miss_falls_back_to_username(cli_env, capsys):
+    """#1768: a numeric PeerChannel miss on every granted account (accounts are
+    not members) is not the end — the stored @username resolves without
+    membership; the card is written only after the resolved id matches."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=900, title="Old GW", username="fallback900")
+
+    pool, stub = _make_gateway_pool(
+        db, {"state": "failed", "result": {"error": "ValueError"}}
+    )
+
+    async def wait(request, timeout=None):
+        peer = stub.submitted[-1].peer
+        if isinstance(peer, int):  # numeric inspect: absent from entity caches
+            return {"state": "failed", "result": {"error": "ValueError"}}
+        return {"state": "succeeded", "result": {**_GATEWAY_CARD, "channel_id": 900}}
+
+    stub.wait = wait
+    _run_refresh_card(db, pool, identifier="900")
+
+    ch = _get_channel(db, 900)
+    assert ch.title == "GW Title"
+    assert ch.username == "gwname"
+    assert ch.about == "gw about"
+    assert "OK" in capsys.readouterr().out
+    assert stub.submitted[-1].peer == "fallback900"  # fallback used the stored name
+
+
 async def test_gateway_pool_routes_owner_account_and_group_peer_type(db):
     """Real GatewayPool contract (#1765 review points 1+2).
 
@@ -624,9 +660,11 @@ def test_refresh_card_gone_and_error_leave_rows_untouched(cli_env, capsys):
     db = cli_env
     _add_stale_channel(db, channel_id=704, title="KeepMe", username="keepme")
     _add_stale_channel(db, channel_id=705, title="KeepMe2", username="keepme2")
+    _add_stale_channel(db, channel_id=706, title="Nameless", username=None)
 
     pool = FakeDirectPool(
-        resolve_by_id={704: {"gone": True}, 705: RuntimeError("no_client")},
+        resolve_by_id={704: {"gone": True}, 705: RuntimeError("no_client"),
+                       706: {"gone": True}},
         meta_by_id={},
     )
     _run_refresh_card(db, pool, identifier="704")
@@ -643,6 +681,151 @@ def test_refresh_card_gone_and_error_leave_rows_untouched(cli_env, capsys):
     out = capsys.readouterr().out
     assert "SKIP" in out
     assert "FAILED" in out
+
+    # A username-less row cannot fall back: gone stays a SKIP, no second call.
+    _run_refresh_card(db, pool, identifier="706")
+    assert "SKIP" in capsys.readouterr().out
+    assert _get_channel(db, 706).title == "Nameless"
+    assert [call[0] for call in pool.resolve_calls if call[0] == "706"] == ["706"]
+
+
+def test_refresh_card_direct_numeric_miss_falls_back_to_username(cli_env, capsys):
+    """#1768 direct contract: a numeric miss (review sentinel — this account is
+    not a member) falls back to the stored @username before giving up."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=902, title="Old", username="fallback902")
+
+    pool = FakeDirectPool(
+        resolve_by_id={902: {"review": True, "reason": "numeric_unresolved"}},
+        meta_by_id={902: {"about": "fresh", "linked_chat_id": None, "has_comments": False}},
+        resolve_by_username={"fallback902": {
+            "channel_id": 902, "title": "Fresh", "username": "fallback902",
+            "channel_type": "channel", "deactivate": False, "created_at": None,
+        }},
+    )
+    _run_refresh_card(db, pool, identifier="902")
+
+    ch = _get_channel(db, 902)
+    assert ch.title == "Fresh"
+    assert ch.about == "fresh"
+    assert [call[0] for call in pool.resolve_calls] == ["902", "fallback902"]
+    # Both attempts keep the pool-call contract: numeric tries the gone/review
+    # sentinel with the numeric fallback, the username attempt signals gone so a
+    # dead name reports honestly instead of returning None.
+    assert pool.resolve_calls[0][1]["signal_gone"] is True
+    assert pool.resolve_calls[0][1]["numeric_fallback"] == "902"
+    assert pool.resolve_calls[1][1]["signal_gone"] is True
+    assert pool.resolve_calls[1][1]["propagate_throttle"] is True
+    assert "OK" in capsys.readouterr().out
+
+
+def test_refresh_card_username_mismatch_leaves_row_untouched(cli_env, capsys, caplog):
+    """#1768 guard: a username reoccupied by a DIFFERENT channel must not leak
+    the foreign card onto our row — untouched, reported as skipped."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=903, title="Keep", username="hijacked")
+
+    pool = FakeDirectPool(
+        resolve_by_id={903: {"gone": True}},
+        meta_by_id={},
+        resolve_by_username={"hijacked": {
+            "channel_id": 555555, "title": "Other", "username": "hijacked",
+            "channel_type": "channel", "deactivate": False, "created_at": None,
+        }},
+    )
+    with caplog.at_level("WARNING"):
+        _run_refresh_card(db, pool, identifier="903")
+
+    ch = _get_channel(db, 903)
+    assert ch.title == "Keep"
+    assert ch.username == "hijacked"
+    assert ch.is_active is True  # refresh-card never deactivates
+    assert len(pool.resolve_calls) == 2  # numeric attempt + username fallback
+    assert "SKIP" in capsys.readouterr().out
+    assert any(
+        record.message.startswith("refresh-card:") and "resolves to channel" in record.message
+        for record in caplog.records
+    )
+
+
+def test_refresh_card_gateway_username_miss_is_skip_not_failed(cli_env, capsys):
+    """#1769 review: on the gateway a dead stored username fails the inspect
+    (UsernameNotOccupiedError receipt) — that is nothing fresh, a SKIP with the
+    row untouched, not a FAILED counter entry like on pre-fix code."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=904, title="Old GW", username="deadgw904")
+
+    pool, stub = _make_gateway_pool(db, {})
+
+    async def wait(request, timeout=None):
+        error = "ValueError" if isinstance(stub.submitted[-1].peer, int) else "UsernameNotOccupiedError"
+        return {"state": "failed", "result": {"error": error}}
+
+    stub.wait = wait
+    _run_refresh_card(db, pool, identifier="904")
+
+    out = capsys.readouterr().out
+    assert "SKIP" in out
+    assert "FAILED" not in out
+    assert _get_channel(db, 904).title == "Old GW"
+
+
+def test_refresh_card_gateway_username_owned_by_user_is_skip(cli_env, capsys):
+    """#1769 review guard: Telegram id ranges overlap, so a username reoccupied
+    by a USER can collide with the stored channel id. The gateway resolves the
+    person's card — it must never be written onto the channel row."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=905, title="Old GW", username="hijacked905")
+
+    pool, stub = _make_gateway_pool(db, {})
+
+    async def wait(request, timeout=None):
+        if isinstance(stub.submitted[-1].peer, int):
+            return {"state": "failed", "result": {"error": "ValueError"}}
+        return {"state": "succeeded", "result": {
+            "channel_id": 905, "title": "Some Person", "username": "hijacked905",
+            "channel_type": "user", "deactivate": False, "about": "personal bio",
+            "linked_chat_id": None, "has_comments": False, "created_at": None,
+        }}
+
+    stub.wait = wait
+    _run_refresh_card(db, pool, identifier="905")
+
+    ch = _get_channel(db, 905)
+    assert ch.title == "Old GW"
+    assert ch.username == "hijacked905"
+    assert ch.about == "old about"
+    assert "SKIP" in capsys.readouterr().out
+
+
+@pytest.mark.timeout(15)
+def test_refresh_card_stops_after_reconnect_deadline_with_counters(cli_env, capsys):
+    """#1769 review: reconnect waits are bounded — a long gateway outage stops
+    the run with the full counters + Unprocessed output instead of spinning
+    forever (pre-fix code loops indefinitely, hence the tight timeout)."""
+    from unittest.mock import AsyncMock
+
+    from tg_agent.gateway.pool import NoActiveCollectionClientsError
+
+    db = cli_env
+    _add_stale_channel(db, channel_id=906, title="Old", username=None)
+
+    pool, stub = _make_gateway_pool(db, {})
+
+    async def wait(request, timeout=None):
+        raise NoActiveCollectionClientsError("gateway down")
+
+    stub.wait = wait
+    pool.initialize = AsyncMock()
+    with patch("tg_agent.cli.commands.channel.asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(typer.Exit) as error:
+            _run_refresh_card(db, pool, identifier="906")
+    assert error.value.exit_code == 1
+    out = capsys.readouterr().out
+    assert "STOP" in out
+    assert "Updated: 0" in out
+    assert "Unprocessed: 1" in out
+    assert "906" in out
 
 
 # ---------------------------------------------------------------------------
@@ -798,3 +981,326 @@ async def test_update_channel_card_meta_present_overwrites_and_backfill_never_do
     assert row.linked_chat_id is None
     assert row.has_comments is False
     assert row.created_at == created  # COALESCE: existing value never downgraded
+
+
+async def test_direct_pool_single_owner_flood_falls_back_to_review(real_pool_harness_factory, db, monkeypatch):
+    """#1769 review: one unavailable owner account must NOT abort a bulk run
+    with AllCollectionClientsFloodedError — that raise is reserved for an
+    all-flooded pool, so the caller keeps the review sentinel and can still
+    resolve by other means (the username fallback needs no membership)."""
+    from unittest.mock import AsyncMock
+
+    from tg_agent.telegram.collector_types import AllCollectionClientsFloodedError
+
+    harness = real_pool_harness_factory()
+    monkeypatch.setattr(harness.pool, "get_phone_for_channel", lambda cid: "+70000000001")
+    monkeypatch.setattr(harness.pool, "get_client_by_phone", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        harness.pool._lease_pool, "snapshot_stats_availability",
+        AsyncMock(return_value=("all_flooded", 300, datetime.now(timezone.utc))),
+    )
+
+    def _availability(state: str):
+        return AsyncMock(return_value=SimpleNamespace(
+            state=state, retry_after_sec=300, next_available_at_utc=datetime.now(timezone.utc),
+        ))
+
+    monkeypatch.setattr(harness.pool, "get_stats_availability", _availability("available"))
+    info = await harness.pool.resolve_channel("850", signal_gone=True, propagate_throttle=True)
+    assert info == {"review": True, "reason": "numeric_unresolved"}
+
+    # The whole pool flooded is still a hard throttle signal for the caller.
+    monkeypatch.setattr(harness.pool, "get_stats_availability", _availability("all_flooded"))
+    with pytest.raises(AllCollectionClientsFloodedError):
+        await harness.pool.resolve_channel("850", signal_gone=True, propagate_throttle=True)
+
+
+@pytest.mark.parametrize("delay", [17, 300])
+def test_refresh_card_retries_local_limit(cli_env, capsys, delay):
+    from unittest.mock import AsyncMock
+
+    from telethon_floodgate import TelegramRateLimitedError
+
+    db = cli_env
+    _add_stale_channel(db, channel_id=990, title="Old", username="old")
+    pool = FakeDirectPool({}, {990: {"about": "fresh", "linked_chat_id": None, "has_comments": False}})
+    pool.resolve_channel = AsyncMock(side_effect=[
+        TelegramRateLimitedError("+10000000001", "dialogs", delay),
+        {"title": "Fresh", "username": "fresh", "channel_type": "channel"},
+    ])
+    with patch("tg_agent.cli.commands.channel.asyncio.sleep", new_callable=AsyncMock):
+        _run_refresh_card(db, pool, all_channels=True)
+    assert _get_channel(db, 990).title == "Fresh"
+    assert "Failed: 0" in capsys.readouterr().out
+
+
+def test_refresh_card_retries_short_telegram_wait_and_continues(cli_env, capsys):
+    from unittest.mock import AsyncMock
+
+    from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError
+
+    db = cli_env
+    for cid in (991, 992):
+        _add_stale_channel(db, channel_id=cid, title="Old", username=None)
+    pool = FakeDirectPool({}, {
+        cid: {"about": "fresh", "linked_chat_id": None, "has_comments": False} for cid in (991, 992)
+    })
+    pool.resolve_channel = AsyncMock(side_effect=[
+        HandledFloodWaitError(FloodWaitInfo(
+            operation="inspect", wait_seconds=17, next_available_at_utc=datetime.now(timezone.utc), detail="wait",
+        )),
+        {"title": "First", "username": None, "channel_type": "channel"},
+        {"title": "Second", "username": None, "channel_type": "channel"},
+    ])
+    with patch("tg_agent.cli.commands.channel.asyncio.sleep", new_callable=AsyncMock):
+        _run_refresh_card(db, pool, all_channels=True)
+    assert _get_channel(db, 991).title == "First"
+    assert _get_channel(db, 992).title == "Second"
+    assert "Failed: 0" in capsys.readouterr().out
+
+
+def test_refresh_card_stops_on_long_telegram_wait(cli_env, capsys):
+    from unittest.mock import AsyncMock
+
+    from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError
+
+    db = cli_env
+    for cid in (993, 994):
+        _add_stale_channel(db, channel_id=cid, title="Old", username=None)
+    pool = FakeDirectPool({}, {})
+    pool.resolve_channel = AsyncMock(side_effect=HandledFloodWaitError(FloodWaitInfo(
+        operation="inspect", wait_seconds=61200, next_available_at_utc=datetime.now(timezone.utc), detail="long wait",
+    )))
+    with pytest.raises(typer.Exit) as error:
+        _run_refresh_card(db, pool, all_channels=True)
+    assert error.value.exit_code == 1
+    assert _get_channel(db, 993).title == "Old"
+    assert _get_channel(db, 994).title == "Old"
+    assert "Unprocessed: 2" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("phase", ["resolve", "metadata"])
+async def test_direct_pool_preserves_throttle_for_refresh(real_pool_harness_factory, db, monkeypatch, phase):
+    from unittest.mock import AsyncMock
+
+    from telethon_floodgate import TelegramRateLimitedError
+
+    from tg_agent.services.channel_onboarding import fetch_channel_meta
+
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(phone="+70000000001", client=FakeCliTelethonClient())
+    await harness.add_account("+70000000001", session_string="s1", is_primary=True)
+    await harness.initialize_connected_accounts()
+    harness.pool.mark_dialogs_fetched("+70000000001")
+    monkeypatch.setattr(harness.pool, "resolve_entity_with_warm", AsyncMock(
+        side_effect=TelegramRateLimitedError("+70000000001", "dialogs", 17),
+    ))
+    with pytest.raises(TelegramRateLimitedError):
+        if phase == "resolve":
+            await harness.pool.resolve_channel("850", propagate_throttle=True)
+        else:
+            await fetch_channel_meta(harness.pool, 850, "channel", propagate_throttle=True)
+
+
+async def test_bulk_resolve_reuses_completed_warm(real_pool_harness_factory, db):
+    harness = real_pool_harness_factory()
+
+    def resolver(peer):
+        raise ValueError("not visible on this account")
+
+    streams = []
+
+    async def dialogs(**kwargs):
+        streams.append(kwargs)
+        return
+        yield
+
+    client = FakeCliTelethonClient(entity_resolver=resolver, iter_dialogs_factory=dialogs)
+    harness.queue_cli_client(phone="+70000000001", client=client)
+    await harness.add_account("+70000000001", session_string="s1", is_primary=True)
+    await harness.initialize_connected_accounts()
+    harness.pool.reset_dialogs_warm("+70000000001")
+    session = harness.pool.clients["+70000000001"]
+    for peer in (PeerChannel(850), PeerChannel(851)):
+        with pytest.raises(ValueError):
+            await harness.pool.resolve_entity_with_warm(session, "+70000000001", peer, reuse_warm_cache=True)
+    assert len(streams) == 1
+
+
+@pytest.mark.parametrize("interruption", ["flood", "timeout"])
+async def test_bulk_warm_resumes_after_short_flood(real_pool_harness_factory, db, interruption):
+    from telethon.tl.types import InputPeerChannel
+    from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError, TelegramRateLimitedError
+
+    harness = real_pool_harness_factory()
+    offsets = []
+
+    def resolver(peer):
+        raise ValueError("not visible")
+
+    async def dialogs(**kwargs):
+        offsets.append(kwargs)
+        if len(offsets) == 1:
+            yield SimpleNamespace(input_entity=InputPeerChannel(123, 456),
+                                  message=SimpleNamespace(id=7, date=datetime.now(timezone.utc)))
+            if interruption == "timeout":
+                raise asyncio.TimeoutError
+            raise HandledFloodWaitError(FloodWaitInfo(
+                operation="dialogs", wait_seconds=17, next_available_at_utc=datetime.now(timezone.utc), detail="wait",
+            ))
+
+    harness.queue_cli_client(phone="+70000000001", client=FakeCliTelethonClient(
+        entity_resolver=resolver, iter_dialogs_factory=dialogs,
+    ))
+    await harness.add_account("+70000000001", session_string="s1", is_primary=True)
+    await harness.initialize_connected_accounts()
+    harness.pool.reset_dialogs_warm("+70000000001")
+    session = harness.pool.clients["+70000000001"]
+    with pytest.raises(HandledFloodWaitError if interruption == "flood" else TelegramRateLimitedError):
+        await harness.pool.resolve_entity_with_warm(session, "+70000000001", PeerChannel(850), reuse_warm_cache=True)
+    with pytest.raises(ValueError):
+        await harness.pool.resolve_entity_with_warm(session, "+70000000001", PeerChannel(850), reuse_warm_cache=True)
+    assert offsets[0] == {}
+    assert offsets[1]["offset_id"] == 7
+    assert offsets[1]["offset_peer"] == InputPeerChannel(123, 456)
+    assert harness.pool.is_dialogs_fetched("+70000000001")
+
+
+def test_refresh_card_cancellation_during_wait_keeps_rows(cli_env):
+    from unittest.mock import AsyncMock
+
+    from telethon_floodgate import TelegramRateLimitedError
+
+    db = cli_env
+    _add_stale_channel(db, channel_id=995, title="Unchanged", username="old")
+    pool = FakeDirectPool({}, {})
+    pool.resolve_channel = AsyncMock(side_effect=TelegramRateLimitedError("+100", "dialogs", 300))
+    with patch("tg_agent.cli.commands.channel.asyncio.sleep", side_effect=asyncio.CancelledError):
+        with pytest.raises(asyncio.CancelledError):
+            _run_refresh_card(db, pool, all_channels=True)
+    assert db._connection.db is None
+    assert _get_channel(db, 995).title == "Unchanged"
+
+
+@pytest.mark.parametrize("outage", ["cold_start", "transport"])
+def test_refresh_card_reconnects_without_losing_channels(cli_env, capsys, outage):
+    from unittest.mock import AsyncMock
+
+    import httpx
+
+    db = cli_env
+    for cid in (821, 822):
+        _add_stale_channel(db, channel_id=cid, title="Old", username=None)
+    pool, stub = _make_gateway_pool(db, {})
+    connected = dict(pool.clients)
+    if outage == "cold_start":
+        pool.clients = {}
+    failures = [outage == "transport"]
+
+    async def wait(request, timeout=None):
+        if failures.pop() if failures else False:
+            pool.clients = {}
+            raise httpx.ReadError("temporary disconnect")
+        return {"state": "succeeded", "result": {
+            **_GATEWAY_CARD, "channel_id": stub.submitted[-1].peer,
+            "title": f"Fresh {stub.submitted[-1].peer}",
+        }}
+
+    async def initialize():
+        pool.clients = dict(connected)
+
+    stub.wait = wait
+    pool.initialize = initialize
+    with patch("tg_agent.cli.commands.channel.asyncio.sleep", new_callable=AsyncMock):
+        _run_refresh_card(db, pool, all_channels=True)
+    assert _get_channel(db, 821).title == "Fresh 821"
+    assert _get_channel(db, 822).title == "Fresh 822"
+    assert "Failed: 0" in capsys.readouterr().out
+
+
+def test_refresh_card_gateway_username_timeout_propagates(cli_env, capsys):
+    """#1769 review: the username fallback's except is narrowed to the
+    username-miss codes — a TimeoutError (120s server op timeout) surfaces as
+    FAILED, never as a silent SKIP."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=901, title="GW TO", username="gone901")
+
+    pool, stub = _make_gateway_pool(
+        db, {"state": "failed", "result": {"error": "ValueError"}}
+    )
+
+    async def wait(request, timeout=None):
+        peer = stub.submitted[-1].peer
+        if isinstance(peer, int):  # numeric inspect: absent from entity caches
+            return {"state": "failed", "result": {"error": "ValueError"}}
+        return {"state": "failed", "result": {"error": "TimeoutError"}}
+
+    stub.wait = wait
+    _run_refresh_card(db, pool, identifier="901")
+
+    out = capsys.readouterr().out
+    assert "FAILED" in out
+    assert "SKIP" not in out
+    ch = _get_channel(db, 901)
+    assert ch.title == "GW TO"
+    assert ch.username == "gone901"  # row untouched
+
+
+def test_refresh_card_gateway_username_miss_is_a_skip(cli_env, capsys):
+    """#1769 review: UsernameNotOccupiedError on the stored name stays a SKIP —
+    parity with the direct pool's gone sentinel."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=902, title="GW Miss", username="dead902")
+
+    pool, stub = _make_gateway_pool(
+        db, {"state": "failed", "result": {"error": "ValueError"}}
+    )
+
+    async def wait(request, timeout=None):
+        peer = stub.submitted[-1].peer
+        if isinstance(peer, int):
+            return {"state": "failed", "result": {"error": "ValueError"}}
+        return {"state": "failed", "result": {"error": "UsernameNotOccupiedError"}}
+
+    stub.wait = wait
+    _run_refresh_card(db, pool, identifier="902")
+
+    out = capsys.readouterr().out
+    assert "SKIP" in out
+    assert "FAILED" not in out
+    ch = _get_channel(db, 902)
+    assert ch.title == "GW Miss"
+    assert ch.username == "dead902"
+
+
+async def test_gateway_read_request_wait_for_limits_is_capped(db, monkeypatch):
+    """#1769 review: an account persistently returning short deferred receipts
+    must not spin read_request forever — past READ_WAIT_LIMIT_ROUNDS the flood
+    error escapes so the caller's stop path bounds the loop."""
+    from tg_agent.gateway.pool import GatewayReadDeferredError
+
+    monkeypatch.setattr("tg_agent.gateway.pool.READ_WAIT_LIMIT_ROUNDS", 2)
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("tg_agent.gateway.pool.asyncio.sleep", fake_sleep)
+
+    pool = GatewayPool(AppConfig(), db)
+    primary = {"id": str(uuid4()), "phone": "+70000000001", "active": True,
+               "flood_until": 0.0, "is_primary": True}
+    owner = {"id": str(uuid4()), "phone": "+70000000002", "active": True,
+             "flood_until": 0.0, "is_primary": False}
+    pool.clients = {primary["phone"]: primary, owner["phone"]: owner}
+    stub = StubGatewayClient({"state": "deferred", "result": {
+        "retry_at": time.time() + 1, "reason": "TelegramActionClientUnavailableError",
+        "wait_seconds": 1}})
+    pool.client = stub
+    await pool.outbox.initialize()
+
+    operation = InspectPeer(kind="inspect_peer", account_id=UUID(primary["id"]),
+                            peer="chan", peer_type="channel")
+    with pytest.raises(GatewayReadDeferredError):
+        await pool.read_request(operation, "cap-test", rotate=True, wait_for_limits=True)
+    assert len(sleeps) == 2  # exactly READ_WAIT_LIMIT_ROUNDS waits, then the raise

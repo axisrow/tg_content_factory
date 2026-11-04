@@ -77,7 +77,11 @@ _CLI = textwrap.dedent(
 
 # Cold interpreters importing the whole core (agent SDKs, langchain, sklearn)
 # can exceed the suite-wide 120s deadlock guard on a busy xdist runner.
-pytestmark = pytest.mark.timeout(300)
+# mutmut_skip: every test here spawns a subprocess; under mutation runs the
+# trampoline in the spawned interpreter cannot resolve the mutmut config
+# (FileNotFoundError on source_paths), which is a sandbox artifact, not an
+# import regression.
+pytestmark = [pytest.mark.timeout(300), pytest.mark.mutmut_skip]
 
 
 def _source_roots() -> list[str]:

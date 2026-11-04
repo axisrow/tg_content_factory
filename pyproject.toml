@@ -319,6 +319,9 @@ also_copy = [
     "mkdocs.yml",
     "config.yaml",
     "docker-compose.yml",
+    # Plugin-discovery tests resolve fixtures via Path(__file__)/../examples
+    # (tests/test_plugins.py), which in the sandbox copies means mutants/.
+    "examples",
 ]
 strip_src_prefix = false
 # The fork-isolated serial stats phase pushes the whole suite (~10.7k tests,

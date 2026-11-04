@@ -57,6 +57,7 @@ from tg_agent.telegram.backends import (
     TelegramTransportSession,
     adapt_transport_session,
 )
+from tg_agent.telegram.collector_types import AllCollectionClientsFloodedError
 from tg_agent.telegram.dialog_snapshots import DialogSnapshotWriter
 from tg_agent.telegram.utils import normalize_utc
 
@@ -286,6 +287,7 @@ class DialogsMixin:
         """
         self._dialogs_fetched.discard(phone)
         self._warm_timestamps().pop(phone, None)
+        getattr(self, "_metadata_warm_cursors", {}).pop(phone, None)
 
     def connected_phones(self) -> set[str]:
         """Return the set of currently connected phone numbers."""
@@ -677,6 +679,7 @@ class DialogsMixin:
         timeout: float = 30.0,
         warm_timeout: float = 60.0,
         use_input_entity: bool = False,
+        reuse_warm_cache: bool = False,
     ) -> object:
         """Resolve a Telegram entity, warming the dialog cache once on a cache miss.
 
@@ -713,15 +716,39 @@ class DialogsMixin:
         try:
             return await _resolve(operation)
         except (ValueError, TypeError):
+            # A missing peer after a completed warm is not fixed by fetching
+            # every dialog again for each channel in a bulk read.
+            if reuse_warm_cache and self.is_dialogs_fetched(phone):
+                raise
+            if reuse_warm_cache:
+                cursors = getattr(self, "_metadata_warm_cursors", None)
+                if cursors is None:
+                    cursors = self._metadata_warm_cursors = {}
+                cursor = cursors.setdefault(phone, _DialogCursor())
+                previous_position = (cursor.offset_id, cursor.offset_peer)
+
+                async def warm():
+                    async for dialog in session.stream_dialogs(**cursor.as_kwargs()):
+                        _advance_cursor(cursor, dialog)
+
+                warming = warm()
+            else:
+                warming = session.warm_dialog_cache()
             try:
                 await run_with_flood_wait(
-                    session.warm_dialog_cache(),
+                    warming,
                     operation=f"{operation}_warm_dialog_cache",
                     phone=phone,
                     pool=self,
                     logger_=logger,
                     timeout=warm_timeout,
                 )
+            except asyncio.TimeoutError:
+                if reuse_warm_cache and (cursor.offset_id, cursor.offset_peer) != previous_position:
+                    # Yield the dispatcher after a productive timed chunk;
+                    # the next receipt resumes from this saved page.
+                    raise TelegramRateLimitedError(phone, "metadata_warm_resume", 1.0) from None
+                raise
             except TelegramRateLimitedError as exc:
                 logger.info(
                     "resolve_entity_with_warm(%s): proactive %s rate limit on %s; retry in %.1fs",
@@ -731,6 +758,8 @@ class DialogsMixin:
                     exc.retry_after_sec,
                 )
                 raise
+            if reuse_warm_cache:
+                cursors.pop(phone, None)
             self.mark_dialogs_fetched(phone)
             return await _resolve(f"{operation}_after_warm")
 
@@ -793,6 +822,7 @@ class DialogsMixin:
         signal_gone: bool = False,
         numeric_fallback: str | None = None,
         channel_type: str | None = None,
+        propagate_throttle: bool = False,
     ) -> dict | None:
         """Resolve channel by @username or t.me/ link. Returns dict with channel info.
 
@@ -834,6 +864,7 @@ class DialogsMixin:
             gone_phone=owner_phone,
             review_on_uncertain=primary_numeric,
             channel_type=channel_type,
+            propagate_throttle=propagate_throttle,
         )
         # Stale-username guard: a gone-by-username verdict is not proof the channel is
         # dead — retry by the stable numeric id before signalling gone (#858 review).
@@ -861,6 +892,7 @@ class DialogsMixin:
                 gone_phone=retry_owner,
                 review_on_uncertain=True,
                 channel_type=channel_type,
+                propagate_throttle=propagate_throttle,
             )
         return result
 
@@ -890,6 +922,7 @@ class DialogsMixin:
         gone_phone: str | None = None,
         review_on_uncertain: bool = False,
         channel_type: str | None = None,
+        propagate_throttle: bool = False,
     ) -> dict | None:
         gone: dict | None = {"gone": True} if signal_gone else None
         # When ``review_on_uncertain`` is set, an ambiguous numeric not-found (cache-miss
@@ -931,6 +964,17 @@ class DialogsMixin:
             if gone_phone is not None:
                 result = await self.get_client_by_phone(gone_phone)
                 if not result:
+                    if propagate_throttle:
+                        # Abort only when the WHOLE pool is flooded; a single
+                        # unavailable owner must fall through to the review
+                        # sentinel so the caller can still resolve by other
+                        # means (e.g. a username fallback that needs no
+                        # membership — #1769 review).
+                        availability = await self.get_stats_availability()
+                        if availability.state == "all_flooded":
+                            raise AllCollectionClientsFloodedError(
+                                availability.retry_after_sec, availability.next_available_at_utc,
+                            )
                     # The owning account is unavailable (flood/disconnected): we cannot
                     # trustworthily confirm gone, so do NOT deactivate. Flag for review
                     # (uncertain) instead of a silent skip when asked (#875 redesign).
@@ -943,6 +987,12 @@ class DialogsMixin:
             else:
                 result = await self.get_available_client()
             if not result:
+                if propagate_throttle:
+                    availability = await self.get_stats_availability()
+                    if availability.state == "all_flooded":
+                        raise AllCollectionClientsFloodedError(
+                            availability.retry_after_sec, availability.next_available_at_utc,
+                        )
                 if last_flood_error is not None:
                     raise last_flood_error
                 logger.warning("resolve_channel: no available client for '%s'", identifier)
@@ -950,7 +1000,7 @@ class DialogsMixin:
             session, phone = result
             try:
                 entity = await self.resolve_entity_with_warm(
-                    session, phone, peer, operation="resolve_channel"
+                    session, phone, peer, operation="resolve_channel", reuse_warm_cache=propagate_throttle,
                 )
                 if isinstance(entity, ChannelForbidden):
                     # Access denied for THIS account, not a deletion — never deactivate
@@ -981,6 +1031,8 @@ class DialogsMixin:
                 logger.warning("resolve_channel: get_entity timed out for '%s'", identifier)
                 return None
             except HandledFloodWaitError as exc:
+                if propagate_throttle:
+                    raise
                 last_flood_error = exc
                 logger.info(
                     "resolve_channel: rotating client after flood wait for '%s': %s",
@@ -1017,6 +1069,8 @@ class DialogsMixin:
                     return gone
                 return review if numeric_peer else None
             except TelegramRateLimitedError as exc:
+                if propagate_throttle:
+                    raise
                 logger.info(
                     "resolve_channel: proactive %s rate limit for '%s' on %s; retry in %.1fs, rotating client",
                     exc.category,
@@ -1156,7 +1210,7 @@ class DialogsMixin:
         return channel_type, channel_type in ("scam", "fake", "restricted")
 
     async def fetch_channel_meta(
-        self, channel_id: int, channel_type: str | None
+        self, channel_id: int, channel_type: str | None, *, propagate_throttle: bool = False
     ) -> dict | None:
         """Fetch about, linked_chat_id, has_comments for a channel or group.
 
@@ -1196,6 +1250,12 @@ class DialogsMixin:
         if result is None:
             result = await self.get_available_client()
         if not result:
+            if propagate_throttle:
+                availability = await self.get_stats_availability()
+                if availability.state == "all_flooded":
+                    raise AllCollectionClientsFloodedError(
+                        availability.retry_after_sec, availability.next_available_at_utc,
+                    )
             logger.warning("fetch_channel_meta: no available client for channel_id %s", channel_id)
             return None
 
@@ -1205,7 +1265,7 @@ class DialogsMixin:
             # Pre-warm the entity cache when routing through a preferred account
             # whose dialogs haven't been fetched this process (StringSession loses
             # the cache between restarts). Mirrors Collector._collect_channel.
-            if used_preferred and not self.is_dialogs_fetched(phone):
+            if used_preferred and not self.is_dialogs_fetched(phone) and not propagate_throttle:
                 try:
                     await run_with_flood_wait(
                         session.warm_dialog_cache(),
@@ -1217,6 +1277,7 @@ class DialogsMixin:
                     )
                     self.mark_dialogs_fetched(phone)
                 except HandledFloodWaitError as exc:
+                    # The block only runs with propagate_throttle False — no raise here.
                     logger.info(
                         "fetch_channel_meta: flood wait warming %s for channel_id %s: %s",
                         phone,
@@ -1239,6 +1300,7 @@ class DialogsMixin:
                 phone,
                 PeerChat(abs(channel_id)) if is_group else PeerChannel(channel_id),
                 operation="fetch_channel_meta",
+                reuse_warm_cache=propagate_throttle,
             )
             resolved = cast(_ChannelEntity, entity)
             full = await run_with_flood_wait(
@@ -1282,6 +1344,8 @@ class DialogsMixin:
             )
             return None
         except HandledFloodWaitError as exc:
+            if propagate_throttle:
+                raise
             logger.info(
                 "fetch_channel_meta: flood wait for channel_id %s: %s",
                 channel_id,
@@ -1318,6 +1382,8 @@ class DialogsMixin:
                 await self.forget_channel_phone(channel_id, only_if_phone=phone)
             return None
         except TelegramRateLimitedError as exc:
+            if propagate_throttle:
+                raise
             logger.info(
                 "fetch_channel_meta: proactive %s rate limit for channel_id %s; retry in %.1fs",
                 exc.category,
