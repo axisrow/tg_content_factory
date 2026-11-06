@@ -1,14 +1,17 @@
 """Real local subprocesses and sockets; these tests make no Telegram requests."""
 
 import concurrent.futures
+import logging
 import os
+import re
 import signal
 import time
+from logging.handlers import RotatingFileHandler
 
 import httpx
 import pytest
 
-from tg_agent.gateway.runtime import configure, endpoint, ensure_gateway
+from tg_agent.gateway.runtime import configure, endpoint, ensure_gateway, setup_gateway_logging
 from tg_agent.gateway.store import private_key
 
 
@@ -25,6 +28,55 @@ def test_concurrent_key_setup_publishes_one_complete_key(tmp_path):
         keys = list(executor.map(lambda _: private_key(tmp_path / "private"), range(16)))
     assert len(set(keys)) == 1
     assert len(keys[0]) >= 48
+
+
+def _detach(handler) -> None:
+    logging.getLogger().removeHandler(handler)
+    handler.close()
+
+
+def test_setup_gateway_logging_writes_timestamped_lines(tmp_path):
+    """#1780: gateway.log lines must carry timestamps — bare lines hid a
+    216k-entry error mass for days."""
+    handler = setup_gateway_logging(tmp_path)
+    try:
+        logging.getLogger("gateway-log-test").warning("boom #1780")
+        handler.flush()
+        line = (tmp_path / "gateway.log").read_text()
+        assert "boom #1780" in line
+        assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", line)
+    finally:
+        _detach(handler)
+
+
+def test_setup_gateway_logging_rotates_and_keeps_backups(tmp_path):
+    """#1780: size-based rotation, so the log cannot grow unbounded."""
+    handler = setup_gateway_logging(tmp_path, max_bytes=200, backup_count=2)
+    try:
+        for index in range(30):
+            logging.getLogger("gateway-log-test").warning(
+                "rotation filler %03d %s", index, "x" * 40)
+        handler.flush()
+        assert (tmp_path / "gateway.log.1").exists()
+        assert (tmp_path / "gateway.log").stat().st_size <= 200
+        # Rotation recreates the file: the 0600 mode must survive rollovers.
+        assert (tmp_path / "gateway.log").stat().st_mode & 0o777 == 0o600
+    finally:
+        _detach(handler)
+
+
+def test_setup_gateway_logging_is_idempotent(tmp_path):
+    """A repeated setup call must not double-attach (duplicate lines)."""
+    first = setup_gateway_logging(tmp_path)
+    second = setup_gateway_logging(tmp_path)
+    try:
+        attached = [h for h in logging.getLogger().handlers
+                    if isinstance(h, RotatingFileHandler)
+                    and getattr(h, "baseFilename", None) == str(tmp_path / "gateway.log")]
+        assert len(attached) == 1
+    finally:
+        for handler in {first, second}:
+            _detach(handler)
 
 
 def test_concurrent_autostart_reuses_gateway_from_another_directory(tmp_path, monkeypatch):
