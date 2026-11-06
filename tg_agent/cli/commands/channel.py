@@ -21,6 +21,7 @@ from tg_agent.cli.commands.common import (
     resolve_channel,
     run_async,
 )
+from tg_agent.collection_queue import TERMINAL_CODE_MISMATCH
 from tg_agent.database.bundles import ChannelBundle
 from tg_agent.filters.probe import ProbeMessage, probe_channel_snapshots
 from tg_agent.gateway.pool import GatewayOperationError, GatewayPool, GatewayReadDeferredError
@@ -801,10 +802,20 @@ async def _stamp_terminal(db, ch: Channel, code: str) -> None:
 
     Metadata only — same contract as the collection path's stamp: the bulk
     enqueue and the bulk refresh-card pass both defer the row for the window,
-    an explicit operator request still goes through.
+    an explicit operator request still goes through. A mismatch code mirrors
+    the collection path's quarantine (``_handle_terminal_username_error``):
+    the stamp defers the row from both bulk consumers, so collection would
+    never re-detect the drift to quarantine it itself.
     """
     assert ch.id is not None, "a stamped row comes from the DB and carries a pk"
-    await db.repos.channels.set_channel_terminal(ch.id, code, datetime.now(timezone.utc))
+    now = datetime.now(timezone.utc)
+    await db.repos.channels.set_channel_terminal(ch.id, code, now)
+    if code == TERMINAL_CODE_MISMATCH:
+        await db.repos.channels.set_channel_review(
+            ch.id,
+            f"UsernameChannelIdMismatch: @{ch.username or ch.channel_id} "
+            f"now resolves to another channel ({now:%Y-%m-%d})",
+        )
 
 
 async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tuple[str, list[str]]:

@@ -839,8 +839,12 @@ def test_refresh_card_username_mismatch_leaves_row_untouched(cli_env, capsys, ca
     assert ch.username == "hijacked"
     assert ch.is_active is True  # refresh-card never deactivates
     assert len(pool.resolve_calls) == 2  # numeric attempt + username fallback
-    # #1787: the reoccupied username is the loudest terminal stamp.
+    # #1787: the reoccupied username is the loudest terminal stamp, and the
+    # stamp quarantines the row like the collection path's #1783 handler does
+    # (the deferral would otherwise hide the drift from collection forever).
     assert ch.terminal_code == "UsernameChannelIdMismatch"
+    assert ch.needs_review is True
+    assert "UsernameChannelIdMismatch" in (ch.review_reason or "")
     assert "SKIP" in capsys.readouterr().out
     assert any(
         record.message.startswith("refresh-card:") and "resolves to channel" in record.message
@@ -893,8 +897,11 @@ def test_refresh_card_gateway_username_owned_by_user_is_skip(cli_env, capsys):
 
     ch = _get_channel(db, 905)
     assert ch.title == "Old GW"
-    # #1787: a username reoccupied by a USER is the same identity drift.
+    # #1787: a username reoccupied by a USER is the same identity drift, so the
+    # stamp quarantines the row like the collection path's #1783 handler does.
     assert ch.terminal_code == "UsernameChannelIdMismatch"
+    assert ch.needs_review is True
+    assert "UsernameChannelIdMismatch" in (ch.review_reason or "")
     assert ch.username == "hijacked905"
     assert ch.about == "old about"
     assert "SKIP" in capsys.readouterr().out
