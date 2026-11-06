@@ -11,6 +11,7 @@ real :memory: DB.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from uuid import uuid4
 
 import pytest
@@ -21,24 +22,37 @@ from tg_agent.models import Channel
 
 
 class ScriptedGatewayClient:
-    """Receipts by rule: history fails with a peer-miss ValueError until the
-    username inspect returns a matching channel_id (the session-cache unlock),
-    then serves one message page and pages out; inspect receipts are scripted
-    per test (a dict, or a callable of the submitted peer)."""
+    """Receipts by rule, with gateway request-UUID semantics: the first wait
+    computes a receipt from stub state, any later wait of the same request
+    UUID replays that stored terminal receipt — so a retry reusing an intent
+    key can never execute, exactly as in production. History fails with a
+    peer-miss ValueError until the username inspect returns a matching
+    channel_id (the session-cache unlock), then serves one message page and
+    pages out; inspect receipts are scripted per test (a dict, or a callable
+    of the submitted peer)."""
 
-    def __init__(self, inspect_receipt, *, numeric: int, history_always_fails: bool = False):
+    def __init__(self, inspect_receipt: dict | Callable[[object], dict], *, numeric: int,
+                 history_always_fails: bool = False):
         self.inspect_receipt = inspect_receipt
         self.numeric = numeric
         self.history_always_fails = history_always_fails
         self.unlocked = False
         self.pages_served = 0
+        self.receipts: dict[object, dict] = {}
         self.log: list[tuple[object, object]] = []
 
     async def submit(self, request, operation):
         self.log.append((request, operation))
 
     async def wait(self, request, timeout=None):
-        operation = next(op for req, op in self.log if req is request)
+        if request in self.receipts:
+            return self.receipts[request]
+        receipt = self.compute_receipt(
+            next(op for req, op in self.log if req is request))
+        self.receipts[request] = receipt
+        return receipt
+
+    def compute_receipt(self, operation) -> dict:
         if operation.kind == "inspect_peer":
             receipt = (self.inspect_receipt(operation.peer) if callable(self.inspect_receipt)
                        else self.inspect_receipt)
@@ -62,17 +76,19 @@ class ScriptedGatewayClient:
         pass
 
 
-def _make_pool(db, inspect_receipt, *, numeric: int = 902, history_always_fails: bool = False):
+def _make_pool(db, inspect_receipt, *, numeric: int = 902,
+               history_always_fails: bool = False) -> tuple[GatewayPool, ScriptedGatewayClient]:
     """Real GatewayPool over the scripted client; two shared project accounts."""
-    pool = GatewayPool(AppConfig(), db, client=ScriptedGatewayClient(
-        inspect_receipt, numeric=numeric, history_always_fails=history_always_fails))
+    stub = ScriptedGatewayClient(inspect_receipt, numeric=numeric,
+                                 history_always_fails=history_always_fails)
+    pool = GatewayPool(AppConfig(), db, client=stub)
     primary = {"id": str(uuid4()), "phone": "+70000000001", "active": True,
                "flood_until": 0.0, "is_primary": True}
     owner = {"id": str(uuid4()), "phone": "+70000000002", "active": True,
              "flood_until": 0.0, "is_primary": False}
     pool.clients = {primary["phone"]: primary, owner["phone"]: owner}
     asyncio.run(pool.outbox.initialize())
-    return pool, pool.client
+    return pool, stub
 
 
 def _channel(username: str | None = "fallback902", channel_id: int = 902) -> Channel:
@@ -117,6 +133,10 @@ def test_collect_numeric_miss_falls_back_to_username_and_collects(db):
     assert ops[2] == ("inspect_peer", "fallback902")
     assert ops[3] == ("history", 902)
     assert ops[-1] == ("history", 902)
+    # The retried history is a fresh intent: the failed request's UUID carries
+    # a terminal failed receipt the gateway would replay verbatim, so reusing
+    # it can never execute (#1782).
+    assert stub.log[3][0] != stub.log[0][0]
     # Collection never rewrites channel meta — the inspect card's "Fresh"
     # title must not leak into the stored row.
     row = asyncio.run(db.repos.channels.get_channel_by_channel_id(902))

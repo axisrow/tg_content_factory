@@ -387,6 +387,10 @@ class GatewayPool:
                     raise GatewayOperationError("failed", {"error": "UsernameChannelIdMismatch"}) from exc
                 logger.info("collect: numeric miss on %s recovered via stored @%s; retrying history (#1779)",
                             channel.channel_id, username)
+                # Fresh intent nonce: outbox.prepare dedups by action key, so
+                # re-issuing the failed key would replay the stored failed
+                # receipt instead of executing the retry (#1782 review).
+                key = f"{key}:username-retry"
                 continue
             finally:
                 if cancelled is not None:
