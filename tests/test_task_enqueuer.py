@@ -108,8 +108,9 @@ def task_enqueuer(mock_db, mock_collection_service):
 
 
 @pytest.mark.anyio
-async def test_enqueue_all_channels_delegates(task_enqueuer, mock_collection_service):
+async def test_enqueue_all_channels_delegates(task_enqueuer, mock_db, mock_collection_service):
     """Delegates to collection service."""
+    mock_db.repos.settings.get_setting = AsyncMock(return_value=None)
     mock_result = MagicMock(queued_count=3)
     mock_collection_service.enqueue_all_channels.return_value = mock_result
 

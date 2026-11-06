@@ -31,7 +31,10 @@ FACADE_PASSTHROUGH_BASELINE = 88
 # 135 → 108 after the cross-bundle wrapper dedup into shared mixins (#1135):
 # duplicated pass-throughs collapsed into one definition each (plain-class mixins,
 # not dataclass fields, so bundle constructor order is unchanged).
-BUNDLE_METHOD_BASELINE = 108
+# 108 → 111 for the #1783 terminal stamp: CollectionQueue consumes
+# ChannelBundle|Database (no db.repos), so set_channel_terminal /
+# clear_channel_terminal / set_channel_review must be reachable on the bundle.
+BUNDLE_METHOD_BASELINE = 111
 
 # Every facade pass-through opens with `self._require()`; counting it is a
 # robust, signature-shape-independent proxy for the pass-through surface.
