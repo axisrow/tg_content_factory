@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import secrets
 import signal
@@ -14,6 +15,7 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import httpx
@@ -207,6 +209,31 @@ async def serve(root: Path, *, access_factory=None) -> None:
         owner.release()
 
 
+def setup_gateway_logging(root: Path, *, max_bytes: int = 10 * 1024 * 1024,
+                          backup_count: int = 3) -> RotatingFileHandler:
+    """Timestamped, rotated ``gateway.log`` handler (#1780).
+
+    The gateway process logs bare WARNING lines to stderr, which the launcher
+    redirects into ``gateway.log`` — no timestamps, no rotation, which is how a
+    216k-line error mass accumulated unnoticed. This handler routes the same
+    records into the same file with timestamps and size-based rotation; the
+    launcher's stdout redirect stays for pre-logging crash output (after a
+    rotation those rare writes land in the rotated ``.log.N`` file). The file
+    keeps the launcher's 0600 mode.
+    """
+    handler = RotatingFileHandler(str(root / "gateway.log"), maxBytes=max_bytes,
+                                  backupCount=backup_count, encoding="utf-8")
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    attached = any(isinstance(h, RotatingFileHandler)
+                   and getattr(h, "baseFilename", None) == str(root / "gateway.log")
+                   for h in logging.getLogger().handlers)
+    if not attached:
+        logging.getLogger().addHandler(handler)
+        os.chmod(root / "gateway.log", 0o600)
+    return handler
+
+
 def preflight(root: Path) -> None:
     """Validate the enrolled binary/configuration before a shared restart."""
     profile = json.loads((root / "gateway.json").read_text(encoding="utf-8"))
@@ -281,4 +308,5 @@ if __name__ == "__main__":
     if args.check:
         preflight(args.root)
     else:
+        setup_gateway_logging(args.root)
         asyncio.run(serve(args.root))

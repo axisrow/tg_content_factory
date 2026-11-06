@@ -1,6 +1,7 @@
 """Two real HTTP clients, isolated project DBs, one injected Telegram transport."""
 
 import asyncio
+import logging
 import secrets
 import time
 from uuid import UUID, uuid4
@@ -324,6 +325,29 @@ async def test_events_fan_out_and_automatic_reply_has_one_owner(gateway):
     with pytest.raises(httpx.HTTPStatusError) as error:
         await clients[1].events()
     assert error.value.response.status_code == 410
+
+
+async def test_operation_failure_log_names_account_and_peer(gateway, caplog):
+    """#1780: a mass failure in gateway.log must be attributable to an
+    account/peer without opening the DB — the log line carries both."""
+    store, transport, account, clients = gateway
+
+    async def deny(project, operation):
+        raise PermissionError("denied by peer permissions")
+
+    transport.execute = deny
+    operation = Send(kind="send", account_id=UUID(account), peer=123, text="log line probe")
+    request = uuid4()
+    with caplog.at_level(logging.WARNING, logger="tg_agent.gateway.server"):
+        await clients[0].submit(request, operation)
+        await clients[0].wait(request, timeout=5)
+    warnings = [record for record in caplog.records if record.name == "tg_agent.gateway.server"]
+    assert warnings, "expected the generic operation-failure warning"
+    message = warnings[-1].getMessage()
+    assert "kind=send" in message
+    assert f"account={account}" in message
+    assert "peer=123" in message
+    assert "error=PermissionError" in message
 
 
 async def test_pending_cancellation_is_scoped_to_its_project(gateway):

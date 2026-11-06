@@ -150,7 +150,11 @@ class Dispatcher:
                 # Never persist raw exception text: upstream errors can carry message text or secrets.
                 state = "failed" if is_read_operation(operation) or isinstance(exc, PermissionError) else "uncertain"
                 await self.store.transition(project, request, "running", state, {"error": type(exc).__name__})
-                logger.warning("Gateway operation failed: kind=%s error=%s", operation.kind, type(exc).__name__)
+                # account/peer in the line (#1780): a mass failure in gateway.log must
+                # be attributable without opening the DB. 0600 local log, ids only.
+                logger.warning("Gateway operation failed: kind=%s account=%s peer=%s error=%s",
+                               operation.kind, operation.account_id,
+                               getattr(operation, "peer", None), type(exc).__name__)
             except asyncio.CancelledError:
                 state = "cancelled" if is_read_operation(operation) else "uncertain"
                 await self.store.transition(project, request, "running", state)
