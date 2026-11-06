@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 RESOLVE_BACKOFF_BY_PHONE_SETTING = "resolve_username_backoff_by_phone"
 RESOLVE_BACKOFF_LEGACY_SETTING = "resolve_username_backoff_until_utc"
+# Снимок окон ResolveRateLimiter (wall-clock штампы + ужатые бюджеты,
+# floodgate #26): переживает рестарт демона, чтобы sustained-объём,
+# уже потраченный до остановки, не обнулял бюджет нового процесса.
+RESOLVE_LIMITER_SNAPSHOT_SETTING = "resolve_rate_limiter_snapshot"
 
 # Объёмный бюджет sustained-яруса (#1498, инцидент 06.10.26): burst-лимитер
 # (20/60с) пропускал неограниченный sustained-объём — холодная догонка 623
@@ -325,6 +329,41 @@ class ResolveGuardMixin:
         except Exception:
             logger.debug("Failed to migrate legacy resolve backoff", exc_info=True)
 
+    async def persist_resolve_limiter_snapshot(self) -> None:
+        """Persist the resolve limiter's per-phone windows to DB settings.
+
+        Wall-clock stamps (and tightened budgets as remaining seconds) survive
+        a daemon restart: the next boot replays them against the new clock, so
+        sustained volume already spent stays against the budget instead of
+        resetting it (floodgate #26). Best-effort — a snapshot is an
+        optimisation, never a failure path.
+        """
+        db = getattr(self, "_db", None)
+        if db is None:
+            return
+        try:
+            payload = json.dumps(self._get_resolve_rate_limiter().snapshot_state())
+            await db.set_setting(RESOLVE_LIMITER_SNAPSHOT_SETTING, payload)
+        except Exception:
+            logger.debug("Failed to persist resolve limiter snapshot", exc_info=True)
+
+    async def restore_resolve_limiter_snapshot(self, db: object) -> None:
+        """Replay a persisted limiter snapshot on startup. Call once during pool init."""
+        store = cast("_SettingsStore", db)
+        try:
+            value = await store.get_setting(RESOLVE_LIMITER_SNAPSHOT_SETTING)
+        except Exception:
+            return
+        if not value:
+            return
+        try:
+            snapshot = json.loads(value)
+        except (ValueError, TypeError):
+            return
+        if isinstance(snapshot, dict):
+            self._get_resolve_rate_limiter().restore_state(snapshot)
+            logger.info("resolve limiter snapshot restored (%d phone(s))", len(snapshot))
+
     def reserve_resolve_username_call(self, phone: str) -> float:
         phone = str(phone or "unknown")
         remaining = self.get_resolve_username_backoff_remaining_sec(phone)
@@ -398,5 +437,22 @@ class ResolveGuardMixin:
                     username,
                     phone,
                     next_available_at.isoformat(),
+                )
+            # Любой флоуд-сигнал Telegram по резолвам — повод ужать
+            # sustained-бюджет этого аккаунта (floodgate #26): эскалационная
+            # лестница начинается с коротких ожиданий, и ожидание сигнала
+            # на полной квоте зовёт следующую ступень.
+            tightened = self._get_resolve_rate_limiter().tighten(phone)
+            await self.persist_resolve_limiter_snapshot()
+            if tightened is not None:
+                (logger_ or logger).warning(
+                    "%s got FloodWait %ss on %s while resolving %s; "
+                    "sustained budget on %s tightened to %d calls/window (#26)",
+                    operation,
+                    exc.info.wait_seconds,
+                    phone,
+                    username,
+                    phone,
+                    tightened,
                 )
             raise

@@ -102,6 +102,10 @@ class ClientLifecycleMixin:
             self, db: object, *, phones: Iterable[str] | None = None
         ) -> None: ...
 
+        async def restore_resolve_limiter_snapshot(self, db: object) -> None: ...
+
+        async def persist_resolve_limiter_snapshot(self) -> None: ...
+
     def _connected_phones(self) -> set[str]:
         return set(self.clients.keys())
 
@@ -142,6 +146,9 @@ class ClientLifecycleMixin:
         await self.restore_resolve_username_backoff(
             self._db, phones=[acc.phone for acc in accounts]
         )
+        # Sustained-volume windows replay too: the previous process's resolve
+        # volume stays against the fresh limiter's budget (floodgate #26).
+        await self.restore_resolve_limiter_snapshot(self._db)
         if phones is not None:
             allowed_phones = {str(phone) for phone in phones if str(phone)}
             accounts = [acc for acc in accounts if acc.phone in allowed_phones]
@@ -451,6 +458,11 @@ class ClientLifecycleMixin:
 
     async def disconnect_all(self) -> None:
         self._disconnecting = True
+        # Snapshot the resolve limiter before teardown: sustained volume spent
+        # in this process stays against the budget across the restart
+        # (floodgate #26). Best-effort; fires before clients disconnect so a
+        # failing DB write cannot block the teardown path.
+        await self.persist_resolve_limiter_snapshot()
         # Detach the watchdog handler from the global telethon.tgcf logger so
         # a torn-down pool is not kept alive by it (#817 review F1); a later
         # initialize() re-installs it. getattr: doubles built via __new__.

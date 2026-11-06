@@ -16,6 +16,7 @@ from tg_agent.telegram.resolve_guard import (
     DEFAULT_RESOLVE_VOLUME_WINDOW_SEC,
     RESOLVE_BACKOFF_BY_PHONE_SETTING,
     RESOLVE_BACKOFF_LEGACY_SETTING,
+    RESOLVE_LIMITER_SNAPSHOT_SETTING,
     ResolveGuardMixin,
 )
 
@@ -74,14 +75,103 @@ async def test_live_username_resolve_records_per_phone_long_flood_backoff():
     assert pool.get_resolve_username_backoff_remaining_sec("+7002") == 0
     # ...so the pool-level aggregate reports "a free phone exists".
     assert pool.get_resolve_username_backoff_remaining_sec() == 0
-    pool._db.set_setting.assert_awaited_once()
-    key, value = pool._db.set_setting.await_args.args
-    assert key == RESOLVE_BACKOFF_BY_PHONE_SETTING
-    stored = json.loads(value)
+    # A flood persists both the per-phone backoff and the limiter snapshot.
+    assert pool._db.set_setting.await_count == 2
+    persisted_keys = {call.args[0] for call in pool._db.set_setting.await_args_list}
+    assert persisted_keys == {
+        RESOLVE_BACKOFF_BY_PHONE_SETTING,
+        RESOLVE_LIMITER_SNAPSHOT_SETTING,
+    }
+    backoff_call = next(
+        call
+        for call in pool._db.set_setting.await_args_list
+        if call.args[0] == RESOLVE_BACKOFF_BY_PHONE_SETTING
+    )
+    stored = json.loads(backoff_call.args[1])
     assert set(stored) == {"+7001"}
     assert datetime.fromisoformat(stored["+7001"]) == pool.get_resolve_username_backoff_until(
         "+7001"
     )
+
+
+@pytest.mark.anyio
+async def test_live_username_resolve_small_flood_tightens_sustained_budget():
+    """#26 wiring: any Telegram flood signal on the resolve path halves the
+    phone's sustained budget — even below the global-backoff threshold — and
+    persists the limiter snapshot, so a restart keeps the tightened state."""
+    pool = ClientPool.__new__(ClientPool)
+    pool.report_flood = AsyncMock()
+    pool._db = SimpleNamespace(set_setting=AsyncMock())
+    pool.clients = {}
+    pool._resolve_rate_limiter = ResolveRateLimiter(jitter_sec=0.0)
+
+    async def _small_flood():
+        raise FloodWaitError(request=None, capture=17)
+
+    with pytest.raises(HandledFloodWaitError):
+        await pool.run_live_username_resolve(
+            _small_flood,
+            phone="+7001",
+            username="small_flood",
+            operation="test_tighten",
+        )
+
+    # Below the global-backoff threshold: no per-phone backoff...
+    assert pool.get_resolve_username_backoff_remaining_sec("+7001") == 0
+    # ...but the sustained budget is tightened (factor 0.5 → 30/3600s)...
+    entry = pool._resolve_rate_limiter.snapshot_state()["+7001"]
+    assert entry["tightened"]["cap"] == DEFAULT_RESOLVE_VOLUME_MAX_CALLS // 2
+    assert entry["tightened"]["expires_in"] > 0
+    # ...and the snapshot is persisted for the next boot.
+    pool._db.set_setting.assert_awaited_once()
+    key, value = pool._db.set_setting.await_args.args
+    assert key == RESOLVE_LIMITER_SNAPSHOT_SETTING
+    stored = json.loads(value)
+    # `expires_in` is a float captured at snapshot time — compare semantics,
+    # not the exact value: the tightened cap carried into the persisted
+    # snapshot, and the budget is still inside its 4h window.
+    assert stored["+7001"]["tightened"]["cap"] == entry["tightened"]["cap"]
+    assert 0 < stored["+7001"]["tightened"]["expires_in"] < 4 * 3600
+
+
+@pytest.mark.anyio
+async def test_restore_resolve_limiter_snapshot_replays_volume():
+    """A restarted pool keeps its sustained volume: stamps replayed from the
+    DB setting land in the fresh limiter's sustained window (#26)."""
+    source = ResolveRateLimiter(jitter_sec=0.0)
+    assert source.try_acquire("+7001") == 0.0
+    payload = json.dumps(source.snapshot_state())
+
+    pool = ClientPool.__new__(ClientPool)
+    pool._db = SimpleNamespace(get_setting=AsyncMock(return_value=payload))
+    pool._resolve_rate_limiter = ResolveRateLimiter(jitter_sec=0.0)
+    await pool.restore_resolve_limiter_snapshot(pool._db)
+
+    snapshot = pool._resolve_rate_limiter.snapshot_state()
+    assert len(snapshot["+7001"]["sustained"]) == 1
+    assert pool.reserve_resolve_username_call("+7001") == 0.0
+
+
+@pytest.mark.anyio
+async def test_restore_resolve_limiter_snapshot_ignores_corrupt_payload():
+    pool = ClientPool.__new__(ClientPool)
+    pool._db = SimpleNamespace(get_setting=AsyncMock(return_value="not-json"))
+    pool._resolve_rate_limiter = ResolveRateLimiter(jitter_sec=0.0)
+    await pool.restore_resolve_limiter_snapshot(pool._db)
+    assert pool._resolve_rate_limiter.snapshot_state() == {}
+
+
+@pytest.mark.anyio
+async def test_disconnect_all_persists_limiter_snapshot():
+    """A managed stop carries the sustained-volume picture to the next boot."""
+    pool = ClientPool.__new__(ClientPool)
+    pool.clients = {}
+    pool._db = SimpleNamespace(set_setting=AsyncMock())
+    await pool.disconnect_all()
+    pool._db.set_setting.assert_awaited_once()
+    key, value = pool._db.set_setting.await_args.args
+    assert key == RESOLVE_LIMITER_SNAPSHOT_SETTING
+    assert json.loads(value) == {}
 
 
 def _make_pool(clients: dict | None = None):

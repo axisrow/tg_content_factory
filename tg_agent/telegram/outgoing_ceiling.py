@@ -58,10 +58,16 @@ class OutgoingRateCeiling:
             kwargs["time_func"] = time_func
         # Exact delays: jitter would make waited callers re-burst on wake
         # instead of pacing through the window in order.
+        # Opt out of the floodgate 0.1.6 sustained default: the spec is the
+        # calibration here (a 120/30s ceiling is a legitimate pace, not abuse;
+        # the resolve-oriented 60/hour sustained cap would silently throttle
+        # sends — pinned red by test_pool_ships_process_wide_ceiling #1417).
         self._limiter = ResolveRateLimiter(
             max_calls=spec.max_calls,
             window_sec=spec.window_sec,
             jitter_sec=0.0,
+            sustained_max_calls=None,
+            sustained_window_sec=None,
             **kwargs,
         )
         self._sleep = sleep_func
