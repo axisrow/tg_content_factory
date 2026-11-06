@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -137,10 +138,33 @@ def test_collect_numeric_miss_falls_back_to_username_and_collects(db):
     # a terminal failed receipt the gateway would replay verbatim, so reusing
     # it can never execute (#1782).
     assert stub.log[3][0] != stub.log[0][0]
-    # Collection never rewrites channel meta — the inspect card's "Fresh"
-    # title must not leak into the stored row.
+    # One resolve, one job (#1788): the id-verified card refreshes the row's
+    # open metadata — the same fields update_channel_card writes in
+    # refresh-card, so no second resolve is ever needed for meta.
     row = asyncio.run(db.repos.channels.get_channel_by_channel_id(902))
-    assert row.title == "Stale"
+    assert row.title == "Fresh"
+    assert row.username == "fallback902"
+    assert row.about == "new about"
+    assert row.linked_chat_id == 999
+    assert row.has_comments is True
+
+
+def test_collect_fallback_clears_terminal_stamp_on_verified_card(db):
+    """#1788/#1783 parity: the verified identity clears a stale terminal stamp
+    exactly like a successful refresh-card does (update_channel_card)."""
+    pool, stub = _make_pool(db, {"state": "succeeded", "result": dict(_CARD)})
+    channel = _channel()
+    _add_channel(db, channel)
+    row = asyncio.run(db.repos.channels.get_channel_by_channel_id(902))
+    asyncio.run(db.repos.channels.set_channel_terminal(
+        row.id, "UsernameInvalidError", datetime.now(timezone.utc)))
+
+    asyncio.run(pool.collect_channel(channel))
+
+    row = asyncio.run(db.repos.channels.get_channel_by_channel_id(902))
+    assert row.title == "Fresh"
+    assert row.terminal_code is None
+    assert row.terminal_at is None
 
 
 def test_collect_username_mismatch_stops_collection(db):

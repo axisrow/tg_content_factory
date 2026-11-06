@@ -387,6 +387,22 @@ class GatewayPool:
                     raise GatewayOperationError("failed", {"error": "UsernameChannelIdMismatch"}) from exc
                 logger.info("collect: numeric miss on %s recovered via stored @%s; retrying history (#1779)",
                             channel.channel_id, username)
+                # One resolve, one job (#1788): the id-verified inspect card
+                # carries the fresh open metadata — write it here (the same
+                # update_channel_card call refresh-card makes, including the
+                # terminal-stamp clear on a verified identity), so no second
+                # resolve is ever spent on this channel's meta.
+                await self._db.repos.channels.update_channel_card(
+                    channel.channel_id,
+                    username=info.get("username"),
+                    title=info.get("title") or None,
+                    channel_type=info.get("channel_type") or None,
+                    created_at=info.get("created_at"),
+                    about=info.get("about"),
+                    linked_chat_id=info.get("linked_chat_id"),
+                    has_comments=bool(info.get("has_comments")),
+                    meta_present=True,
+                )
                 # Fresh intent nonce: outbox.prepare dedups by action key, so
                 # re-issuing the failed key would replay the stored failed
                 # receipt instead of executing the retry (#1782 review).
