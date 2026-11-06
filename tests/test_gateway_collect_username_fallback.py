@@ -185,6 +185,28 @@ def test_collect_username_mismatch_stops_collection(db):
     assert row.title == "Stale"
 
 
+def test_collect_username_reoccupied_by_user_with_colliding_id_writes_nothing(db):
+    """#1790 review: peer id ranges overlap, so a username reoccupied by a USER
+    can carry the stored numeric id and pass the id check. The user/bot guard
+    must fire before any card write — row untouched, collection stopped."""
+    person = dict(_CARD, channel_type="user", title="Some Person")
+    pool, stub = _make_pool(db, {"state": "succeeded", "result": person})
+    channel = _channel()
+    _add_channel(db, channel)
+
+    with pytest.raises(GatewayOperationError) as excinfo:
+        asyncio.run(pool.collect_channel(channel))
+
+    assert excinfo.value.code == "UsernameChannelIdMismatch"
+    ops = _ops(stub)
+    assert ops[2] == ("inspect_peer", "fallback902")
+    assert len(ops) == 3, "no history retry after a user/bot collision"
+    row = asyncio.run(db.repos.channels.get_channel_by_channel_id(902))
+    assert row.title == "Stale"
+    assert row.channel_type == "channel"
+    assert row.about == "old about"
+
+
 def test_collect_username_resolve_miss_is_reported_not_valueerror(db):
     pool, stub = _make_pool(db, {"state": "succeeded", "result": {"gone": True}})
     channel = _channel()

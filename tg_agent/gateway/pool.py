@@ -380,6 +380,15 @@ class GatewayPool:
                             if info and not info.get("gone") and not info.get("review") else 0)
                 if not resolved:
                     raise GatewayOperationError("failed", {"error": "UsernameResolveMiss"}) from exc
+                if info.get("channel_type") in ("user", "bot"):
+                    # Telegram id ranges overlap: a username reoccupied by a
+                    # USER can collide with the stored channel id and pass the
+                    # numeric check. Never write a person's card onto a channel
+                    # row (#1769 review, mirrored from refresh-card).
+                    logger.warning(
+                        "collect: @%s now belongs to a %s, not a channel; row untouched",
+                        username, info.get("channel_type"))
+                    raise GatewayOperationError("failed", {"error": "UsernameChannelIdMismatch"}) from exc
                 if resolved != abs(channel.channel_id):
                     logger.warning(
                         "collect: @%s now resolves to channel %d, not stored %d; row untouched (#1779)",
