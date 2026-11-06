@@ -361,7 +361,17 @@ class ResolveGuardMixin:
         except (ValueError, TypeError):
             return
         if isinstance(snapshot, dict):
-            self._get_resolve_rate_limiter().restore_state(snapshot)
+            try:
+                self._get_resolve_rate_limiter().restore_state(snapshot)
+            except (TypeError, ValueError, KeyError, AttributeError) as exc:
+                # A dict payload with a wrong per-entry shape (hand-edited
+                # setting, drifted schema) must not fail daemon boot; the
+                # limiter simply starts from its configured budget.
+                logger.warning(
+                    "resolve limiter snapshot ignored: malformed payload (%s)",
+                    type(exc).__name__,
+                )
+                return
             logger.info("resolve limiter snapshot restored (%d phone(s))", len(snapshot))
 
     def reserve_resolve_username_call(self, phone: str) -> float:

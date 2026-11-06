@@ -162,6 +162,19 @@ async def test_restore_resolve_limiter_snapshot_ignores_corrupt_payload():
 
 
 @pytest.mark.anyio
+async def test_restore_resolve_limiter_snapshot_ignores_wrong_entry_shape():
+    """A JSON-dict payload with malformed per-phone entries must not fail
+    daemon boot (review #1777): the limiter starts from its own budget."""
+    pool = ClientPool.__new__(ClientPool)
+    pool._db = SimpleNamespace(
+        get_setting=AsyncMock(return_value=json.dumps({"+7001": {"burst": "oops"}}))
+    )
+    pool._resolve_rate_limiter = ResolveRateLimiter(jitter_sec=0.0)
+    await pool.restore_resolve_limiter_snapshot(pool._db)
+    assert pool._resolve_rate_limiter.snapshot_state() == {}
+
+
+@pytest.mark.anyio
 async def test_disconnect_all_persists_limiter_snapshot():
     """A managed stop carries the sustained-volume picture to the next boot."""
     pool = ClientPool.__new__(ClientPool)

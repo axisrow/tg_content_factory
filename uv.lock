@@ -5097,7 +5097,7 @@ requires-dist = [
     { name = "setuptools", marker = "extra == 'dev'", specifier = ">=77.0" },
     { name = "telethon", specifier = ">=1.43.2" },
     { name = "telethon-cli", specifier = ">=0.1.1" },
-    { name = "telethon-floodgate", specifier = ">=0.1.5,<0.2" },
+    { name = "telethon-floodgate", specifier = ">=0.1.6,<0.2" },
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "tg-messenger", specifier = ">=0.1.0" },
     { name = "typer", specifier = ">=0.12.0" },
