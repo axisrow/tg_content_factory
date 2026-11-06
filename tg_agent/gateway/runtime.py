@@ -219,10 +219,19 @@ def setup_gateway_logging(root: Path, *, max_bytes: int = 10 * 1024 * 1024,
     records into the same file with timestamps and size-based rotation; the
     launcher's stdout redirect stays for pre-logging crash output (after a
     rotation those rare writes land in the rotated ``.log.N`` file). The file
-    keeps the launcher's 0600 mode.
+    keeps the launcher's 0600 mode across rollovers.
     """
-    handler = RotatingFileHandler(str(root / "gateway.log"), maxBytes=max_bytes,
-                                  backupCount=backup_count, encoding="utf-8")
+
+    class _PrivateRotatingHandler(RotatingFileHandler):
+        # FileHandler._open recreates the file with umask perms on every
+        # rollover, silently dropping 0600 — re-apply it at reopen time.
+        def _open(self):
+            stream = super()._open()
+            os.chmod(self.baseFilename, 0o600)
+            return stream
+
+    handler = _PrivateRotatingHandler(str(root / "gateway.log"), maxBytes=max_bytes,
+                                      backupCount=backup_count, encoding="utf-8")
     handler.setFormatter(logging.Formatter(
         "%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
     attached = any(isinstance(h, RotatingFileHandler)

@@ -59,6 +59,8 @@ def test_setup_gateway_logging_rotates_and_keeps_backups(tmp_path):
         handler.flush()
         assert (tmp_path / "gateway.log.1").exists()
         assert (tmp_path / "gateway.log").stat().st_size <= 200
+        # Rotation recreates the file: the 0600 mode must survive rollovers.
+        assert (tmp_path / "gateway.log").stat().st_mode & 0o777 == 0o600
     finally:
         _detach(handler)
 
