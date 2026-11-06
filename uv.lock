@@ -4918,15 +4918,15 @@ wheels = [
 
 [[package]]
 name = "telethon-floodgate"
-version = "0.1.5"
+version = "0.1.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "telethon" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4a/e8/b4c16a694b43a63279cc07bd8cc09b24679d5bbea6aef542150a90b8f519/telethon_floodgate-0.1.5.tar.gz", hash = "sha256:9f07c7d41d83ec44fbeb004448bb0bd3363042797a95260faef90add576ede4a", size = 67502, upload-time = "2026-10-24T01:46:53.88Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/2c/b5d28770bed14b2fc99befb323f3a090115ffc42fdcd6f766c145aab6019/telethon_floodgate-0.1.6.tar.gz", hash = "sha256:00111dcc0f5d448b1a19f295c34b19973b0786e24897e76d382b52db66c0b496", size = 80182, upload-time = "2026-11-05T07:53:36.853Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e1/08/4bf99d1ca49b5e2496c3944624341811080cf9cc7d40bb1c0b6a827e1814/telethon_floodgate-0.1.5-py3-none-any.whl", hash = "sha256:56193b92ba74417d7b2c2719e6a0ffdb18e7cc311664b3f9190dfd38365e2cd4", size = 31316, upload-time = "2026-10-24T01:46:51.951Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/58/4640507d187180a28b3ea567bd82fe78fcdf9e112be1893da1a173dfde13/telethon_floodgate-0.1.6-py3-none-any.whl", hash = "sha256:c9251a9d1f57c286b7b5de8a7085c354e338017faa629bdfa9736e639c4c67b9", size = 36329, upload-time = "2026-11-05T07:53:35.151Z" },
 ]
 
 [[package]]
@@ -5097,7 +5097,7 @@ requires-dist = [
     { name = "setuptools", marker = "extra == 'dev'", specifier = ">=77.0" },
     { name = "telethon", specifier = ">=1.43.2" },
     { name = "telethon-cli", specifier = ">=0.1.1" },
-    { name = "telethon-floodgate", specifier = ">=0.1.5,<0.2" },
+    { name = "telethon-floodgate", specifier = ">=0.1.6,<0.2" },
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "tg-messenger", specifier = ">=0.1.0" },
     { name = "typer", specifier = ">=0.12.0" },

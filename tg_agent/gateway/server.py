@@ -103,17 +103,14 @@ class Dispatcher:
                 result = await self.operation_task
             except GatewayDeferredError as exc:
                 await self.store.transition(project, request, "running", "deferred", {"retry_at": exc.until})
-            except TelegramRateLimitedError as exc:
-                state = "deferred" if is_read_operation(operation) else "uncertain"
-                await self.store.transition(project, request, "running", state, {
-                    "retry_at": time.time() + max(0.1, exc.retry_after_sec),
-                    "reason": type(exc).__name__,
-                    "category": exc.category,
-                })
             except (UsernameResolveRateLimitedError, UsernameResolveFloodWaitDeferredError) as exc:
                 # Account-local username budgets (#1774): defer the read so the
                 # client's retry machinery paces itself instead of fast-failing
                 # the request through every granted account.
+                # NB: this branch must precede the TelegramRateLimitedError one —
+                # floodgate 0.1.6 made UsernameResolve* subclasses of
+                # TelegramRateLimitedError (#11), so a later narrow branch would
+                # never fire.
                 retry_at = (
                     exc.next_available_at.timestamp()
                     if isinstance(exc, UsernameResolveFloodWaitDeferredError)
@@ -123,6 +120,13 @@ class Dispatcher:
                 await self.store.transition(project, request, "running", state, {
                     "retry_at": retry_at,
                     "reason": type(exc).__name__,
+                })
+            except TelegramRateLimitedError as exc:
+                state = "deferred" if is_read_operation(operation) else "uncertain"
+                await self.store.transition(project, request, "running", state, {
+                    "retry_at": time.time() + max(0.1, exc.retry_after_sec),
+                    "reason": type(exc).__name__,
+                    "category": exc.category,
                 })
             except HandledFloodWaitError as exc:
                 await self.store.transition(project, request, "running", "deferred", {
