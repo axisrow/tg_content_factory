@@ -84,8 +84,16 @@ def _is_permanent_collection_error(exc: BaseException) -> bool:
 # name (now someone else's channel), or a resolve that returns nothing usable.
 # Each retry burns real resolve budget, so instead of the daily fail-cycle the
 # channel is stamped and the bulk enqueue skips it for a defer window.
+# On the gateway path the telethon pair arrives as receipt error-codes
+# (UsernameNotOccupiedError/UsernameInvalidError), on the direct path as the
+# raw exceptions — both spellings are terminal.
 TERMINAL_USERNAME_CODES = frozenset(
-    {"UsernameInvalidError", "UsernameChannelIdMismatch", "UsernameResolveMiss"}
+    {
+        "UsernameInvalidError",
+        "UsernameChannelIdMismatch",
+        "UsernameResolveMiss",
+        "UsernameNotOccupiedError",
+    }
 )
 
 # The loudest terminal code: the row's username now points at another channel —

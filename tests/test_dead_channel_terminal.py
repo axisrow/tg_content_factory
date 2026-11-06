@@ -179,6 +179,22 @@ async def test_mismatch_code_also_quarantines_for_review(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_gateway_username_not_occupied_code_is_terminal(tmp_path):
+    """On the gateway path telethon errors arrive as receipt codes: a vacant
+    username must stamp the channel just like the direct-path exception."""
+    db, queue, channel, task_id = await _seed(tmp_path)
+    try:
+        exc = GatewayOperationError("failed", {"error": "UsernameNotOccupiedError"})
+        await queue._handle_collection_exception(
+            exc, task_id=task_id, channel=channel, force=False, full=False
+        )
+        assert (await _row(db, channel.id)).terminal_code == "UsernameNotOccupiedError"
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
 async def test_gateway_valueerror_is_not_terminal(tmp_path):
     """#1782's transient numeric-miss must keep today's behavior: no stamp,
     retry pass still re-enqueues."""
