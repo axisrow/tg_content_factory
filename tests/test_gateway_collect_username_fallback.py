@@ -219,6 +219,27 @@ def test_collect_username_resolve_miss_is_reported_not_valueerror(db):
     assert _ops(stub).count(("inspect_peer", "fallback902")) == 1
 
 
+def test_collect_fallback_review_sentinel_stays_transient(db):
+    """#1791: the review sentinel (owner unavailable/unresolved) is transient —
+    the original ValueError re-raises (no terminal stamp) and the row is marked
+    for review instead; a plain gone sentinel stays terminal UsernameResolveMiss."""
+    pool, stub = _make_pool(db, {"state": "succeeded", "result": {
+        "gone": True, "review": True, "reason": "numeric_unresolved"}})
+    channel = _channel()
+    _add_channel(db, channel)
+    # Production collectors pass DB-loaded rows (pk set); reload so the review
+    # marker has a target row.
+    channel = asyncio.run(db.repos.channels.get_channel_by_channel_id(channel.channel_id))
+
+    with pytest.raises(GatewayOperationError) as excinfo:
+        asyncio.run(pool.collect_channel(channel))
+
+    assert excinfo.value.code == "ValueError"
+    row = asyncio.run(db.repos.channels.get_channel_by_channel_id(902))
+    assert row.review_reason == "numeric_unresolved"
+    assert row.terminal_code is None
+
+
 def test_collect_without_username_keeps_old_valueerror_path(db):
     pool, stub = _make_pool(db, {"state": "succeeded", "result": dict(_CARD)})
     channel = _channel(username=None)

@@ -49,6 +49,7 @@ from tg_agent.telegram.collector import (
     UsernameResolveFloodWaitDeferredError,
     UsernameResolveRateLimitedError,
 )
+from tg_agent.telegram.collector_resolve import TRANSIENT_REVIEW_REASONS
 from tg_agent.telegram.collector_types import NoActiveCollectionClientsError
 from tg_agent.utils.json import safe_json_dumps
 
@@ -858,9 +859,17 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
     except GatewayOperationError as exc:
         if exc.code != "ValueError":  # peer-miss only; timeout/uncertain propagate
             raise
+    # A review sentinel means the owner is unavailable everywhere (uncertain
+    # numeric resolve) — transient, not dead (#1791). Marked for review at the
+    # return sites below; healed by the auto-clear on a later verified card.
+    numeric_review_reason = info.get("reason") if info and info.get("review") else None
     miss = not info or info.get("gone") or info.get("review")
     if miss:
         if not ch.username:
+            if numeric_review_reason:
+                if ch.id:
+                    await db.repos.channels.set_channel_review(ch.id, numeric_review_reason)
+                return "owner_unavailable", []
             return "unavailable", []
         # Numeric-miss fallback on the stored @username: ResolveUsername needs no
         # account membership, unlike a bare PeerChannel lookup (#1768). Write only
@@ -885,6 +894,10 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
             if info and not info.get("gone") and not info.get("review") else 0
         )
         if not resolved:
+            if numeric_review_reason:
+                if ch.id:
+                    await db.repos.channels.set_channel_review(ch.id, numeric_review_reason)
+                return "owner_unavailable", []
             return "unavailable", []
         if info.get("channel_type") in ("user", "bot"):
             # Telegram id ranges overlap: a username reoccupied by a USER can
@@ -955,6 +968,10 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
         has_comments=bool(meta.get("has_comments")) if meta_present else False,
         meta_present=meta_present,
     )
+    if ch.id and ch.review_reason in TRANSIENT_REVIEW_REASONS:
+        # Transient markers heal on a verified card (#1791) — same auto-clear as
+        # the collector's success path; operator quarantines survive untouched.
+        await db.repos.channels.clear_channel_review(ch.id)
     return ("partial" if partial else "updated"), changes
 
 
@@ -1002,6 +1019,7 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
         # The direct pool routes internally via its owner map / preferred_phone.
         gateway_pool = isinstance(pool, GatewayPool)
         updated = partial_count = skipped = failed = 0
+        owner_unavailable = 0
         reconnect_waits = 0
 
         def _stop_with_unprocessed(at_index: int, reason: str) -> typer.Exit:
@@ -1080,7 +1098,15 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
                 print(f"FAILED: {ch.title} ({ch.channel_id}) — {e}; row untouched", flush=True)
                 failed += 1
                 continue
-            if status == "unavailable":
+            if status == "owner_unavailable":
+                print(
+                    f"SKIP (owner unavailable): {ch.title} ({ch.channel_id}) — "
+                    "marked for review; row untouched",
+                    flush=True,
+                )
+                owner_unavailable += 1
+                skipped += 1
+            elif status == "unavailable":
                 print(
                     f"SKIP: {ch.title} ({ch.channel_id}) — "
                     "no fresh data (gone/uncertain/transient); row untouched",
@@ -1102,7 +1128,8 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
                 updated += 1
         print(
             f"\nUpdated: {updated} (partial: {partial_count}), "
-            f"Skipped: {skipped}, Failed: {failed}"
+            f"Skipped: {skipped}, Failed: {failed}\n"
+            f"Owner unavailable: {owner_unavailable}"
         )
     finally:
         if pool:
