@@ -37,6 +37,61 @@ logger = logging.getLogger(__name__)
 
 STREAM_ITERATOR_CLOSE_TIMEOUT_SEC = 10.0
 
+# Operation tags the gateway access layer uses that telethon-floodgate's
+# _OPERATION_CATEGORIES does not register yet. Without a row here, each tag
+# falls through ``TelegramRateLimitGate.category_for`` into the permissive
+# "default" bucket with the "not registered in _OPERATION_CATEGORIES"
+# warning (#1784). Resolution order in ``_reserve_gate_slot``: explicit
+# category argument -> this table -> the floodgate table, so the floodgate
+# table stays authoritative and this table only fills its gaps; a row is
+# dropped once a floodgate release registers the tag itself.
+# tests/test_gate_operation_categories.py fails when an access-layer tag is
+# missing from both tables — the static half of the #1784 audit.
+_GATE_OPERATION_CATEGORIES: dict[str, str] = {
+    # Mutating peer-message operations: the budget family of their
+    # registered siblings (pin_message/edit_message price "send").
+    "telegram_unpin_message": "send",
+    "telegram_delete_messages": "send",
+    "telegram_delete_scheduled_messages": "send",
+    # Dialog removal is a lifecycle mutation like delete_channel/delete_chat;
+    # the tight lifecycle budget is deliberate for bulk-leave shapes.
+    "telegram_remove_dialog": "channel_lifecycle",
+    # Cheap one-shot meta reads: the broad default bucket IS the honest
+    # budget; rows are explicit so they stay silent and one-line adjustable.
+    "telegram_fetch_me": "default",
+    "telegram_is_bot": "default",
+    "telegram_is_user_authorized": "default",
+    "telegram_get_peer_id": "default",
+    "telegram_get_permissions": "default",
+    "telegram_get_drafts": "default",
+    "telegram_stream_drafts": "default",
+    "telegram_set_receive_updates": "default",
+    "telegram_run_until_disconnected": "default",
+    "telegram_catch_up": "default",
+    "telegram_end_takeout": "default",
+    "telegram_inline_query": "default",
+    # Best-effort, high-volume-by-design read acks must not pay send prices.
+    "telegram_send_read_acknowledge": "default",
+    # Generic raw-RPC escape hatch: unknown budget by definition — the flood
+    # breaker (wired on every operation) is the safety net, not this gate.
+    "telegram_invoke_request": "default",
+    # Media/profile/participants/admin-log transfers: no production
+    # calibration exists for these RPC families, and inventing budgets here
+    # would only collide with the calibrated families sharing those buckets.
+    # Deliberate default until calibrated against real logs (floodgate-side).
+    "telegram_fetch_profile_photo": "default",
+    "telegram_get_profile_photos": "default",
+    "telegram_stream_profile_photos": "default",
+    "telegram_download_media": "default",
+    "telegram_download_file": "default",
+    "telegram_stream_download": "default",
+    "telegram_upload_file": "default",
+    "telegram_get_participants": "default",
+    "telegram_stream_participants": "default",
+    "telegram_get_admin_log": "default",
+    "telegram_stream_admin_log": "default",
+}
+
 
 class _DialogRequestGateClient:
     """Proxy a Telethon client so paginated requests pass transport gating.
@@ -377,7 +432,14 @@ class TelegramTransportSession:
         gate = getattr(self._pool, "_rate_limit_gate", None)
         if not isinstance(gate, TelegramRateLimitGate):
             return
-        category = category or gate.category_for(operation)
+        # Access-layer rows fill the floodgate table's gaps before the
+        # package lookup runs: category_for warns on unregistered tags, so a
+        # known-gap tag must resolve here, not fall through (#1784).
+        category = (
+            category
+            or _GATE_OPERATION_CATEGORIES.get(operation)
+            or gate.category_for(operation)
+        )
         if peer is not None:
             retry_after = gate.try_acquire(self._phone, category, slots=slots, peer=peer)
         elif slots == 1:
