@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Literal
 
 from tg_agent.database import Database
@@ -13,6 +14,11 @@ if TYPE_CHECKING:
 
 EnqueueResult = Literal["not_found", "filtered", "queued", "already_active"]
 
+# Terminal username failures (#1783) skip the daily bulk enqueue for this long
+# after the stamp. One bounded probe per window replaces ~1400 wasted resolves
+# per day; override via the `collection_terminal_defer_days` setting.
+DEFAULT_TERMINAL_DEFER_DAYS = 30
+
 
 @dataclass(slots=True)
 class BulkEnqueueResult:
@@ -20,6 +26,18 @@ class BulkEnqueueResult:
     skipped_existing_count: int
     total_candidates: int
     skipped_backoff_count: int = 0
+    skipped_terminal_count: int = 0
+
+
+def _terminal_defer_active(channel: Channel, defer_days: int, now: datetime) -> bool:
+    """True while the channel's terminal stamp still holds (#1783).
+
+    Explicit per-channel enqueues are NOT gated — an operator-run
+    ``channel collect`` is a deliberate override of the defer window.
+    """
+    if channel.terminal_code is None or channel.terminal_at is None:
+        return False
+    return channel.terminal_at + timedelta(days=defer_days) > now
 
 
 class CollectionService:
@@ -79,12 +97,18 @@ class CollectionService:
         self,
         *,
         resolve_backoff_remaining_sec: int = 0,
+        terminal_defer_days: int = DEFAULT_TERMINAL_DEFER_DAYS,
     ) -> BulkEnqueueResult:
         channels = await self._channels.list_channels(active_only=True, include_filtered=False)
+        now = datetime.now(timezone.utc)
         queued_count = 0
         skipped_existing_count = 0
+        skipped_terminal_count = 0
 
         for channel in channels:
+            if _terminal_defer_active(channel, terminal_defer_days, now):
+                skipped_terminal_count += 1
+                continue
             created = await self._enqueue_channel(channel, force=True, full=False)
             if created:
                 queued_count += 1
@@ -96,6 +120,7 @@ class CollectionService:
             skipped_existing_count=skipped_existing_count,
             total_candidates=len(channels),
             skipped_backoff_count=0,
+            skipped_terminal_count=skipped_terminal_count,
         )
 
     async def cancel_task(self, task_id: int, note: str | None = None) -> bool:

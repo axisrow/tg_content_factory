@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import aiosqlite
@@ -159,6 +160,14 @@ class ChannelsRepository:
             needs_review=bool(row["needs_review"]) if "needs_review" in keys and row["needs_review"] else False,
             review_reason=(
                 row["review_reason"] if "review_reason" in keys and row["review_reason"] else None
+            ),
+            terminal_code=(
+                row["terminal_code"] if "terminal_code" in keys and row["terminal_code"] else None
+            ),
+            terminal_at=(
+                parse_datetime(row["terminal_at"])
+                if "terminal_at" in keys and row["terminal_at"]
+                else None
             ),
         )
 
@@ -462,6 +471,40 @@ class ChannelsRepository:
         """Channels currently quarantined for human review (needs_review = 1)."""
         cur = await self._db.execute(
             "SELECT * FROM channels WHERE needs_review = 1 ORDER BY id ASC"
+        )
+        rows = await cur.fetchall()
+        return [self._map_channel(row) for row in rows]
+
+    async def set_channel_terminal(self, pk: int, code: str, at: datetime) -> None:
+        """Stamp the last terminal username-failure on the channel (#1783).
+
+        Metadata only — never touches the guarded active/filtered decisions:
+        the bulk enqueue skips the channel for the defer window instead of
+        deactivating, so no provenance journal write is required here.
+        """
+        assert self._database is not None, (
+            "ChannelsRepository.set_channel_terminal requires a Database reference"
+        )
+        await self._database.execute_write(
+            "UPDATE channels SET terminal_code = ?, terminal_at = ? WHERE id = ?",
+            (code, at.astimezone(timezone.utc).isoformat(), pk),
+        )
+
+    async def clear_channel_terminal(self, pk: int) -> None:
+        """Clear the terminal stamp (collection succeeded again / identity verified)."""
+        assert self._database is not None, (
+            "ChannelsRepository.clear_channel_terminal requires a Database reference"
+        )
+        await self._database.execute_write(
+            "UPDATE channels SET terminal_code = NULL, terminal_at = NULL WHERE id = ?",
+            (pk,),
+        )
+
+    async def list_terminal_channels(self) -> list[Channel]:
+        """Channels carrying a terminal username-failure stamp (#1783), newest first."""
+        cur = await self._db.execute(
+            "SELECT * FROM channels WHERE terminal_code IS NOT NULL "
+            "ORDER BY terminal_at DESC"
         )
         rows = await cur.fetchall()
         return [self._map_channel(row) for row in rows]
@@ -919,12 +962,18 @@ class ChannelsRepository:
     async def update_channel_meta(
         self, channel_id: int, *, username: str | None, title: str | None
     ) -> None:
-        """Обновить username и title канала (после переименования/смены @username)."""
+        """Обновить username и title канала (после переименования/смены @username).
+
+        Верифицированная meta-запись подтверждает личность канала — терминальный
+        штамп (#1783) снимается, чтобы сбор возобновился сразу, а не по истечении
+        окна дефера.
+        """
         assert self._database is not None, (
             "ChannelsRepository.update_channel_meta requires a Database reference"
         )
         await self._database.execute_write(
-            "UPDATE channels SET username = ?, username_state = 'known', title = ? "
+            "UPDATE channels SET username = ?, username_state = 'known', title = ?, "
+            "terminal_code = NULL, terminal_at = NULL "
             "WHERE channel_id = ?",
             (username, title, channel_id),
         )
@@ -977,6 +1026,10 @@ class ChannelsRepository:
             "title = ?",
             "channel_type = COALESCE(?, channel_type)",
             "created_at = COALESCE(created_at, ?)",
+            # Verified card = identity confirmed live: clear the terminal stamp
+            # (#1783) so collection resumes immediately.
+            "terminal_code = NULL",
+            "terminal_at = NULL",
         ]
         params: list = [username, title, channel_type, iso_created]
         if meta_present:

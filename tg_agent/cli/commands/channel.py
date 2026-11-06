@@ -364,10 +364,33 @@ async def toggle_impl(config_path: str, *, identifier: str) -> None:
         await db.close()
 
 
-async def review_list_impl(config_path: str) -> None:
-    """``channel review-list`` — channels quarantined for human review."""
+async def review_list_impl(config_path: str, *, terminal: bool = False) -> None:
+    """``channel review-list`` — channels quarantined for human review.
+
+    ``--terminal`` instead lists channels stamped with a terminal
+    username-failure (#1783): dead/reoccupied usernames the bulk enqueue
+    defers. ``UsernameChannelIdMismatch`` rows are the loudest — their stored
+    username now points at someone else's channel.
+    """
     _, db = await runtime.init_db(config_path)
     try:
+        if terminal:
+            stamped = await db.repos.channels.list_terminal_channels()
+            if not stamped:
+                print("No channels carry a terminal username-failure stamp.")
+            else:
+                print(f"Channels with terminal username failures: {len(stamped)}")
+                for ch in stamped:
+                    marker = (
+                        "!! reoccupied" if ch.terminal_code == "UsernameChannelIdMismatch" else "  "
+                    )
+                    stamp = ch.terminal_at.isoformat() if ch.terminal_at else "?"
+                    print(
+                        f"  {marker} {ch.id}\t{ch.title} "
+                        f"(@{ch.username or ch.channel_id})\t"
+                        f"{ch.terminal_code}\t{stamp}"
+                    )
+            return
         pending = await db.repos.channels.list_channels_for_review()
         if not pending:
             print("No channels are quarantined for review.")
@@ -1621,7 +1644,7 @@ def run(args: argparse.Namespace) -> None:
     elif action == "toggle":
         coro = toggle_impl(config_path, identifier=args.identifier)
     elif action == "review-list":
-        coro = review_list_impl(config_path)
+        coro = review_list_impl(config_path, terminal=getattr(args, "terminal", False))
     elif action == "review-confirm":
         coro = review_confirm_impl(config_path, identifier=args.identifier)
     elif action == "review-keep":
@@ -1824,10 +1847,18 @@ def channel_refresh_card(
 
 
 @channel_app.command("review-list")
-def channel_review_list(ctx: typer.Context) -> None:
-    """List channels quarantined for review."""
+def channel_review_list(
+    ctx: typer.Context,
+    terminal: bool = typer.Option(
+        False,
+        "--terminal",
+        help="List channels stamped with a terminal username failure (#1783) "
+        "instead of the review quarantine",
+    ),
+) -> None:
+    """List channels quarantined for review (or --terminal username failures)."""
     apply_startup(ctx)
-    run_async(review_list_impl(ctx.obj.config))
+    run_async(review_list_impl(ctx.obj.config, terminal=terminal))
 
 
 @channel_app.command("review-confirm", context_settings=_NEG_ID_POSITIONAL)

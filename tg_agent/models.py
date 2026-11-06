@@ -144,6 +144,8 @@ class Channel(BaseModel):
     preferred_phone: str | None = None
     needs_review: bool = False
     review_reason: str | None = None
+    terminal_code: str | None = None
+    terminal_at: datetime | None = None
     added_at: datetime | None = None
     created_at: datetime | None = None
     message_count: int = 0

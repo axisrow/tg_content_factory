@@ -188,6 +188,18 @@ class _ChannelOps:
         """Обновить базовые метаданные канала — username и title."""
         await self.channels.update_channel_meta(channel_id, username=username, title=title)
 
+    async def set_channel_terminal(self, pk: int, code: str, at) -> None:
+        """Штамп последней терминальной ошибки username (#1783)."""
+        await self.channels.set_channel_terminal(pk, code, at)
+
+    async def clear_channel_terminal(self, pk: int) -> None:
+        """Снять терминальный штамп (сбор снова успешен / личность подтверждена)."""
+        await self.channels.clear_channel_terminal(pk)
+
+    async def set_channel_review(self, pk: int, reason: str) -> None:
+        """Поставить канал в карантин ручной проверки."""
+        await self.channels.set_channel_review(pk, reason)
+
     async def set_filtered_bulk(
         self,
         updates: list[tuple[int, str]],

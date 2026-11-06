@@ -36,7 +36,9 @@ CREATE TABLE IF NOT EXISTS channels (
     created_at TEXT,
     preferred_phone TEXT,
     needs_review INTEGER DEFAULT 0,
-    review_reason TEXT
+    review_reason TEXT,
+    terminal_code TEXT,
+    terminal_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS messages (

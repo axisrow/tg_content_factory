@@ -11,11 +11,14 @@ from tg_agent.models import (
     PipelineRunTaskPayload,
     SqStatsTaskPayload,
 )
+from tg_agent.services.collection_service import DEFAULT_TERMINAL_DEFER_DAYS
 
 if TYPE_CHECKING:
     from tg_agent.services.collection_service import CollectionService
 
 logger = logging.getLogger(__name__)
+
+TERMINAL_DEFER_DAYS_SETTING = "collection_terminal_defer_days"
 
 
 class TaskEnqueuer:
@@ -29,10 +32,25 @@ class TaskEnqueuer:
         self._db = db
         self._collection_service = collection_service
 
+    async def _terminal_defer_days(self) -> int:
+        """Configured terminal-defer window (#1783), defaulting to 30 days."""
+        raw = await self._db.repos.settings.get_setting(TERMINAL_DEFER_DAYS_SETTING)
+        if not raw:
+            return DEFAULT_TERMINAL_DEFER_DAYS
+        try:
+            return int(raw)
+        except ValueError:
+            logger.warning(
+                "Invalid %s=%r; using default %d days",
+                TERMINAL_DEFER_DAYS_SETTING, raw, DEFAULT_TERMINAL_DEFER_DAYS,
+            )
+            return DEFAULT_TERMINAL_DEFER_DAYS
+
     async def enqueue_all_channels(self, *, resolve_backoff_remaining_sec: int = 0):
         """Delegate to CollectionService for channel collection tasks."""
         return await self._collection_service.enqueue_all_channels(
             resolve_backoff_remaining_sec=resolve_backoff_remaining_sec,
+            terminal_defer_days=await self._terminal_defer_days(),
         )
 
     async def enqueue_sq_stats(self, sq_id: int) -> int | None:

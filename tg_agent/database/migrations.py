@@ -64,6 +64,11 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
         "last_collected_id": "last_collected_id INTEGER DEFAULT 0",
         "needs_review": "needs_review INTEGER DEFAULT 0",
         "review_reason": "review_reason TEXT",
+        # Terminal username-failure stamp (#1783): last terminal collection
+        # code + timestamp; the bulk enqueue skips the channel while the
+        # configurable defer window is open. NULL = healthy.
+        "terminal_code": "terminal_code TEXT",
+        "terminal_at": "terminal_at TEXT",
     },
     "messages": {
         "sender_first_name": "sender_first_name TEXT",

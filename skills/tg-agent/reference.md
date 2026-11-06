@@ -130,6 +130,13 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
   Approval column (#1701).
 - `channel pending-list` — the full approval queue (#1314): every pending row, including
   ones without search-tagged messages that `candidates` skips.
+- `channel review-list [--terminal]` — channels quarantined for human review; with
+  `--terminal`, channels stamped with a terminal username failure (#1783): dead or
+  reoccupied usernames the daily bulk enqueue defers (default 30 days, setting
+  `collection_terminal_defer_days`). `!! reoccupied` marks `UsernameChannelIdMismatch`
+  rows — the stored username now points at someone else's channel; fix the username
+  (any verified meta write clears the stamp), deactivate via `channel review-confirm`,
+  or wait out the window (one probe attempt). A successful collection clears the stamp.
 - `channel add <identifier>` — manual add of a channel that is already in the approval
   queue approves it (human origin, journaled): the explicit add IS the operator's
   decision (#1701). A fresh add creates the row approved, by @username or numeric ID alike.

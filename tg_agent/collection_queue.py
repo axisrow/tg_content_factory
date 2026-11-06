@@ -17,6 +17,7 @@ from telethon_floodgate import TelegramRateLimitedError
 
 from tg_agent.database import Database, DatabaseBusyError
 from tg_agent.database.bundles import ChannelBundle
+from tg_agent.gateway.pool import GatewayOperationError
 from tg_agent.live_runtime_pause import LiveRuntimePauseGate
 from tg_agent.models import Channel, CollectionTaskStatus
 from tg_agent.telegram.collector import (
@@ -76,6 +77,36 @@ def _is_permanent_collection_error(exc: BaseException) -> bool:
     dead channel just exhausts its retry-pass attempts and stays FAILED.
     """
     return isinstance(exc, (UsernameNotOccupiedError, UsernameInvalidError))
+
+
+# Terminal username-failure codes (#1783): the stored username can never be
+# collected again until an operator fixes the row — a dead name, a reoccupied
+# name (now someone else's channel), or a resolve that returns nothing usable.
+# Each retry burns real resolve budget, so instead of the daily fail-cycle the
+# channel is stamped and the bulk enqueue skips it for a defer window.
+TERMINAL_USERNAME_CODES = frozenset(
+    {"UsernameInvalidError", "UsernameChannelIdMismatch", "UsernameResolveMiss"}
+)
+
+# The loudest terminal code: the row's username now points at another channel —
+# a data-integrity drift that needs an operator decision, not a retry.
+TERMINAL_CODE_MISMATCH = "UsernameChannelIdMismatch"
+
+
+def _terminal_collection_code(exc: BaseException) -> str | None:
+    """Terminal username-failure code carried by ``exc``, else ``None``.
+
+    Gateway receipts surface the code in ``GatewayOperationError.code``; the
+    direct-Telethon path raises the raw telethon errors (``code`` attr absent).
+    ValueError (transient numeric-miss, #1782's fallback target) is never
+    terminal.
+    """
+    if isinstance(exc, GatewayOperationError):
+        code = exc.code
+        return code if code in TERMINAL_USERNAME_CODES else None
+    if isinstance(exc, (UsernameNotOccupiedError, UsernameInvalidError)):
+        return type(exc).__name__
+    return None
 
 
 class CollectionFailureOutcome(NamedTuple):
@@ -695,6 +726,10 @@ class CollectionQueue:
             messages_collected=count,
             note=note,
         )
+        if channel.terminal_code and channel.id is not None:
+            # The channel collected fine — the terminal stamp is stale (#1783),
+            # clear it so the bulk enqueue admits the channel again.
+            await self._channels.clear_channel_terminal(channel.id)
         if channel.id is not None:
             self._channel_private_error_counts.pop(channel.id, None)
         logger.info("Collected %d messages from channel %d", count, channel.channel_id)
@@ -836,6 +871,10 @@ class CollectionQueue:
         if isinstance(exc, ChannelPrivateError):
             await self._handle_channel_private_error(task_id, channel, exc)
             return CollectionFailureOutcome()
+        terminal_code = _terminal_collection_code(exc)
+        if terminal_code is not None and channel.id is not None:
+            await self._handle_terminal_username_error(task_id, channel, terminal_code)
+            return CollectionFailureOutcome()
         if isinstance(exc, ConnectionError):
             outcome = await self._try_reconnect_and_requeue(task_id, channel, full, force, exc)
             if outcome == "requeued":
@@ -897,6 +936,44 @@ class CollectionQueue:
             self.RETRY_PASS_MAX_ATTEMPTS,
         )
         return CollectionFailureOutcome(keep_known_task_id=True)
+
+    async def _handle_terminal_username_error(
+        self, task_id: int, channel: Channel, terminal_code: str
+    ) -> None:
+        """Stamp a terminal username failure and stop the daily re-enqueue cycle (#1783).
+
+        The channel is NOT deactivated (the numeric-id path may still collect it
+        once an account's dialog cache warms): the bulk enqueue skips it for the
+        configurable defer window instead. No retry pass — every attempt against
+        a dead name burns one real resolve. A reoccupied username additionally
+        lands in the review quarantine: the stored row's identity has drifted.
+        """
+        self._retried_tasks.discard(task_id)
+        self._retry_pass.pop(task_id, None)
+        pk = channel.id
+        if pk is None:  # unreachable: the caller guards, this narrows for type-checkers
+            return
+        now = datetime.now(timezone.utc)
+        await self._channels.set_channel_terminal(pk, terminal_code, now)
+        if terminal_code == TERMINAL_CODE_MISMATCH:
+            await self._channels.set_channel_review(
+                pk,
+                f"UsernameChannelIdMismatch: @{channel.username or channel.channel_id} "
+                f"now resolves to another channel ({now:%Y-%m-%d})",
+            )
+        await self._update_task_status_shutdown_safe(
+            task_id,
+            CollectionTaskStatus.FAILED,
+            error=f"{terminal_code}: terminal username failure, bulk re-enqueue deferred",
+        )
+        logger.warning(
+            "Channel %d (pk=%d) terminal username failure %s; stamped %s, "
+            "bulk re-enqueue deferred",
+            channel.channel_id,
+            channel.id,
+            terminal_code,
+            now.isoformat(),
+        )
 
     async def _handle_channel_private_error(
         self, task_id: int, channel: Channel, exc: ChannelPrivateError
