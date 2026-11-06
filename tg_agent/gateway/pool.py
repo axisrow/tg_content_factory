@@ -348,6 +348,7 @@ class GatewayPool:
         cursor = 0 if full else channel.last_collected_id
         key = intent_key or f"collect:{uuid4()}"
         collected = 0
+        username_fallback_used = False
         while cancel_event is None or not cancel_event.is_set():
             operation = History(kind="history", account_id=UUID(account["id"]), peer=channel.channel_id,
                                 peer_type="chat" if channel.channel_type == "group" else "channel", after_id=cursor)
@@ -362,6 +363,35 @@ class GatewayPool:
                         await asyncio.gather(request, return_exceptions=True)
                         return collected
                 data = await request
+            except GatewayOperationError as exc:
+                # Numeric-miss on every gateway account (#1779, the collection
+                # twin of the refresh-card #1769 fallback): a bare PeerChannel
+                # resolve needs the entity in the account dialog cache, which
+                # most tracked channels are not in. One stored-@username
+                # resolve — membership-free, and it caches the entity into the
+                # resolving account's session — unlocks the numeric history.
+                # Once per collect call; verification guards reoccupied names.
+                username = getattr(channel, "username", None)
+                if exc.code != "ValueError" or username_fallback_used or not username:
+                    raise
+                username_fallback_used = True
+                info = await self.resolve_channel(username, channel_type=channel.channel_type)
+                resolved = (abs(int(info.get("channel_id") or 0))
+                            if info and not info.get("gone") and not info.get("review") else 0)
+                if not resolved:
+                    raise GatewayOperationError("failed", {"error": "UsernameResolveMiss"}) from exc
+                if resolved != abs(channel.channel_id):
+                    logger.warning(
+                        "collect: @%s now resolves to channel %d, not stored %d; row untouched (#1779)",
+                        username, resolved, channel.channel_id)
+                    raise GatewayOperationError("failed", {"error": "UsernameChannelIdMismatch"}) from exc
+                logger.info("collect: numeric miss on %s recovered via stored @%s; retrying history (#1779)",
+                            channel.channel_id, username)
+                # Fresh intent nonce: outbox.prepare dedups by action key, so
+                # re-issuing the failed key would replay the stored failed
+                # receipt instead of executing the retry (#1782 review).
+                key = f"{key}:username-retry"
+                continue
             finally:
                 if cancelled is not None:
                     cancelled.cancel()
