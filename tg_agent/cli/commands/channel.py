@@ -34,7 +34,11 @@ from tg_agent.services.channel_onboarding import (
     fetch_channel_meta,
 )
 from tg_agent.services.channel_service import ChannelService
-from tg_agent.services.collection_service import CollectionService
+from tg_agent.services.collection_service import (
+    CollectionService,
+    _terminal_defer_active,
+    terminal_defer_days,
+)
 from tg_agent.services.telegram_command_service import TelegramCommandService
 from tg_agent.telegram.backends import adapt_transport_session
 from tg_agent.telegram.collector import (
@@ -792,6 +796,17 @@ async def refresh_meta_impl(config_path: str, *, all_channels: bool, identifier:
         await db.close()
 
 
+async def _stamp_terminal(db, ch: Channel, code: str) -> None:
+    """Write the #1783 terminal username-failure stamp (#1787).
+
+    Metadata only — same contract as the collection path's stamp: the bulk
+    enqueue and the bulk refresh-card pass both defer the row for the window,
+    an explicit operator request still goes through.
+    """
+    assert ch.id is not None, "a stamped row comes from the DB and carries a pk"
+    await db.repos.channels.set_channel_terminal(ch.id, code, datetime.now(timezone.utc))
+
+
 async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tuple[str, list[str]]:
     """Refresh one channel row's open metadata from Telegram (#1764, #1765 review).
 
@@ -848,7 +863,11 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
                 raise  # TimeoutError/uncertain/etc. propagate — never a silent SKIP
             # The stored name resolves for nobody on the gateway either
             # (UsernameNotOccupiedError and friends): nothing fresh — SKIP,
-            # parity with the direct pool's gone sentinel.
+            # parity with the direct pool's gone sentinel. A dead name is also
+            # terminal (#1787): stamp it so the bulk enqueue and the next
+            # bulk pass defer the row instead of re-burning the budget.
+            if exc.code != "ValueError":
+                await _stamp_terminal(db, ch, exc.code)
             info = None
         resolved = (
             abs(int(info.get("channel_id") or 0))
@@ -859,17 +878,20 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
         if info.get("channel_type") in ("user", "bot"):
             # Telegram id ranges overlap: a username reoccupied by a USER can
             # collide with the stored channel id. Never write a person's card
-            # onto a channel row (#1769 review).
+            # onto a channel row (#1769 review). The identity drift is also
+            # terminal (#1787).
             logging.warning(
                 "refresh-card: @%s now belongs to a %s, not a channel; row untouched",
                 ch.username, info.get("channel_type"),
             )
+            await _stamp_terminal(db, ch, "UsernameChannelIdMismatch")
             return "unavailable", []
         if resolved != abs(ch.channel_id):
             logging.warning(
                 "refresh-card: @%s now resolves to channel %d, not stored %d; row untouched",
                 ch.username, resolved, ch.channel_id,
             )
+            await _stamp_terminal(db, ch, "UsernameChannelIdMismatch")
             return "unavailable", []
     assert info is not None  # every miss path returned above
 
@@ -943,6 +965,17 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
             return
         if all_channels:
             channels = await db.get_channels(active_only=True)
+            # Terminal-stamped rows are deferred for the same window as the bulk
+            # enqueue (#1787): re-attempting burns a resolve on a dead name and
+            # head-of-line blocks the pass on the shared budget. A single-
+            # channel request (below) ignores stamps — an operator asking for
+            # one channel gets the refresh regardless.
+            defer_window = await terminal_defer_days(db)
+            now = datetime.now(timezone.utc)
+            deferred = {ch.id for ch in channels if _terminal_defer_active(ch, defer_window, now)}
+            if deferred:
+                channels = [ch for ch in channels if ch.id not in deferred]
+                print(f"Deferred (terminal stamps): {len(deferred)}", flush=True)
         elif identifier:
             found = resolve_channel(await db.get_channels(), identifier)
             if not found:

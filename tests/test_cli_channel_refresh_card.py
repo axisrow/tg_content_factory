@@ -719,6 +719,104 @@ def test_refresh_card_direct_numeric_miss_falls_back_to_username(cli_env, capsys
     assert "OK" in capsys.readouterr().out
 
 
+def _stamp(db, channel_id: int, code: str) -> None:
+    ch = _get_channel(db, channel_id)
+    asyncio.run(db.repos.channels.set_channel_terminal(ch.id, code, datetime.now(timezone.utc)))
+
+
+def test_refresh_card_gateway_stamps_dead_username(cli_env, capsys):
+    """#1787: a dead stored username (gateway receipt UsernameInvalidError in
+    the numeric-miss fallback) is terminal — the row carries the stamp, so the
+    bulk enqueue AND the next refresh-card pass skip it."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=908, title="Old GW", username="deadgw908")
+
+    pool, stub = _make_gateway_pool(db, {})
+
+    async def wait(request, timeout=None):
+        error = "ValueError" if isinstance(stub.submitted[-1].peer, int) else "UsernameInvalidError"
+        return {"state": "failed", "result": {"error": error}}
+
+    stub.wait = wait
+    _run_refresh_card(db, pool, identifier="908")
+
+    out = capsys.readouterr().out
+    assert "SKIP" in out
+    assert _get_channel(db, 908).title == "Old GW"
+    assert _get_channel(db, 908).terminal_code == "UsernameInvalidError"
+    assert _get_channel(db, 908).terminal_at is not None
+
+
+def test_refresh_card_bulk_skips_terminal_stamped_channels(cli_env, capsys):
+    """#1787: the --all pass defers channels carrying an active terminal stamp
+    (same window as the bulk enqueue) — no pool calls for them, count reported."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=909, title="Live", username="live909")
+    _add_stale_channel(db, channel_id=910, title="Dead", username="dead910")
+    _stamp(db, 910, "UsernameInvalidError")
+
+    pool = FakeDirectPool(
+        resolve_by_id={909: {
+            "channel_id": 909, "title": "Live Fresh", "username": "live909",
+            "channel_type": "channel", "deactivate": False, "created_at": None,
+        }},
+        meta_by_id={909: {"about": "a", "linked_chat_id": None, "has_comments": False}},
+    )
+    _run_refresh_card(db, pool, all_channels=True)
+
+    out = capsys.readouterr().out
+    assert "Deferred (terminal stamps): 1" in out
+    assert [call[0] for call in pool.resolve_calls] == ["909"]
+    ch = _get_channel(db, 910)
+    assert ch.title == "Dead"  # stamped row untouched
+    assert ch.terminal_code == "UsernameInvalidError"
+
+
+def test_refresh_card_success_clears_terminal_stamp(cli_env, capsys):
+    """#1787: a successful refresh verifies the channel identity — the stamp
+    heals exactly like a successful collection clears it."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=911, title="Stale", username="revived911")
+    _stamp(db, 911, "UsernameResolveMiss")
+
+    pool = FakeDirectPool(
+        resolve_by_id={911: {
+            "channel_id": 911, "title": "Revived", "username": "revived911",
+            "channel_type": "channel", "deactivate": False, "created_at": None,
+        }},
+        meta_by_id={911: {"about": "back", "linked_chat_id": None, "has_comments": False}},
+    )
+    _run_refresh_card(db, pool, identifier="911")
+
+    assert "OK" in capsys.readouterr().out
+    ch = _get_channel(db, 911)
+    assert ch.title == "Revived"
+    assert ch.terminal_code is None
+    assert ch.terminal_at is None
+
+
+def test_refresh_card_single_channel_ignores_stamp(cli_env, capsys):
+    """#1787: an explicit identifier request must refresh a stamped channel —
+    the defer window is a bulk-pass optimization, not an operator veto."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=912, title="Stale", username="stamped912")
+    _stamp(db, 912, "UsernameInvalidError")
+
+    pool = FakeDirectPool(
+        resolve_by_id={912: {
+            "channel_id": 912, "title": "Fresh Again", "username": "stamped912",
+            "channel_type": "channel", "deactivate": False, "created_at": None,
+        }},
+        meta_by_id={912: {"about": "a", "linked_chat_id": None, "has_comments": False}},
+    )
+    _run_refresh_card(db, pool, identifier="912")
+
+    out = capsys.readouterr().out
+    assert "OK" in out
+    assert "Deferred (terminal stamps)" not in out
+    assert _get_channel(db, 912).title == "Fresh Again"
+
+
 def test_refresh_card_username_mismatch_leaves_row_untouched(cli_env, capsys, caplog):
     """#1768 guard: a username reoccupied by a DIFFERENT channel must not leak
     the foreign card onto our row — untouched, reported as skipped."""
@@ -741,6 +839,8 @@ def test_refresh_card_username_mismatch_leaves_row_untouched(cli_env, capsys, ca
     assert ch.username == "hijacked"
     assert ch.is_active is True  # refresh-card never deactivates
     assert len(pool.resolve_calls) == 2  # numeric attempt + username fallback
+    # #1787: the reoccupied username is the loudest terminal stamp.
+    assert ch.terminal_code == "UsernameChannelIdMismatch"
     assert "SKIP" in capsys.readouterr().out
     assert any(
         record.message.startswith("refresh-card:") and "resolves to channel" in record.message
@@ -793,6 +893,8 @@ def test_refresh_card_gateway_username_owned_by_user_is_skip(cli_env, capsys):
 
     ch = _get_channel(db, 905)
     assert ch.title == "Old GW"
+    # #1787: a username reoccupied by a USER is the same identity drift.
+    assert ch.terminal_code == "UsernameChannelIdMismatch"
     assert ch.username == "hijacked905"
     assert ch.about == "old about"
     assert "SKIP" in capsys.readouterr().out

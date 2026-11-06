@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Literal
@@ -12,12 +13,15 @@ if TYPE_CHECKING:
     from tg_agent.collection_queue import CollectionQueue
     from tg_agent.telegram.collector import Collector
 
+logger = logging.getLogger(__name__)
+
 EnqueueResult = Literal["not_found", "filtered", "queued", "already_active"]
 
 # Terminal username failures (#1783) skip the daily bulk enqueue for this long
 # after the stamp. One bounded probe per window replaces ~1400 wasted resolves
 # per day; override via the `collection_terminal_defer_days` setting.
 DEFAULT_TERMINAL_DEFER_DAYS = 30
+TERMINAL_DEFER_DAYS_SETTING = "collection_terminal_defer_days"
 
 
 @dataclass(slots=True)
@@ -38,6 +42,25 @@ def _terminal_defer_active(channel: Channel, defer_days: int, now: datetime) -> 
     if channel.terminal_code is None or channel.terminal_at is None:
         return False
     return channel.terminal_at + timedelta(days=defer_days) > now
+
+
+async def terminal_defer_days(db: Database) -> int:
+    """Configured terminal-defer window (#1783), defaulting to 30 days.
+
+    Shared by the bulk enqueue (TaskEnqueuer) and the bulk refresh-card pass
+    (#1787) so both consumers honor the same window from the same setting.
+    """
+    raw = await db.repos.settings.get_setting(TERMINAL_DEFER_DAYS_SETTING)
+    if not raw:
+        return DEFAULT_TERMINAL_DEFER_DAYS
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid %s=%r; using default %d days",
+            TERMINAL_DEFER_DAYS_SETTING, raw, DEFAULT_TERMINAL_DEFER_DAYS,
+        )
+        return DEFAULT_TERMINAL_DEFER_DAYS
 
 
 class CollectionService:
