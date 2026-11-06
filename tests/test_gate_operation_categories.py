@@ -138,10 +138,17 @@ def test_consumer_rows_agree_with_package_table() -> None:
 
 
 def test_consumer_rows_use_real_gate_categories() -> None:
-    """Each row's category must be an actual gate bucket (public behavior)."""
+    """Each row's category must be a configured gate bucket.
+
+    ``try_acquire`` never raises on an unknown category — it silently prices
+    at ``_limiters["default"]`` — so a typo row must be caught by enumerating
+    the real buckets through the public ``snapshot()`` instead.
+    """
     gate = TelegramRateLimitGate()
-    phone = "+15551230001"
+    snapshot_categories = gate.snapshot("+15551230001")["categories"]
+    assert isinstance(snapshot_categories, dict)
     for tag, category in _GATE_OPERATION_CATEGORIES.items():
-        # An unknown category raises KeyError inside try_acquire.
-        retry_after = gate.try_acquire(phone, category)
-        assert retry_after == 0, f"{tag}: {category!r} refused an idle account"
+        assert category in snapshot_categories, (
+            f"{tag}: {category!r} is not a configured gate bucket — it would "
+            "silently price at 'default'"
+        )
