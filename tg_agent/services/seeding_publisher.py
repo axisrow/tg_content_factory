@@ -36,6 +36,7 @@ from tg_agent.services.seeding_composer import (
     LINK_RE,
     ChatStatistics,
     compute_chat_statistics,
+    load_chat_messages,
 )
 
 if TYPE_CHECKING:
@@ -182,9 +183,7 @@ async def validate_schedule_rails(
 
 async def _learn_chat_stats(db: "Database", chat_channel_id: int, *, days: int) -> ChatStatistics:
     """Профиль чата из собранных сообщений (общий ход композера и rails)."""
-    messages = await db.repos.messages.get_recent_for_channels(
-        [chat_channel_id], since_hours=days * 24.0
-    )
+    messages = await load_chat_messages(db, chat_channel_id, days=days)
     return compute_chat_statistics(
         messages, chat_channel_id=chat_channel_id, window_days=days
     )

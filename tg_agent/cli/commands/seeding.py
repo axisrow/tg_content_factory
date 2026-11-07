@@ -1,9 +1,10 @@
 """``seeding`` CLI group — композер и публикатор посевных диалогов (#1756/#1757, эпик #1751).
 
-Композер: ``seeding stats`` (профиль реального чата — вход промпта
-композера), ``seeding validate`` (валидация сценария по выученному
-распределению) и запись черновиков (``thread-create``/``add``/``list``/
-``show``) в таблицы ``seeding_threads``/``seeding_messages`` (#1755):
+Композер: ``seeding samples`` (реальная речь чата — окна разговоров
+дословно + голоса участников, главный вход композера, #1793), ``seeding
+stats`` (выученный профиль: тайминги, тихие часы, границы), ``seeding
+validate`` (валидация сценария по выученному распределению) и запись
+черновиков (``thread-create``/``add``/``list``/``show``) в таблицы ``seeding_threads``/``seeding_messages`` (#1755):
 сценарий ложится строками ``status=draft`` с ``planned_at`` из кумулятива
 задержек — черновое расписание видно сразу.
 
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -27,20 +29,26 @@ from aiosqlite import IntegrityError
 from pydantic import TypeAdapter, ValidationError
 
 from tg_agent.cli import runtime
-from tg_agent.cli.commands.common import apply_startup, cli_error, run_async
+from tg_agent.cli.commands.common import _NEG_ID_POSITIONAL, apply_startup, cli_error, run_async
 from tg_agent.models import (
     CollectionTaskType,
+    Message,
     SeedingMessage,
     SeedingMessageStatus,
     SeedingThread,
     SeedingThreadStatus,
 )
 from tg_agent.services.seeding_composer import (
+    ChatSamples,
     ChatStatistics,
+    ConversationWindow,
     SeedingPersona,
     SeedingScenario,
+    SenderVoice,
+    build_chat_samples,
     compute_chat_statistics,
     derive_planned_schedule,
+    load_chat_messages,
     validate_scenario,
 )
 from tg_agent.services.seeding_publisher import validate_schedule_rails
@@ -102,13 +110,18 @@ def _violations_error(violations: list[str]) -> NoReturn:
     cli_error(message)
 
 
-async def _load_chat_stats(config_path: str, *, chat: int, days: int) -> ChatStatistics:
-    """Собранные сообщения окна → выученный профиль чата (общий ход stats/validate/add)."""
+async def _load_chat_messages(config_path: str, *, chat: int, days: int) -> list[Message]:
+    """Собранные сообщения чата за окно (id в любой форме: голый или ``-100…``)."""
     _, db = await runtime.init_db(config_path)
     try:
-        messages = await db.repos.messages.get_recent_for_channels([chat], since_hours=days * 24.0)
+        return await load_chat_messages(db, chat, days=days)
     finally:
         await db.close()
+
+
+async def _load_chat_stats(config_path: str, *, chat: int, days: int) -> ChatStatistics:
+    """Собранные сообщения окна → выученный профиль чата (общий ход stats/validate)."""
+    messages = await _load_chat_messages(config_path, chat=chat, days=days)
     return compute_chat_statistics(messages, chat_channel_id=chat, window_days=days)
 
 
@@ -116,6 +129,96 @@ async def stats_impl(config_path: str, *, chat: int, days: int) -> ChatStatistic
     stats = await _load_chat_stats(config_path, chat=chat, days=days)
     print(stats.model_dump_json(indent=2))
     return stats
+
+
+class SamplesFormat(str, Enum):
+    """``seeding samples --format`` choices."""
+
+    text = "text"
+    json = "json"
+
+
+def _print_block(prefix: str, body: str) -> None:
+    """Первая строка за префиксом, продолжения многострочного текста — с отступом под ним."""
+    lines = body.splitlines() or [""]
+    print(prefix + lines[0])
+    for line in lines[1:]:
+        print(" " * len(prefix) + line)
+
+
+def _print_window(index: int, total: int, window: ConversationWindow) -> None:
+    speakers = ", ".join(window.speakers)
+    print(
+        f"\n=== window {index}/{total} · {window.start:%Y-%m-%d %H:%M} UTC · "
+        f"{window.message_count} messages · {len(window.speakers)} speakers: {speakers} ==="
+    )
+    for m in window.messages:
+        gap = f"+{m.gap_seconds}s" if m.gap_seconds is not None else ""
+        media = f"[{m.media_type}]" if m.media_type else ""
+        _print_block(f"{gap:>7}  {m.sender}: ", " ".join(part for part in (media, m.text) if part))
+    if window.truncated:
+        print(f"  … +{window.truncated} more message(s) in this window (raise --window)")
+
+
+def _print_voices(voices: list[SenderVoice]) -> None:
+    if not voices:
+        return
+    print(f"\n=== voices: top {len(voices)} sender(s), latest messages each ===")
+    for voice in voices:
+        print(f"\n--- {voice.sender} ({voice.message_count} messages) ---")
+        for text in voice.samples:
+            _print_block("  - ", text)
+
+
+def _print_samples_text(samples: ChatSamples) -> None:
+    print(
+        f"Chat {samples.chat_channel_id}: {samples.message_count} messages in {samples.window_days}d, "
+        f"{samples.qualifying_windows} conversation window(s) "
+        f"(gap ≤ {samples.window_gap_seconds // 60} min); showing {len(samples.windows)} most recent."
+    )
+    if not samples.windows:
+        print(
+            "No conversation windows matched — widen --days, lower --min-messages/--min-speakers, "
+            "or backfill history: tg-agent channel collect <chat> --full"
+        )
+    for i, window in enumerate(samples.windows, 1):
+        _print_window(i, len(samples.windows), window)
+    _print_voices(samples.voices)
+
+
+async def samples_impl(
+    config_path: str,
+    *,
+    chat: int,
+    days: int,
+    windows: int = 4,
+    window_size: int = 20,
+    senders: int = 4,
+    per_sender: int = 10,
+    gap_minutes: int = 10,
+    min_messages: int = 6,
+    min_speakers: int = 3,
+    output_format: SamplesFormat = SamplesFormat.text,
+) -> ChatSamples:
+    """Реальная речь чата (#1793): свежие окна разговоров дословно + голоса участников."""
+    messages = await _load_chat_messages(config_path, chat=chat, days=days)
+    samples = build_chat_samples(
+        messages,
+        chat_channel_id=chat,
+        window_days=days,
+        windows=windows,
+        window_size=window_size,
+        gap_seconds=gap_minutes * 60,
+        min_messages=min_messages,
+        min_speakers=min_speakers,
+        senders=senders,
+        per_sender=per_sender,
+    )
+    if output_format is SamplesFormat.json:
+        print(samples.model_dump_json(indent=2))
+    else:
+        _print_samples_text(samples)
+    return samples
 
 
 async def validate_impl(
@@ -199,9 +302,7 @@ async def add_impl(
                 "Personas сценария не совпадают с тредом — персоны треда "
                 f"{sorted(thread.personas)}, сценария {sorted(scenario_map)}."
             )
-        messages = await db.repos.messages.get_recent_for_channels(
-            [scenario.chat_channel_id], since_hours=days * 24.0
-        )
+        messages = await load_chat_messages(db, scenario.chat_channel_id, days=days)
         stats = compute_chat_statistics(
             messages, chat_channel_id=scenario.chat_channel_id, window_days=days
         )
@@ -303,7 +404,10 @@ async def show_impl(config_path: str, *, thread_id: int) -> None:
 
 seeding_app = typer.Typer(
     no_args_is_help=True,
-    help="Chat seeding: composer (stats/validate/drafts, #1756) + publisher (approve/schedule/cancel, #1757)",
+    help=(
+        "Chat seeding: composer (samples/stats/validate/drafts, #1756/#1793) "
+        "+ publisher (approve/schedule/cancel, #1757)"
+    ),
 )
 
 
@@ -438,17 +542,56 @@ async def status_impl(config_path: str, *, thread_id: int) -> None:
     print(f"  SEED_DUE-задача: {'активна' if seed_task_active else 'нет'}")
 
 
-@seeding_app.command("stats")
+@seeding_app.command("stats", context_settings=_NEG_ID_POSITIONAL)
 def stats_command(
     ctx: typer.Context,
     chat: int = typer.Argument(
-        ..., metavar="chat-id", help="Telegram chat id (negative for groups), as in `dialogs list`"
+        ..., metavar="chat-id", help="Chat id: bare (1234567890) or Telegram-marked (-1001234567890)"
     ),
     days: int = typer.Option(14, "--days", min=1, help="Window over collected messages"),
 ) -> None:
-    """Learn the real-chat statistics profile (JSON; composer prompt input + validation base)."""
+    """Learn the real-chat statistics profile (JSON; timing/quiet-hours bounds + validation base)."""
     apply_startup(ctx)
     run_async(stats_impl(ctx.obj.config, chat=chat, days=days))
+
+
+@seeding_app.command("samples")
+def samples_command(
+    ctx: typer.Context,
+    chat: int = typer.Option(
+        ..., "--chat", help="Chat id: bare (1234567890) or Telegram-marked (-1001234567890)"
+    ),
+    days: int = typer.Option(14, "--days", min=1, help="Window over collected messages"),
+    windows: int = typer.Option(4, "--windows", min=0, help="How many most recent conversation windows"),
+    window_size: int = typer.Option(20, "--window", min=1, help="Max messages shown per window"),
+    senders: int = typer.Option(4, "--senders", min=0, help="Top senders whose voices to show"),
+    per_sender: int = typer.Option(10, "--per-sender", min=0, help="Latest messages per sender voice"),
+    gap_minutes: int = typer.Option(
+        10, "--gap-minutes", min=1, help="A pause longer than this starts a new window"
+    ),
+    min_messages: int = typer.Option(6, "--min-messages", min=1, help="Min messages for a window to qualify"),
+    min_speakers: int = typer.Option(3, "--min-speakers", min=1, help="Min speakers for a window to qualify"),
+    output_format: SamplesFormat = typer.Option(
+        SamplesFormat.text, "--format", case_sensitive=False, help="text (readable) or json"
+    ),
+) -> None:
+    """Real chat speech for the composer: recent conversation windows verbatim + top-sender voices."""
+    apply_startup(ctx)
+    run_async(
+        samples_impl(
+            ctx.obj.config,
+            chat=chat,
+            days=days,
+            windows=windows,
+            window_size=window_size,
+            senders=senders,
+            per_sender=per_sender,
+            gap_minutes=gap_minutes,
+            min_messages=min_messages,
+            min_speakers=min_speakers,
+            output_format=output_format,
+        )
+    )
 
 
 @seeding_app.command("validate")

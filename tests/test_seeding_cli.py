@@ -166,6 +166,118 @@ def test_stats_command_prints_json(cli_db, capsys):
     assert isinstance(stats["quiet_hours"], list)
 
 
+# --------------------------------------------------------------------------- #
+# samples (#1793) + id чата в любой форме
+# --------------------------------------------------------------------------- #
+
+BARE_CHAT_ID = 1234567890
+MARKED_CHAT_ID = -1001234567890
+
+
+def _seed_conversation(db) -> None:
+    """Чат под голым id (как пишет коллектор): разговор трёх + поздний обмен двоих."""
+    base = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0) - timedelta(hours=5)
+    _reopen(db)
+    asyncio.run(
+        db.repos.channels.add_channel(
+            Channel(channel_id=BARE_CHAT_ID, title="Живой чат", channel_type="supergroup")
+        )
+    )
+    rows = [
+        (0, "Аня", "кто-нибудь пробовал агента в песочнице?", None),
+        (70, "Боря", "я в докере гоняю", None),
+        (130, "Вика", "а я на основной машине, живу опасно", None),
+        (200, "Боря", None, "photo"),
+        (260, "Аня", "ну это смело\nочень смело", None),
+        (330, "Вика", "раз в год и палка стреляет", None),
+        (400, "Боря", "вово", None),
+        (7200, "Аня", "кстати", None),
+        (7260, "Боря", "ага", None),
+    ]
+    for i, (second, sender, text, media) in enumerate(rows):
+        asyncio.run(
+            db.repos.messages.insert_message(
+                Message(
+                    channel_id=BARE_CHAT_ID,
+                    message_id=i + 1,
+                    date=base + timedelta(seconds=second),
+                    text=text,
+                    media_type=media,
+                    sender_id=100 + i,
+                    sender_name=sender,
+                    sender_kind="user",
+                    message_kind="regular",
+                )
+            )
+        )
+
+
+def test_samples_text_with_marked_id_finds_bare_stored_chat(cli_db, capsys):
+    _seed_conversation(cli_db)
+
+    samples, out = _run_impl(
+        lambda: seeding_cli.samples_impl("cfg", chat=MARKED_CHAT_ID, days=1), cli_db, capsys
+    )
+
+    assert samples.qualifying_windows == 1
+    assert samples.windows[0].speakers == ["Аня", "Боря", "Вика"]
+    assert "=== window 1/1" in out
+    assert "Боря: [photo]" in out
+    assert "ну это смело" in out and "очень смело" in out
+    assert "=== voices" in out
+    assert "--- Боря (3 messages) ---" in out
+
+
+def test_samples_json_output(cli_db, capsys):
+    _seed_conversation(cli_db)
+
+    _, out = _run_impl(
+        lambda: seeding_cli.samples_impl(
+            "cfg",
+            chat=MARKED_CHAT_ID,
+            days=1,
+            per_sender=1,
+            output_format=seeding_cli.SamplesFormat.json,
+        ),
+        cli_db,
+        capsys,
+    )
+
+    payload = json.loads(out)
+    assert payload["chat_channel_id"] == MARKED_CHAT_ID
+    assert payload["window_gap_seconds"] == 600
+    window = payload["windows"][0]
+    assert window["message_count"] == 7
+    assert window["messages"][0]["gap_seconds"] is None
+    assert window["messages"][1]["gap_seconds"] == 70
+    # Аня и Боря — по 3 текста (фото Бори не текст): равенство разрешается по имени.
+    assert payload["voices"][:2] == [
+        {"sender": "Аня", "message_count": 3, "samples": ["кстати"]},
+        {"sender": "Боря", "message_count": 3, "samples": ["ага"]},
+    ]
+
+
+def test_samples_empty_chat_is_not_an_error(cli_db, capsys):
+    samples, out = _run_impl(
+        lambda: seeding_cli.samples_impl("cfg", chat=MARKED_CHAT_ID, days=1), cli_db, capsys
+    )
+
+    assert samples.windows == [] and samples.voices == []
+    assert "No conversation windows matched" in out
+
+
+def test_stats_with_marked_id_finds_bare_stored_chat(cli_db, capsys):
+    """Регрессия: ``-100<bare>`` молча давал нулевой профиль (хранилище — голый id)."""
+    _seed_conversation(cli_db)
+
+    stats, _ = _run_impl(
+        lambda: seeding_cli.stats_impl("cfg", chat=MARKED_CHAT_ID, days=1), cli_db, capsys
+    )
+
+    assert stats.message_count == 8
+    assert stats.sender_count == 3
+
+
 def test_validate_impl_valid_scenario(cli_db, capsys, tmp_path):
     _seed_chat(cli_db)
     path = _scenario_file(tmp_path, delays=[400, 600])

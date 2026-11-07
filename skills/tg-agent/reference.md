@@ -305,6 +305,8 @@ cannot be re-queued.
 ## seeding — chat seeding composer + publisher (epic #1751; composer #1756, publisher #1757)
 
 ```
+seeding samples --chat <chat-id> [--days N] [--windows N] [--window N] [--senders N] [--per-sender N]
+                [--gap-minutes N] [--min-messages N] [--min-speakers N] [--format text|json]
 seeding stats <chat-id> [--days N]
 seeding validate <scenario.json> --chat <chat-id> [--days N] [--start-at ISO]
 seeding thread-create --chat <chat-id> --personas personas.json [--ref REF]
@@ -317,13 +319,22 @@ seeding cancel <thread-id>
 seeding status <thread-id>
 ```
 
-Composer half of the chat-seeding engine (epic #1751): `stats` returns the
+Composer half of the chat-seeding engine (epic #1751): `samples` (#1793)
+prints the chat's real speech — the most recent conversation windows
+verbatim (consecutive messages with pauses ≤ `--gap-minutes`, ≥
+`--min-messages` messages, ≥ `--min-speakers` speakers; sender, pause, full
+text, media as `[photo]`; channel posts are triggers, not speakers) and the
+voices of the top real senders (their latest messages; no channel posts or
+anonymous admin) — the primary composer input, method in
+[seeding-voice.md](seeding-voice.md). `stats` returns the
 learned real-chat profile JSON (length/gap distributions, active/quiet
 hours UTC, emoji and style habits, per-sender stats) — the prompt input for
 the composing LLM (Claude Code CLI, workflow in
 [seeding.md](seeding.md)) and the base `validate`/`add` check timings and
 anti-patterns against (no links, no echo, no equal-length runs, no
 machine-like pauses, no messages landing in `quiet_hours`).
+Every seeding read accepts the chat id bare (as stored, `1997034059`) or
+Telegram-marked (`-1001997034059`).
 
 `thread-create` stores the draft thread (status `draft`, persona map
 «name → account_phone» in `personas_json`); `add` records the scenario as

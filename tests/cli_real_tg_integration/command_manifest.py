@@ -381,6 +381,10 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
         "list-only chat-statistics profile read from collected messages; "
         "DB-only, no live Telegram, covered by offline CLI tests (#1756)"
     ),
+    ("seeding", "samples"): (
+        "list-only real-speech samples (conversation windows + sender voices) read from "
+        "collected messages; DB-only, no live Telegram, covered by offline CLI tests (#1793)"
+    ),
     ("seeding", "validate"): (
         "file-only scenario validation against the learned chat stats; "
         "no Telegram, covered by offline CLI tests (#1756)"

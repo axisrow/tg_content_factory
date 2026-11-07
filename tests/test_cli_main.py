@@ -160,6 +160,20 @@ class TestNegativeIdPositionalParity:
         assert code == 0
         assert mock_impl.call_args.kwargs["channel_id"] == -100123456
 
+    def test_seeding_stats_negative_chat_id(self):
+        with patch("tg_agent.cli.commands.seeding.stats_impl") as mock_impl:
+            code = _run_main(["seeding", "stats", "-1001234567890", "--days", "7"])
+        assert code == 0
+        assert mock_impl.call_args.kwargs["chat"] == -1001234567890
+        assert mock_impl.call_args.kwargs["days"] == 7
+
+    def test_seeding_samples_negative_chat_option(self):
+        with patch("tg_agent.cli.commands.seeding.samples_impl") as mock_impl:
+            code = _run_main(["seeding", "samples", "--chat", "-1001234567890", "--format", "json"])
+        assert code == 0
+        assert mock_impl.call_args.kwargs["chat"] == -1001234567890
+        assert mock_impl.call_args.kwargs["output_format"].value == "json"
+
     def test_dialogs_leave_negative_dialog_ids(self):
         """``dialogs leave -100111 --yes`` — the variadic ``dialog_ids`` positional
         holds negative Telegram ids; it must accept them with the flag in either

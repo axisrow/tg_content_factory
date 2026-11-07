@@ -24,6 +24,7 @@ from tg_agent.models import (
 from tg_agent.services.seeding_publisher import (
     PER_ACCOUNT_DAILY_LIMIT,
     SeedingPublisherService,
+    _learn_chat_stats,
     validate_schedule_rails,
 )
 
@@ -516,3 +517,26 @@ async def test_rails_require_approved_state(db):
 @pytest.mark.anyio
 async def test_rails_missing_thread(db):
     assert await validate_schedule_rails(db, 424242) == ["тред #424242 не найден"]
+
+
+@pytest.mark.anyio
+async def test_rails_profile_accepts_marked_chat_id(db):
+    """Тихие часы rails учатся и по ``-100<bare>``: хранилище держит голый id."""
+    bare = 1234567890
+    await db.repos.channels.add_channel(Channel(channel_id=bare, title="Чат", channel_type="supergroup"))
+    base = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0) - timedelta(hours=2)
+    for i in range(3):
+        await db.repos.messages.insert_message(
+            Message(
+                channel_id=bare,
+                message_id=i + 1,
+                date=base + timedelta(minutes=i),
+                text=f"живое сообщение {i}",
+                sender_id=1,
+                sender_name="Аня",
+            )
+        )
+
+    stats = await _learn_chat_stats(db, -1_000_000_000_000 - bare, days=1)
+
+    assert stats.message_count == 3
