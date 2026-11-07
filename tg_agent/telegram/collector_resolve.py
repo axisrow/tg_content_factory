@@ -41,7 +41,8 @@ logger = logging.getLogger(__name__)
 
 RESOLVE_USERNAME_OPERATION = "collect_channel_resolve_username"
 TRANSIENT_REVIEW_REASONS = frozenset(
-    {"resolve_transient_error", "resolve_account_unavailable", "stats_entity_unresolved"}
+    {"resolve_transient_error", "resolve_account_unavailable", "stats_entity_unresolved",
+     "numeric_unresolved"}
 )
 
 

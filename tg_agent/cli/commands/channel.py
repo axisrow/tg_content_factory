@@ -49,6 +49,7 @@ from tg_agent.telegram.collector import (
     UsernameResolveFloodWaitDeferredError,
     UsernameResolveRateLimitedError,
 )
+from tg_agent.telegram.collector_resolve import TRANSIENT_REVIEW_REASONS
 from tg_agent.telegram.collector_types import NoActiveCollectionClientsError
 from tg_agent.utils.json import safe_json_dumps
 
@@ -818,6 +819,72 @@ async def _stamp_terminal(db, ch: Channel, code: str) -> None:
         )
 
 
+async def _resolve_card_miss_fallback(db, pool, ch, *, numeric_review_reason, resolve_kwargs):
+    """Numeric-miss handling: username fallback with id verification.
+
+    The #1768 fallback (stored @username, no membership needed), the #1787
+    terminal stamps and the #1791 review-sentinel marking in one place —
+    extracted from ``_refresh_channel_card`` to keep both under the
+    complexity gate. Returns ``(status, info)``: ``info`` is the id-verified
+    card to continue with (status ``None``), or the terminal status string
+    (``owner_unavailable``/``unavailable``) with ``info=None`` when the row
+    is left untouched.
+    """
+    if not ch.username:
+        if numeric_review_reason:
+            if ch.id:
+                await db.repos.channels.set_channel_review(ch.id, numeric_review_reason)
+            return "owner_unavailable", None
+        return "unavailable", None
+    # Numeric-miss fallback on the stored @username: ResolveUsername needs no
+    # account membership, unlike a bare PeerChannel lookup (#1768). Write only
+    # after the resolved id matches the stored one — a username reoccupied by
+    # another channel must never leak a foreign card onto this row.
+    info = None
+    try:
+        info = await pool.resolve_channel(ch.username, signal_gone=True, **resolve_kwargs)
+    except GatewayOperationError as exc:
+        if exc.code not in {"ValueError", "UsernameNotOccupiedError", "UsernameInvalidError"}:
+            raise  # TimeoutError/uncertain/etc. propagate — never a silent SKIP
+        # The stored name resolves for nobody on the gateway either
+        # (UsernameNotOccupiedError and friends): nothing fresh — SKIP,
+        # parity with the direct pool's gone sentinel. A dead name is also
+        # terminal (#1787): stamp it so the bulk enqueue and the next
+        # bulk pass defer the row instead of re-burning the budget.
+        if exc.code != "ValueError":
+            await _stamp_terminal(db, ch, exc.code)
+        info = None
+    resolved = (
+        abs(int(info.get("channel_id") or 0))
+        if info and not info.get("gone") and not info.get("review") else 0
+    )
+    if not resolved:
+        if numeric_review_reason:
+            if ch.id:
+                await db.repos.channels.set_channel_review(ch.id, numeric_review_reason)
+            return "owner_unavailable", None
+        return "unavailable", None
+    if info.get("channel_type") in ("user", "bot"):
+        # Telegram id ranges overlap: a username reoccupied by a USER can
+        # collide with the stored channel id. Never write a person's card
+        # onto a channel row (#1769 review). The identity drift is also
+        # terminal (#1787).
+        logging.warning(
+            "refresh-card: @%s now belongs to a %s, not a channel; row untouched",
+            ch.username, info.get("channel_type"),
+        )
+        await _stamp_terminal(db, ch, "UsernameChannelIdMismatch")
+        return "unavailable", None
+    if resolved != abs(ch.channel_id):
+        logging.warning(
+            "refresh-card: @%s now resolves to channel %d, not stored %d; row untouched",
+            ch.username, resolved, ch.channel_id,
+        )
+        await _stamp_terminal(db, ch, "UsernameChannelIdMismatch")
+        return "unavailable", None
+    return None, info
+
+
 async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tuple[str, list[str]]:
     """Refresh one channel row's open metadata from Telegram (#1764, #1765 review).
 
@@ -858,52 +925,18 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
     except GatewayOperationError as exc:
         if exc.code != "ValueError":  # peer-miss only; timeout/uncertain propagate
             raise
+    # A review sentinel means the owner is unavailable everywhere (uncertain
+    # numeric resolve) — transient, not dead (#1791). Marked for review at the
+    # return sites below; healed by the auto-clear on a later verified card.
+    numeric_review_reason = info.get("reason") if info and info.get("review") else None
     miss = not info or info.get("gone") or info.get("review")
     if miss:
-        if not ch.username:
-            return "unavailable", []
-        # Numeric-miss fallback on the stored @username: ResolveUsername needs no
-        # account membership, unlike a bare PeerChannel lookup (#1768). Write only
-        # after the resolved id matches the stored one — a username reoccupied by
-        # another channel must never leak a foreign card onto this row.
-        info = None
-        try:
-            info = await pool.resolve_channel(ch.username, signal_gone=True, **resolve_kwargs)
-        except GatewayOperationError as exc:
-            if exc.code not in {"ValueError", "UsernameNotOccupiedError", "UsernameInvalidError"}:
-                raise  # TimeoutError/uncertain/etc. propagate — never a silent SKIP
-            # The stored name resolves for nobody on the gateway either
-            # (UsernameNotOccupiedError and friends): nothing fresh — SKIP,
-            # parity with the direct pool's gone sentinel. A dead name is also
-            # terminal (#1787): stamp it so the bulk enqueue and the next
-            # bulk pass defer the row instead of re-burning the budget.
-            if exc.code != "ValueError":
-                await _stamp_terminal(db, ch, exc.code)
-            info = None
-        resolved = (
-            abs(int(info.get("channel_id") or 0))
-            if info and not info.get("gone") and not info.get("review") else 0
+        status, info = await _resolve_card_miss_fallback(
+            db, pool, ch, numeric_review_reason=numeric_review_reason,
+            resolve_kwargs=resolve_kwargs,
         )
-        if not resolved:
-            return "unavailable", []
-        if info.get("channel_type") in ("user", "bot"):
-            # Telegram id ranges overlap: a username reoccupied by a USER can
-            # collide with the stored channel id. Never write a person's card
-            # onto a channel row (#1769 review). The identity drift is also
-            # terminal (#1787).
-            logging.warning(
-                "refresh-card: @%s now belongs to a %s, not a channel; row untouched",
-                ch.username, info.get("channel_type"),
-            )
-            await _stamp_terminal(db, ch, "UsernameChannelIdMismatch")
-            return "unavailable", []
-        if resolved != abs(ch.channel_id):
-            logging.warning(
-                "refresh-card: @%s now resolves to channel %d, not stored %d; row untouched",
-                ch.username, resolved, ch.channel_id,
-            )
-            await _stamp_terminal(db, ch, "UsernameChannelIdMismatch")
-            return "unavailable", []
+        if status is not None:
+            return status, []
     assert info is not None  # every miss path returned above
 
     changes: list[str] = []
@@ -955,6 +988,10 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
         has_comments=bool(meta.get("has_comments")) if meta_present else False,
         meta_present=meta_present,
     )
+    if ch.id and ch.review_reason in TRANSIENT_REVIEW_REASONS:
+        # Transient markers heal on a verified card (#1791) — same auto-clear as
+        # the collector's success path; operator quarantines survive untouched.
+        await db.repos.channels.clear_channel_review(ch.id)
     return ("partial" if partial else "updated"), changes
 
 
@@ -1002,6 +1039,7 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
         # The direct pool routes internally via its owner map / preferred_phone.
         gateway_pool = isinstance(pool, GatewayPool)
         updated = partial_count = skipped = failed = 0
+        owner_unavailable = 0
         reconnect_waits = 0
 
         def _stop_with_unprocessed(at_index: int, reason: str) -> typer.Exit:
@@ -1080,7 +1118,15 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
                 print(f"FAILED: {ch.title} ({ch.channel_id}) — {e}; row untouched", flush=True)
                 failed += 1
                 continue
-            if status == "unavailable":
+            if status == "owner_unavailable":
+                print(
+                    f"SKIP (owner unavailable): {ch.title} ({ch.channel_id}) — "
+                    "marked for review; row untouched",
+                    flush=True,
+                )
+                owner_unavailable += 1
+                skipped += 1
+            elif status == "unavailable":
                 print(
                     f"SKIP: {ch.title} ({ch.channel_id}) — "
                     "no fresh data (gone/uncertain/transient); row untouched",
@@ -1102,7 +1148,8 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
                 updated += 1
         print(
             f"\nUpdated: {updated} (partial: {partial_count}), "
-            f"Skipped: {skipped}, Failed: {failed}"
+            f"Skipped: {skipped}, Failed: {failed}\n"
+            f"Owner unavailable: {owner_unavailable}"
         )
     finally:
         if pool:

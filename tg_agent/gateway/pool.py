@@ -379,6 +379,15 @@ class GatewayPool:
                 resolved = (abs(int(info.get("channel_id") or 0))
                             if info and not info.get("gone") and not info.get("review") else 0)
                 if not resolved:
+                    if info and info.get("review"):
+                        # Owner unavailable/unresolved (review sentinel, #1791):
+                        # transient — never a terminal stamp on a live channel.
+                        # Mark for review (the collector's auto-clear heals it on
+                        # the next success) and re-raise the original peer-miss.
+                        if channel.id:
+                            await self._db.repos.channels.set_channel_review(
+                                channel.id, info.get("reason") or "numeric_unresolved")
+                        raise exc from None
                     raise GatewayOperationError("failed", {"error": "UsernameResolveMiss"}) from exc
                 if info.get("channel_type") in ("user", "bot"):
                     # Telegram id ranges overlap: a username reoccupied by a

@@ -724,6 +724,64 @@ def _stamp(db, channel_id: int, code: str) -> None:
     asyncio.run(db.repos.channels.set_channel_terminal(ch.id, code, datetime.now(timezone.utc)))
 
 
+def test_refresh_card_review_sentinel_marks_review_when_no_username(cli_env, capsys):
+    """#1791: a numeric resolve returning the review sentinel (owner
+    unavailable everywhere) with no username to fall back to must not be a
+    silent SKIP — the row is marked for review and the pass reports it."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=913, title="Ghost", username=None)
+
+    pool = FakeDirectPool(
+        resolve_by_id={913: {"review": True, "reason": "numeric_unresolved"}},
+        meta_by_id={},
+    )
+    _run_refresh_card(db, pool, identifier="913")
+
+    out = capsys.readouterr().out
+    assert "owner unavailable" in out
+    assert "Owner unavailable: 1" in out
+    ch = _get_channel(db, 913)
+    assert ch.title == "Ghost"  # row untouched
+    assert ch.review_reason == "numeric_unresolved"
+
+
+def test_refresh_card_success_clears_transient_review(cli_env, capsys):
+    """#1791 parity with the collector's auto-clear: a verified card heals a
+    TRANSIENT review marker; operator quarantines are never auto-cleared."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=914, title="Stale", username="healing914")
+    row = _get_channel(db, 914)
+    asyncio.run(db.repos.channels.set_channel_review(row.id, "resolve_account_unavailable"))
+
+    pool = FakeDirectPool(
+        resolve_by_id={914: {
+            "channel_id": 914, "title": "Healed", "username": "healing914",
+            "channel_type": "channel", "deactivate": False, "created_at": None,
+        }},
+        meta_by_id={914: {"about": "a", "linked_chat_id": None, "has_comments": False}},
+    )
+    _run_refresh_card(db, pool, identifier="914")
+
+    assert "OK" in capsys.readouterr().out
+    assert _get_channel(db, 914).review_reason is None
+
+    # Non-transient (operator quarantine) survives the same successful refresh.
+    _add_stale_channel(db, channel_id=915, title="Stale Q", username="quarantined915")
+    row = _get_channel(db, 915)
+    asyncio.run(db.repos.channels.set_channel_review(row.id, "uncertain"))
+    pool = FakeDirectPool(
+        resolve_by_id={915: {
+            "channel_id": 915, "title": "Healed Q", "username": "quarantined915",
+            "channel_type": "channel", "deactivate": False, "created_at": None,
+        }},
+        meta_by_id={915: {"about": "a", "linked_chat_id": None, "has_comments": False}},
+    )
+    _run_refresh_card(db, pool, identifier="915")
+
+    assert "OK" in capsys.readouterr().out
+    assert _get_channel(db, 915).review_reason == "uncertain"
+
+
 def test_refresh_card_gateway_stamps_dead_username(cli_env, capsys):
     """#1787: a dead stored username (gateway receipt UsernameInvalidError in
     the numeric-miss fallback) is terminal — the row carries the stamp, so the
