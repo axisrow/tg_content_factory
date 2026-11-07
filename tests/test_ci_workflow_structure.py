@@ -296,9 +296,10 @@ def test_dependency_review_gate_is_blocking_and_pr_scoped(ci_config: dict) -> No
     assert review.get("with", {}).get("fail-on-severity") == "moderate", (
         "fail-on-severity pins the blocking threshold (noise knob: raise to high, never drop the gate)"
     )
-    assert review.get("with", {}).get("allow-ghsas") == "GHSA-xcq7-p3pf-p88h", (
-        "the single allowed waiver is the otel advisory that google-adk 2.13.0 caps "
-        "below the patched 1.45.1; when google-adk lifts the cap, upgrade the lock and drop the waiver"
+    assert "allow-ghsas" not in review.get("with", {}), (
+        "no advisory waivers: the former GHSA-xcq7-p3pf-p88h otel waiver is gone "
+        "(google-adk 2.14.0 lifted the cap, lock took opentelemetry-api 1.45.2); "
+        "a new waiver needs its own removal plan in the same breath it lands"
     )
 
 
