@@ -127,7 +127,7 @@ python -m tg_agent.main pipeline list|show|add|dry-run-count|edit|delete|toggle|
 python -m tg_agent.main photo-loader dialogs|refresh|send|schedule-send|batch-create|batch-list|items|batch-cancel|auto-create|auto-list|auto-update|auto-toggle|auto-delete|run-due
 python -m tg_agent.main dialogs list|refresh|resolve|leave|join|topics|cache-clear|cache-status|send|forward|edit-message|delete-message|create-channel|create-group|pin-message|react|unpin-message|download-media|transcribe|participants|edit-admin|edit-permissions|kick|broadcast-stats|archive|unarchive|mark-read|queue|queue status|queue cancel|queue clear-pending
 python -m tg_agent.main dm drafts list|create|approve|reject|send
-python -m tg_agent.main seeding stats|validate|thread-create|add|list|show   # chat seeding composer (#1756): stats/validation/drafts, эпик #1751
+python -m tg_agent.main seeding samples|stats|validate|thread-create|add|list|show|approve|schedule|cancel|status   # chat seeding (эпик #1751): composer (#1756, samples = real speech #1793) + publisher (#1757)
 python -m tg_agent.main agent threads|thread-create|thread-delete|chat|thread-rename|thread-stop|messages|context|test-escaping|test-tools
 python -m tg_agent.main analytics top|content-types|hourly|summary|daily|pipeline-stats|trending-topics|trending-channels|velocity|peak-hours|calendar|trending-emojis|channel|channel-rating|channel-rate|usefulness
 python -m tg_agent.main provider list|add|delete|probe|refresh|test-all

@@ -1,19 +1,31 @@
 # Chat seeding — composer + publisher workflow (#1756, #1757)
 
 Compose realistic multi-participant dialogues for the owner's own chats
-(epic #1751). The learned statistics are the prompt input; the scenario JSON
-is the contract; validation is a loop; drafts are recorded through the CLI.
+(epic #1751). Real chat speech is the prompt input (`seeding samples`, the
+composing method is [seeding-voice.md](seeding-voice.md)); the learned
+statistics bound the timing; the scenario JSON is the contract; validation is
+a loop; drafts are recorded through the CLI.
 The composing LLM is Claude Code itself (z.ai is banned). The publisher
 (approve/schedule/cancel/status, #1757) turns an approved draft into a
 worker-run send — gated on explicit owner consent (chat + content).
 
-## 1. Learn the chat profile
+## 1. Read the real speech, then learn the chat profile
 
 ```bash
+tg-agent seeding samples --chat <chat-id> --days 14
 tg-agent seeding stats <chat-id> --days 14
 ```
 
-Returns ONE JSON object — the real-chat profile computed from collected
+`samples` comes FIRST: the most recent conversation windows verbatim
+(sender, pause, full text; media as `[photo]`) plus the voices of the top
+real senders (their latest messages). Compose from these windows — few-shot
+style transfer of rhythm, register, slang and reply manner, not content —
+following [seeding-voice.md](seeding-voice.md). `--format json` for
+parsing; `--windows/--window/--senders/--per-sender/--gap-minutes/
+--min-messages/--min-speakers` tune the selection. Few qualifying windows →
+widen `--days` or ask the owner to backfill (`channel collect <chat-id> --full`).
+
+`stats` is for timing and bounds only. It returns ONE JSON object — the real-chat profile computed from collected
 messages (deterministic, no LLM): `length` (percentiles + mean),
 `gaps_seconds` (inter-message pauses; `max` is the longest observed silence),
 `active_hour_counts` (UTC hours; missing hour = quiet), `quiet_hours`,
@@ -22,7 +34,8 @@ shares, `top_tokens`), `per_sender` (activity per participant — the basis
 for persona count). `--days` widens/narrows the window; keep 14 unless the
 chat is thin.
 
-Chat id is the negative group/supergroup id, as in `dialogs list`.
+Chat id: the Telegram-marked group/supergroup id (`-100…`) or the bare id
+the DB stores (`1997034059`) — every seeding read accepts both.
 
 ## 2. Compose the scenario JSON
 
@@ -50,7 +63,12 @@ Fill this schema — it mirrors the `seeding_messages` columns (#1755):
 
 Rules (the validator enforces most of them — do not wait for it to fail):
 
-- **Personas**: 2–4, one per participating account (`account_phone` unique).
+- **Source**: compose from the `samples` windows, not from the stats —
+  transfer a real window's skeleton (speaker order with bursts, per-slot
+  length, pause shape) onto a new evergreen topic; strip AI tells; never
+  post a rewrite of a real window ([seeding-voice.md](seeding-voice.md)).
+- **Personas**: 2–4, one per participating account (`account_phone` unique),
+  each anchored to one real sender's voice from `samples`.
   A persona is CONSISTENT across sessions: fix vocabulary, punctuation and
   the activity window in `style` and reuse the same file for the same chat.
 - **No echo**: accounts never repeat each other's (or their own) phrasings —
@@ -63,9 +81,10 @@ Rules (the validator enforces most of them — do not wait for it to fail):
   comfortable gap (≥20s even in fast chats).
 - **Lengths vary**: no three consecutive messages of the same length
   (`length` percentiles are the guide).
-- **Voice**: informal per chat norms — occasional typos, lowercase starts if
-  the chat does that, `emoji_share`-consistent emoji use from `top_emojis`,
-  vocabulary close to `top_tokens`.
+- **Voice**: the anchored sender's register first (short fragments, no
+  closure, people talk past each other); then the chat norms — occasional
+  typos, lowercase starts if the chat does that, `emoji_share`-consistent
+  emoji use from `top_emojis`, vocabulary close to `top_tokens`.
 - **No links ever** — spam-reportable; seeds with URLs are rejected.
 - Telegram caps a message at 4096 chars.
 
