@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -16,8 +18,11 @@ from tg_agent.services.seeding_composer import (
     SeedingPersona,
     SeedingScenario,
     SeedingScenarioMessage,
+    build_chat_samples,
+    chat_id_lookup_keys,
     compute_chat_statistics,
     derive_planned_schedule,
+    split_conversation_windows,
     validate_scenario,
 )
 
@@ -306,3 +311,167 @@ def test_derive_planned_schedule() -> None:
         start + timedelta(seconds=300),
         start + timedelta(seconds=600),
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Реальная речь для композера (#1793): окна разговоров + голоса участников
+# --------------------------------------------------------------------------- #
+
+_REAL_CHAT_FIXTURE = Path(__file__).parent / "fixtures" / "test_db_seed" / "vAIbecoding.jsonl"
+_T0 = _naive(10)
+
+
+def _cm(
+    second: int,
+    sender: str,
+    text: str | None = "реплика",
+    *,
+    kind: str | None = "user",
+    media: str | None = None,
+    message_kind: str = "regular",
+    message_id: int | None = None,
+) -> Message:
+    """Сообщение разговора через ``second`` секунд от 10:00 (ids растут со временем)."""
+    return Message(
+        channel_id=CHAT_ID,
+        message_id=message_id if message_id is not None else second + 1,
+        date=_T0 + timedelta(seconds=second),
+        text=text,
+        sender_name=sender,
+        sender_kind=kind,
+        media_type=media,
+        message_kind=message_kind,
+    )
+
+
+def _talk(start: int, senders: tuple[str, ...], *, step: int = 60) -> list[Message]:
+    """Разговор: по сообщению от каждого из ``senders`` с шагом ``step`` секунд."""
+    return [_cm(start + i * step, name, f"{name}: реплика {start + i}") for i, name in enumerate(senders)]
+
+
+def test_chat_id_lookup_keys_cover_marked_and_bare_forms() -> None:
+    assert chat_id_lookup_keys(-1001997034059) == [-1001997034059, 1997034059]
+    assert chat_id_lookup_keys(1997034059) == [1997034059]
+    # Тестовые/исторические строки с id «как передан» продолжают находиться.
+    assert chat_id_lookup_keys(-100999) == [-100999, 100999]
+
+
+def test_windows_split_only_on_gap_longer_than_threshold() -> None:
+    msgs = [_cm(0, "Аня"), _cm(600, "Боря"), _cm(1201, "Вика")]
+
+    windows = split_conversation_windows(msgs, gap_seconds=600)
+
+    assert [[m.sender_name for m in w] for w in windows] == [["Аня", "Боря"], ["Вика"]]
+
+
+def test_channel_post_is_trigger_not_speaker() -> None:
+    msgs = [_cm(0, "Vibe Coding", "пост канала", kind="channel"), *_talk(60, ("Аня", "Боря") * 3)]
+
+    strict = build_chat_samples(msgs, chat_channel_id=CHAT_ID, window_days=14, min_speakers=3)
+    loose = build_chat_samples(msgs, chat_channel_id=CHAT_ID, window_days=14, min_speakers=2)
+
+    assert strict.qualifying_windows == 0
+    assert loose.qualifying_windows == 1
+    window = loose.windows[0]
+    assert window.speakers == ["Аня", "Боря"]
+    assert window.messages[0].sender == "Vibe Coding"  # триггер остаётся в окне
+
+
+def test_most_recent_windows_shown_chronologically() -> None:
+    trio = ("Аня", "Боря", "Вика") * 2
+    msgs = [*_talk(0, trio), *_talk(5000, trio), *_talk(10000, trio)]
+
+    samples = build_chat_samples(list(reversed(msgs)), chat_channel_id=CHAT_ID, window_days=14, windows=2)
+
+    assert samples.qualifying_windows == 3
+    assert [w.start for w in samples.windows] == [
+        _T0.replace(tzinfo=timezone.utc) + timedelta(seconds=5000),
+        _T0.replace(tzinfo=timezone.utc) + timedelta(seconds=10000),
+    ]
+
+
+def test_window_truncated_to_window_size_with_gaps() -> None:
+    msgs = _talk(0, ("Аня", "Боря", "Вика") * 3, step=45)
+
+    window = build_chat_samples(msgs, chat_channel_id=CHAT_ID, window_days=14, window_size=5).windows[0]
+
+    assert window.message_count == 9
+    assert len(window.messages) == 5
+    assert window.truncated == 4
+    assert [m.gap_seconds for m in window.messages] == [None, 45, 45, 45, 45]
+
+
+def test_media_without_text_kept_service_and_empty_dropped() -> None:
+    msgs = [
+        *_talk(0, ("Аня", "Боря", "Вика", "Аня", "Боря")),
+        _cm(400, "Вика", None, media="photo"),
+        _cm(420, "Гоша", "Гоша вступил в группу", message_kind="service"),
+        _cm(440, "Аня", "   "),
+    ]
+
+    samples = build_chat_samples(msgs, chat_channel_id=CHAT_ID, window_days=14)
+
+    window = samples.windows[0]
+    assert samples.message_count == 6
+    assert window.message_count == 6
+    assert (window.messages[-1].media_type, window.messages[-1].text) == ("photo", "")
+    assert "Гоша" not in window.speakers
+
+
+def test_mixed_naive_and_aware_dates_do_not_crash() -> None:
+    aware = _cm(30, "Боря")
+    aware.date = aware.date.replace(tzinfo=timezone.utc)
+    msgs = [aware, _cm(0, "Аня"), _cm(90, "Вика"), *_talk(120, ("Аня", "Боря", "Вика"))]
+
+    window = build_chat_samples(msgs, chat_channel_id=CHAT_ID, window_days=14).windows[0]
+
+    assert [m.sender for m in window.messages][:3] == ["Аня", "Боря", "Вика"]
+
+
+def test_equal_dates_ordered_by_message_id() -> None:
+    late = _cm(0, "Боря", message_id=2)
+    early = _cm(0, "Аня", message_id=1)
+    msgs = [late, early, *_talk(60, ("Вика", "Аня", "Боря", "Вика"))]
+
+    window = build_chat_samples(msgs, chat_channel_id=CHAT_ID, window_days=14).windows[0]
+
+    assert [m.message_id for m in window.messages][:2] == [1, 2]
+
+
+def test_voices_are_top_senders_latest_texts_without_channel_and_admin() -> None:
+    msgs = [
+        *[_cm(i * 10, "Аня", f"аня {i}") for i in range(5)],
+        *[_cm(100 + i * 10, "Боря", f"боря {i}") for i in range(3)],
+        _cm(200, "Вика", "вика 0"),
+        _cm(210, "Боря", None, media="photo"),
+        *[_cm(300 + i * 10, "Vibe Coding", f"пост {i}", kind="channel") for i in range(10)],
+        *[_cm(500 + i * 10, "Чат", f"админ {i}", kind="anonymous_admin") for i in range(6)],
+    ]
+
+    voices = build_chat_samples(msgs, chat_channel_id=CHAT_ID, window_days=14, senders=2, per_sender=2).voices
+
+    assert [(v.sender, v.message_count) for v in voices] == [("Аня", 5), ("Боря", 3)]
+    assert voices[0].samples == ["аня 3", "аня 4"]
+
+
+def test_samples_on_real_chat_fixture_respect_thresholds() -> None:
+    """Реальная выгрузка чата (#1794): окна не пусты и все проходят пороги."""
+    fields = set(Message.model_fields)
+    with _REAL_CHAT_FIXTURE.open(encoding="utf-8") as fh:
+        messages = [
+            Message.model_validate({k: v for k, v in json.loads(line).items() if k in fields}) for line in fh
+        ]
+
+    samples = build_chat_samples(messages, chat_channel_id=-1001997034059, window_days=30, windows=10)
+
+    assert samples.qualifying_windows >= 10
+    assert len(samples.windows) == 10
+    for window in samples.windows:
+        assert window.message_count >= 6
+        assert len(window.speakers) >= 3
+        assert all(m.gap_seconds is None or m.gap_seconds <= 600 for m in window.messages)
+    assert len(samples.voices) == 4
+    assert all(v.samples for v in samples.voices)
+    assert samples == build_chat_samples(
+        list(reversed(messages)), chat_channel_id=-1001997034059, window_days=30, windows=10
+    )

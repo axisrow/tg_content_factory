@@ -13,6 +13,12 @@
   ночная тишина).
 - ``derive_planned_schedule`` — ``planned_at`` каждой реплики из кумулятива
   задержек (черновое расписание видно сразу).
+- ``build_chat_samples`` — реальная речь чата для композера (#1793): окна
+  разговоров (смежные сообщения с паузой ≤ порога) дословно + «голоса» топ-
+  участников (их последние сообщения). Агрегаты ``stats`` — измерения, а не
+  речь; сленг, регистр и манера ответов живут только в самих сообщениях.
+- ``load_chat_messages`` — общий ход чтения сообщений чата (stats/validate/
+  add/samples и rails публикатора); принимает id чата в обеих формах.
 
 Запись черновиков (``seeding_threads``/``seeding_messages`` + переходы
 статусов) — контракт параллельного #1755; CLI-команды записи включаются
@@ -26,11 +32,15 @@ import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from statistics import fmean
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
 from tg_agent.models import Message
+from tg_agent.parsers import bare_channel_id
+
+if TYPE_CHECKING:
+    from tg_agent.database.facade import Database
 
 # Те же диапазоны, что в channel_analysis_service._EMOJI_RE (порт ai_detect_tool #781).
 _EMOJI_RE = re.compile(
@@ -405,3 +415,207 @@ def derive_planned_schedule(scenario: SeedingScenario, start_at: datetime) -> li
         cursor = cursor + timedelta(seconds=m.delay_seconds)
         planned.append(cursor)
     return planned
+
+
+# --------------------------------------------------------------------------- #
+# Чтение сообщений чата (общий ход) + реальная речь для композера (#1793)
+# --------------------------------------------------------------------------- #
+
+#: Пауза, после которой разговор считается новым: окно режется.
+DEFAULT_WINDOW_GAP_SECONDS = 600
+
+#: Отправители, которые не становятся голосами персон: посты привязанного
+#: канала (триггеры обсуждения) и анонимный админ (говорит от имени чата).
+_NON_PERSONA_SENDER_KINDS = frozenset({"channel", "anonymous_admin"})
+
+
+def chat_id_lookup_keys(chat_channel_id: int) -> list[int]:
+    """Формы id чата, под которыми его сообщения могут лежать в ``messages``.
+
+    Хранилище — голый положительный id (``bare_channel_id``), а владелец и доки
+    передают телеграмный ``-100<bare>`` (как в Telegram/Telethon). Поиск только
+    по переданной форме молча давал пустой профиль; ищем по обеим.
+    """
+    keys = [chat_channel_id]
+    bare = bare_channel_id(chat_channel_id)
+    if bare != chat_channel_id:
+        keys.append(bare)
+    return keys
+
+
+async def load_chat_messages(db: Database, chat_channel_id: int, *, days: int) -> list[Message]:
+    """Собранные сообщения чата за ``days`` дней (общий ход stats/validate/add/samples/rails)."""
+    return await db.repos.messages.get_recent_for_channels(
+        chat_id_lookup_keys(chat_channel_id), since_hours=days * 24.0
+    )
+
+
+class SampleMessage(BaseModel):
+    """Сообщение окна дословно: автор, время, пауза от предыдущего, текст."""
+
+    message_id: int
+    date: datetime
+    #: Пауза от предыдущего сообщения окна в секундах (None — первое в окне).
+    gap_seconds: int | None
+    sender: str
+    sender_kind: str | None
+    #: Текст как есть (без крайних пробелов); пусто у медиа без подписи.
+    text: str
+    media_type: str | None
+
+
+class ConversationWindow(BaseModel):
+    """Непрерывный разговор: смежные сообщения с паузой ≤ порога."""
+
+    start: datetime
+    end: datetime
+    #: Сколько сообщений в окне всего (до обрезки до --window).
+    message_count: int
+    #: Участники в порядке первого появления (посты канала — триггеры, не участники).
+    speakers: list[str]
+    messages: list[SampleMessage]
+    #: Сколько сообщений окна не показано (обрезка до --window).
+    truncated: int
+
+
+class SenderVoice(BaseModel):
+    """Голос реального участника: его последние сообщения — образец для персоны."""
+
+    sender: str
+    message_count: int
+    samples: list[str]
+
+
+class ChatSamples(BaseModel):
+    """Реальная речь чата для композера: свежие окна разговоров + голоса участников."""
+
+    chat_channel_id: int
+    window_days: int
+    #: Сообщения выборки (без служебных; текст или медиа).
+    message_count: int
+    window_gap_seconds: int
+    #: Сколько окон прошли пороги (показаны последние из них).
+    qualifying_windows: int
+    windows: list[ConversationWindow]
+    voices: list[SenderVoice]
+
+
+def _has_text(msg: Message) -> bool:
+    return bool(msg.text and msg.text.strip())
+
+
+def _conversation_population(messages: list[Message]) -> list[Message]:
+    """Сообщения разговора: без служебных; с текстом или медиа; по времени, затем id.
+
+    Медиа без подписи остаются: на скрины реагируют, это часть ритма чата.
+    ``_as_utc`` в ключе — смесь naive (тесты/старые строки) и aware (коллектор)
+    дат не падает на сравнении.
+    """
+    population = [
+        m for m in messages if m.message_kind != "service" and (_has_text(m) or m.media_type)
+    ]
+    population.sort(key=lambda m: (_as_utc(m.date), m.message_id))
+    return population
+
+
+def split_conversation_windows(messages: list[Message], *, gap_seconds: int) -> list[list[Message]]:
+    """Разрезать упорядоченные сообщения на окна: пауза > ``gap_seconds`` — новое окно."""
+    windows: list[list[Message]] = []
+    current: list[Message] = []
+    for m in messages:
+        if current and (_as_utc(m.date) - _as_utc(current[-1].date)).total_seconds() > gap_seconds:
+            windows.append(current)
+            current = []
+        current.append(m)
+    if current:
+        windows.append(current)
+    return windows
+
+
+def _window_speakers(window: list[Message]) -> list[str]:
+    speakers: list[str] = []
+    for m in window:
+        label = _sender_label(m)
+        if m.sender_kind != "channel" and label not in speakers:
+            speakers.append(label)
+    return speakers
+
+
+def _sample_message(msg: Message, prev: Message | None) -> SampleMessage:
+    gap = None if prev is None else int((_as_utc(msg.date) - _as_utc(prev.date)).total_seconds())
+    return SampleMessage(
+        message_id=msg.message_id,
+        date=_as_utc(msg.date),
+        gap_seconds=gap,
+        sender=_sender_label(msg),
+        sender_kind=msg.sender_kind,
+        text=(msg.text or "").strip(),
+        media_type=msg.media_type,
+    )
+
+
+def _to_conversation_window(window: list[Message], *, window_size: int) -> ConversationWindow:
+    shown = window[:window_size]
+    return ConversationWindow(
+        start=_as_utc(window[0].date),
+        end=_as_utc(window[-1].date),
+        message_count=len(window),
+        speakers=_window_speakers(window),
+        messages=[_sample_message(m, shown[i - 1] if i else None) for i, m in enumerate(shown)],
+        truncated=len(window) - len(shown),
+    )
+
+
+def _sender_voices(population: list[Message], *, senders: int, per_sender: int) -> list[SenderVoice]:
+    """Топ-``senders`` участников по числу текстовых сообщений; у каждого последние ``per_sender``."""
+    by_sender: dict[str, list[Message]] = {}
+    for m in population:
+        if m.sender_kind in _NON_PERSONA_SENDER_KINDS or not _has_text(m):
+            continue
+        by_sender.setdefault(_sender_label(m), []).append(m)
+    ranked = sorted(by_sender.items(), key=lambda item: (-len(item[1]), item[0]))
+    return [
+        SenderVoice(
+            sender=name,
+            message_count=len(msgs),
+            samples=[(m.text or "").strip() for m in msgs[-per_sender:]] if per_sender > 0 else [],
+        )
+        for name, msgs in ranked[:senders]
+    ]
+
+
+def build_chat_samples(
+    messages: list[Message],
+    *,
+    chat_channel_id: int,
+    window_days: int,
+    windows: int = 4,
+    window_size: int = 20,
+    gap_seconds: int = DEFAULT_WINDOW_GAP_SECONDS,
+    min_messages: int = 6,
+    min_speakers: int = 3,
+    senders: int = 4,
+    per_sender: int = 10,
+) -> ChatSamples:
+    """Реальная речь чата для композера (#1793), детерминированно и без LLM.
+
+    Окно проходит пороги, если в нём ≥ ``min_messages`` сообщений и
+    ≥ ``min_speakers`` участников; показываются ``windows`` самых свежих из
+    прошедших (хронологически), каждое — первые ``window_size`` сообщений.
+    """
+    population = _conversation_population(messages)
+    qualifying = [
+        w
+        for w in split_conversation_windows(population, gap_seconds=gap_seconds)
+        if len(w) >= min_messages and len(_window_speakers(w)) >= min_speakers
+    ]
+    recent = qualifying[-windows:] if windows > 0 else []
+    return ChatSamples(
+        chat_channel_id=chat_channel_id,
+        window_days=window_days,
+        message_count=len(population),
+        window_gap_seconds=gap_seconds,
+        qualifying_windows=len(qualifying),
+        windows=[_to_conversation_window(w, window_size=window_size) for w in recent],
+        voices=_sender_voices(population, senders=senders, per_sender=per_sender),
+    )
