@@ -13,9 +13,11 @@ def live_message_lines(data, *, reverse=False, budget=50_000):
         reactions = format_reactions_json(row.get("reactions_json"))
         suffix = f" reactions: {reactions}" if reactions else ""
         lines.append(f"[{str(row.get('date') or '—')[:19]}] #{row['message_id']} {sender}{suffix}")
-        text = row.get("text") or (f"[media: {row['media_type']}]" if row.get("media_type") else "")
+        text = row.get("text")
         if text:
             lines.append("  " + text[:500])
+        if row.get("media_type"):
+            lines.append(f"  [media: {row['media_type']}]")
         users = data["reaction_users"].get(str(row["message_id"]))
         if users:
             lines.append("  reaction users: " + users)
