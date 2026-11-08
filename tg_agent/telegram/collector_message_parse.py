@@ -18,6 +18,7 @@ import json
 import re
 from datetime import date as date_cls
 from datetime import datetime, timezone
+from typing import cast
 
 from tg_agent.models import Message
 from tg_agent.services.translation_service import TranslationService
@@ -253,6 +254,7 @@ def build_message_from_telethon(msg, channel_id: int) -> Message:
         views=getattr(msg, "views", None),
         forwards=getattr(msg, "forwards", None),
         reply_count=getattr(getattr(msg, "replies", None), "replies", None),
-        date=_normalize_date(msg),
+        # Telethon messages always carry a date; pydantic rejects a missing one.
+        date=cast(datetime, _normalize_date(msg)),
         forward_from_channel_id=extract_forward_from_channel_id(msg),
     )

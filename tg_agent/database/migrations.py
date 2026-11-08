@@ -768,7 +768,7 @@ async def _backfill_private_channel_provenance(
         unknown_cur = await db.execute(
             "SELECT COUNT(*) FROM channels WHERE username_state = 'unknown'"
         )
-        unknown_count = (await unknown_cur.fetchone())[0]
+        unknown_count = (await unknown_cur.fetchone() or (0,))[0]
         if unknown_count:
             logger.info(
                 "Deferring private channel provenance for %d channels until "
@@ -781,7 +781,7 @@ async def _backfill_private_channel_provenance(
         "FROM channels WHERE (username IS NULL OR username = '') "
         "AND username_state = 'known' AND filtered_origin != 'human' ORDER BY id ASC"
     )
-    rows = await cur.fetchall()
+    rows = list(await cur.fetchall())
     filtered_private = [
         {
             "id": row["id"],
@@ -816,7 +816,7 @@ async def _backfill_private_channel_provenance(
     unknown_cur = await db.execute(
         "SELECT COUNT(*) FROM channels WHERE username_state = 'unknown'"
     )
-    unknown_count = (await unknown_cur.fetchone())[0]
+    unknown_count = (await unknown_cur.fetchone() or (0,))[0]
     if unknown_count:
         logger.info(
             "Private channel provenance backfill deferred: %d channels still have "
