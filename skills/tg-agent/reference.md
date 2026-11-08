@@ -332,7 +332,10 @@ hours UTC, emoji and style habits, per-sender stats) — the prompt input for
 the composing LLM (Claude Code CLI, workflow in
 [seeding.md](seeding.md)) and the base `validate`/`add` check timings and
 anti-patterns against (no links, no echo, no equal-length runs, no
-machine-like pauses, no messages landing in `quiet_hours`).
+machine-like pauses, no messages landing in `quiet_hours`). After
+`Scenario OK.`, `validate` also lists per message the words the chat's
+members never wrote (vocabulary = all collected history, not `--days`;
+channel posts and the anonymous admin excluded) — a hint, exit code stays 0.
 Every seeding read accepts the chat id bare (as stored, `1997034059`) or
 Telegram-marked (`-1001997034059`).
 

@@ -19,6 +19,8 @@
   речь; сленг, регистр и манера ответов живут только в самих сообщениях.
 - ``load_chat_messages`` — общий ход чтения сообщений чата (stats/validate/
   add/samples и rails публикатора); принимает id чата в обеих формах.
+- ``foreign_words`` — слова сценария, которых участники чата не писали
+  (подсказка ``validate``: в слепом тесте #1793 посевы выдали именно чужие слова).
 
 Запись черновиков (``seeding_threads``/``seeding_messages`` + переходы
 статусов) — контракт параллельного #1755; CLI-команды записи включаются
@@ -27,6 +29,7 @@
 
 from __future__ import annotations
 
+import bisect
 import math
 import re
 from collections import Counter
@@ -619,3 +622,35 @@ def build_chat_samples(
         windows=[_to_conversation_window(w, window_size=window_size) for w in recent],
         voices=_sender_voices(population, senders=senders, per_sender=per_sender),
     )
+
+
+def foreign_words(scenario: SeedingScenario, messages: list[Message]) -> dict[int, list[str]]:
+    """Слова реплик, которых участники чата не писали: позиция → слова (#1793).
+
+    В слепом тесте 08.11 посевы выдали чужие слова («бутстрап», «градиент» —
+    0 раз в чате): манеру персон композер копирует, а словарь остаётся свой.
+    Это подсказка, а не нарушение: у 58% живых сообщений эталонного чата есть
+    слово, которого больше нигде в чате нет. Словарь — только реплики
+    участников: посты канала и анонимный админ пишут новостным языком.
+    """
+    vocab = sorted({
+        token.lower()
+        for m in messages
+        if m.sender_kind not in _NON_PERSONA_SENDER_KINDS and m.message_kind != "service" and _has_text(m)
+        for token in _TOKEN_RE.findall(m.text or "")
+    })
+
+    def known(word: str) -> bool:
+        # ponytail: основа = первые max(4, len-3) букв вместо стемминга — падежи
+        # («лимита»/«лимиты») совпадают, но сленг с общей основой проскочит
+        # («свежак»/«свежий»); настоящий стеммер — если промахи начнут мешать.
+        stem = word[: max(4, len(word) - 3)]
+        i = bisect.bisect_left(vocab, stem)
+        return i < len(vocab) and vocab[i].startswith(stem)
+
+    found: dict[int, list[str]] = {}
+    for m in sorted(scenario.messages, key=lambda m: m.position):
+        words = [w for w in dict.fromkeys(t.lower() for t in _TOKEN_RE.findall(m.text)) if not known(w)]
+        if words:
+            found[m.position] = words
+    return found
