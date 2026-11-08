@@ -131,6 +131,21 @@ def test_sender_kind_channel_admin_user():
     assert get_sender_kind(_msg(post=False, sender_id=99)) == "user"
 
 
+def test_sender_kind_linked_channel_post_copy_is_channel():
+    """A linked channel's post copied into its discussion group comes with
+    ``post=False`` and the channel as sender: it is the channel, not a member (#1793)."""
+    chat = SimpleNamespace(channel_id=1997)
+    copy = _msg(sender_id=-1002110, from_id=SimpleNamespace(channel_id=2110), peer_id=chat)
+    assert get_sender_kind(copy) == "channel"
+    # The group itself as sender is not a channel post.
+    as_group = _msg(sender_id=-1001997, from_id=SimpleNamespace(channel_id=1997), peer_id=chat)
+    assert get_sender_kind(as_group) != "channel"
+    member = _msg(sender_id=99, from_id=SimpleNamespace(user_id=99), peer_id=chat)
+    assert get_sender_kind(member) == "user"
+    # Suite-wide MagicMock messages carry mock attributes, not peer ids.
+    assert get_sender_kind(MagicMock(post=False, sender_id=5)) == "user"
+
+
 # --- full Message build (the inline block from _stream_channel_messages) ------
 
 

@@ -582,6 +582,45 @@ async def _drop_obsolete_indexes(db: aiosqlite.Connection) -> None:
     await db.execute("DROP INDEX IF EXISTS idx_messages_text")
 
 
+async def _backfill_linked_channel_sender_kind(db: aiosqlite.Connection) -> None:
+    """Relabel stored copies of linked-channel posts as ``sender_kind='channel'``.
+
+    A channel's post copied into its discussion group arrives with ``post=False``,
+    so the collector stored it as a member until ``get_sender_kind`` learned the
+    channel sender (#1793): the channel became a speaker in ``seeding samples`` and
+    its news wording leaked into the chat vocabulary. A copy is a row sent by its
+    chat's ``linked_chat_id`` or, for a chat without one on record, an auto-forward
+    of its own sender. Gated on a settings flag: the UPDATE scans every member row.
+    """
+    if not await table_exists(db, "messages") or not await table_exists(db, "channels"):
+        return
+    message_columns = set(await table_columns(db, "messages"))
+    if not {"sender_id", "sender_kind", "forward_from_channel_id"} <= message_columns:
+        return
+    if "linked_chat_id" not in await table_columns(db, "channels"):
+        return
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = '_migration_linked_channel_sender_kind_v1' LIMIT 1"
+    )
+    if await cur.fetchone():
+        return
+    cur = await db.execute(
+        """
+        UPDATE messages
+           SET sender_kind = 'channel'
+         WHERE sender_kind = 'user'
+           AND (sender_id = forward_from_channel_id
+                OR sender_id = (SELECT c.linked_chat_id FROM channels c
+                                 WHERE c.channel_id = messages.channel_id))
+        """
+    )
+    logger.info("Relabelled %d linked-channel post copies as sender_kind='channel'", cur.rowcount)
+    await db.execute(
+        "INSERT OR IGNORE INTO settings (key, value) "
+        "VALUES ('_migration_linked_channel_sender_kind_v1', '1')"
+    )
+
+
 async def _backfill_message_reactions_date(db: aiosqlite.Connection) -> None:
     """Fill ``message_reactions.date`` from the parent message for legacy rows.
 
@@ -1091,6 +1130,9 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     # One-off: fill message_reactions.date for rows that predate the column so
     # reaction analytics can filter by date without joining messages (#760).
     await _backfill_message_reactions_date(db)
+
+    # One-off: linked-channel post copies stored as members become 'channel' (#1793).
+    await _backfill_linked_channel_sender_kind(db)
 
     fts_available = await _ensure_fts5_available(db)
     if fts_available:

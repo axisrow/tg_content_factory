@@ -176,6 +176,11 @@ def get_service_action_payload(msg) -> str | None:
 def get_sender_kind(msg) -> str:
     if getattr(msg, "post", False):
         return "channel"
+    # A linked channel's post copied into its discussion group has post=False but
+    # a channel sender other than the group itself (#1793).
+    from_channel = getattr(getattr(msg, "from_id", None), "channel_id", None)
+    if isinstance(from_channel, int) and from_channel != getattr(getattr(msg, "peer_id", None), "channel_id", None):
+        return "channel"
     if getattr(msg, "sender_id", None) is None:
         return "anonymous_admin"
     return "user"

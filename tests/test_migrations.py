@@ -753,6 +753,61 @@ async def test_run_migrations_backfills_message_reactions_date(tmp_path):
 
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
+async def test_run_migrations_relabels_linked_channel_post_copies(tmp_path):
+    """Copies of a linked channel's posts in its discussion group were stored as
+    members (``sender_kind='user'``, #1793): the one-off backfill makes them
+    ``'channel'`` and leaves real members alone."""
+    conn = await _connect(str(tmp_path / "linked_channel.db"))
+    try:
+        await run_migrations(conn)
+        await conn.execute("DELETE FROM settings WHERE key = '_migration_linked_channel_sender_kind_v1'")
+        await conn.executemany(
+            "INSERT INTO channels (channel_id, channel_type, linked_chat_id) VALUES (?, ?, ?)",
+            [(100, "supergroup", 200), (200, "channel", 100)],
+        )
+        insert = (
+            "INSERT INTO messages (channel_id, message_id, sender_id, forward_from_channel_id, sender_kind, date)"
+            " VALUES (?, ?, ?, ?, ?, '2026-11-01T00:00:00')"
+        )
+        await conn.executemany(
+            insert,
+            [
+                (100, 1, 200, 200, "user"),  # copy of the linked channel's own post
+                (100, 2, 200, 300, "user"),  # copy of its repost of another channel
+                (100, 3, 555, None, "user"),  # member
+                (100, 4, 556, 300, "user"),  # member forwarding a channel post
+                (100, 5, None, None, "anonymous_admin"),
+                (400, 1, 500, 500, "user"),  # auto-copy in a chat with no linked_chat_id on record
+            ],
+        )
+        await conn.commit()
+
+        await run_migrations(conn)
+
+        cur = await conn.execute("SELECT channel_id, message_id, sender_kind FROM messages")
+        kinds = {(row["channel_id"], row["message_id"]): row["sender_kind"] for row in await cur.fetchall()}
+        assert kinds == {
+            (100, 1): "channel",
+            (100, 2): "channel",
+            (100, 3): "user",
+            (100, 4): "user",
+            (100, 5): "anonymous_admin",
+            (400, 1): "channel",
+        }
+
+        # One-off: the full-table scan does not repeat on every boot.
+        await conn.execute(insert, (100, 6, 200, 200, "user"))
+        await conn.commit()
+        await run_migrations(conn)
+        cur = await conn.execute("SELECT sender_kind FROM messages WHERE channel_id = 100 AND message_id = 6")
+        row = await cur.fetchone()
+        assert row is not None and row["sender_kind"] == "user"
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
 async def test_reactions_date_index_recreated_when_flag_set_but_index_missing(tmp_path):
     """Regression (PR #945 cycle-2 review): the date-emoji index creation must NOT
     be gated by the backfill flag. A DB carrying the flag but missing the index
