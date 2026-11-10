@@ -42,9 +42,9 @@ class ProjectAccountCatalog:
         await self.db.repos.accounts.sync_gateway_catalog(rows)
 
     async def reference(self, local_id: int) -> str:
-        async with self.db.db.execute("SELECT account_id FROM gateway_account_refs WHERE local_id=?",
-                                      (local_id,)) as cursor:
-            row = await cursor.fetchone()
+        cursor = await self.db.db.execute("SELECT account_id FROM gateway_account_refs WHERE local_id=?",
+                                          (local_id,))
+        row = await cursor.fetchone()
         if row is None:
             raise ValueError("Project account not found")
         return row[0]

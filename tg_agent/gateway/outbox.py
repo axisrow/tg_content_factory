@@ -29,9 +29,9 @@ class ProjectOutbox:
         async with self.db.transaction() as connection:
             await connection.execute("INSERT OR IGNORE INTO gateway_outbox VALUES (?,?,?,NULL)",
                                      (action_key, str(uuid4()), serialized))
-            async with connection.execute("SELECT request_id,payload FROM gateway_outbox WHERE action_key=?",
-                                          (action_key,)) as cursor:
-                row = await cursor.fetchone()
+            cursor = await connection.execute("SELECT request_id,payload FROM gateway_outbox WHERE action_key=?",
+                                              (action_key,))
+            row = await cursor.fetchone()
             if row[1] != serialized:
                 raise ValueError("Gateway action key already identifies a different intent")
             return UUID(row[0])

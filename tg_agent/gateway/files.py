@@ -21,9 +21,9 @@ async def upload_file(pool, path, intent):
                            "intent TEXT PRIMARY KEY,artifact_id TEXT NOT NULL,fingerprint TEXT NOT NULL,filename TEXT)")
         await conn.execute("INSERT OR IGNORE INTO gateway_uploads VALUES (?,?,?,?)",
                            (intent, str(uuid4()), fingerprint, path.name))
-        async with conn.execute("SELECT artifact_id,fingerprint,filename FROM gateway_uploads WHERE intent=?",
-                                (intent,)) as cursor:
-            row = await cursor.fetchone()
+        cursor = await conn.execute("SELECT artifact_id,fingerprint,filename FROM gateway_uploads WHERE intent=?",
+                                    (intent,))
+        row = await cursor.fetchone()
         if row[1] != fingerprint or row[2] != path.name:
             raise ValueError("File content changed for an existing Telegram send intent")
         artifact = row[0]

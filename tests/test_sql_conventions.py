@@ -83,3 +83,41 @@ def test_regex_does_not_match_good_joins(good: str):
 )
 def test_regex_matches_bad_joins(bad: str):
     assert _CHANNELS_JOIN_RE.search(bad) is not None
+
+
+# Matches `async with <conn>.execute(...)` without await — the raw-aiosqlite
+# idiom that breaks on ProfilingConnection (#1801): its execute() is an async
+# function, so the un-awaited call yields a coroutine, not an async-CM cursor.
+# Exempted files own the gateway store's raw aiosqlite.connect() connection
+# (store.py:122 transaction), where the idiom is correct.
+_ASYNC_WITH_EXECUTE_RE = re.compile(r"async with\s+(?!\s*await\b)[A-Za-z_][\w.]*\.execute\(")
+_ASYNC_WITH_EXECUTE_EXEMPT = {
+    SRC_DIR / "gateway" / "store.py",
+    SRC_DIR / "gateway" / "notifications.py",
+    SRC_DIR / "gateway" / "pool_storage.py",
+}
+
+
+def test_no_async_with_execute_without_await():
+    """Regression guard for #1801 — `cur = await conn.execute(...)`, never `async with conn.execute(...)`.
+
+    Under ENV=DEV the facade write connection is a ProfilingConnection whose
+    execute() is a coroutine function; the un-awaited `async with` form raises
+    TypeError ('coroutine' object does not support the asynchronous context
+    manager protocol). `cur = await conn.execute(...)` is valid on both raw
+    aiosqlite and ProfilingConnection.
+    """
+    offenders: list[str] = []
+    for path in _iter_py_sources():
+        if path in _ASYNC_WITH_EXECUTE_EXEMPT:
+            continue
+        text = path.read_text()
+        for match in _ASYNC_WITH_EXECUTE_RE.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            offenders.append(f"{path.relative_to(SRC_DIR.parent)}:{line_no}: {match.group(0).strip()}")
+    assert not offenders, (
+        "`async with <conn>.execute(...)` without await found — use "
+        "`cur = await conn.execute(...)` (valid on raw aiosqlite and "
+        "ProfilingConnection alike, #1801).\n"
+        "Offenders:\n  - " + "\n  - ".join(offenders)
+    )
