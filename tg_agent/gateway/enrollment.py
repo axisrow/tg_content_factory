@@ -162,9 +162,9 @@ async def enable_project(config_path: str, phones: list[str], *, database_path: 
                     "source_secret": config.security.session_encryption_key or None})
             await administrator.call("grants", {"project_id": identity["project_id"], "phone": phone,
                                                  "primary": index == 0 and existing is None})
-        async with db.db.execute("SELECT tg_user_id,tg_username,bot_id,bot_username,bot_token "
-                                 "FROM notification_bots WHERE bot_token!=''") as cursor:
-            bots = await cursor.fetchall()
+        cursor = await db.db.execute("SELECT tg_user_id,tg_username,bot_id,bot_username,bot_token "
+                                     "FROM notification_bots WHERE bot_token!=''")
+        bots = await cursor.fetchall()
         for bot in bots:
             await administrator.call("notification-bots/import", {"project_id": identity["project_id"], **dict(bot)})
         await db.execute_write("UPDATE notification_bots SET bot_token='' WHERE bot_token!=''")

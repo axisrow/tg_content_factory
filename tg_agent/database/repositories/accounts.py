@@ -700,7 +700,7 @@ class AccountsRepository:
                                    "is_premium=max(accounts.is_premium,excluded.is_premium)",
                                    (row["phone"], int(row.get("is_primary", False)), int(row["active"]), flood,
                                     int(row.get("is_premium", False))))
-                async with conn.execute("SELECT id FROM accounts WHERE phone=?", (row["phone"],)) as cursor:
-                    local_id = (await cursor.fetchone())[0]
+                cursor = await conn.execute("SELECT id FROM accounts WHERE phone=?", (row["phone"],))
+                local_id = (await cursor.fetchone())[0]
                 await conn.execute("INSERT INTO gateway_account_refs VALUES (?,?) ON CONFLICT(local_id) "
                                    "DO UPDATE SET account_id=excluded.account_id", (local_id, row["id"]))
