@@ -350,6 +350,42 @@ async def test_operation_failure_log_names_account_and_peer(gateway, caplog):
     assert "error=PermissionError" in message
 
 
+async def test_operation_failure_log_carries_traceback(gateway, caplog):
+    """#1806: the failure warning must carry exc_info.
+
+    The receipt keeps only the exception class (no secrets, #1780), so with a
+    class-only warning the local 0600 log cannot root-cause a live failure at
+    all — dialogs.read_history has been failing as bare 'error=TypeError' for
+    days. The traceback stays in the log file; secrets never leave it.
+    """
+
+    store, transport, account, clients = gateway
+
+    async def boom(project, operation):
+        raise TypeError("cannot read history on this transport")
+
+    transport.execute = boom
+    operation = Send(kind="send", account_id=UUID(account), peer=321, text="traceback probe")
+    request = uuid4()
+    with caplog.at_level(logging.WARNING, logger="tg_agent.gateway.server"):
+        await clients[0].submit(request, operation)
+        receipt = await clients[0].wait(request, timeout=5)
+    warnings = [record for record in caplog.records if record.name == "tg_agent.gateway.server"]
+    assert warnings, "expected the generic operation-failure warning"
+    # Receipt stays class-only (no exception text leaves the gateway, #1780).
+    assert receipt["state"] == "uncertain"
+    assert (receipt.get("result") or {}).get("error") == "TypeError"
+    assert "cannot read history on this transport" not in str(receipt)
+    # ...but the local log carries the full traceback for root-causing.
+    assert warnings[-1].exc_info is not None, (
+        "failure warning must carry exc_info/traceback — class-only logs make "
+        "live TypeErrors untraceable (#1806)"
+    )
+    assert "cannot read history on this transport" in (
+        warnings[-1].exc_text or "".join(logging.Formatter().formatException(warnings[-1].exc_info).splitlines())
+    )
+
+
 async def test_pending_cancellation_is_scoped_to_its_project(gateway):
     store, transport, account, clients = gateway
     request = uuid4()
