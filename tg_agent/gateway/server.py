@@ -152,9 +152,12 @@ class Dispatcher:
                 await self.store.transition(project, request, "running", state, {"error": type(exc).__name__})
                 # account/peer in the line (#1780): a mass failure in gateway.log must
                 # be attributable without opening the DB. 0600 local log, ids only.
+                # exc_info stays in the local log file only — the receipt (line above)
+                # still carries just the class name (#1806).
                 logger.warning("Gateway operation failed: kind=%s account=%s peer=%s error=%s",
                                operation.kind, operation.account_id,
-                               getattr(operation, "peer", None), type(exc).__name__)
+                               getattr(operation, "peer", None), type(exc).__name__,
+                               exc_info=exc)
             except asyncio.CancelledError:
                 state = "cancelled" if is_read_operation(operation) else "uncertain"
                 await self.store.transition(project, request, "running", state)
