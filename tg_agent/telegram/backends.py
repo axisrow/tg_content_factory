@@ -248,6 +248,30 @@ class UnsupportedBackendOperationError(RuntimeError):
     """Raised when a backend cannot support the requested transport/mode."""
 
 
+class _GatedMessageIterator:
+    """Async-iterator proxy that keeps the callable client floodgate requires.
+
+    ``wrap_messages_iterator`` refuses iterators whose ``client`` is not
+    callable (Telethon iterators carry it, a bare generator cannot) — without
+    it every tg_messenger history read through this adapter died with
+    'TypeError: message iterator must expose a callable client' (#1806).
+    All page-gate binding on the raw iterator stays intact.
+    """
+
+    def __init__(self, generator: AsyncIterator[Any], client: Any) -> None:
+        self._generator = generator
+        self.client = lambda: client
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        return self
+
+    async def __anext__(self) -> Any:
+        return await self._generator.__anext__()
+
+    def aclose(self) -> Any:
+        return self._generator.aclose()
+
+
 class TelegramTransportSession:
     """Thin operation adapter that keeps raw Telethon calls inside backend code."""
 
@@ -614,7 +638,7 @@ class TelegramTransportSession:
             request_type=GetHistoryRequest,
             page_category=None,
         )
-        return self._stream(operation, iterator)
+        return _GatedMessageIterator(self._stream(operation, iterator), self._client)
 
     def iter_messages(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
         return self.stream_messages(entity, **kwargs)
