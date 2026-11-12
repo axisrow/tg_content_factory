@@ -372,8 +372,17 @@ class GatewayPool:
                 # resolving account's session — unlocks the numeric history.
                 # Once per collect call; verification guards reoccupied names.
                 username = getattr(channel, "username", None)
-                if exc.code != "ValueError" or username_fallback_used or not username:
+                if exc.code != "ValueError":
                     raise
+                if username_fallback_used or not username:
+                    # #1805: nothing will ever recover this numeric peer-miss —
+                    # no stored username to warm the entity from, or the one-shot
+                    # fallback already tried. Surface the terminal code so the
+                    # queue stamps the channel and defers the bulk re-enqueue
+                    # (396 such peers burned every account every round).
+                    raise GatewayOperationError(
+                        "failed", {"error": "HistoryNumericUnresolved"}
+                    ) from exc
                 username_fallback_used = True
                 info = await self.resolve_channel(username, channel_type=channel.channel_type)
                 resolved = (abs(int(info.get("channel_id") or 0))

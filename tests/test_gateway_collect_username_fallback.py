@@ -240,7 +240,14 @@ def test_collect_fallback_review_sentinel_stays_transient(db):
     assert row.terminal_code is None
 
 
-def test_collect_without_username_keeps_old_valueerror_path(db):
+def test_collect_without_username_stamps_history_unresolved(db):
+    """#1805: a channel with no stored username can never recover from the
+    numeric peer-miss — nothing will ever resolve its entity. The storm showed
+    396 such peers burning every gateway account every scheduler round, so the
+    bare ValueError now surfaces as the terminal HistoryNumericUnresolved code
+    (the queue stamps it and defers the bulk re-enqueue)."""
+    from tg_agent.collection_queue import TERMINAL_USERNAME_CODES
+
     pool, stub = _make_pool(db, {"state": "succeeded", "result": dict(_CARD)})
     channel = _channel(username=None)
     _add_channel(db, channel)
@@ -248,7 +255,8 @@ def test_collect_without_username_keeps_old_valueerror_path(db):
     with pytest.raises(GatewayOperationError) as excinfo:
         asyncio.run(pool.collect_channel(channel))
 
-    assert excinfo.value.code == "ValueError"
+    assert excinfo.value.code == "HistoryNumericUnresolved"
+    assert "HistoryNumericUnresolved" in TERMINAL_USERNAME_CODES
     assert all(kind == "history" for kind, _peer in _ops(stub))
 
 
@@ -266,5 +274,5 @@ def test_collect_fallback_is_once_per_call(db):
     with pytest.raises(GatewayOperationError) as excinfo:
         asyncio.run(collect())
 
-    assert excinfo.value.code == "ValueError"
+    assert excinfo.value.code == "HistoryNumericUnresolved"
     assert _ops(stub).count(("inspect_peer", "fallback902")) == 1
