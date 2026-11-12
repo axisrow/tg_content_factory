@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from typing import get_type_hints
 from uuid import UUID
 
+from pydantic import BaseModel
+
 from tg_agent.gateway.action_protocol import LOCAL_ARGUMENTS, PATH_ARGUMENTS
 from tg_agent.gateway.context import automatic_intent, next_intent_key
 from tg_agent.gateway.protocol import ACTION_MODELS
@@ -60,7 +62,14 @@ class RemoteActionService:
         elif name in {"download_media", "download_media_sized"}:
             await self._download(result, arguments)
         return_type = get_type_hints(getattr(TelegramActionService, name))["return"]
-        return return_type(**result) if is_dataclass(return_type) else result
+        if is_dataclass(return_type):
+            return return_type(**result)
+        if isinstance(return_type, type) and issubclass(return_type, BaseModel):
+            # MessagesResult & co are pydantic models, not dataclasses: without
+            # this branch the raw receipt dict leaked to callers that do
+            # result.messages (#1806 follow-up).
+            return return_type.model_validate(result)
+        return result
 
     async def _download(self, result, arguments):
         artifact = result.pop("artifact_id", None)
