@@ -87,12 +87,18 @@ def _is_permanent_collection_error(exc: BaseException) -> bool:
 # On the gateway path the telethon pair arrives as receipt error-codes
 # (UsernameNotOccupiedError/UsernameInvalidError), on the direct path as the
 # raw exceptions — both spellings are terminal.
+# HistoryNumericUnresolved (#1805) is the username-less twin: a bare numeric
+# peer-miss with no stored username to recover from burned every gateway
+# account every scheduler round (396 stable peers); it was previously
+# deliberately non-terminal (#1782, when the fallback could still heal it) —
+# the storm proved the no-username subset never heals.
 TERMINAL_USERNAME_CODES = frozenset(
     {
         "UsernameInvalidError",
         "UsernameChannelIdMismatch",
         "UsernameResolveMiss",
         "UsernameNotOccupiedError",
+        "HistoryNumericUnresolved",
     }
 )
 
@@ -106,8 +112,9 @@ def _terminal_collection_code(exc: BaseException) -> str | None:
 
     Gateway receipts surface the code in ``GatewayOperationError.code``; the
     direct-Telethon path raises the raw telethon errors (``code`` attr absent).
-    ValueError (transient numeric-miss, #1782's fallback target) is never
-    terminal.
+    Raw ValueError (a numeric-miss the username fallback can still heal) is
+    never terminal — but its unrecoverable form (no stored username to heal
+    from) arrives pre-wrapped as HistoryNumericUnresolved and is (#1805).
     """
     if isinstance(exc, GatewayOperationError):
         code = exc.code
