@@ -8,6 +8,7 @@ def live_message_lines(data, *, reverse=False, budget=50_000):
     lines = []
     size = 0
     for row in messages:
+        start = len(lines)
         sender = " ".join(filter(None, [row.get("sender_first_name"), row.get("sender_last_name")]))
         sender = sender or row.get("sender_name") or row.get("sender_username") or ""
         reactions = format_reactions_json(row.get("reactions_json"))
@@ -16,13 +17,15 @@ def live_message_lines(data, *, reverse=False, budget=50_000):
         text = row.get("text")
         if text:
             lines.append("  " + text[:500])
-        if row.get("media_type"):
-            lines.append(f"  [media: {row['media_type']}]")
+        media_type = row.get("media_type")
+        if media_type and media_type != "web_page":
+            # web_page = link preview, not downloadable media — no marker (#1813 review)
+            lines.append(f"  [media: {media_type}]")
         users = data["reaction_users"].get(str(row["message_id"]))
         if users:
             lines.append("  reaction users: " + users)
         lines.append("")
-        size += sum(len(line) for line in lines[-4:])
+        size += sum(len(line) for line in lines[start:])
         if size >= budget:
             lines.append("[message text budget reached]")
             break

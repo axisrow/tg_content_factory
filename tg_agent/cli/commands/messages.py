@@ -108,13 +108,16 @@ def _print_live_messages(collected: list, reaction_users_by_message_id: dict[int
             last = getattr(msg.sender, "last_name", None) or ""
             sender = f" {name} {last}".strip()
         text = (msg.text or "").strip()
-        if not text and msg.media:
-            text = f"[media: {type(msg.media).__name__}]"
         reactions = format_message_reactions(msg)
         reaction_suffix = f" reactions: {reactions}" if reactions else ""
         print(f"[{date_str}] #{msg.id}{sender}{reaction_suffix}")
         if text:
             print(f"  {text[:500]}")
+        media_name = type(msg.media).__name__ if msg.media else ""
+        if media_name and media_name != "MessageMediaWebPage":
+            # Media marker alongside caption text, like the gateway path (issue #1776);
+            # web_page = link preview, not downloadable media — no marker (#1813 review)
+            print(f"  [media: {media_name}]")
         reaction_users = reaction_users_by_message_id.get(msg.id)
         if reaction_users:
             print(f"  reaction users: {reaction_users}")

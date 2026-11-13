@@ -32,6 +32,20 @@ def test_media_without_caption_keeps_marker():
     assert "  [media: photo]" in lines
 
 
+def test_web_page_preview_gets_no_marker():
+    # Link previews are not downloadable media — no marker line (review on #1813).
+    row = {
+        "message_id": 104,
+        "date": "2026-11-03T09:21:00",
+        "sender_name": "user_001",
+        "text": "look at this https://example.com/post",
+        "media_type": "web_page",
+    }
+    lines = live_message_lines(_data(row))
+    assert "  look at this https://example.com/post" in lines
+    assert not any("[media:" in line for line in lines)
+
+
 def test_text_only_message_has_no_marker():
     row = {
         "message_id": 103,
