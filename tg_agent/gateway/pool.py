@@ -277,14 +277,19 @@ class GatewayPool:
             if getattr(getattr(client, "http", None), "is_closed", False):
                 raise NoActiveCollectionClientsError("Shared gateway client was reconnected; retry the read") from exc
             raise
-        try:
-            # #1773: a recorded receipt moves the row to the short retention
-            # bucket. Audit only — a failed write here must never change the
-            # operation's outcome, the row just stays pending.
-            await self.outbox.record(intent_key, receipt)
-        except Exception:
-            logger.warning("Failed to record gateway receipt for %s", intent_key, exc_info=True)
         state = receipt["state"]
+        if state in ("succeeded", "failed"):
+            try:
+                # #1773: a terminal receipt moves the row to the short retention
+                # bucket. Audit only — a failed record never changes the
+                # operation's outcome, the row just stays pending. Uncertain and
+                # deferred receipts are deliberately NOT recorded: replaying an
+                # intent key after prune depends on the row existing, and an
+                # unconfirmed send whose row pruned after 7 days would re-send
+                # as a new intent on the same deterministic key.
+                await self.outbox.record(intent_key, receipt)
+            except Exception:
+                logger.warning("Failed to record gateway receipt for %s", intent_key, exc_info=True)
         if state == "deferred":
             raise GatewayReadDeferredError(receipt["result"])
         if state == "uncertain":

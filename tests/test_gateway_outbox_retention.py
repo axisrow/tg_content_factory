@@ -5,6 +5,7 @@ writes, deferred reads, in-flight intents) keep the longer window so live
 retries and idempotent replay always find their intent in place.
 """
 
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -15,7 +16,7 @@ import pytest
 from tg_agent.config import AppConfig
 from tg_agent.database import Database
 from tg_agent.gateway.outbox import PENDING_RETENTION_DAYS, RECEIPTED_RETENTION_DAYS, ProjectOutbox
-from tg_agent.gateway.pool import GatewayPool, GatewayUncertainError
+from tg_agent.gateway.pool import GatewayPool, GatewayReadDeferredError, GatewayUncertainError
 from tg_agent.gateway.protocol import History, Send
 
 
@@ -108,8 +109,29 @@ async def test_request_records_receipt_but_uncertain_write_stays_pending(db):
     async with db.db.execute("SELECT receipt FROM gateway_outbox WHERE action_key=?", (key,)) as cursor:
         (receipt,) = await cursor.fetchone()
     assert receipt is None
-    # Uncertain delivery: the intent stays prunable only on the long window.
+
+    # A non-terminal receipt handed back by the server must also stay pending:
+    # pruning such a row would re-send the same deterministic key as a new
+    # intent (#1814 review).
+    keys = []
+    for state, payload in (
+        ("uncertain", {}),
+        ("deferred", {"retry_at": time.time() + 60, "reason": "TelegramRateLimitedError", "wait_seconds": 60}),
+    ):
+        pool.client = SimpleNamespace(submit=AsyncMock(), wait=AsyncMock(return_value={"state": state,
+                                                                                          "result": payload}))
+        key = f"send:{uuid4()}"
+        keys.append(key)
+        with pytest.raises((GatewayUncertainError, GatewayReadDeferredError)):
+            await pool.request(Send(kind="send", account_id=UUID(int=1), peer=123, text="unconfirmed"), key)
+        async with db.db.execute("SELECT receipt FROM gateway_outbox WHERE action_key=?", (key,)) as cursor:
+            (receipt,) = await cursor.fetchone()
+        assert receipt is None, state
+
+    # Uncertain/deferred intents survive prune inside the long pending window.
     assert await pool.outbox.prune(force=True) == {"receipted": 0, "pending": 0}
+    for key in keys:
+        assert await _row_count(db, f"action_key='{key}'") == 1
 
 
 async def test_pool_initialize_prunes(db):
