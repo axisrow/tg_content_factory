@@ -42,15 +42,15 @@ class TestLiveMessageLines(unittest.TestCase):
                 {
                     "message_id": 17829,
                     "date": "2026-11-03 09:18:29",
-                    "sender_name": "Victoria Kalinina",
-                    "text": "@DaniilGrigoryan привет, база рег с 1 января",
+                    "sender_name": "user_001",
+                    "text": "@user_002 registration database starts on January 1",
                     "media_type": "document",
                 }
             ],
             "reaction_users": {},
         }
         lines = live_message_lines(data)
-        self.assertIn("  @DaniilGrigoryan привет, база рег с 1 января", lines)
+        self.assertIn("  @user_002 registration database starts on January 1", lines)
         self.assertIn("  [media: document]", lines)
 
     def test_budget_exceeded(self):
