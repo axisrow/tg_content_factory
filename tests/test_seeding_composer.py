@@ -22,6 +22,7 @@ from tg_agent.services.seeding_composer import (
     chat_id_lookup_keys,
     compute_chat_statistics,
     derive_planned_schedule,
+    foreign_words,
     split_conversation_windows,
     validate_scenario,
 )
@@ -475,3 +476,26 @@ def test_samples_on_real_chat_fixture_respect_thresholds() -> None:
     assert samples == build_chat_samples(
         list(reversed(messages)), chat_channel_id=-1001997034059, window_days=30, windows=10
     )
+
+
+# --------------------------------------------------------------------------- #
+# Чужие слова (#1793): слова сценария, которых участники чата не писали
+# --------------------------------------------------------------------------- #
+
+
+def test_foreign_words_flags_unseen_words_but_not_other_forms_of_known_ones() -> None:
+    chat = [_cm(0, "Аня", "лимиты опять кончились"), _cm(60, "Боря", "агент пишет ерунду")]
+    scenario = _scenario([400, 600], texts=["лимита опять нет", "градиент и бутстрап, градиент"])
+
+    assert foreign_words(scenario, chat) == {2: ["градиент", "бутстрап"]}
+
+
+def test_foreign_words_vocabulary_is_members_only() -> None:
+    chat = [
+        _cm(0, "Vibe Coding", "градиенты в новом релизе", kind="channel"),
+        _cm(10, "Чат", "бутстрап запрещён", kind="anonymous_admin"),
+        _cm(20, "Аня", "шрифты", message_kind="service"),
+    ]
+    scenario = _scenario([400], texts=["градиенты бутстрап шрифты"])
+
+    assert foreign_words(scenario, chat) == {1: ["градиенты", "бутстрап", "шрифты"]}

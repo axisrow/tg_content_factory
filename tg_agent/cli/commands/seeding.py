@@ -48,6 +48,7 @@ from tg_agent.services.seeding_composer import (
     build_chat_samples,
     compute_chat_statistics,
     derive_planned_schedule,
+    foreign_words,
     load_chat_messages,
     validate_scenario,
 )
@@ -120,7 +121,7 @@ async def _load_chat_messages(config_path: str, *, chat: int, days: int) -> list
 
 
 async def _load_chat_stats(config_path: str, *, chat: int, days: int) -> ChatStatistics:
-    """Собранные сообщения окна → выученный профиль чата (общий ход stats/validate)."""
+    """Собранные сообщения окна → выученный профиль чата (ход stats)."""
     messages = await _load_chat_messages(config_path, chat=chat, days=days)
     return compute_chat_statistics(messages, chat_channel_id=chat, window_days=days)
 
@@ -221,6 +222,11 @@ async def samples_impl(
     return samples
 
 
+#: Словарь чата для подсказки о чужих словах — вся собранная история, а не
+#: окно --days (то окно — для статистики пауз).
+_VOCABULARY_DAYS = 3650
+
+
 async def validate_impl(
     config_path: str,
     *,
@@ -235,11 +241,22 @@ async def validate_impl(
             f"Сценарий для чата {scenario.chat_channel_id} не совпадает с --chat {chat} — "
             "валидация по чужому профилю даст неверный вердикт таймингов."
         )
-    stats = await _load_chat_stats(config_path, chat=chat, days=days)
+    _, db = await runtime.init_db(config_path)
+    try:
+        messages = await load_chat_messages(db, chat, days=days)
+        history = await load_chat_messages(db, chat, days=_VOCABULARY_DAYS)
+    finally:
+        await db.close()
+    stats = compute_chat_statistics(messages, chat_channel_id=chat, window_days=days)
     violations = validate_scenario(scenario, stats, start_at=start_at)
     if violations:
         _violations_error(violations)
     print("Scenario OK.")
+    foreign = foreign_words(scenario, history)
+    if foreign:
+        print("Слова, которых в чате не было (замени словами чата или оставь осознанно):")
+        for position, words in foreign.items():
+            print(f"  #{position}: {', '.join(words)}")
     return violations
 
 
@@ -604,7 +621,10 @@ def validate_command(
         None, "--start-at", help="ISO datetime (naive = UTC) — enables the quiet-hour checks"
     ),
 ) -> None:
-    """Validate a scenario against the learned chat profile; exit 1 on violations."""
+    """Validate a scenario against the learned chat profile; exit 1 on violations.
+
+    Words the chat's members never wrote are listed as a hint (exit code stays 0).
+    """
     apply_startup(ctx)
     run_async(
         validate_impl(

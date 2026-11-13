@@ -3,11 +3,14 @@
 Seeded dialogues read as AI when the composer writes from aggregates. `seeding stats`
 measures the chat (length percentiles, gaps, top tokens), but measurements are not speech:
 slang, register, message rhythm and the way people hook their replies live only in the
-messages themselves. This page is the composing method: **read real windows → anchor
-personas to real voices → transfer a real skeleton → strip AI tells → pick an evergreen
-topic → owner review**. The workflow commands are in [seeding.md](seeding.md).
+messages themselves. This page is the composing method: **read real windows → write the
+chat passport → anchor personas to real voices → transfer a real skeleton → strip AI
+tells → pick an evergreen topic → validate → owner line review**. The workflow commands
+are in [seeding.md](seeding.md).
 
-Acceptance (#1793): a composed sample passes the owner's "can't tell it's AI" blind review.
+Acceptance (#1793): the owner reads the composed dialogue line by line and marks no line
+«у нас так не напишут» (§9). The first bar, a mixed blind test, failed on 08.11.2026 — see
+[the lessons](#lessons-from-the-blind-test-08112026).
 
 ## 1. Check what data you have
 
@@ -49,7 +52,7 @@ tg-agent seeding samples --chat <chat-id> --days 30 --windows 8 --format json
 Read at least four windows before writing anything. `seeding stats` stays the source of
 timing only: delay distribution, quiet hours, validation bounds.
 
-## 3. Measure the chat's speech markers
+## 3. Measure the chat, write its passport
 
 Compare your draft against the chat, not against clean prose. Reference chat
 (`examples/vAIbecoding.jsonl`, 1,388 messages, 19.10–06.11.2026; channel posts excluded):
@@ -67,6 +70,20 @@ Compare your draft against the chat, not against clean prose. Reference chat
 The last row is why the ≥20s persona-switch rail costs some realism: keep it anyway, it is
 a safety rail.
 
+**Chat passport.** Every chat has its own specifics. Before composing, read at least 10
+windows and write down:
+
+- how useful things are discussed: doubt, dispute, boasting, «покажи конкретно», advice —
+  and whether thanks or summaries happen at all;
+- the humor: elaborate jabs, hyperbole, absurdity;
+- the share of useful threads vs banter;
+- how products are named — the chat's spelling, not the official one (e.g. «дипсик»);
+- lines the owner rejected, with the reason (§9).
+
+Keep the passport and the persona file locally, outside the repo:
+`~/.tg-agent/seeding/<chat-id>/passport.md` and `personas.json`; reuse both for the same
+chat across sessions.
+
 ## 4. Personas are real voices
 
 - One persona ↔ one real top sender from `voices`. Copy the register: capitalization,
@@ -74,6 +91,9 @@ a safety rail.
 - Chat-wide memes (used by several senders, e.g. «инновации», «кожаный») — yes. One
   person's signature phrase verbatim — no: members recognize it.
 - Keep the persona file consistent across sessions (see [seeding.md](seeding.md) §2).
+- Rotate roles across dialogues: the same persona does not always ask, always advise or
+  always joke. A formatting habit (a «(» ending, multi-line messages) shows in some of a
+  persona's messages, not in every one — a habit in every line becomes a signature.
 
 ## 5. Skeleton transfer — how to compose
 
@@ -83,6 +103,10 @@ a safety rail.
 3. Replace the content with the new topic. Fragments, one thought per message, questions
    left unanswered — all allowed.
 4. Map real speakers to personas by voice similarity.
+5. Give it concrete anchors: product names in the chat's spelling and personal figures
+   (10 hours, 4 TB, the third session). Versions and dates stay banned (§7). A dialogue
+   without a single name or number reads as invented.
+6. Keep at least one elaborate jab in the chat's manner — the genre, not a quote.
 
 Never post a rewrite of a real window into the same chat — members recognize their own
 conversation. Rewrites are a quality test only (§9).
@@ -99,6 +123,11 @@ conversation. Rewrites are a quality test only (§9).
 - Typos copied verbatim from a real message — move them elsewhere instead.
 - An opener out of nowhere («привет всем, что думаете о…»). Real conversations are
   triggered: a channel post, a screenshot, one's own problem.
+- Your own vocabulary: words the chat never uses. `seeding validate` lists them. In the
+  reference chat «бутстрап», «градиент», «джун», «jquery», «свежак», «исходники» occur
+  0 times in 1,388 messages.
+- The lesson shape: one person asks, the others politely advise, a punchline closes.
+  Useful topics go the way the passport says this chat discusses them (§3).
 
 ## 7. Topics
 
@@ -106,8 +135,10 @@ conversation. Rewrites are a quality test only (§9).
 
 - No time anchors: «сегодня», «завтра», dates, deadlines («сгорают 26-го»).
 - No news: releases, model version numbers, promos, limit resets, IPOs, ban waves.
-  Product names are fine (клод, кодекс, гпт), version numbers are not.
-- A recurring practice question: problem → advice, disagreement or a story.
+  Product names are welcome (клод, кодекс, гпт) in the chat's spelling; version numbers
+  are not.
+- A recurring practice question: problem → doubt, dispute, boasting or a story — in the
+  form the passport records (§3), not a lesson.
 - The opener is self-contained: no reference to a screenshot or post nobody can see.
 
 **The topic bank comes from the chat.** Label the windows with topic + date and keep
@@ -132,16 +163,46 @@ better source of fresh topics is collecting similar chats with tg-agent and runn
   reject 42% of the reference chat's real windows (5+ messages, 2–4 speakers) — in real
   chats one person often carries the thread. Token-overlap echo checks between personas do
   not measure realism either: unnatural text passes them cleanly.
+- The same test is why the foreign-word list of `validate` is a hint, not a violation: it
+  would flag 58% of the reference chat's own messages (leave-one-out — a word whose stem
+  appears nowhere else in the chat). Treat each listed word as a question: the chat's
+  word or yours?
 - Safety rails stay regardless: no links, ≥20s between accounts, quiet hours, per-account
   daily caps, no overdue `planned_at` ([seeding.md](seeding.md) §5).
 
 ## 9. Review loop
 
-1. **Side by side** — real window | rewrite on the same skeleton, so the owner can judge
-   the voice.
-2. **Blind test** — shuffle real windows and composed dialogues without labels; the owner
-   guesses which is AI. This is the acceptance bar of #1793.
-3. Only then `seeding validate` → `thread-create` → `add`.
+1. `seeding validate` — fix every violation and replace the listed words the chat never
+   wrote ([seeding.md](seeding.md) §3).
+2. **Side by side** (optional) — real window | rewrite on the same skeleton, so the owner
+   can judge the voice.
+3. **Line review** — the owner reads only the composed dialogues and marks each line «у нас
+   так не напишут» with a reason. Acceptance (#1793): zero marked lines in the dialogue.
+   Record rejected lines and reasons in the passport (§3), fix, re-validate, show again.
+4. **Blind test** (real and composed mixed, no labels) — only with a judge who has not read
+   the chat. An owner who reads the chat recognizes real windows from memory: the test
+   then measures memory, not realism.
+5. Only then `thread-create` → `add`.
+
+## Lessons from the blind test (08.11.2026)
+
+Three real windows of the reference chat and three composed dialogues, shuffled, speakers
+as letters. The owner found all three composed dialogues and took one real window for AI.
+
+- **Foreign vocabulary** gave the seeds away, confirmed against the DB: «админка из
+  нулевых» is not how this chat talks; «бутстрап», «градиент», «джун», «jquery»,
+  «свежак», «исходники» occur 0 times in its 1,388 messages. The personas' manner was
+  copied, the vocabulary stayed the composer's. → §6, the `validate` hint.
+- **Lesson shape, wrong humor**: one person asked, the others helpfully advised, a
+  punchline closed. This chat competes in who jabs more inventively — the real window the
+  owner took for AI held exactly such a jab: an absurd boast about discovering a law of
+  physics with one model while another «can't do Roblox». → §5, passport.
+- **No names or numbers** (likely): real windows carry product names and personal figures
+  (hours, terabytes). → §5.
+- **Not only banter**: the chat discusses useful things too, in its own form, and every
+  chat differs. → passport (§3).
+- **The test itself**: the owner has read almost the whole chat and recognizes real windows
+  from memory, and there is no outside judge. → acceptance moved to line review (§9).
 
 ## Examples (reference chat, participants anonymized as `user_NNN`, `ADMIN` = anonymous admin)
 

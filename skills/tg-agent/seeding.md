@@ -84,7 +84,8 @@ Rules (the validator enforces most of them — do not wait for it to fail):
 - **Voice**: the anchored sender's register first (short fragments, no
   closure, people talk past each other); then the chat norms — occasional
   typos, lowercase starts if the chat does that, `emoji_share`-consistent
-  emoji use from `top_emojis`, vocabulary close to `top_tokens`.
+  emoji use from `top_emojis`, only the chat's own vocabulary (`validate`
+  lists the words it never used).
 - **No links ever** — spam-reportable; seeds with URLs are rejected.
 - Telegram caps a message at 4096 chars.
 
@@ -94,7 +95,13 @@ Rules (the validator enforces most of them — do not wait for it to fail):
 tg-agent seeding validate scenario.json --chat <chat-id> [--days 14] [--start-at "2026-11-02T18:00"]
 ```
 
-Exit 1 lists violations; fix the scenario and re-run. `--start-at` (ISO;
+Exit 1 lists violations; fix the scenario and re-run. A clean run prints
+`Scenario OK.` and may then list, per message, the words the chat's members
+never wrote (`#5: бутстрап, градиент`; vocabulary = all collected history,
+not `--days`; channel posts and the anonymous admin excluded). That list is a
+hint with exit code 0, but in the 08.11 blind test exactly such words gave
+the seeds away: replace each with a word the chat uses, keep one only on
+purpose ([seeding-voice.md](seeding-voice.md) §6). `--start-at` (ISO;
 naive = UTC) additionally checks that no message lands in `quiet_hours` —
 always pass it before drafting. The scenario file must pass schema
 validation (`personas` unique names/phones, `messages` positions 1..N,
@@ -110,7 +117,9 @@ tg-agent seeding add scenario.json --thread <thread-id> --start-at "2026-11-02T1
 `thread-create` stores the persona map «name → account_phone» in
 `personas_json` (#1755) — the full persona styles stay in your local
 personas file; reuse the same file for the same chat across sessions
-(keep it outside the repo, like style specs). `add` validates the
+(keep it outside the repo, like style specs:
+`~/.tg-agent/seeding/<chat-id>/personas.json`, next to the chat passport,
+[seeding-voice.md](seeding-voice.md) §3). `add` validates the
 scenario against the learned stats and records draft rows in
 `seeding_messages` with `status=draft` and `planned_at` derived from the
 delays — the draft schedule is visible immediately via

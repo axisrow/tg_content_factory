@@ -290,6 +290,33 @@ def test_validate_impl_valid_scenario(cli_db, capsys, tmp_path):
     assert violations == []
 
 
+def test_validate_impl_lists_foreign_words_from_full_history(cli_db, capsys, tmp_path):
+    """Слова, которых в чате не было, — подсказка с кодом 0; словарь — вся история, не --days."""
+    base = _seed_chat(cli_db)
+    old = Message(
+        channel_id=CHAT_ID,
+        message_id=99,
+        date=base - timedelta(days=30),
+        text="реплика старая",
+        sender_id=3,
+        sender_name="Вика",
+    )
+    asyncio.run(cli_db.repos.messages.insert_message(old))
+    path = _scenario_file(tmp_path, delays=[400, 600])
+
+    violations, out = _run_impl(
+        lambda: seeding_cli.validate_impl("cfg", scenario_path=path, chat=CHAT_ID, days=14, start_at=None),
+        cli_db,
+        capsys,
+    )
+
+    assert violations == []
+    assert "Scenario OK." in out
+    assert "Слова, которых в чате не было" in out
+    assert "  #1: первая\n" in out
+    assert "  #2: вторая, длиннее\n" in out
+
+
 def test_validate_impl_invalid_scenario(cli_db, capsys, tmp_path):
     _seed_chat(cli_db)
     path = _scenario_file(tmp_path, delays=[2, 300])
