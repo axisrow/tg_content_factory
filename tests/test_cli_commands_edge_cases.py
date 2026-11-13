@@ -204,12 +204,22 @@ class TestPrintLiveMessages:
         assert "MessageMediaPhoto" in out
 
     def test_with_media_and_text(self, capsys):
+        # Issue #1776: captioned media must show BOTH caption text and marker.
         media_obj = type("MessageMediaDocument", (), {})()
         msgs = [self._make_live_msg(text="has media too", media=media_obj)]
         _print_live_messages(msgs)
         out = capsys.readouterr().out
         assert "has media too" in out
-        # text takes precedence, media type is not shown when text is present
+        assert "[media: MessageMediaDocument]" in out
+
+    def test_web_page_preview_no_marker(self, capsys):
+        # Webpage previews are not downloadable media — no marker line (review on #1813).
+        media_obj = type("MessageMediaWebPage", (), {})()
+        msgs = [self._make_live_msg(text="check this link", media=media_obj)]
+        _print_live_messages(msgs)
+        out = capsys.readouterr().out
+        assert "check this link" in out
+        assert "media:" not in out
 
     def test_reversed_order(self, capsys):
         msgs = [self._make_live_msg(id=1), self._make_live_msg(id=2)]
