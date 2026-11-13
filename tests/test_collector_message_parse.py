@@ -58,6 +58,11 @@ def _msg(**kwargs) -> SimpleNamespace:
     return SimpleNamespace(**base)
 
 
+def _json(value: str | None):
+    assert value is not None
+    return json.loads(value)
+
+
 # --- topic_id resolution ------------------------------------------------------
 
 
@@ -129,6 +134,21 @@ def test_sender_kind_channel_admin_user():
     assert get_sender_kind(_msg(post=True, sender_id=None)) == "channel"
     assert get_sender_kind(_msg(post=False, sender_id=None)) == "anonymous_admin"
     assert get_sender_kind(_msg(post=False, sender_id=99)) == "user"
+
+
+def test_sender_kind_linked_channel_post_copy_is_channel():
+    """A linked channel's post copied into its discussion group comes with
+    ``post=False`` and the channel as sender: it is the channel, not a member (#1793)."""
+    chat = SimpleNamespace(channel_id=1997)
+    copy = _msg(sender_id=-1002110, from_id=SimpleNamespace(channel_id=2110), peer_id=chat)
+    assert get_sender_kind(copy) == "channel"
+    # The group itself as sender is not a channel post.
+    as_group = _msg(sender_id=-1001997, from_id=SimpleNamespace(channel_id=1997), peer_id=chat)
+    assert get_sender_kind(as_group) != "channel"
+    member = _msg(sender_id=99, from_id=SimpleNamespace(user_id=99), peer_id=chat)
+    assert get_sender_kind(member) == "user"
+    # Suite-wide MagicMock messages carry mock attributes, not peer ids.
+    assert get_sender_kind(MagicMock(post=False, sender_id=5)) == "user"
 
 
 # --- full Message build (the inline block from _stream_channel_messages) ------
@@ -221,7 +241,7 @@ def test_extract_entities_serializes_formatting_spans():
             MessageEntitySpoiler(offset=5, length=6),
         ],
     )
-    assert json.loads(extract_message_entities_json(msg)) == [
+    assert _json(extract_message_entities_json(msg)) == [
         {"length": 4, "offset": 0, "type": "bold"},
         {"length": 6, "offset": 5, "type": "spoiler"},
     ]
@@ -236,7 +256,7 @@ def test_extract_entities_custom_emoji_keeps_document_id():
         text="a 🎯 b",
         entities=[MessageEntityCustomEmoji(offset=2, length=2, document_id=555999)],
     )
-    assert json.loads(extract_message_entities_json(msg)) == [
+    assert _json(extract_message_entities_json(msg)) == [
         {"document_id": 555999, "length": 2, "offset": 2, "type": "custom_emoji"}
     ]
 
@@ -250,7 +270,7 @@ def test_extract_entities_keeps_masked_link_url():
         text="masked",
         entities=[MessageEntityTextUrl(offset=0, length=6, url="https://example.internal")],
     )
-    assert json.loads(extract_message_entities_json(msg)) == [
+    assert _json(extract_message_entities_json(msg)) == [
         {"length": 6, "offset": 0, "type": "text_url", "url": "https://example.internal"}
     ]
 
@@ -260,7 +280,7 @@ def test_build_message_carries_entities_json():
 
     msg = _msg(text="hello", entities=[MessageEntityBold(offset=0, length=5)])
     message = build_message_from_telethon(msg, channel_id=-100123)
-    assert json.loads(message.entities_json) == [{"length": 5, "offset": 0, "type": "bold"}]
+    assert _json(message.entities_json) == [{"length": 5, "offset": 0, "type": "bold"}]
 
 
 def test_plain_text_and_entities_ignores_nonstring_message_fakes():
@@ -283,7 +303,7 @@ def test_plain_text_and_entities_ignores_nonstring_message_fakes():
 def test_rich_text_to_str_flattens_nested_nodes():
     from telethon.tl.types import TextBold, TextPlain
 
-    node = [TextPlain(text="see "), TextBold(text="this"), TextPlain(text=" now")]
+    node = [TextPlain(text="see "), TextBold(text=TextPlain(text="this")), TextPlain(text=" now")]
     assert rich_text_to_str(node) == "see this now"
     assert rich_text_to_str("plain") == "plain"
 

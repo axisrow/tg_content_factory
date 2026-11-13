@@ -37,6 +37,12 @@ async def _columns(conn: aiosqlite.Connection, table: str) -> set[str]:
     return {row["name"] for row in await cur.fetchall()}
 
 
+async def _fetchone(cur: aiosqlite.Cursor) -> aiosqlite.Row:
+    row = await cur.fetchone()
+    assert row is not None
+    return row
+
+
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
 async def test_run_migrations_creates_missing_schema_tables(tmp_path):
@@ -87,7 +93,7 @@ async def test_private_channel_provenance_backfill_is_idempotent_and_preserves_f
         cur = await conn.execute(
             "SELECT is_filtered, filtered_origin FROM channels WHERE channel_id = 1877929309"
         )
-        row = await cur.fetchone()
+        row = await _fetchone(cur)
         assert (row["is_filtered"], row["filtered_origin"]) == (1, "human")
         decisions = await conn.execute_fetchall(
             "SELECT reason FROM decisions WHERE entity_key = 1877929309"
@@ -100,7 +106,7 @@ async def test_private_channel_provenance_backfill_is_idempotent_and_preserves_f
         decisions = await conn.execute_fetchall(
             "SELECT id FROM decisions WHERE entity_key = 1877929309"
         )
-        assert len(decisions) == 1
+        assert len(list(decisions)) == 1
     finally:
         await conn.close()
 
@@ -199,7 +205,7 @@ async def test_run_migrations_adds_missing_columns_and_indexes(tmp_path):
         assert await cur.fetchone() is not None
 
         cur = await conn.execute("SELECT value FROM settings WHERE key = 'agent_prompt_template'")
-        row = await cur.fetchone()
+        row = await _fetchone(cur)
         assert row["value"] == "legacy"
     finally:
         await conn.close()
@@ -233,7 +239,7 @@ async def test_run_migrations_does_not_treat_repaired_username_as_private(tmp_pa
         cur = await conn.execute(
             "SELECT filtered_origin FROM channels WHERE channel_id = ?", (987654,)
         )
-        row = await cur.fetchone()
+        row = await _fetchone(cur)
         assert row["filtered_origin"] == "auto"
         marker = await conn.execute(
             "SELECT value FROM settings WHERE key = '_migration_private_channel_provenance_v1'"
@@ -265,7 +271,7 @@ async def test_run_migrations_does_not_treat_repaired_username_as_private(tmp_pa
         cur = await conn.execute(
             "SELECT filtered_origin FROM channels WHERE channel_id = ?", (987655,)
         )
-        assert (await cur.fetchone())["filtered_origin"] == "human"
+        assert (await _fetchone(cur))["filtered_origin"] == "human"
     finally:
         await conn.close()
 
@@ -477,7 +483,7 @@ async def test_run_migrations_rebuilds_legacy_collection_tasks_channel_id_notnul
         assert "task_type" in columns
 
         cur = await conn.execute("SELECT channel_id, task_type FROM collection_tasks WHERE id = 1")
-        row = await cur.fetchone()
+        row = await _fetchone(cur)
         assert row["channel_id"] is None
         assert row["task_type"] == "stats_all"
 
@@ -500,7 +506,7 @@ async def test_run_migrations_rebuilds_legacy_collection_tasks_channel_id_notnul
         # drop the row just inserted or leave a dangling transaction.
         await run_migrations(conn)
         cur = await conn.execute("SELECT COUNT(*) AS c FROM collection_tasks")
-        assert (await cur.fetchone())["c"] == 4
+        assert (await _fetchone(cur))["c"] == 4
     finally:
         await conn.close()
 
@@ -541,13 +547,13 @@ async def test_legacy_data_migration_helpers_preserve_upgrade_contracts(tmp_path
         await _migrate_tool_permission_key(conn, "list_dialogs", "search_dialogs")
 
         cur = await conn.execute("SELECT COUNT(*) AS cnt FROM message_embeddings")
-        assert (await cur.fetchone())["cnt"] == 0
+        assert (await _fetchone(cur))["cnt"] == 0
         cur = await conn.execute("SELECT value FROM settings WHERE key = 'agent_deepagents_providers_v1'")
-        provider_rows = json.loads((await cur.fetchone())["value"])
+        provider_rows = json.loads((await _fetchone(cur))["value"])
         assert provider_rows[0]["plain_fields"]["base_url"] == "https://api.z.ai/api/paas/v4"
         assert provider_rows[1]["plain_fields"]["base_url"] == "https://api.z.ai/api/coding/paas/v4"
         cur = await conn.execute("SELECT value FROM settings WHERE key = 'agent_tool_permissions'")
-        permissions = json.loads((await cur.fetchone())["value"])
+        permissions = json.loads((await _fetchone(cur))["value"])
         assert permissions == {"search_dialogs": False}
     finally:
         await conn.close()
@@ -733,20 +739,75 @@ async def test_run_migrations_backfills_message_reactions_date(tmp_path):
         cur = await conn.execute(
             "SELECT date FROM message_reactions WHERE channel_id = 100 AND message_id = 1"
         )
-        assert (await cur.fetchone())["date"] == "2026-06-01T12:00:00"
+        assert (await _fetchone(cur))["date"] == "2026-06-01T12:00:00"
 
         # Backfill is gated: a second run is a no-op (flag set) and does not error.
         await run_migrations(conn)
         cur = await conn.execute(
             "SELECT value FROM settings WHERE key = '_migration_reactions_date_backfill_v1'"
         )
-        assert (await cur.fetchone())["value"] == "1"
+        assert (await _fetchone(cur))["value"] == "1"
 
         # Regression (PR #945 review): the date-emoji index must NOT be built up
         # front with the other repair indexes — that would force the 6.8M-row
         # backfill UPDATE to maintain it per row. It is created by the backfill
         # function itself, after the UPDATE.
         assert not any("idx_message_reactions_date_emoji" in s for s in SCHEMA_REPAIR_INDEXES)
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_run_migrations_relabels_linked_channel_post_copies(tmp_path):
+    """Copies of a linked channel's posts in its discussion group were stored as
+    members (``sender_kind='user'``, #1793): the one-off backfill makes them
+    ``'channel'`` and leaves real members alone."""
+    conn = await _connect(str(tmp_path / "linked_channel.db"))
+    try:
+        await run_migrations(conn)
+        await conn.execute("DELETE FROM settings WHERE key = '_migration_linked_channel_sender_kind_v1'")
+        await conn.executemany(
+            "INSERT INTO channels (channel_id, channel_type, linked_chat_id) VALUES (?, ?, ?)",
+            [(100, "supergroup", 200), (200, "channel", 100)],
+        )
+        insert = (
+            "INSERT INTO messages (channel_id, message_id, sender_id, forward_from_channel_id, sender_kind, date)"
+            " VALUES (?, ?, ?, ?, ?, '2026-11-01T00:00:00')"
+        )
+        await conn.executemany(
+            insert,
+            [
+                (100, 1, 200, 200, "user"),  # copy of the linked channel's own post
+                (100, 2, 200, 300, "user"),  # copy of its repost of another channel
+                (100, 3, 555, None, "user"),  # member
+                (100, 4, 556, 300, "user"),  # member forwarding a channel post
+                (100, 5, None, None, "anonymous_admin"),
+                (400, 1, 500, 500, "user"),  # auto-copy in a chat with no linked_chat_id on record
+            ],
+        )
+        await conn.commit()
+
+        await run_migrations(conn)
+
+        cur = await conn.execute("SELECT channel_id, message_id, sender_kind FROM messages")
+        kinds = {(row["channel_id"], row["message_id"]): row["sender_kind"] for row in await cur.fetchall()}
+        assert kinds == {
+            (100, 1): "channel",
+            (100, 2): "channel",
+            (100, 3): "user",
+            (100, 4): "user",
+            (100, 5): "anonymous_admin",
+            (400, 1): "channel",
+        }
+
+        # One-off: the full-table scan does not repeat on every boot.
+        await conn.execute(insert, (100, 6, 200, 200, "user"))
+        await conn.commit()
+        await run_migrations(conn)
+        cur = await conn.execute("SELECT sender_kind FROM messages WHERE channel_id = 100 AND message_id = 6")
+        row = await _fetchone(cur)
+        assert row["sender_kind"] == "user"
     finally:
         await conn.close()
 
@@ -842,9 +903,9 @@ async def test_initial_analyze_seeds_planner_statistics(tmp_path):
         cur = await conn.execute(
             "SELECT count(*) AS n FROM sqlite_stat1 WHERE tbl = 'messages'"
         )
-        assert (await cur.fetchone())["n"] > 0
+        assert (await _fetchone(cur))["n"] > 0
         cur = await conn.execute("SELECT value FROM settings WHERE key = '_migration_analyze_v1'")
-        assert (await cur.fetchone())["value"] == "1"  # gate set
+        assert (await _fetchone(cur))["value"] == "1"  # gate set
 
         # Second call short-circuits on the gate and must not error.
         await _ensure_initial_analyze(conn)

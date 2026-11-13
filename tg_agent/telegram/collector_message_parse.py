@@ -18,6 +18,7 @@ import json
 import re
 from datetime import date as date_cls
 from datetime import datetime, timezone
+from typing import cast
 
 from tg_agent.models import Message
 from tg_agent.services.translation_service import TranslationService
@@ -176,6 +177,11 @@ def get_service_action_payload(msg) -> str | None:
 def get_sender_kind(msg) -> str:
     if getattr(msg, "post", False):
         return "channel"
+    # A linked channel's post copied into its discussion group has post=False but
+    # a channel sender other than the group itself (#1793).
+    from_channel = getattr(getattr(msg, "from_id", None), "channel_id", None)
+    if isinstance(from_channel, int) and from_channel != getattr(getattr(msg, "peer_id", None), "channel_id", None):
+        return "channel"
     if getattr(msg, "sender_id", None) is None:
         return "anonymous_admin"
     return "user"
@@ -248,6 +254,7 @@ def build_message_from_telethon(msg, channel_id: int) -> Message:
         views=getattr(msg, "views", None),
         forwards=getattr(msg, "forwards", None),
         reply_count=getattr(getattr(msg, "replies", None), "replies", None),
-        date=_normalize_date(msg),
+        # Telethon messages always carry a date; pydantic rejects a missing one.
+        date=cast(datetime, _normalize_date(msg)),
         forward_from_channel_id=extract_forward_from_channel_id(msg),
     )
