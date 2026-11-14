@@ -1110,3 +1110,25 @@ def test_samples_live_no_connected_accounts(cli_db, capsys, monkeypatch):
     with pytest.raises(typer.Exit):
         seeding_cli.run_async(seeding_cli.samples_impl("cfg", chat=MARKED_CHAT_ID, days=1, live=True))
     assert "No connected accounts" in capsys.readouterr().err
+
+
+def test_samples_live_native_error_reported_cleanly(cli_db, capsys, monkeypatch):
+    """telethon-ошибка (TypeNotFoundError и т.п.) — чистый CLI-error, не трейсбек (#1486-зеркало)."""
+    from types import SimpleNamespace
+
+    raw = SimpleNamespace(id=1, date=datetime.now(timezone.utc), message="x", sender_id=1, sender=None)
+    pool = _FakeNativePool([raw])
+
+    async def broken_iter(entity, *, limit):
+        raise RuntimeError("TypeNotFoundError: boom")
+        yield None  # pragma: no cover
+
+    pool.iter_messages = broken_iter
+    _patch_live_pools(monkeypatch, cli_db, pool)
+
+    with pytest.raises(typer.Exit):
+        seeding_cli.run_async(
+            seeding_cli.samples_impl("cfg", chat=MARKED_CHAT_ID, days=1, live=True)
+        )
+    err = capsys.readouterr().err
+    assert "Error reading chat" in err and "TypeNotFoundError" in err

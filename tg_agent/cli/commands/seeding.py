@@ -177,27 +177,37 @@ async def _fetch_live_chat_messages(
             cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")
         client, _ = result
         try:
-            entity = await pool.resolve_entity_with_warm(
-                client, phone, chat, operation="seeding_live_read"
-            )
+            try:
+                entity = await pool.resolve_entity_with_warm(
+                    client, phone, chat, operation="seeding_live_read"
+                )
+            except Exception as exc:
+                cli_error(
+                    f"Cannot resolve chat {chat} via account {phone}: {exc}. "
+                    "The dialog may live on another account — retry with --phone."
+                )
+            collected: list = []
+
+            async def _read_messages() -> None:
+                async for msg in client.iter_messages(entity, limit=limit):
+                    collected.append(msg)
+
+            try:
+                await run_with_flood_wait(
+                    _read_messages(), operation="seeding_live_read", phone=phone, pool=pool
+                )
+            except HandledFloodWaitError as exc:
+                cli_error(f"Flood wait: {exc.info.detail}")
+            return [build_message_from_telethon(msg, bare_channel_id(chat)) for msg in collected]
+        except typer.Exit:
+            # cli_error() from the inner paths must not be re-reported as
+            # "Error reading chat" by the broad handler below (#1486,
+            # mirrored from messages_read_impl).
+            raise
         except Exception as exc:
-            cli_error(
-                f"Cannot resolve chat {chat} via account {phone}: {exc}. "
-                "The dialog may live on another account — retry with --phone."
-            )
-        collected: list = []
-
-        async def _read_messages() -> None:
-            async for msg in client.iter_messages(entity, limit=limit):
-                collected.append(msg)
-
-        try:
-            await run_with_flood_wait(
-                _read_messages(), operation="seeding_live_read", phone=phone, pool=pool
-            )
-        except HandledFloodWaitError as exc:
-            cli_error(f"Flood wait: {exc.info.detail}")
-        return [build_message_from_telethon(msg, bare_channel_id(chat)) for msg in collected]
+            # telethon errors (TypeNotFoundError on never-collected channels,
+            # #1800 review) surface as a clean CLI error, not a traceback.
+            cli_error(f"Error reading chat {chat} live: {exc}")
     finally:
         if pool:
             await pool.disconnect_all()
