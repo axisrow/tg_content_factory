@@ -58,7 +58,9 @@ _GATE_OPERATION_CATEGORIES: dict[str, str] = {
     "telegram_remove_dialog": "channel_lifecycle",
     # Cheap one-shot meta reads: the broad default bucket IS the honest
     # budget; rows are explicit so they stay silent and one-line adjustable.
-    "telegram_fetch_me": "default",
+    # (telegram_fetch_me has no row: floodgate 0.1.8 absorbed it into the
+    # pass-through "resolve" family — the agree-test below fails if the row
+    # is re-added.)
     "telegram_fetch_peer_by_id": "default",
     "telegram_is_bot": "default",
     "telegram_is_user_authorized": "default",
@@ -73,9 +75,8 @@ _GATE_OPERATION_CATEGORIES: dict[str, str] = {
     "telegram_inline_query": "default",
     # Best-effort, high-volume-by-design read acks must not pay send prices.
     "telegram_send_read_acknowledge": "default",
-    # Generic raw-RPC escape hatch: unknown budget by definition — the flood
-    # breaker (wired on every operation) is the safety net, not this gate.
-    "telegram_invoke_request": "default",
+    # (telegram_invoke_request has no row either: floodgate 0.1.8 prices it
+    # at the calibrated "history" family.)
     # Media/profile/participants/admin-log transfers: no production
     # calibration exists for these RPC families, and inventing budgets here
     # would only collide with the calibrated families sharing those buckets.
