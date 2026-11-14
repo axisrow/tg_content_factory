@@ -386,6 +386,28 @@ async def test_operation_failure_log_carries_traceback(gateway, caplog):
     )
 
 
+async def test_operation_failure_receipt_carries_error_site(gateway):
+    """#1817: the receipt carries a curated raise SITE (file:line:name of the
+    innermost frame) next to the class name — the collector's log becomes
+    self-sufficient about WHICH gateway stage failed, without secrets
+    (#1780: no exception text leaves the gateway; coordinates only)."""
+    store, transport, account, clients = gateway
+
+    async def boom(project, operation):
+        raise TypeError("cannot read history on this transport")
+
+    transport.execute = boom
+    operation = Send(kind="send", account_id=UUID(account), peer=322, text="site probe")
+    request = uuid4()
+    await clients[0].submit(request, operation)
+    receipt = await clients[0].wait(request, timeout=5)
+    result = receipt.get("result") or {}
+    assert result.get("error") == "TypeError"
+    site = result.get("site")
+    assert site, "failure receipt must carry the curated raise site (#1817)"
+    assert "test_gateway_api.py" in site and "boom" in site
+
+
 async def test_pending_cancellation_is_scoped_to_its_project(gateway):
     store, transport, account, clients = gateway
     request = uuid4()

@@ -7,6 +7,7 @@ import hashlib
 import logging
 import secrets
 import time
+import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import unquote
@@ -149,7 +150,19 @@ class Dispatcher:
                     continue
                 # Never persist raw exception text: upstream errors can carry message text or secrets.
                 state = "failed" if is_read_operation(operation) or isinstance(exc, PermissionError) else "uncertain"
-                await self.store.transition(project, request, "running", state, {"error": type(exc).__name__})
+                # Curated raise SITE (file:line:name, coordinates only — #1817):
+                # the collector's log names the failing gateway stage without
+                # cross-referencing gateway.log; no message text leaves.
+                frames = traceback.extract_tb(exc.__traceback__)
+                site = (
+                    f"{Path(frames[-1].filename).name}:{frames[-1].lineno} in {frames[-1].name}"
+                    if frames
+                    else None
+                )
+                failure_payload = {"error": type(exc).__name__}
+                if site:
+                    failure_payload["site"] = site
+                await self.store.transition(project, request, "running", state, failure_payload)
                 # account/peer in the line (#1780): a mass failure in gateway.log must
                 # be attributable without opening the DB. 0600 local log, ids only.
                 # exc_info stays in the local log file only — the receipt (line above)
