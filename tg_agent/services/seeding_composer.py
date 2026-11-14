@@ -453,6 +453,24 @@ async def load_chat_messages(db: Database, chat_channel_id: int, *, days: int) -
     )
 
 
+async def chat_registered(db: Database, chat_channel_id: int) -> bool:
+    """Есть ли чат строкой в ``channels`` (обе формы id из ``chat_id_lookup_keys``).
+
+    Пустой профиль молча равен «чату нечего сказать» только у зарегистрированного
+    чата; у незарегистрированного INNER JOIN в ``get_recent_for_channels`` всегда
+    даёт ноль строк (#1800) — вызывающие различают эти случаи этим предикатом.
+    """
+    for key in chat_id_lookup_keys(chat_channel_id):
+        if await db.repos.channels.get_channel_by_channel_id(key) is not None:
+            return True
+    return False
+
+
+#: Сообщений в live-чтении по умолчанию (``--live --limit``): хватает на окна
+#: разговора и голоса, страница шлюза = 100 сообщений — 5 запросов, не лавина.
+DEFAULT_LIVE_LIMIT = 500
+
+
 class SampleMessage(BaseModel):
     """Сообщение окна дословно: автор, время, пауза от предыдущего, текст."""
 

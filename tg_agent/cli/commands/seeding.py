@@ -19,6 +19,7 @@ validate`` (валидация сценария по выученному рас
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -27,6 +28,7 @@ from typing import Any, NoReturn
 import typer
 from aiosqlite import IntegrityError
 from pydantic import TypeAdapter, ValidationError
+from telethon_floodgate import HandledFloodWaitError, run_with_flood_wait
 
 from tg_agent.cli import runtime
 from tg_agent.cli.commands.common import _NEG_ID_POSITIONAL, apply_startup, cli_error, run_async
@@ -38,7 +40,10 @@ from tg_agent.models import (
     SeedingThread,
     SeedingThreadStatus,
 )
+from tg_agent.parsers import bare_channel_id
+from tg_agent.services.account_service import resolve_default_phone
 from tg_agent.services.seeding_composer import (
+    DEFAULT_LIVE_LIMIT,
     ChatSamples,
     ChatStatistics,
     ConversationWindow,
@@ -46,6 +51,7 @@ from tg_agent.services.seeding_composer import (
     SeedingScenario,
     SenderVoice,
     build_chat_samples,
+    chat_registered,
     compute_chat_statistics,
     derive_planned_schedule,
     foreign_words,
@@ -53,6 +59,7 @@ from tg_agent.services.seeding_composer import (
     validate_scenario,
 )
 from tg_agent.services.seeding_publisher import validate_schedule_rails
+from tg_agent.telegram.collector_message_parse import build_message_from_telethon
 
 
 def _parse_start_at(value: str) -> datetime:
@@ -111,23 +118,117 @@ def _violations_error(violations: list[str]) -> NoReturn:
     cli_error(message)
 
 
-async def _load_chat_messages(config_path: str, *, chat: int, days: int) -> list[Message]:
-    """Собранные сообщения чата за окно (id в любой форме: голый или ``-100…``)."""
+async def _load_chat_profile(config_path: str, *, chat: int, days: int) -> tuple[list[Message], bool]:
+    """Собранные сообщения чата за окно + зарегистрирован ли чат (id в любой форме).
+
+    Признак регистрации нужен только на пустом профиле (#1800): INNER JOIN на
+    ``channels`` даёт ноль строк и для «тонкого» чата, и для никогда не
+    добавленного — подсказки у этих случаев разные.
+    """
     _, db = await runtime.init_db(config_path)
     try:
-        return await load_chat_messages(db, chat, days=days)
+        messages = await load_chat_messages(db, chat, days=days)
+        registered = bool(messages) or await chat_registered(db, chat)
+        return messages, registered
     finally:
+        await db.close()
+
+
+_NOT_REGISTERED_HINT = (
+    "Чат {chat} не зарегистрирован в базе — собранных сообщений нет и не появится, "
+    "пока чат не добавлен. Два пути:\n"
+    "  - быстрый взгляд без записи: добавь --live (прочтёт последние сообщения прямо из Telegram);\n"
+    "  - постоянный путь (нужен для рельсов публикатора): tg-agent channel add {chat} и collect."
+)
+
+
+def _print_live_note(count: int) -> None:
+    """Заметка о live-чтении — в stderr, чтобы stdout (json) оставался парсимым."""
+    print(f"Live read: {count} message(s) from Telegram, nothing saved to the DB.", file=sys.stderr)
+
+
+async def _fetch_live_chat_messages(
+    config_path: str, *, chat: int, phone: str | None, limit: int
+) -> list[Message]:
+    """Последние ``limit`` сообщений чата из Telegram (read-only, как ``messages read --live``).
+
+    Шлюз ``read_messages`` (строки шлюза — готовые ``Message``-дампы) либо
+    нативный клиент ``iter_messages`` + ``build_message_from_telethon``.
+    """
+    config, db = await runtime.init_db(config_path)
+    pool = None
+    try:
+        _, pool = await runtime.init_pool(config, db)
+        if not pool.clients:
+            cli_error("No connected accounts.")
+        if not phone:
+            phone = await resolve_default_phone(db, connected=set(pool.clients))
+        if phone is None:
+            cli_error("No connected accounts.")
+        if phone not in pool.clients:
+            cli_error(f"Account {phone} not connected.")
+        from tg_agent.gateway.pool import GatewayPool
+
+        if isinstance(pool, GatewayPool):
+            data = await pool.read_messages(chat, phone=phone, limit=limit)
+            return [Message.model_validate(row) for row in data["messages"]]
+        result = await pool.get_native_client_by_phone(phone)
+        if result is None:
+            cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")
+        client, _ = result
+        try:
+            entity = await pool.resolve_entity_with_warm(
+                client, phone, chat, operation="seeding_live_read"
+            )
+        except Exception as exc:
+            cli_error(
+                f"Cannot resolve chat {chat} via account {phone}: {exc}. "
+                "The dialog may live on another account — retry with --phone."
+            )
+        collected: list = []
+
+        async def _read_messages() -> None:
+            async for msg in client.iter_messages(entity, limit=limit):
+                collected.append(msg)
+
+        try:
+            await run_with_flood_wait(
+                _read_messages(), operation="seeding_live_read", phone=phone, pool=pool
+            )
+        except HandledFloodWaitError as exc:
+            cli_error(f"Flood wait: {exc.info.detail}")
+        return [build_message_from_telethon(msg, bare_channel_id(chat)) for msg in collected]
+    finally:
+        if pool:
+            await pool.disconnect_all()
         await db.close()
 
 
 async def _load_chat_stats(config_path: str, *, chat: int, days: int) -> ChatStatistics:
     """Собранные сообщения окна → выученный профиль чата (ход stats)."""
-    messages = await _load_chat_messages(config_path, chat=chat, days=days)
+    messages, _ = await _load_chat_profile(config_path, chat=chat, days=days)
     return compute_chat_statistics(messages, chat_channel_id=chat, window_days=days)
 
 
-async def stats_impl(config_path: str, *, chat: int, days: int) -> ChatStatistics:
-    stats = await _load_chat_stats(config_path, chat=chat, days=days)
+async def stats_impl(
+    config_path: str,
+    *,
+    chat: int,
+    days: int,
+    live: bool = False,
+    phone: str | None = None,
+    limit: int = DEFAULT_LIVE_LIMIT,
+) -> ChatStatistics:
+    if live:
+        messages = await _fetch_live_chat_messages(config_path, chat=chat, phone=phone, limit=limit)
+        stats = compute_chat_statistics(messages, chat_channel_id=chat, window_days=days)
+        print(stats.model_dump_json(indent=2))
+        _print_live_note(len(messages))
+        return stats
+    messages, registered = await _load_chat_profile(config_path, chat=chat, days=days)
+    if not messages and not registered:
+        cli_error(_NOT_REGISTERED_HINT.format(chat=chat))
+    stats = compute_chat_statistics(messages, chat_channel_id=chat, window_days=days)
     print(stats.model_dump_json(indent=2))
     return stats
 
@@ -200,9 +301,23 @@ async def samples_impl(
     min_messages: int = 6,
     min_speakers: int = 3,
     output_format: SamplesFormat = SamplesFormat.text,
+    live: bool = False,
+    phone: str | None = None,
+    limit: int = DEFAULT_LIVE_LIMIT,
 ) -> ChatSamples:
-    """Реальная речь чата (#1793): свежие окна разговоров дословно + голоса участников."""
-    messages = await _load_chat_messages(config_path, chat=chat, days=days)
+    """Реальная речь чата (#1793): свежие окна разговоров дословно + голоса участников.
+
+    Без ``--live`` — собранные сообщения БД (чат обязан быть зарегистрирован,
+    точная диагностика вместо «no windows», #1800); с ``--live`` — чтение прямо
+    из Telegram, ничего не записывается.
+    """
+    if live:
+        messages = await _fetch_live_chat_messages(config_path, chat=chat, phone=phone, limit=limit)
+        _print_live_note(len(messages))
+    else:
+        messages, registered = await _load_chat_profile(config_path, chat=chat, days=days)
+        if not messages and not registered:
+            cli_error(_NOT_REGISTERED_HINT.format(chat=chat))
     samples = build_chat_samples(
         messages,
         chat_channel_id=chat,
@@ -244,6 +359,8 @@ async def validate_impl(
     _, db = await runtime.init_db(config_path)
     try:
         messages = await load_chat_messages(db, chat, days=days)
+        if not messages and not await chat_registered(db, chat):
+            cli_error(_NOT_REGISTERED_HINT.format(chat=chat))
         history = await load_chat_messages(db, chat, days=_VOCABULARY_DAYS)
     finally:
         await db.close()
@@ -320,6 +437,8 @@ async def add_impl(
                 f"{sorted(thread.personas)}, сценария {sorted(scenario_map)}."
             )
         messages = await load_chat_messages(db, scenario.chat_channel_id, days=days)
+        if not messages and not await chat_registered(db, scenario.chat_channel_id):
+            cli_error(_NOT_REGISTERED_HINT.format(chat=scenario.chat_channel_id))
         stats = compute_chat_statistics(
             messages, chat_channel_id=scenario.chat_channel_id, window_days=days
         )
@@ -566,10 +685,17 @@ def stats_command(
         ..., metavar="chat-id", help="Chat id: bare (1234567890) or Telegram-marked (-1001234567890)"
     ),
     days: int = typer.Option(14, "--days", min=1, help="Window over collected messages"),
+    live: bool = typer.Option(
+        False, "--live", help="Read the last messages straight from Telegram (chat need not be registered)"
+    ),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone for --live (default: primary account)"),
+    limit: int = typer.Option(
+        DEFAULT_LIVE_LIMIT, "--limit", min=1, help="Max messages for --live (flood-safe bound)"
+    ),
 ) -> None:
     """Learn the real-chat statistics profile (JSON; timing/quiet-hours bounds + validation base)."""
     apply_startup(ctx)
-    run_async(stats_impl(ctx.obj.config, chat=chat, days=days))
+    run_async(stats_impl(ctx.obj.config, chat=chat, days=days, live=live, phone=phone, limit=limit))
 
 
 @seeding_app.command("samples")
@@ -591,6 +717,13 @@ def samples_command(
     output_format: SamplesFormat = typer.Option(
         SamplesFormat.text, "--format", case_sensitive=False, help="text (readable) or json"
     ),
+    live: bool = typer.Option(
+        False, "--live", help="Read the last messages straight from Telegram (chat need not be registered)"
+    ),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone for --live (default: primary account)"),
+    limit: int = typer.Option(
+        DEFAULT_LIVE_LIMIT, "--limit", min=1, help="Max messages for --live (flood-safe bound)"
+    ),
 ) -> None:
     """Real chat speech for the composer: recent conversation windows verbatim + top-sender voices."""
     apply_startup(ctx)
@@ -607,6 +740,9 @@ def samples_command(
             min_messages=min_messages,
             min_speakers=min_speakers,
             output_format=output_format,
+            live=live,
+            phone=phone,
+            limit=limit,
         )
     )
 
