@@ -719,6 +719,19 @@ class DialogsMixin:
             # A missing peer after a completed warm is not fixed by fetching
             # every dialog again for each channel in a bulk read.
             if reuse_warm_cache and self.is_dialogs_fetched(phone):
+                # A complete sweep ran inside the TTL, so re-warming would
+                # find nothing new — except a peer the account JOINED after
+                # it (#1772). One bounded server-side fetch by bare id
+                # answers exactly that, without a GetDialogs sweep; a miss
+                # is now server-verified instead of assumed from the warm
+                # flag. Test doubles may not carry the fetcher — the old
+                # immediate raise stays their contract.
+                fetcher = getattr(session, "fetch_peer_by_id", None)
+                fetched = await fetcher(peer) if fetcher is not None else None
+                if fetched is not None:
+                    # The fetch persisted the entity into the session store,
+                    # so the retry resolves like a post-warm retry.
+                    return await _resolve(f"{operation}_after_fetch")
                 raise
             if reuse_warm_cache:
                 cursors = getattr(self, "_metadata_warm_cursors", None)

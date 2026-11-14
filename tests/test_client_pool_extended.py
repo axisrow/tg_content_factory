@@ -534,6 +534,86 @@ async def test_resolve_entity_with_warm_uses_input_entity_resolver(mock_db, mock
 
 
 @pytest.mark.anyio
+async def test_guarded_numeric_miss_resolves_via_bounded_probe(mock_db, mock_auth):
+    """#1772: a peer joined after the last warm resolves through one bounded
+    server-side fetch — no GetDialogs sweep, no TTL wait."""
+    from telethon.tl.types import PeerChannel
+
+    entity = _make_group_entity(999, "joined after warm")
+    session = MagicMock()
+    session.resolve_entity = AsyncMock(side_effect=[ValueError("cold"), entity])
+    session.fetch_peer_by_id = AsyncMock(return_value=entity)
+    session.warm_dialog_cache = AsyncMock()
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool._dialogs_fetched = {"+7001"}  # fresh warm flag: the guard fires
+
+    with patch(
+        "tg_agent.telegram.pool_dialogs.adapt_transport_session",
+        side_effect=lambda candidate, **_kwargs: candidate,
+    ):
+        result = await pool.resolve_entity_with_warm(
+            session, "+7001", PeerChannel(999), reuse_warm_cache=True
+        )
+
+    assert result is entity
+    session.fetch_peer_by_id.assert_awaited_once_with(PeerChannel(999))
+    session.resolve_entity.assert_awaited()  # retry after the fetch
+    session.warm_dialog_cache.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_guarded_numeric_miss_stays_a_miss_after_verified_probe(mock_db, mock_auth):
+    """#1772: a probe miss is server-verified — the old immediate raise, no sweep."""
+    from telethon.tl.types import PeerChannel
+
+    session = MagicMock()
+    session.resolve_entity = AsyncMock(side_effect=ValueError("cold"))
+    session.fetch_peer_by_id = AsyncMock(return_value=None)
+    session.warm_dialog_cache = AsyncMock()
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool._dialogs_fetched = {"+7001"}
+
+    with patch(
+        "tg_agent.telegram.pool_dialogs.adapt_transport_session",
+        side_effect=lambda candidate, **_kwargs: candidate,
+    ):
+        with pytest.raises(ValueError):
+            await pool.resolve_entity_with_warm(
+                session, "+7001", PeerChannel(999), reuse_warm_cache=True
+            )
+
+    session.fetch_peer_by_id.assert_awaited_once()
+    session.resolve_entity.assert_awaited_once()
+    session.warm_dialog_cache.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_guarded_miss_without_fetcher_keeps_immediate_raise(mock_db, mock_auth):
+    """Test doubles without the fetcher keep the pre-#1772 contract."""
+    from types import SimpleNamespace
+
+    from telethon.tl.types import PeerChannel
+
+    session = SimpleNamespace(resolve_entity=AsyncMock(side_effect=ValueError("cold")))
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool._dialogs_fetched = {"+7001"}
+
+    with patch(
+        "tg_agent.telegram.pool_dialogs.adapt_transport_session",
+        side_effect=lambda candidate, **_kwargs: candidate,
+    ):
+        with pytest.raises(ValueError):
+            await pool.resolve_entity_with_warm(
+                session, "+7001", PeerChannel(999), reuse_warm_cache=True
+            )
+
+    session.resolve_entity.assert_awaited_once()
+
+
+@pytest.mark.anyio
 async def test_await_transient_flood_sleeps_for_short_flood(mock_db, mock_auth):
     """A transient (<=60s) flood is slept out before acquiring a pinned phone."""
     until = datetime.now(timezone.utc) + timedelta(seconds=20)

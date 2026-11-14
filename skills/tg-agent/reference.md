@@ -98,7 +98,11 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
   exits 1 and prints the remaining channel IDs. Local cooldowns are never classified as
   long Telegram waits. Progress is flushed immediately, including when redirected to a file.
   Cache warming resumes from the last dialog page after a short wait or a productive
-  timeout, and a completed warm is reused until its existing cache TTL expires.
+  timeout, and a completed warm is reused until its existing cache TTL expires. Within
+  that window a numeric-id miss is answered by one bounded server-side fetch by bare id
+  (`channels.getChannels`/`messages.getChats`/`users.getUsers`, access_hash=0) instead of
+  a full dialog sweep, so a channel the account joined after the last warm resolves
+  immediately; a miss that the server rejects stays a miss (#1772).
   A temporary gateway disconnect also pauses the current channel until reconnection;
   it does not mark the remaining channels as failed. If the gateway stays unreachable
   for about a minute, the run stops and prints the remaining channel IDs.
