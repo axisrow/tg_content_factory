@@ -148,6 +148,12 @@ class GatewayPool:
                 return
             except (NoActiveCollectionClientsError, PermissionError) as exc:
                 logger.warning("warm_all_dialogs: skipping %s: %s", phone, type(exc).__name__)
+            except Exception:
+                # A failed receipt (e.g. a cache-miss sweep dying on schema drift
+                # or a network error) must not abort the pass or crash the
+                # startup task: remaining phones still need their warm (#1821
+                # review). Mirrors the native path's wide per-phone catch.
+                logger.warning("warm_all_dialogs: failed for %s", phone, exc_info=True)
 
     async def authenticate(self, action, payload):
         if self.client is None:

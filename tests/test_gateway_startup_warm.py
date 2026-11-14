@@ -103,3 +103,35 @@ async def test_startup_warm_survives_all_accounts_flooded(db):
     await pool.warm_all_dialogs(skip_already_swept=True)
 
     assert submitted == []
+
+
+@pytest.mark.aiosqlite_serial
+async def test_startup_warm_isolates_one_failing_phone(db):
+    """A failed receipt on one phone must not abort the pass (#1821 review).
+
+    A cache-miss sweep on a never-swept account can die (schema drift,
+    network) and come back as a failed receipt; the remaining phones still
+    need their warm, and the startup task must stay alive.
+    """
+    rows = [_account_row("+100", primary=True), _account_row("+200")]
+    pool = GatewayPool(AppConfig(), db)
+    submitted: list = []
+
+    async def submit(request, operation):
+        if str(operation.account_id) == rows[0]["id"]:
+            raise ValueError("boom")
+        submitted.append(operation)
+
+    async def noop_initialize(**kwargs):
+        pool.clients = {row["phone"]: row for row in rows}
+
+    pool.initialize = noop_initialize
+    pool.client = SimpleNamespace(submit=submit, wait=AsyncMock(
+        return_value={"state": "succeeded", "result": {"dialogs": []}}))
+    await pool.outbox.initialize()
+
+    await pool.warm_all_dialogs(skip_already_swept=True)
+
+    assert [op.account_id for op in submitted] == [UUID(rows[1]["id"])], (
+        "the pass must continue past a failing phone and warm the rest"
+    )
