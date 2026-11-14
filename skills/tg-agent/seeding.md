@@ -14,6 +14,9 @@ worker-run send — gated on explicit owner consent (chat + content).
 ```bash
 tg-agent seeding samples --chat <chat-id> --days 14
 tg-agent seeding stats <chat-id> --days 14
+# chat never added to the DB? read it live, nothing is saved:
+tg-agent seeding samples --chat <chat-id> --live [--phone P] [--limit N]
+tg-agent seeding stats <chat-id> --live [--phone P] [--limit N]
 ```
 
 `samples` comes FIRST: the most recent conversation windows verbatim
@@ -24,6 +27,14 @@ following [seeding-voice.md](seeding-voice.md). `--format json` for
 parsing; `--windows/--window/--senders/--per-sender/--gap-minutes/
 --min-messages/--min-speakers` tune the selection. Few qualifying windows →
 widen `--days` or ask the owner to backfill (`channel collect <chat-id> --full`).
+
+An unregistered chat (no row in `channels`) is reported as such, not as
+"no windows matched". For a quick look add `--live`: it reads the last
+`--limit` (default 500) messages straight from Telegram through the same
+read-only path as `messages read --live`, writes nothing to the DB, and
+both commands note the live read and its coverage. `--days` does not apply
+to a live read. The persistent path the publisher rails need is still
+`channel add <chat-id>` + collect — `--live` never registers anything.
 
 `stats` is for timing and bounds only. It returns ONE JSON object — the real-chat profile computed from collected
 messages (deterministic, no LLM): `length` (percentiles + mean),
@@ -171,4 +182,7 @@ tg-agent seeding cancel <thread-id>
   (a thread of 5–12 messages per chat per session, not dozens).
 - Never run this workflow without an explicit owner request naming the
   target chat; publishing (separate workflow) always asks consent again.
-- The stats read is DB-only and safe; `validate` is file-only.
+- The stats read is DB-only and safe; `validate` is file-only. `--live`
+  variants of `samples`/`stats` are read-only Telegram reads (no sends, no
+  writes); `validate`/`add`/`schedule` stay DB-only — an unregistered chat
+  is reported as the real cause there, never masked as "quiet hours".

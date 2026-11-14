@@ -311,7 +311,8 @@ cannot be re-queued.
 ```
 seeding samples --chat <chat-id> [--days N] [--windows N] [--window N] [--senders N] [--per-sender N]
                 [--gap-minutes N] [--min-messages N] [--min-speakers N] [--format text|json]
-seeding stats <chat-id> [--days N]
+                [--live] [--phone P] [--limit N]
+seeding stats <chat-id> [--days N] [--live] [--phone P] [--limit N]
 seeding validate <scenario.json> --chat <chat-id> [--days N] [--start-at ISO]
 seeding thread-create --chat <chat-id> --personas personas.json [--ref REF]
 seeding add <scenario.json> --thread <thread-id> --start-at ISO [--days N]
@@ -341,7 +342,15 @@ machine-like pauses, no messages landing in `quiet_hours`). After
 members never wrote (vocabulary = all collected history, not `--days`;
 channel posts and the anonymous admin excluded) — a hint, exit code stays 0.
 Every seeding read accepts the chat id bare (as stored, `1997034059`) or
-Telegram-marked (`-1001997034059`).
+Telegram-marked (`-1001997034059`). By default both read collected messages
+from the DB; an unregistered chat is reported as such with two ways out —
+`--live` (read the last `--limit`, default 500, messages straight from
+Telegram via the same read-only path as `messages read --live`; nothing is
+saved; `samples`/`stats` note the live read and its coverage) or
+`channel add <chat-id>` + collect, which the publisher rails require.
+A registered chat with no qualifying windows keeps the widen/backfill hint;
+`validate`/`add`/`schedule` on an unregistered chat name the real cause
+instead of validating against an empty profile or rejecting on "quiet hours".
 
 `thread-create` stores the draft thread (status `draft`, persona map
 «name → account_phone» in `personas_json`); `add` records the scenario as

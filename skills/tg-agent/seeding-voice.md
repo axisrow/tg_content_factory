@@ -31,7 +31,10 @@ windows qualified. Thin data makes thin voices:
   the reference chat) — about 6% of the chat's history.
 
 The chat id is accepted in both forms: bare (`1997034059`) or Telegram-marked
-(`-1001997034059`).
+(`-1001997034059`). A chat with no row in the DB at all is reported as
+"not registered" — for a first look read it live without registering:
+`seeding samples --chat <chat-id> --live` (nothing is saved; to compose and
+publish for real the owner still adds the chat and collects history).
 
 ## 2. Read the real speech
 

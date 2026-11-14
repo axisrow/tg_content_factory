@@ -257,7 +257,15 @@ def test_samples_json_output(cli_db, capsys):
     ]
 
 
-def test_samples_empty_chat_is_not_an_error(cli_db, capsys):
+def test_samples_registered_empty_chat_keeps_windows_hint(cli_db, capsys):
+    """Чат зарегистрирован, но сообщений нет — прежняя подсказка (widen/backfill)."""
+    _reopen(cli_db)
+    asyncio.run(
+        cli_db.repos.channels.add_channel(
+            Channel(channel_id=BARE_CHAT_ID, title="Пустой чат", channel_type="supergroup")
+        )
+    )
+
     samples, out = _run_impl(
         lambda: seeding_cli.samples_impl("cfg", chat=MARKED_CHAT_ID, days=1), cli_db, capsys
     )
@@ -849,3 +857,278 @@ def test_status_impl_unknown_thread(cli_db, capsys):
     with pytest.raises(typer.Exit):
         _run_impl(lambda: seeding_cli.status_impl("cfg", thread_id=999), cli_db, capsys)
     assert "не найден" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- #
+# Незарегистрированный чат + --live (#1800)
+# --------------------------------------------------------------------------- #
+
+
+def test_samples_unregistered_chat_names_real_cause(cli_db, capsys):
+    """Пустой профиль незарегистрированного чата ≠ «no windows»: называем причину (#1800)."""
+
+    with pytest.raises(typer.Exit):
+        _run_impl(
+            lambda: seeding_cli.samples_impl("cfg", chat=MARKED_CHAT_ID, days=1), cli_db, capsys
+        )
+    err = capsys.readouterr().err
+    assert "не зарегистрирован" in err
+    assert "--live" in err and "channel add" in err
+
+
+def test_stats_unregistered_chat_names_real_cause(cli_db, capsys):
+    """Нулевой JSON-профиль с exit 0 молчал о причине (#1800)."""
+
+    with pytest.raises(typer.Exit):
+        _run_impl(lambda: seeding_cli.stats_impl("cfg", chat=BARE_CHAT_ID, days=14), cli_db, capsys)
+    err = capsys.readouterr().err
+    assert "не зарегистрирован" in err and "--live" in err
+
+
+def test_validate_unregistered_chat_names_real_cause(cli_db, capsys, tmp_path):
+    _seed_chat(cli_db)  # другой чат зарегистрирован — валидируемый нет
+    path = _scenario_file(tmp_path, chat_id=777000)
+
+    with pytest.raises(typer.Exit):
+        _run_impl(
+            lambda: seeding_cli.validate_impl("cfg", scenario_path=path, chat=777000, days=14, start_at=None),
+            cli_db,
+            capsys,
+        )
+    assert "не зарегистрирован" in capsys.readouterr().err
+
+
+def test_add_unregistered_chat_names_real_cause(cli_db, capsys, tmp_path):
+    thread_id = _make_thread(cli_db, chat_id=777000)
+    base = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
+    path = _scenario_file(tmp_path, chat_id=777000)
+
+    with pytest.raises(typer.Exit):
+        _run_impl(
+            lambda: seeding_cli.add_impl(
+                "cfg", scenario_path=path, thread_id=thread_id, days=14, start_at=_start_at(base)
+            ),
+            cli_db,
+            capsys,
+        )
+    assert "не зарегистрирован" in capsys.readouterr().err
+
+
+def test_schedule_rails_unregistered_chat_rejects_without_quiet_hours(cli_db, capsys, tmp_path):
+    """Пустой профиль незарегистрированного чата делал все часы тихими (#1800)."""
+    thread_id = _make_thread(cli_db, chat_id=777000)
+    _reopen(cli_db)
+    start = _future_start()
+    asyncio.run(
+        cli_db.repos.seeding.create_messages(
+            thread_id,
+            [
+                SeedingMessage(
+                    thread_id=thread_id, position=1, account_phone="+79990000001",
+                    persona_name="Аня", text="первая реплика", planned_at=start,
+                ),
+            ],
+        )
+    )
+    asyncio.run(cli_db.repos.seeding.approve_thread(thread_id))
+
+    with pytest.raises(typer.Exit):
+        _run_impl(
+            lambda: seeding_cli.schedule_impl("cfg", thread_id=thread_id, days=14), cli_db, capsys
+        )
+    err = capsys.readouterr().err
+    assert "не зарегистрирован" in err
+    assert "тихие часы" not in err
+
+
+def _gateway_rows() -> list[dict]:
+    """Строки шлюза = Message.model_dump (как сериализует _read_message_page)."""
+    base = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(hours=1)
+    return [
+        Message(
+            channel_id=BARE_CHAT_ID,
+            message_id=i + 1,
+            date=base + timedelta(seconds=i * 60),
+            text=f"живое сообщение {i + 1}",
+            sender_id=200 + (i % 3),
+            sender_name=("Аня", "Боря", "Вика")[i % 3],
+            sender_kind="user",
+            message_kind="regular",
+        ).model_dump(mode="json")
+        for i in range(7)
+    ]
+
+
+def _fake_gateway_pool(rows):
+    """GatewayPool без __init__ (isinstance-проверка в загрузчике) со стабом read_messages.
+
+    Возвращает ``(pool, calls)`` — вызовы read_messages/disconnect для asserting.
+    """
+    from tg_agent.gateway.pool import GatewayPool
+
+    pool = object.__new__(GatewayPool)
+    pool.clients = {"+79990000001": {"phone": "+79990000001", "active": True}}
+    calls: list[dict] = []
+
+    async def fake_read_messages(peer, *, phone=None, limit=50, **kwargs):
+        calls.append({"peer": peer, "phone": phone, "limit": limit})
+        return {"messages": rows[:limit], "reaction_users": {}, "forward_ids": [], "urls": {}}
+
+    async def fake_disconnect_all():
+        calls.append({"disconnected": True})
+
+    pool.read_messages = fake_read_messages
+    pool.disconnect_all = fake_disconnect_all
+    return pool, calls
+
+
+class _FakeNativePool:
+    """Нешлюзовой пул: нативный клиент с iter_messages (реальный маппер telethon→Message)."""
+
+    def __init__(self, raw_msgs):
+        self.clients = {"+79990000001": {"phone": "+79990000001", "active": True}}
+        self._raw_msgs = raw_msgs
+        self.resolved_target = None
+
+    async def get_native_client_by_phone(self, phone):
+        return self, phone
+
+    async def resolve_entity_with_warm(self, client, phone, target, *, operation):
+        self.resolved_target = target
+        return "entity"
+
+    async def disconnect_all(self):
+        pass
+
+    def iter_messages(self, entity, *, limit):
+        async def _gen():
+            for msg in self._raw_msgs[:limit]:
+                yield msg
+
+        return _gen()
+
+
+def _patch_live_pools(monkeypatch, db, pool):
+    config = AppConfig()
+
+    async def fake_init_db(_):
+        return config, db
+
+    async def fake_init_pool(_config, _db):
+        return None, pool
+
+    monkeypatch.setattr(seeding_cli.runtime, "init_db", fake_init_db)
+    monkeypatch.setattr(seeding_cli.runtime, "init_pool", fake_init_pool)
+
+
+def test_samples_live_via_gateway_pool(cli_db, capsys, monkeypatch):
+    """--live читает чат через шлюз, строит окна и ничего не пишет в БД (#1800)."""
+    pool, calls = _fake_gateway_pool(_gateway_rows())
+    _patch_live_pools(monkeypatch, cli_db, pool)
+
+    samples = seeding_cli.run_async(
+        seeding_cli.samples_impl("cfg", chat=MARKED_CHAT_ID, days=1, live=True, min_messages=4, min_speakers=3)
+    )
+    captured = capsys.readouterr()
+
+    assert samples.chat_channel_id == MARKED_CHAT_ID
+    assert samples.message_count == 7
+    assert samples.windows, "живые сообщения должны дать окно разговора"
+    assert "живое сообщение 1" in captured.out
+    assert "Live read: 7 message(s)" in captured.err
+    assert calls[0]["peer"] == MARKED_CHAT_ID
+    assert calls[-1] == {"disconnected": True}
+    # Ничего не записано: таблица messages пуста (чат и не зарегистрирован).
+    _reopen(cli_db)
+
+    async def _count() -> int:
+        cur = await cli_db.db.execute("SELECT COUNT(*) AS n FROM messages")
+        return (await cur.fetchone())["n"]
+
+    assert asyncio.run(_count()) == 0
+
+
+def test_stats_live_via_gateway_pool(cli_db, capsys, monkeypatch):
+    pool, calls = _fake_gateway_pool(_gateway_rows())
+    _patch_live_pools(monkeypatch, cli_db, pool)
+
+    stats = seeding_cli.run_async(
+        seeding_cli.stats_impl("cfg", chat=BARE_CHAT_ID, days=14, live=True, limit=5)
+    )
+    captured = capsys.readouterr()
+
+    assert stats.message_count == 5  # --limit ограничивает чтение
+    assert "Live read: 5 message(s)" in captured.err
+    assert calls[0]["limit"] == 5
+
+
+def test_samples_live_via_native_client(cli_db, capsys, monkeypatch):
+    """Нативный путь: iter_messages → build_message_from_telethon, id в голой форме."""
+    from types import SimpleNamespace
+
+    base = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(hours=1)
+    raw_msgs = [
+        SimpleNamespace(
+            id=i + 1,
+            date=base + timedelta(seconds=i * 60),
+            message=f"нативное сообщение {i + 1}",
+            sender_id=300 + (i % 3),
+            sender=None,
+            media=None,
+            reactions=None,
+            entities=None,
+            action=None,
+            fwd_from=None,
+            reply_to=None,
+            post=False,
+            from_id=None,
+            peer_id=None,
+            views=None,
+            forwards=None,
+            replies=None,
+        )
+        for i in range(7)
+    ]
+    pool = _FakeNativePool(raw_msgs)
+    _patch_live_pools(monkeypatch, cli_db, pool)
+
+    samples = seeding_cli.run_async(
+        seeding_cli.samples_impl("cfg", chat=MARKED_CHAT_ID, days=1, live=True, min_messages=4, min_speakers=3)
+    )
+    out = capsys.readouterr().out
+
+    assert pool.resolved_target == MARKED_CHAT_ID
+    assert samples.message_count == 7
+    assert "нативное сообщение 1" in out
+
+
+def test_samples_live_no_connected_accounts(cli_db, capsys, monkeypatch):
+    pool, _ = _fake_gateway_pool([])
+    pool.clients = {}
+    _patch_live_pools(monkeypatch, cli_db, pool)
+
+    with pytest.raises(typer.Exit):
+        seeding_cli.run_async(seeding_cli.samples_impl("cfg", chat=MARKED_CHAT_ID, days=1, live=True))
+    assert "No connected accounts" in capsys.readouterr().err
+
+
+def test_samples_live_native_error_reported_cleanly(cli_db, capsys, monkeypatch):
+    """telethon-ошибка (TypeNotFoundError и т.п.) — чистый CLI-error, не трейсбек (#1486-зеркало)."""
+    from types import SimpleNamespace
+
+    raw = SimpleNamespace(id=1, date=datetime.now(timezone.utc), message="x", sender_id=1, sender=None)
+    pool = _FakeNativePool([raw])
+
+    async def broken_iter(entity, *, limit):
+        raise RuntimeError("TypeNotFoundError: boom")
+        yield None  # pragma: no cover
+
+    pool.iter_messages = broken_iter
+    _patch_live_pools(monkeypatch, cli_db, pool)
+
+    with pytest.raises(typer.Exit):
+        seeding_cli.run_async(
+            seeding_cli.samples_impl("cfg", chat=MARKED_CHAT_ID, days=1, live=True)
+        )
+    err = capsys.readouterr().err
+    assert "Error reading chat" in err and "TypeNotFoundError" in err

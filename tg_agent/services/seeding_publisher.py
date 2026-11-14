@@ -35,6 +35,7 @@ from tg_agent.services.seeding_composer import (
     CROSS_PERSONA_MIN_GAP_SECONDS,
     LINK_RE,
     ChatStatistics,
+    chat_registered,
     compute_chat_statistics,
     load_chat_messages,
 )
@@ -168,6 +169,17 @@ async def validate_schedule_rails(
                 )
 
     # 4. Тихие часы — выученный профиль чата, тот же расчёт, что в композере.
+    # У незарегистрированного чата профиль всегда пуст (INNER JOIN, #1800):
+    # тихими стали бы все 24 часа, и рельса отклонила бы с ложной причиной —
+    # называем настоящую причину и тихие часы не считаем.
+    if not await chat_registered(db, thread.chat_channel_id):
+        violations.append(
+            f"чат {thread.chat_channel_id} не зарегистрирован в channels — рельсы "
+            "тихих часов требуют собранную историю: tg-agent channel add "
+            f"{thread.chat_channel_id} и collect (быстрый взгляд: seeding samples "
+            "--live, но для расписания нужен сбор)"
+        )
+        return violations
     stats = await _learn_chat_stats(db, thread.chat_channel_id, days=days)
     for m in ordered:
         if m.planned_at is None:
