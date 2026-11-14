@@ -59,6 +59,7 @@ _GATE_OPERATION_CATEGORIES: dict[str, str] = {
     # Cheap one-shot meta reads: the broad default bucket IS the honest
     # budget; rows are explicit so they stay silent and one-line adjustable.
     "telegram_fetch_me": "default",
+    "telegram_fetch_peer_by_id": "default",
     "telegram_is_bot": "default",
     "telegram_is_user_authorized": "default",
     "telegram_get_peer_id": "default",
@@ -574,6 +575,68 @@ class TelegramTransportSession:
         if inspect.isawaitable(result):
             return await result
         return result
+
+    async def fetch_peer_by_id(self, peer: Any) -> Any:
+        """One bounded server-side fetch of a peer by its bare numeric id (#1772).
+
+        channels.getChannels / messages.getChats / users.getUsers with
+        access_hash=0: a single lightweight RPC — no GetDialogs sweep. Telethon
+        persists entities from every response into the session store, so a
+        resolve retried right after this finds the peer. Returns None (a
+        *verified* miss for this account) when: the peer is not numeric, the
+        client cannot serve raw requests, or Telegram answers
+        CHANNEL_INVALID / CHANNEL_PRIVATE — anything else (floods, transport
+        errors) propagates so the caller's flood machinery stays in charge.
+        """
+        try:
+            from telethon.errors import RPCError
+            from telethon.tl.functions.channels import GetChannelsRequest
+            from telethon.tl.functions.messages import GetChatsRequest
+            from telethon.tl.functions.users import GetUsersRequest
+            from telethon.tl.types import (
+                Channel,
+                Chat,
+                InputChannel,
+                InputUser,
+                PeerChannel,
+                PeerChat,
+                PeerUser,
+                User,
+            )
+        except ImportError:
+            # Telethon not available (e.g. test env with stub backend).
+            return None
+        numeric = (
+            getattr(peer, "channel_id", None)
+            or getattr(peer, "chat_id", None)
+            or getattr(peer, "user_id", None)
+        )
+        if not isinstance(numeric, int) or not callable(self._client):
+            return None
+        if isinstance(peer, PeerChannel):
+            request = GetChannelsRequest(id=[InputChannel(numeric, access_hash=0)])
+            response_field, wanted_type = "chats", Channel
+        elif isinstance(peer, PeerChat):
+            request = GetChatsRequest(id=[numeric])
+            response_field, wanted_type = "chats", Chat
+        elif isinstance(peer, PeerUser):
+            request = GetUsersRequest(id=[InputUser(numeric, access_hash=0)])
+            response_field, wanted_type = "users", User
+        else:
+            return None
+        try:
+            response = await self._run("telegram_fetch_peer_by_id", self._client(request))
+        except RPCError:
+            # CHANNEL_INVALID / CHANNEL_PRIVATE / …: the server answered that
+            # this account cannot see the peer. A verified miss, not a
+            # transport failure (#1772) — the caller keeps its miss semantics.
+            return None
+        for item in getattr(response, response_field, None) or []:
+            # ChannelForbidden entries fail the isinstance check and are
+            # skipped: access denied is not a resolution.
+            if isinstance(item, wanted_type) and getattr(item, "id", None) == numeric:
+                return item
+        return None
 
     async def warm_dialog_cache(self) -> Any:
         operation = "telegram_warm_dialog_cache"

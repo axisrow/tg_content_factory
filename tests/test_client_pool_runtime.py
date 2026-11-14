@@ -342,3 +342,96 @@ async def test_acquire_falls_back_to_backend_when_reconnect_fails(
     assert phone == "+70000000001"
     # The dead client was evicted from self.clients
     assert harness.pool.clients["+70000000001"].raw_client is fresh_client
+
+
+@pytest.mark.anyio
+async def test_fetch_peer_by_id_returns_channel_for_member_account():
+    """#1772: one bounded getChannels fetch by bare id returns the entity."""
+    from telethon.tl.functions.channels import GetChannelsRequest
+    from telethon.tl.types import Channel, PeerChannel
+    from telethon.tl.types import messages as tl_messages
+
+    seen = []
+
+    async def invoke(request):
+        seen.append(request)
+        return tl_messages.Chats(
+            chats=[Channel(id=999, title="joined", access_hash=5, photo=None, date=None)]
+        )
+
+    session = TelegramTransportSession(invoke, phone="+7001")
+    entity = await session.fetch_peer_by_id(PeerChannel(999))
+
+    assert entity is not None
+    assert entity.id == 999
+    assert isinstance(seen[0], GetChannelsRequest)
+    assert seen[0].id[0].channel_id == 999
+    assert seen[0].id[0].access_hash == 0
+
+
+@pytest.mark.anyio
+async def test_fetch_peer_by_id_dispatches_chat_and_user_peers():
+    from telethon.tl.functions.messages import GetChatsRequest
+    from telethon.tl.functions.users import GetUsersRequest
+    from telethon.tl.types import Chat, PeerChat, PeerUser, User
+    from telethon.tl.types import messages as tl_messages
+    from telethon.tl.types import users as tl_users
+
+    seen = []
+
+    async def invoke(request):
+        seen.append(request)
+        if isinstance(request, GetChatsRequest):
+            return tl_messages.Chats(
+                chats=[Chat(id=77, title="g", photo=None, date=None,
+                            participants_count=2, version=1)]
+            )
+        return tl_users.Users(users=[User(id=42, first_name="a", access_hash=1)])
+
+    session = TelegramTransportSession(invoke, phone="+7001")
+
+    chat = await session.fetch_peer_by_id(PeerChat(77))
+    user = await session.fetch_peer_by_id(PeerUser(42))
+
+    assert chat is not None and chat.id == 77
+    assert isinstance(seen[0], GetChatsRequest)
+    assert user is not None and user.id == 42
+    assert isinstance(seen[1], GetUsersRequest)
+
+
+@pytest.mark.anyio
+async def test_fetch_peer_by_id_verified_miss_on_rpc_error():
+    """CHANNEL_PRIVATE from the server is a verified miss, not an error."""
+    from telethon.errors.rpcerrorlist import ChannelPrivateError
+    from telethon.tl.types import PeerChannel
+
+    async def invoke(_request):
+        raise ChannelPrivateError(request=None)
+
+    session = TelegramTransportSession(invoke, phone="+7001")
+
+    assert await session.fetch_peer_by_id(PeerChannel(999)) is None
+
+
+@pytest.mark.anyio
+async def test_fetch_peer_by_id_skips_non_numeric_and_mute_clients():
+    from telethon.tl.types import PeerChannel
+
+    seen = []
+
+    async def invoke(request):
+        seen.append(request)
+        return None
+
+    session = TelegramTransportSession(invoke, phone="+7001")
+
+    # Username peers never resolve through this path: no RPC at all.
+    assert await session.fetch_peer_by_id("@name") is None
+    # A numeric peer whose response carries no match (None payload, e.g. only
+    # ChannelForbidden entries) is a verified miss — and DID reach the server.
+    assert await session.fetch_peer_by_id(PeerChannel(999)) is None
+    # A client that cannot serve raw requests keeps the miss, no RPC.
+    assert await TelegramTransportSession(object(), phone="+7001").fetch_peer_by_id(
+        PeerChannel(999)
+    ) is None
+    assert len(seen) == 1
