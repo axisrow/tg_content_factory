@@ -35,8 +35,12 @@ class GatewayUncertainError(TimeoutError):
 
 class GatewayOperationError(RuntimeError):
     def __init__(self, state, result):
-        self.code = (result or {}).get("error")
-        super().__init__(f"Gateway operation {state}: {self.code or state}")
+        result = result or {}
+        self.code = result.get("error")
+        site = result.get("site")
+        super().__init__(
+            f"Gateway operation {state}: {self.code or state}" + (f" ({site})" if site else "")
+        )
 
 
 class GatewayReadDeferredError(AllCollectionClientsFloodedError):
