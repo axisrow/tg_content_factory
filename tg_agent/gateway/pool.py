@@ -118,10 +118,36 @@ class GatewayPool:
             await self.client.close()
         self.clients.clear()
 
-    async def warm_all_dialogs(self, **kwargs):
+    async def warm_all_dialogs(self, *, skip_already_swept: bool = False) -> None:
+        """Warm the gateway's dialog cache without flooding the accounts (#1819).
+
+        ``skip_already_swept=True`` is the STARTUP call (bootstrap
+        ``warm_all_dialogs_startup``): a worker restart shares the gateway
+        process, whose dialog_cache persists, so ``refresh=False`` serves
+        warm from cache and sweeps only when the cache is genuinely stale
+        (get_dialogs_for_phone falls through to a budgeted sweep on a miss).
+        Forcing ``refresh=True`` here re-swept every account on every worker
+        restart — a restart storm multiplied full GetDialogs sweeps into
+        multi-hour flood-waits (#1819). The PERIODIC refresh job keeps
+        ``refresh=True``: that job exists to refresh a stale cache (#1043).
+
+        Phones with a stored future flood-wait are skipped and per-phone
+        failures never kill the pass, mirroring the native warm path.
+        """
         await self.initialize()
-        for phone in list(self.clients):
-            await self.get_dialogs_for_phone(phone, include_dm=True, refresh=True)
+        refresh = not skip_already_swept
+        for phone, row in list(self.clients.items()):
+            if row["flood_until"] > time.time():
+                logger.info("warm_all_dialogs: skip %s because active flood-wait is stored", phone)
+                continue
+            try:
+                await self.get_dialogs_for_phone(phone, include_dm=True, refresh=refresh)
+            except AllCollectionClientsFloodedError:
+                # Every usable account went flooded mid-pass; nothing more to warm.
+                logger.warning("warm_all_dialogs: all accounts flooded; stopping the warm pass")
+                return
+            except (NoActiveCollectionClientsError, PermissionError) as exc:
+                logger.warning("warm_all_dialogs: skipping %s: %s", phone, type(exc).__name__)
 
     async def authenticate(self, action, payload):
         if self.client is None:
