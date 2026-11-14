@@ -26,7 +26,10 @@ classifiers = [
 ]
 dependencies = [
     "telethon>=1.43.2",
-    "telethon-floodgate>=0.1.6,<0.2",
+    # Floor tracks the release that absorbed the last access-layer gate rows
+    # (0.1.8: telegram_fetch_me → resolve pass-through, telegram_invoke_request
+    # → history); on 0.1.7 the dropped rows degrade to warn-once + default.
+    "telethon-floodgate>=0.1.8,<0.2",
     "telethon-cli>=0.1.1",
     # Telethon's SOCKS/HTTP proxy path (TG_PROXY) needs python-socks with the
     # asyncio extra; without it Telethon silently ignores `proxy=` (warns only).
