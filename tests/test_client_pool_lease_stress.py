@@ -27,6 +27,9 @@ _LEASE_OWNERSHIP_ALLOWLIST = {
     # finally tears the client and lease state down before the process exits
     # (same shape as messages_read_impl).
     "tg_agent/cli/commands/channel.py:probe_impl",
+    # seeding --live (#1800): one-shot read-only peek; `pool.disconnect_all()`
+    # in its finally owns the release (same shape as messages_read_impl).
+    "tg_agent/cli/commands/seeding.py:_fetch_live_chat_messages",
 }
 
 

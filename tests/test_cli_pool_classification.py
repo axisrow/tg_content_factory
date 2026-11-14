@@ -74,6 +74,10 @@ REFUSED_WHILE_DAEMON = {
     # the DB yet — the worker queue has no equivalent (it only touches
     # collected channels).
     ("commands/channel.py", "probe_impl"),
+    # seeding --live (#1800): read-only last-messages peek for a chat that may
+    # not be in the DB — same shape as messages_read_impl (refuse next to the
+    # daemon, no queue equivalent).
+    ("commands/seeding.py", "_fetch_live_chat_messages"),
 }
 
 # Intentionally untouched: frozen long-lived legacy surfaces with their own
