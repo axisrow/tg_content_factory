@@ -78,10 +78,13 @@ def _has_deliberate_category(tag: str) -> bool:
 async def test_fetch_me_reservation_is_deliberate_and_silent(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The #1784 symptom end-to-end: no unknown-op warning, real limiting.
+    """The #1784 symptom end-to-end: no unknown-op warning, deliberate pricing.
 
-    The reservation must consume a real ``default``-category slot — a
-    deliberate row must not degrade into bypassing the gate.
+    Since floodgate 0.1.8 absorbed the row, ``fetch_me`` prices at the
+    ``resolve`` pass-through family (``try_acquire`` short-circuits it — the
+    family owns no bucket). The guard inverts accordingly: the call must not
+    warn and must not silently consume a ``default`` slot — a ``default``
+    usage here would mean the pricing degraded back to the fallback.
     """
     gate = TelegramRateLimitGate()
     phone = "+15551230000"
@@ -105,7 +108,7 @@ async def test_fetch_me_reservation_is_deliberate_and_silent(
         if "not registered in _OPERATION_CATEGORIES" in record.getMessage()
     ]
     assert not warnings
-    assert gate.snapshot(phone)["categories"]["default"]["used"] == 1
+    assert gate.snapshot(phone)["categories"]["default"]["used"] == 0
 
 
 def test_every_access_layer_operation_tag_has_deliberate_category() -> None:
