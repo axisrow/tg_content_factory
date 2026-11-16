@@ -39,7 +39,11 @@ class ConnectedTarget:
 
     @asynccontextmanager
     async def use_client(self):
-        yield self.session.raw_client, self.account
+        # Yield the guarded transport session, not raw_client (#1825): every
+        # notification/BotFather call then rides the pool's shared gate,
+        # process ceiling, flood breaker and flood reporting exactly like
+        # adapter-bound callers, regardless of who holds the client.
+        yield self.session, self.account
 
 
 async def execute_notification(access, project, operation):
