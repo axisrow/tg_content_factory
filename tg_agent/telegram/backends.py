@@ -11,7 +11,23 @@ from typing import Any
 
 from telethon import TelegramClient
 from telethon.errors import AuthKeyDuplicatedError
-from telethon.tl.functions.messages import GetDialogsRequest, GetHistoryRequest
+from telethon.tl.functions.channels import (
+    GetAdminLogRequest,
+    GetParticipantsRequest,
+)
+from telethon.tl.functions.channels import (
+    GetMessagesRequest as GetChannelMessagesRequest,
+)
+from telethon.tl.functions.messages import (
+    GetDialogsRequest,
+    GetHistoryRequest,
+    GetMessagesRequest,
+    GetRepliesRequest,
+    GetScheduledHistoryRequest,
+    SearchGlobalRequest,
+    SearchRequest,
+)
+from telethon.tl.functions.photos import GetUserPhotosRequest
 from telethon_cli import runtime as telethon_cli_runtime
 from telethon_cli.errors import CLIError
 from telethon_floodgate import (
@@ -94,19 +110,55 @@ _GATE_OPERATION_CATEGORIES: dict[str, str] = {
     "telegram_stream_admin_log": "default",
 }
 
+# Physical page-request types Telethon 1.45 dispatches through
+# ``iterator.client`` on every pagination step of its message iterators
+# (_IterMessages / _IDsIter): ordinary history, in-chat search, global
+# search, topic replies, the scheduled-history one-shot and the ID-chunk
+# variants (chat-scoped and channel-scoped).  One bound proxy classifies
+# pages by the actual request instead of binding a single RPC (#1827).
+_MESSAGE_PAGE_REQUESTS: tuple[type, ...] = (
+    GetHistoryRequest,
+    SearchRequest,
+    SearchGlobalRequest,
+    GetRepliesRequest,
+    GetScheduledHistoryRequest,
+    GetMessagesRequest,
+    GetChannelMessagesRequest,
+)
 
-class _DialogRequestGateClient:
+# Iterator methods whose pages Telethon dispatches through the
+# ``RequestIter.client`` attribute; a proxy exposes these so Telethon's
+# ``get_*`` conveniences (``iter_*(...).collect()``) receive the same
+# per-page gate as the explicit stream paths (#1827).
+_PROXY_BOUND_ITERATORS = frozenset(
+    {"iter_dialogs", "iter_participants", "iter_profile_photos", "iter_admin_log"}
+)
+
+
+def _is_native_telethon_method(client: Any, name: str, native: Any) -> bool:
+    """True when ``client.<name>`` is still the unoverridden Telethon method."""
+    return isinstance(client, TelegramClient) and getattr(getattr(client, name), "__func__", None) is native
+
+
+class _PageGateClient:
     """Proxy a Telethon client so paginated requests pass transport gating.
 
-    ``TelegramClient.iter_dialogs``/``iter_messages`` return a ``RequestIter``
-    whose ``client`` attribute is used for every page request.  Gating only
-    the surrounding iterator therefore reserves one slot but leaves later
-    page RPCs unprotected.  The enclosing ``_run``/``_stream`` reserves the
-    logical-operation slot, while every page request is dispatched through
-    ``_run`` too: dialogs pages draw their own bounded page budget
-    (``page_category``), history pages charge only the process-wide ceiling
-    (``page_category=None`` -> ``gate_reserved=True``), keeping the #1418
-    per-account history calibration on logical streams.
+    Telethon's ``RequestIter`` objects dispatch every page request through
+    their ``client`` attribute.  Gating only the surrounding iterator
+    therefore reserves one slot but leaves later page RPCs unprotected.
+    The enclosing ``_run``/``_stream`` reserves the logical-operation slot,
+    while every page request is dispatched through ``_run`` too: dialogs
+    pages draw their own bounded page budget (``page_category``), all other
+    supported read families (history, search, topic replies, scheduled/ID
+    variants, participants, profile photos, admin logs) charge only the
+    process-wide ceiling (``page_category=None`` -> ``gate_reserved=True``),
+    keeping the #1418 per-account history calibration on logical streams
+    and not inventing per-account quotas for uncalibrated RPC families
+    (#1827).
+
+    The proxy also exposes Telethon's paginated ``iter_*`` methods, so the
+    ``get_*`` conveniences (which run ``iter_*(...).collect()``) receive the
+    same per-page gate when driven through a proxy instance.
     """
 
     def __init__(
@@ -115,23 +167,35 @@ class _DialogRequestGateClient:
         client: Any,
         operation: str,
         *,
-        request_type: Any,
+        request_types: tuple[type, ...],
         page_category: str | None,
     ) -> None:
         self._session = session
         self._client = client
         self._operation = operation
-        self._request_type = request_type
+        self._request_types = request_types
         self._page_category = page_category
 
     def __getattr__(self, name: str) -> Any:
+        if name in _PROXY_BOUND_ITERATORS:
+            def bound_iter(*args: Any, **kwargs: Any) -> Any:
+                iterator = getattr(self._client, name)(*args, **kwargs)
+                return _bind_page_request_gate(
+                    iterator,
+                    self._session,
+                    self._operation,
+                    request_types=self._request_types,
+                    page_category=self._page_category,
+                )
+
+            return bound_iter
         return getattr(self._client, name)
 
     def __call__(self, request: Any) -> Any:
         # Telethon keeps this client on emitted Dialog/Draft/Message objects.
         # Those objects may later use the client for unrelated requests; only
         # the iterator's own page requests belong to the page budget.
-        if not isinstance(request, self._request_type):
+        if not isinstance(request, self._request_types):
             return self._client(request)
         awaitable = self._client(request)
         # Pages outsource ALL breaker accounting to the enclosing stream
@@ -162,24 +226,13 @@ class _DialogRequestGateClient:
             check_flood_breaker=False,
         )
 
-    def iter_dialogs(self, *args: Any, **kwargs: Any) -> Any:
-        iterator = self._client.iter_dialogs(*args, **kwargs)
-        _bind_page_request_gate(
-            iterator,
-            self._session,
-            self._operation,
-            request_type=GetDialogsRequest,
-            page_category="dialogs_page",
-        )
-        return iterator
-
 
 def _bind_page_request_gate(
     iterator: Any,
     session: TelegramTransportSession,
     operation: str,
     *,
-    request_type: Any,
+    request_types: tuple[type, ...],
     page_category: str | None,
 ) -> Any:
     """Bind a page-request proxy to a Telethon ``RequestIter`` when possible."""
@@ -195,11 +248,11 @@ def _bind_page_request_gate(
     if client is not session._client:
         return iterator
     try:
-        iterator.client = _DialogRequestGateClient(
+        iterator.client = _PageGateClient(
             session,
             client,
             operation,
-            request_type=request_type,
+            request_types=request_types,
             page_category=page_category,
         )
     except (AttributeError, TypeError):
@@ -642,20 +695,20 @@ class TelegramTransportSession:
     async def warm_dialog_cache(self) -> Any:
         operation = "telegram_warm_dialog_cache"
         get_dialogs = self._client.get_dialogs
-        is_native_get_dialogs = (
-            isinstance(self._client, TelegramClient)
-            and getattr(get_dialogs, "__func__", None) is TelegramClient.get_dialogs
-        )
-        if is_native_get_dialogs and self._pool is not None and self._phone is not None:
+        if (
+            _is_native_telethon_method(self._client, "get_dialogs", TelegramClient.get_dialogs)
+            and self._pool is not None
+            and self._phone is not None
+        ):
             # ``get_dialogs`` is implemented as ``iter_dialogs().collect()``.
             # Call the Telethon implementation with a proxy so every
             # paginated GetDialogsRequest, not just the logical operation, is
             # subject to the same per-phone gate.
-            proxy = _DialogRequestGateClient(
+            proxy = _PageGateClient(
                 self,
                 self._client,
                 operation,
-                request_type=GetDialogsRequest,
+                request_types=(GetDialogsRequest,),
                 page_category="dialogs_page",
             )
             awaitable = TelegramClient.get_dialogs(proxy)
@@ -680,7 +733,7 @@ class TelegramTransportSession:
             iterator,
             self,
             operation,
-            request_type=GetDialogsRequest,
+            request_types=(GetDialogsRequest,),
             page_category="dialogs_page",
         )
         return self._stream(operation, iterator)
@@ -691,15 +744,18 @@ class TelegramTransportSession:
     def stream_messages(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
         operation = "telegram_stream_messages"
         iterator = self._client.iter_messages(entity, **kwargs)
-        # History pages are ceiling-only (gate_reserved=True inside the
+        # Message pages are ceiling-only (gate_reserved=True inside the
         # proxy): the #1418 history calibration (24/30s) prices LOGICAL
         # streams, so per-account gating stays on the enclosing operation
-        # while every raw GetHistory RPC draws a process-wide ceiling slot.
+        # while every physical page RPC — history, in-chat/global search,
+        # topic replies, scheduled/ID variants — draws a process-wide
+        # ceiling slot instead of bypassing it (#1827).  No per-account
+        # quota is invented for uncalibrated page families.
         _bind_page_request_gate(
             iterator,
             self,
             operation,
-            request_type=GetHistoryRequest,
+            request_types=_MESSAGE_PAGE_REQUESTS,
             page_category=None,
         )
         return _GatedMessageIterator(self._stream(operation, iterator), self._client)
@@ -873,16 +929,59 @@ class TelegramTransportSession:
             kwargs["limit"] = limit
         if search:
             kwargs["search"] = search
-        return await self._run(
+        awaitable = self._collect_with_page_gate(
+            "get_participants",
+            TelegramClient.get_participants,
             "telegram_get_participants",
-            self._client.get_participants(entity, **kwargs),
+            (GetParticipantsRequest,),
+            entity,
+            **kwargs,
         )
+        return await self._run("telegram_get_participants", awaitable)
+
+    def _collect_with_page_gate(
+        self,
+        client_method_name: str,
+        native: Any,
+        operation: str,
+        request_types: tuple[type, ...],
+        entity: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Drive a native Telethon ``get_*`` collect through a page-gate proxy.
+
+        ``get_*`` conveniences run ``iter_*(...).collect()``: without the
+        proxy the pages inside a collect bypass every gate except the outer
+        logical admission (#1827).  A non-native or unbound client keeps the
+        plain call path.
+        """
+        client_method = getattr(self._client, client_method_name)
+        if (
+            _is_native_telethon_method(self._client, client_method_name, native)
+            and self._pool is not None
+            and self._phone is not None
+        ):
+            proxy = _PageGateClient(
+                self,
+                self._client,
+                operation,
+                request_types=request_types,
+                page_category=None,
+            )
+            return native(proxy, entity, **kwargs)
+        return client_method(entity, **kwargs)
 
     def stream_participants(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
-        return self._stream(
-            "telegram_stream_participants",
-            self._client.iter_participants(entity, **kwargs),
+        operation = "telegram_stream_participants"
+        iterator = self._client.iter_participants(entity, **kwargs)
+        _bind_page_request_gate(
+            iterator,
+            self,
+            operation,
+            request_types=(GetParticipantsRequest,),
+            page_category=None,
         )
+        return self._stream(operation, iterator)
 
     def iter_participants(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
         return self.stream_participants(entity, **kwargs)
@@ -977,28 +1076,50 @@ class TelegramTransportSession:
     # --- chats ---
 
     def stream_admin_log(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
-        return self._stream(
-            "telegram_stream_admin_log",
-            self._client.iter_admin_log(entity, **kwargs),
+        operation = "telegram_stream_admin_log"
+        iterator = self._client.iter_admin_log(entity, **kwargs)
+        _bind_page_request_gate(
+            iterator,
+            self,
+            operation,
+            request_types=(GetAdminLogRequest,),
+            page_category=None,
         )
+        return self._stream(operation, iterator)
 
     async def get_admin_log(self, entity: Any, **kwargs: Any) -> Any:
-        return await self._run(
+        awaitable = self._collect_with_page_gate(
+            "get_admin_log",
+            TelegramClient.get_admin_log,
             "telegram_get_admin_log",
-            self._client.get_admin_log(entity, **kwargs),
+            (GetAdminLogRequest,),
+            entity,
+            **kwargs,
         )
+        return await self._run("telegram_get_admin_log", awaitable)
 
     def stream_profile_photos(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
-        return self._stream(
-            "telegram_stream_profile_photos",
-            self._client.iter_profile_photos(entity, **kwargs),
+        operation = "telegram_stream_profile_photos"
+        iterator = self._client.iter_profile_photos(entity, **kwargs)
+        _bind_page_request_gate(
+            iterator,
+            self,
+            operation,
+            request_types=(GetUserPhotosRequest,),
+            page_category=None,
         )
+        return self._stream(operation, iterator)
 
     async def get_profile_photos(self, entity: Any, **kwargs: Any) -> Any:
-        return await self._run(
+        awaitable = self._collect_with_page_gate(
+            "get_profile_photos",
+            TelegramClient.get_profile_photos,
             "telegram_get_profile_photos",
-            self._client.get_profile_photos(entity, **kwargs),
+            (GetUserPhotosRequest,),
+            entity,
+            **kwargs,
         )
+        return await self._run("telegram_get_profile_photos", awaitable)
 
     def action(self, entity: Any, action: str, **kwargs: Any) -> Any:
         return self._client.action(entity, action, **kwargs)
@@ -1257,7 +1378,7 @@ class TelethonCliBackend(TelegramBackend):
             client._retry_delay = 2
             client.flood_sleep_threshold = 0
             # Network-level MTProto proxy (TG_PROXY → Telethon proxy= dict);
-            # safe before connect(). Unrelated to _DialogRequestGateClient,
+            # safe before connect(). Unrelated to _PageGateClient,
             # whose "proxy" is a request wrapper, not a network route.
             if self._auth.proxy is not None:
                 client.set_proxy(self._auth.proxy)
