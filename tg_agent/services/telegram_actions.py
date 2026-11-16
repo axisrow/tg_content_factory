@@ -249,8 +249,11 @@ class TelegramActionService:
         stripped = value.strip()
         if not stripped:
             return False
-        if stripped[0] in ("+", "-"):
+        if stripped[0] == "-":
             return stripped[1:].isdigit()
+        # A leading '+' is a PHONE number, not a Telegram id (#1830 review):
+        # numeric-id attempts can never resolve it, so it must reach the
+        # string path where Telethon resolves contacts.
         return stripped.isdigit()
 
     @staticmethod

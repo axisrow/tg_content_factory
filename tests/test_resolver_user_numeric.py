@@ -49,9 +49,35 @@ def make_recording_client(*, seeded=()):
         dispatched.append(request)
         if isinstance(request, GetChannelsRequest):
             raise ChannelInvalidError(request=None)
+        if type(request).__name__ == "ImportContactsRequest":
+            # Telethon resolves a phone recipient by (re-)importing the
+            # contact; the seeded contact answers with the same user.
+            from telethon.tl.types import (
+                contacts as tl_contacts,
+            )
+
+            return tl_contacts.ImportedContacts(
+                imported=[
+                    tl_contacts.ImportedContact(user_id=USER_ID, client_id=0)
+                ],
+                users=[_contact_entity()],
+                retry_contacts=[],
+            )
+        if type(request).__name__ == "GetContactsRequest":
+            # get_entity("+79…") scans the contacts list for the phone.
+            from telethon.tl.types import (
+                contacts as tl_contacts,
+            )
+
+            return tl_contacts.Contacts(contacts=[], saved_count=0, users=[_contact_entity()])
         if isinstance(request, GetUsersRequest):
-            # No user by that id: the empty reply keeps Telethon's resolver
-            # missing, exactly like Telegram would for a foreign id.
+            # The seeded contact resolves; a foreign id stays a verified miss
+            # (UserEmpty), exactly like Telegram would answer.
+            wanted = request.id[0].user_id
+            if wanted == USER_ID:
+                return tl_users.Users(
+                    users=[User(id=USER_ID, first_name="penpal", access_hash=1)]
+                )
             return tl_users.Users(users=[UserEmpty()])
         if isinstance(request, GetDialogsRequest):
             return tl_messages.Dialogs(dialogs=[], users=[], chats=[], messages=[])
@@ -70,6 +96,11 @@ def make_recording_client(*, seeded=()):
 
 def _user_entity():
     return User(id=USER_ID, first_name="penpal", access_hash=1)
+
+
+def _contact_entity():
+    # Telegram stores contact phones without the '+' prefix.
+    return User(id=USER_ID, first_name="penpal", phone="79991234567", access_hash=1)
 
 
 async def _connect_native(harness, client):
@@ -176,3 +207,22 @@ async def test_ping_monitor_send_declares_user_kind(real_pool_harness_factory):
     # The nudge reached the known user with zero resolve RPCs — no channel
     # probe, no dialog sweep, only the send itself.
     assert _request_names(dispatched) == ["SendMessageRequest"]
+
+
+@pytest.mark.anyio
+@pytest.mark.native_backend_allowed
+async def test_phone_number_recipient_is_not_a_numeric_id(real_pool_harness_factory):
+    """A '+79…' recipient is a phone, not a Telegram id: it must go through
+    the string path, where Telethon resolves contacts (#1830 review follow-up).
+    Before the fix the numeric gate captured it and raised unconditionally."""
+    harness = real_pool_harness_factory()
+    client, dispatched = make_recording_client(seeded=[_contact_entity()])
+    session, phone = await _connect_native(harness, client)
+
+    actions = TelegramActionService(harness.pool)
+    result = await actions.send_message(phone=phone, recipient="+79991234567", text="hi")
+
+    assert result.message_id == 77
+    names = _request_names(dispatched)
+    assert "GetDialogsRequest" not in names
+    assert "SendMessageRequest" in names
