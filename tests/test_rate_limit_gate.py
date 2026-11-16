@@ -1,12 +1,30 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from telethon import TelegramClient
+from telethon import types as tl_types
 from telethon.sessions import MemorySession
-from telethon.tl.functions.messages import GetDialogsRequest
+from telethon.tl.functions.channels import (
+    GetAdminLogRequest,
+    GetParticipantsRequest,
+)
+from telethon.tl.functions.channels import (
+    GetMessagesRequest as GetChannelMessagesRequest,
+)
+from telethon.tl.functions.messages import (
+    GetDialogsRequest,
+    GetHistoryRequest,
+    GetMessagesRequest,
+    GetRepliesRequest,
+    GetScheduledHistoryRequest,
+    SearchGlobalRequest,
+    SearchRequest,
+)
+from telethon.tl.functions.photos import GetUserPhotosRequest
 from telethon_floodgate import (
     FloodCircuitBreaker,
     HandledFloodWaitError,
@@ -19,6 +37,7 @@ from telethon_floodgate import (
 
 from tg_agent.telegram.backends import TelegramTransportSession
 from tg_agent.telegram.client_pool import HISTORY_CALIBRATED_SPEC
+from tg_agent.telegram.outgoing_ceiling import OutgoingRateCeiling
 
 
 class _Clock:
@@ -485,3 +504,531 @@ def test_history_calibration_stops_a_collector_burst_before_telegram() -> None:
     # Sliding window: after the window passes, the bucket accepts again.
     clock.now += HISTORY_CALIBRATED_SPEC.window_sec
     assert gate.try_acquire("+7001", "history") == 0.0
+
+
+# --- physical page accounting across supported read iterators (#1827) -------
+
+
+class _SpyCeiling(OutgoingRateCeiling):
+    """Test double: records every ``acquire`` without ever waiting.
+
+    Subclasses the real ceiling so ``_run``'s isinstance probe passes; slots
+    are counted, not consumed.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(RateLimitSpec(max_calls=10**6, window_sec=30.0))
+        self.acquires = 0
+
+    async def acquire(self) -> None:
+        self.acquires += 1
+
+
+def _page_gate_pool() -> tuple[type, _SpyCeiling]:
+    """Pool whose calibrated history bucket holds exactly ONE slot.
+
+    The outer logical stream consumes it.  Any page that still charged the
+    per-account history bucket would refuse mid-stream and go red — pages
+    must ride the process ceiling, not the logical quota (#1827).
+    """
+    ceiling = _SpyCeiling()
+
+    class Pool:
+        _rate_limit_gate = TelegramRateLimitGate(
+            category_limits={"history": RateLimitSpec(max_calls=1, window_sec=60)}
+        )
+        _outgoing_ceiling = ceiling
+
+    return Pool, ceiling
+
+
+def _channel_message(mid: int) -> tl_types.Message:
+    return tl_types.Message(
+        id=mid,
+        peer_id=tl_types.PeerChannel(channel_id=100),
+        date=datetime(2026, 11, 16, tzinfo=timezone.utc),
+        message="body",
+    )
+
+
+def _message_slice(mids: list[int]) -> tl_types.MessagesSlice:
+    return tl_types.messages.MessagesSlice(
+        count=1000,
+        messages=[_channel_message(mid) for mid in mids],
+        next_rate=0,
+        chats=[],
+        users=[],
+        topics=[],
+    )
+
+
+class _RecordingTelethonClient(TelegramClient):
+    """Real Telethon client with a recording sender, offline page replays.
+
+    A warm session cache is simulated by returning the peer unchanged from
+    ``get_input_entity`` — resolved InputPeers must produce zero username
+    resolves (#1827).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(MemorySession(), 1, "a" * 32)
+        self.sent = []
+        self.respond = self._no_responder
+
+    @staticmethod
+    def _no_responder(request) -> object:
+        raise AssertionError(f"unexpected dispatch: {request!r}")
+
+    async def __call__(self, request, ordered=False):
+        self.sent.append(request)
+        return self.respond(request)
+
+    async def get_input_entity(self, peer):
+        return peer
+
+
+class _PageIterator:
+    """RequestIter shape: N pages, each dispatched through ``iterator.client``."""
+
+    def __init__(self, client, request_factory, pages) -> None:
+        self.client = client
+        self._request_factory = request_factory
+        self._pages = pages
+        self.page = 0
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self.page >= self._pages:
+            raise StopAsyncIteration
+        await self.client(self._request_factory(self.page))
+        self.page += 1
+        return self.page
+
+    async def aclose(self):
+        self.closed = True
+
+    async def collect(self):
+        result = []
+        async for item in self:
+            result.append(item)
+        return result
+
+
+class _PageDispatchClient:
+    """Fake client: one iterator method dispatches pages via ``client()``."""
+
+    def __init__(self, request_factory, pages, *, iterator_method) -> None:
+        self._request_factory = request_factory
+        self._pages = pages
+        self._iterator_method = iterator_method
+        self.calls = []
+
+    def _iter(self, *args, **kwargs):
+        return _PageIterator(self, self._request_factory, self._pages)
+
+    def __getattr__(self, name):
+        if name == self._iterator_method:
+            return self._iter
+        raise AttributeError(name)
+
+    async def __call__(self, request):
+        self.calls.append(request)
+
+
+def _history_request(page: int) -> GetHistoryRequest:
+    return GetHistoryRequest(
+        peer=None, limit=100, offset_id=page, add_offset=0, offset_date=None, max_id=0, min_id=0, hash=0
+    )
+
+
+def _search_request(page: int) -> SearchRequest:
+    return SearchRequest(
+        peer=None, q="audit", filter=None, min_date=None, max_date=None,
+        offset_id=page, add_offset=0, limit=100, max_id=0, min_id=0, hash=0, from_id=None,
+    )
+
+
+def _search_global_request(page: int) -> SearchGlobalRequest:
+    return SearchGlobalRequest(
+        q="audit", filter=None, min_date=None, max_date=None,
+        offset_rate=0, offset_peer=None, offset_id=page, limit=100,
+    )
+
+
+def _replies_request(page: int) -> GetRepliesRequest:
+    return GetRepliesRequest(
+        peer=None, msg_id=7, offset_id=page, offset_date=None, add_offset=0,
+        limit=100, max_id=0, min_id=0, hash=0,
+    )
+
+
+def _ids_request(page: int):
+    if page == 0:
+        return GetChannelMessagesRequest(channel=None, id=[100 + page])
+    return GetMessagesRequest(id=[100 + page])
+
+
+def _participants_request(page: int) -> GetParticipantsRequest:
+    return GetParticipantsRequest(channel=None, filter=None, offset=page, limit=100, hash=0)
+
+
+def _profile_photos_request(page: int) -> GetUserPhotosRequest:
+    return GetUserPhotosRequest(user_id=None, offset=0, max_id=page, limit=100)
+
+
+def _admin_log_request(page: int) -> GetAdminLogRequest:
+    return GetAdminLogRequest(
+        channel=None, q="", events_filter=None, admins=None, max_id=0, min_id=page, limit=100
+    )
+
+
+def _chat_photos_request(page: int) -> SearchRequest:
+    """Telethon 1.45 pages channel profile photos via messages.Search."""
+    return SearchRequest(
+        peer=None,
+        q="",
+        filter=tl_types.InputMessagesFilterChatPhotos(),
+        min_date=None,
+        max_date=None,
+        offset_id=0,
+        add_offset=page,
+        limit=100,
+        max_id=0,
+        min_id=0,
+        hash=0,
+        from_id=None,
+    )
+
+
+async def _drain(stream) -> list:
+    items = []
+    async for item in stream:
+        items.append(item)
+    return items
+
+
+@pytest.mark.asyncio
+async def test_real_iter_messages_history_pages_are_ceiling_accounted() -> None:
+    """Working control (#1827 row 1): 2-page history stream = 3 admissions.
+
+    The outer logical stream holds the calibrated history slot; the physical
+    GetHistory pages must ride the process ceiling only.
+    """
+    pool, ceiling = _page_gate_pool()
+    client = _RecordingTelethonClient()
+    slices = [_message_slice([302, 301]), _message_slice([51])]
+    state = {"page": 0}
+
+    def respond(request):
+        response = slices[state["page"]]
+        state["page"] += 1
+        return response
+
+    client.respond = respond
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    entity = tl_types.InputPeerChannel(channel_id=100, access_hash=0)
+    stream = session.stream_messages(entity, limit=250)
+    assert [item.id for item in await _drain(stream)] == [302, 301, 51]
+    assert state["page"] == 2
+    assert ceiling.acquires == 3  # outer stream + two physical pages
+    assert all(isinstance(request, GetHistoryRequest) for request in client.sent)
+
+
+@pytest.mark.asyncio
+async def test_real_iter_messages_search_pages_are_ceiling_accounted() -> None:
+    """Search pages (#1827 row 2) reach the ceiling like history pages do."""
+    pool, ceiling = _page_gate_pool()
+    client = _RecordingTelethonClient()
+    slices = [_message_slice([302, 301]), _message_slice([51])]
+    state = {"page": 0}
+
+    def respond(request):
+        response = slices[state["page"]]
+        state["page"] += 1
+        return response
+
+    client.respond = respond
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    entity = tl_types.InputPeerChannel(channel_id=100, access_hash=0)
+    stream = session.stream_messages(entity, search="audit", limit=250)
+    assert [item.id for item in await _drain(stream)] == [302, 301, 51]
+    assert ceiling.acquires == 3  # outer stream + two physical pages
+    assert [type(request).__name__ for request in client.sent] == [
+        "SearchRequest",
+        "SearchRequest",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_real_iter_messages_reverse_mode_pages_are_ceiling_accounted() -> None:
+    """Reverse mode keeps Telethon's own offset math and ceiling accounting.
+
+    Reverse chunks are sent with a negative add_offset; Telegram answers in
+    descending order and Telethon reverses each chunk locally. The page gate
+    must not disturb the offset math, and the empty terminal chunk stops the
+    stream (#1827).
+    """
+    pool, ceiling = _page_gate_pool()
+    client = _RecordingTelethonClient()
+    slices = [_message_slice([51]), _message_slice([302, 301]), _message_slice([])]
+    state = {"page": 0}
+
+    def respond(request):
+        response = slices[state["page"]]
+        state["page"] += 1
+        return response
+
+    client.respond = respond
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    entity = tl_types.InputPeerChannel(channel_id=100, access_hash=0)
+    stream = session.stream_messages(entity, limit=250, reverse=True)
+    assert [item.id for item in await _drain(stream)] == [51, 301, 302]
+    assert ceiling.acquires == 4  # outer stream + three physical pages
+    assert [type(request).__name__ for request in client.sent] == [
+        "GetHistoryRequest",
+        "GetHistoryRequest",
+        "GetHistoryRequest",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_real_iter_messages_topic_reply_pages_are_ceiling_accounted() -> None:
+    """Topic replies (#1827 row 3) dispatch GetReplies through the ceiling."""
+    pool, ceiling = _page_gate_pool()
+    client = _RecordingTelethonClient()
+    slices = [_message_slice([302, 301]), _message_slice([51])]
+    state = {"page": 0}
+
+    def respond(request):
+        response = slices[state["page"]]
+        state["page"] += 1
+        return response
+
+    client.respond = respond
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    entity = tl_types.InputPeerChannel(channel_id=100, access_hash=0)
+    stream = session.stream_messages(entity, reply_to=7, limit=250)
+    assert [item.id for item in await _drain(stream)] == [302, 301, 51]
+    assert ceiling.acquires == 3  # outer stream + two physical pages
+    assert [type(request).__name__ for request in client.sent] == [
+        "GetRepliesRequest",
+        "GetRepliesRequest",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_real_iter_messages_global_search_page_is_ceiling_accounted() -> None:
+    """Global search (entity=None) dispatches SearchGlobal through the ceiling."""
+    pool, ceiling = _page_gate_pool()
+    client = _RecordingTelethonClient()
+    client.respond = lambda request: _message_slice([51])
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    stream = session.stream_messages(None, search="audit", limit=250)
+    assert [item.id for item in await _drain(stream)] == [51]
+    assert ceiling.acquires == 2  # outer stream + one physical page
+    assert isinstance(client.sent[0], SearchGlobalRequest)
+
+
+@pytest.mark.asyncio
+async def test_real_iter_messages_scheduled_page_is_ceiling_accounted() -> None:
+    """The scheduled iterator variant is one accounted GetScheduledHistory RPC."""
+    pool, ceiling = _page_gate_pool()
+    client = _RecordingTelethonClient()
+    client.respond = lambda request: tl_types.messages.Messages(
+        messages=[_channel_message(51)], chats=[], users=[], topics=[]
+    )
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    entity = tl_types.InputPeerChannel(channel_id=100, access_hash=0)
+    stream = session.stream_messages(entity, scheduled=True, limit=250)
+    assert [item.id for item in await _drain(stream)] == [51]
+    assert ceiling.acquires == 2  # outer stream + one physical page
+    assert isinstance(client.sent[0], GetScheduledHistoryRequest)
+
+
+@pytest.mark.asyncio
+async def test_real_iter_messages_ids_page_is_ceiling_accounted() -> None:
+    """The ids iterator variant charges its physical GetMessages dispatch."""
+    pool, ceiling = _page_gate_pool()
+    client = _RecordingTelethonClient()
+    client.respond = lambda request: tl_types.messages.Messages(
+        messages=[_channel_message(301), _channel_message(300), _channel_message(299)],
+        chats=[],
+        users=[],
+        topics=[],
+    )
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    entity = tl_types.InputPeerChannel(channel_id=100, access_hash=0)
+    stream = session.stream_messages(entity, ids=[301, 300, 299])
+    assert [item.id for item in await _drain(stream)] == [301, 300, 299]
+    assert ceiling.acquires == 2  # outer stream + one physical page
+    assert isinstance(client.sent[0], GetChannelMessagesRequest)
+
+
+@pytest.mark.asyncio
+async def test_real_iter_pages_trigger_no_username_resolves() -> None:
+    """A resolved InputPeer walks pages without any username resolve (#1827)."""
+    pool, ceiling = _page_gate_pool()
+    client = _RecordingTelethonClient()
+    client.respond = lambda request: _message_slice([51])
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    entity = tl_types.InputPeerChannel(channel_id=100, access_hash=0)
+    stream = session.stream_messages(entity, search="audit", limit=250)
+    assert [item.id for item in await _drain(stream)] == [51]
+    assert not any("ResolveUsername" in type(request).__name__ for request in client.sent)
+
+
+@pytest.mark.asyncio
+async def test_stream_participants_pages_are_ceiling_accounted() -> None:
+    pool, ceiling = _page_gate_pool()
+    client = _PageDispatchClient(_participants_request, 2, iterator_method="iter_participants")
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    entity = SimpleNamespace(channel_id=100)
+    stream = session.stream_participants(entity, limit=450)
+    assert await _drain(stream) == [1, 2]
+    assert ceiling.acquires == 3  # outer stream + two physical pages
+    assert all(isinstance(request, GetParticipantsRequest) for request in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_stream_profile_photos_pages_are_ceiling_accounted() -> None:
+    pool, ceiling = _page_gate_pool()
+    client = _PageDispatchClient(_profile_photos_request, 2, iterator_method="iter_profile_photos")
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    entity = SimpleNamespace(user_id=42)
+    stream = session.stream_profile_photos(entity)
+    assert await _drain(stream) == [1, 2]
+    assert ceiling.acquires == 3  # outer stream + two physical pages
+    assert all(isinstance(request, GetUserPhotosRequest) for request in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_stream_profile_photos_channel_pages_are_ceiling_accounted() -> None:
+    """Non-user entities page their photo history via messages.Search (#1833).
+
+    Telethon 1.45's _ProfilePhotoIter only uses GetUserPhotosRequest for
+    users; a channel/chat entity paginates SearchRequest with the
+    chat-photos filter — those pages must not bypass the ceiling.
+    """
+    pool, ceiling = _page_gate_pool()
+    client = _PageDispatchClient(_chat_photos_request, 2, iterator_method="iter_profile_photos")
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    stream = session.stream_profile_photos(SimpleNamespace(channel_id=100))
+    assert await _drain(stream) == [1, 2]
+    assert ceiling.acquires == 3  # outer stream + two physical pages
+    assert all(isinstance(request, SearchRequest) for request in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_stream_admin_log_pages_are_ceiling_accounted() -> None:
+    pool, ceiling = _page_gate_pool()
+    client = _PageDispatchClient(_admin_log_request, 2, iterator_method="iter_admin_log")
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    entity = SimpleNamespace(channel_id=100)
+    stream = session.stream_admin_log(entity, limit=100)
+    assert await _drain(stream) == [1, 2]
+    assert ceiling.acquires == 3  # outer stream + two physical pages
+    assert all(isinstance(request, GetAdminLogRequest) for request in client.calls)
+
+
+class _CollectingTelethonClient(TelegramClient):
+    """Native get_* methods over fake page iterators for collect-path probes."""
+
+    def __init__(self, request_factory, pages, *, iterator_method) -> None:
+        super().__init__(MemorySession(), 1, "a" * 32)
+        self._request_factory = request_factory
+        self._pages = pages
+        self._iterator_method = iterator_method
+        self.calls = []
+        # Instance attribute shadows the inherited native iter_* so the
+        # get_* collect runs over the fake page iterator.
+        setattr(self, iterator_method, self._iter)
+
+    async def get_input_entity(self, peer):
+        # Warm session cache: the collect path must not resolve anything.
+        return peer
+
+    def _iter(self, *args, **kwargs):
+        return _PageIterator(self, self._request_factory, self._pages)
+
+    async def __call__(self, request):
+        self.calls.append(request)
+
+
+@pytest.mark.asyncio
+async def test_get_participants_collect_gates_each_telethon_page() -> None:
+    """``get_participants`` (collect of N pages) gates every physical page."""
+    pool, ceiling = _page_gate_pool()
+    client = _CollectingTelethonClient(_participants_request, 2, iterator_method="iter_participants")
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    entity = SimpleNamespace(channel_id=100)
+    assert await session.get_participants(entity, limit=450) == [1, 2]
+    assert ceiling.acquires == 3  # outer collect + two physical pages
+    assert all(isinstance(request, GetParticipantsRequest) for request in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_get_profile_photos_collect_gates_each_telethon_page() -> None:
+    pool, ceiling = _page_gate_pool()
+    client = _CollectingTelethonClient(_profile_photos_request, 2, iterator_method="iter_profile_photos")
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    entity = SimpleNamespace(user_id=42)
+    assert await session.get_profile_photos(entity) == [1, 2]
+    assert ceiling.acquires == 3  # outer collect + two physical pages
+    assert all(isinstance(request, GetUserPhotosRequest) for request in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_get_admin_log_collect_gates_each_telethon_page() -> None:
+    pool, ceiling = _page_gate_pool()
+    client = _CollectingTelethonClient(_admin_log_request, 2, iterator_method="iter_admin_log")
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    entity = SimpleNamespace(channel_id=100)
+    assert await session.get_admin_log(entity, limit=100) == [1, 2]
+    assert ceiling.acquires == 3  # outer collect + two physical pages
+    assert all(isinstance(request, GetAdminLogRequest) for request in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_dialog_page_budget_refusal_keeps_partial_stream_state() -> None:
+    """A refused page leaves received items intact and the stream closable."""
+    ceiling = _SpyCeiling()
+
+    class Pool:
+        _rate_limit_gate = TelegramRateLimitGate(
+            category_limits={
+                "dialog_sweep": RateLimitSpec(max_calls=1, window_sec=60),
+                "dialogs_page": RateLimitSpec(max_calls=1, window_sec=60),
+            }
+        )
+        _outgoing_ceiling = ceiling
+
+    client = _PageDispatchClient(_dialog_page_request, 3, iterator_method="iter_dialogs")
+    session = TelegramTransportSession(client, phone="+66...2247", pool=Pool())
+    stream = session.stream_dialogs()
+    assert await stream.__anext__() == 1  # received item stays with the caller
+    with pytest.raises(TelegramRateLimitedError):
+        await stream.__anext__()
+    assert len(client.calls) == 1  # the refused page never reached Telethon
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_message_page_proxy_passes_emitted_object_requests() -> None:
+    """Emitted Message objects may use the client for unrelated requests.
+
+    Only the iterator's own page requests belong to the page budget; an
+    unrelated request must pass through uncharged.
+    """
+    pool, ceiling = _page_gate_pool()
+    client = _PageDispatchClient(_history_request, 1, iterator_method="iter_messages")
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    entity = SimpleNamespace(channel_id=100)
+    stream = session.stream_messages(entity, limit=250)
+    assert await _drain(stream) == [1]
+    unrelated = _dialog_page_request()
+    await client(unrelated)
+    assert ceiling.acquires == 2  # outer stream + one page; unrelated uncharged
+    assert unrelated in client.calls
