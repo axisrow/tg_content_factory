@@ -7,7 +7,6 @@ responses seed it — ``session.process_entities``. ``get_entity`` /
 ``get_input_entity`` are never stubbed.
 """
 
-import asyncio
 import secrets
 from datetime import datetime, timezone
 from uuid import uuid4
