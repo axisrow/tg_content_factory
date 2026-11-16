@@ -33,11 +33,12 @@ def _flood(seconds: int) -> FloodWaitError:
     return err
 
 
-def _flooded_session(harness, phone: str, *, resolve=None, send=None):
+def _flooded_session(harness, phone: str, *, resolve=None, send=None, edit_admin=None):
     """Transport session over a fake client injecting FloodWait at the boundary."""
     client = FakeCliTelethonClient(
         entity_resolver=resolve,
         send_message_side_effect=send,
+        edit_admin_side_effect=edit_admin,
     )
     from tg_agent.telegram.backends import TelegramTransportSession
 
@@ -85,6 +86,52 @@ async def test_send_flood_still_blocks_account_wide(real_pool_harness_factory):
     assert accounts[0].flood_wait_until is not None
     floods = await harness.db.repos.accounts.list_active_family_floods(phone=PHONE_A)
     assert floods == {}, "send-family flood is account-wide, not a family row"
+
+
+@pytest.mark.anyio
+async def test_admin_action_flood_blocks_account_wide(real_pool_harness_factory):
+    """admin_action is a mutating bucket (edit_admin/...): account-wide, not family."""
+    harness = real_pool_harness_factory()
+    await harness.add_account(PHONE_A, session_string="s1", is_primary=True)
+
+    def _raise_flood(*_a, **_k):
+        raise _flood(3600)
+
+    session = _flooded_session(harness, PHONE_A, edit_admin=_raise_flood)
+    with pytest.raises(HandledFloodWaitError):
+        await session.edit_admin("@chat", "@user", is_admin=True)
+
+    accounts = await harness.db.get_accounts()
+    assert accounts[0].flood_wait_until is not None, (
+        "admin_action flood must keep the account-wide report"
+    )
+    floods = await harness.db.repos.accounts.list_active_family_floods(phone=PHONE_A)
+    assert floods == {}
+
+
+@pytest.mark.anyio
+async def test_pool_without_family_slice_falls_back_account_wide():
+    """A pool that reports account-wide only keeps that behavior (no dropped flood)."""
+    from unittest.mock import AsyncMock
+
+    from telethon_floodgate import FloodCircuitBreaker, TelegramRateLimitGate
+
+    from tg_agent.telegram.backends import TelegramTransportSession
+
+    pool = SimpleNamespace(
+        _rate_limit_gate=TelegramRateLimitGate(),
+        _outgoing_ceiling=None,
+        _flood_breaker=FloodCircuitBreaker(),
+        report_flood=AsyncMock(),
+        # No report_family_flood / family_flood_deadline: the legacy shape.
+    )
+    client = FakeCliTelethonClient(entity_resolver=lambda _a: _flood(3600))
+    session = TelegramTransportSession(client, phone=PHONE_A, pool=pool)
+
+    with pytest.raises(HandledFloodWaitError):
+        await session.get_entity("@some_channel")
+
+    pool.report_flood.assert_awaited_once_with(PHONE_A, 3600)
 
 
 @pytest.mark.anyio

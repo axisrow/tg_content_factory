@@ -356,6 +356,14 @@ class TelegramTransportSession:
                 reported = reporter(self._phone, info.wait_seconds, family, operation=operation)
                 if inspect.isawaitable(reported):
                     await reported
+            else:
+                # Pool without the family slice: keep the conservative
+                # account-wide report instead of dropping the flood signal.
+                fallback = getattr(self._pool, "report_flood", None)
+                if callable(fallback):
+                    reported = fallback(self._phone, info.wait_seconds)
+                    if inspect.isawaitable(reported):
+                        await reported
             return HandledFloodWaitError(info)
         info = await handle_flood_wait(
             exc,

@@ -3,9 +3,10 @@
 Classifies a transport operation tag into its flood family (the gate
 category) and splits flood reports into:
 
-* **write families** — ``send`` and ``channel_lifecycle`` buckets plus the
-  raw-invoke wildcard. A FloodWait there keeps the historical account-wide
-  behavior (``accounts.flood_wait_until``): Telegram refused a mutating RPC.
+* **write families** — the ``send``, ``channel_lifecycle`` and ``admin_action``
+  buckets plus the raw-invoke wildcard. A FloodWait there keeps the historical
+  account-wide behavior (``accounts.flood_wait_until``): Telegram refused a
+  mutating RPC.
 * **read families** — everything else (``resolve``, ``history``, ``default``,
   ``reaction``, ...). A FloodWait there records a per-(phone, family) deadline
   (``account_family_floods``) and leaves the account writable, so a history
@@ -24,7 +25,7 @@ from typing import Any
 
 # Categories whose FloodWait blocks the whole account (Telegram refused a
 # mutating RPC). Everything else is a read family and gets per-family scoping.
-WRITE_FAMILY_CATEGORIES = {"send", "channel_lifecycle"}
+WRITE_FAMILY_CATEGORIES = {"send", "channel_lifecycle", "admin_action"}
 
 # Raw invoke is a wildcard: the underlying RPC may be a write, so its flood
 # can never be scoped narrower than the account.
