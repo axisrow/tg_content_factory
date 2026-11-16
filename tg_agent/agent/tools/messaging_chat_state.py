@@ -299,8 +299,16 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
                     reaction_suffix = f" | реакции: {reactions}" if reactions else ""
                     reaction_users_suffix = ""
                     if include_reaction_users and reactions:
+                        # The lease hands out a raw Telethon client; reaction
+                        # lookups go through a bound adapter session so each
+                        # dispatch pays the shared budget and ceiling (#1826).
+                        from tg_agent.telegram.backends import adapt_transport_session
+
+                        reaction_session = adapt_transport_session(
+                            client, phone=phone, pool=client_pool
+                        )
                         reaction_users = await fetch_message_reaction_users(
-                            client,
+                            reaction_session,
                             entity,
                             msg.id,
                             limit=reaction_users_limit,

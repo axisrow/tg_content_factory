@@ -281,12 +281,28 @@ async def fetch_message_reaction_users(
 ) -> ReactionUsersResult:
     safe_limit = normalize_reaction_users_limit(limit)
     try:
-        from tg_agent.telegram.backends import fetch_message_reaction_users_raw
+        from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitedError
+
+        from tg_agent.telegram.backends import (
+            TelegramTransportSession,
+            fetch_message_reaction_users_raw,
+        )
     except ImportError as exc:
         return ReactionUsersResult([], unavailable=str(exc))
 
     try:
-        result = await fetch_message_reaction_users_raw(client, peer, int(message_id), limit=safe_limit)
+        if isinstance(client, TelegramTransportSession):
+            # Bound session: the gated adapter path (#1826) — every dispatch
+            # pays the per-account budget and the process ceiling.
+            result = await client.fetch_message_reaction_users(peer, int(message_id), limit=safe_limit)
+        else:
+            result = await fetch_message_reaction_users_raw(client, peer, int(message_id), limit=safe_limit)
+    except (HandledFloodWaitError, TelegramRateLimitedError):
+        # Local budget refusal and an already-reported Telegram flood are
+        # outcomes, not "data unavailable": both must reach the caller's
+        # incomplete/defer handling instead of collapsing into a missing
+        # reaction list (#1826, #1828).
+        raise
     except Exception as exc:
         if exc.__class__.__name__ == "FloodWaitError":
             raise

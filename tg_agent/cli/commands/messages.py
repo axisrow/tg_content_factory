@@ -8,7 +8,11 @@ import json
 import sys
 
 import typer
-from telethon_floodgate import HandledFloodWaitError, run_with_flood_wait
+from telethon_floodgate import (
+    HandledFloodWaitError,
+    TelegramRateLimitedError,
+    run_with_flood_wait,
+)
 
 from tg_agent.cli import runtime
 from tg_agent.cli.commands.common import (
@@ -184,6 +188,12 @@ async def messages_read_impl(
                     topic_id=topic_id, include_reaction_users=include_reaction_users,
                     reaction_users_limit=reaction_users_limit)
                 print("\n".join(live_message_lines(data, reverse=True)) if data["messages"] else "No messages found.")
+                if data.get("reaction_users_incomplete"):
+                    print(
+                        "Reaction users incomplete: a local rate limit deferred some lookups; "
+                        "retry later to fetch the rest.",
+                        file=sys.stderr,
+                    )
                 return
             result = await pool.get_native_client_by_phone(phone)
             if result is None:
@@ -232,12 +242,20 @@ async def messages_read_impl(
                     return
                 reaction_users_by_message_id: dict[int, str] = {}
                 if include_reaction_users:
+                    # Reaction-user fetches go through the bound adapter
+                    # session so every dispatch pays the shared budget and
+                    # the process ceiling (#1826); the surrounding
+                    # iter_messages read keeps its own flood wrapper.
+                    from tg_agent.telegram.backends import adapt_transport_session
+
+                    reaction_session = adapt_transport_session(client, phone=phone, pool=pool)
+
                     async def _read_reaction_users() -> None:
                         for msg in collected:
                             if not format_message_reactions(msg):
                                 continue
                             result = await fetch_message_reaction_users(
-                                client,
+                                reaction_session,
                                 entity,
                                 msg.id,
                                 limit=reaction_users_limit,
@@ -255,6 +273,14 @@ async def messages_read_impl(
                         )
                     except HandledFloodWaitError as exc:
                         cli_error(f"Flood wait: {exc.info.detail}")
+                    except TelegramRateLimitedError as exc:
+                        # Local budget refusal (#1826): print what was fetched
+                        # and say so — partial reaction data is not complete.
+                        print(
+                            f"Reaction users incomplete: local rate limit ({exc}); "
+                            "retry later for the rest.",
+                            file=sys.stderr,
+                        )
                 _print_live_messages(collected, reaction_users_by_message_id)
             except typer.Exit:
                 # cli_error() from the inner paths must not be re-reported as
