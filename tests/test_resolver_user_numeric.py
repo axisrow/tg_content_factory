@@ -1,0 +1,178 @@
+"""Numeric-id resolution order (#1830) — offline, real request resolution.
+
+A numeric user id must not cost a channel-first `GetDialogs` sweep, one action
+must never request more than one sweep, and a caller that knows the target is
+a user says so. Same test discipline as the id-form family: a REAL
+``TelegramClient`` whose MTProto sender is a recording stub; TL requests are
+built by real Telethon code; ``get_entity`` / ``get_input_entity`` are never
+stubbed; the only replaced behavior is ``is_connected()`` (offline test).
+"""
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from telethon.errors.rpcerrorlist import ChannelInvalidError
+from telethon.sessions import StringSession
+from telethon.tl.functions.channels import GetChannelsRequest
+from telethon.tl.functions.messages import GetDialogsRequest, SendMessageRequest
+from telethon.tl.functions.users import GetUsersRequest
+from telethon.tl.types import (
+    UpdateShortSentMessage,
+    User,
+    UserEmpty,
+)
+from telethon.tl.types import (
+    messages as tl_messages,
+)
+from telethon.tl.types import (
+    users as tl_users,
+)
+
+from tg_agent.services.ping_monitor_service import PingMonitorService
+from tg_agent.services.telegram_actions import (
+    TelegramActionEntityResolutionError,
+    TelegramActionService,
+)
+
+PHONE = "+70000000283"
+SESSION = "session-user-numeric"
+USER_ID = 42
+
+
+def make_recording_client(*, seeded=()):
+    from telethon import TelegramClient
+
+    client = TelegramClient(StringSession(), 1, "x")
+    dispatched = []
+
+    async def send(request, ordered=False):
+        dispatched.append(request)
+        if isinstance(request, GetChannelsRequest):
+            raise ChannelInvalidError(request=None)
+        if isinstance(request, GetUsersRequest):
+            # No user by that id: the empty reply keeps Telethon's resolver
+            # missing, exactly like Telegram would for a foreign id.
+            return tl_users.Users(users=[UserEmpty()])
+        if isinstance(request, GetDialogsRequest):
+            return tl_messages.Dialogs(dialogs=[], users=[], chats=[], messages=[])
+        if isinstance(request, SendMessageRequest):
+            return UpdateShortSentMessage(
+                id=77, date=datetime.now(timezone.utc), out=True, pts=1, pts_count=1
+            )
+        return None
+
+    client._sender.send = send
+    client.is_connected = lambda: True
+    for entity in seeded:
+        client.session.process_entities([entity])
+    return client, dispatched
+
+
+def _user_entity():
+    return User(id=USER_ID, first_name="penpal", access_hash=1)
+
+
+async def _connect_native(harness, client):
+    harness.queue_cli_client(phone=PHONE)
+    harness.queue_native_client(session_string=SESSION, client=client)
+    await harness.add_account(PHONE, session_string=SESSION, is_primary=True)
+    await harness.initialize_connected_accounts()
+    session, phone = await harness.pool.get_native_client_by_phone(PHONE)
+    assert session is not None
+    return session, phone
+
+
+def _request_names(dispatched):
+    return [type(request).__name__ for request in dispatched]
+
+
+@pytest.mark.anyio
+@pytest.mark.native_backend_allowed
+async def test_numeric_user_known_to_session_needs_no_sweep(real_pool_harness_factory):
+    """send_message(..., is_user=True) to a known user id: the send only."""
+    harness = real_pool_harness_factory()
+    client, dispatched = make_recording_client(seeded=[_user_entity()])
+    session, phone = await _connect_native(harness, client)
+
+    actions = TelegramActionService(harness.pool)
+    result = await actions.send_message(phone=phone, recipient=str(USER_ID), text="hi", is_user=True)
+
+    assert result.message_id == 77
+    assert _request_names(dispatched) == ["SendMessageRequest"]
+
+
+@pytest.mark.anyio
+@pytest.mark.native_backend_allowed
+async def test_unknown_numeric_target_costs_at_most_one_sweep(real_pool_harness_factory):
+    """A failing numeric action asks for one dialog sweep, not one per candidate."""
+    harness = real_pool_harness_factory()
+    # Neutralize the local dialogs gate: it would refuse a second sweep before
+    # any RPC and mask the count this test is about (the fix must make the
+    # second/third warm structurally absent, not merely gated).
+    harness.pool._rate_limit_gate = None
+    client, dispatched = make_recording_client()
+    session, phone = await _connect_native(harness, client)
+
+    actions = TelegramActionService(harness.pool)
+    with pytest.raises(TelegramActionEntityResolutionError):
+        await actions.send_message(phone=phone, recipient="9999999", text="hi")
+
+    sweeps = [r for r in dispatched if isinstance(r, GetDialogsRequest)]
+    assert len(sweeps) == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.native_backend_allowed
+async def test_ping_monitor_send_declares_user_kind(real_pool_harness_factory):
+    """The ping monitor's nudge goes out as a user-kind numeric send (#1830)."""
+    harness = real_pool_harness_factory()
+    client, dispatched = make_recording_client(seeded=[_user_entity()])
+    session, phone = await _connect_native(harness, client)
+
+    from unittest.mock import AsyncMock, patch
+
+    from tg_agent.models import DialogMessage, MessagesResult, PingMonitor
+
+    now = datetime.now(timezone.utc)
+    monitor = PingMonitor(
+        id=1,
+        phone=phone,
+        dialog_id=USER_ID,
+        silence_threshold_days=30,
+        nudge_text="пинг",
+        cycle_count=0,
+        is_active=True,
+    )
+    repo = AsyncMock()
+    repo.list = AsyncMock(return_value=[monitor])
+    repo.update = AsyncMock()
+    frozen = patch(
+        "tg_agent.services.ping_monitor_service.datetime",
+        **{"now.return_value": now + timedelta(days=31)},
+    )
+    actions = TelegramActionService(harness.pool)
+    with patch(
+        "tg_agent.services.telegram_actions.TelegramActionService.read_history",
+        new_callable=AsyncMock,
+        return_value=MessagesResult(
+            phone=phone,
+            dialog_id=USER_ID,
+            messages=[
+                DialogMessage(
+                    id=10,
+                    dialog_id=USER_ID,
+                    out=True,
+                    date=now - timedelta(days=31, minutes=5),
+                    text="...",
+                )
+            ],
+        ),
+    ):
+        service = PingMonitorService(repo, actions)
+        with frozen:
+            checked = await service.run_due()
+
+    assert checked == 1
+    # The nudge reached the known user with zero resolve RPCs — no channel
+    # probe, no dialog sweep, only the send itself.
+    assert _request_names(dispatched) == ["SendMessageRequest"]

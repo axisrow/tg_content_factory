@@ -126,7 +126,10 @@ class PingMonitorService:
 
         with gateway_intent(f"ping:{monitor_id}:{monitor.cycle_count}:{anchor.isoformat()}", automatic=True):
             await self._actions.send_message(
-                phone=monitor.phone, recipient=monitor.dialog_id, text=monitor.nudge_text
+                phone=monitor.phone,
+                recipient=monitor.dialog_id,
+                text=monitor.nudge_text,
+                is_user=True,  # DM-диалог: не пробовать канал первым (#1830)
             )
         await self._repo.update(
             monitor_id, cycle_count=monitor.cycle_count + 1, last_nudge_sent_at=now

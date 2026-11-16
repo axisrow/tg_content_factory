@@ -782,6 +782,8 @@ class DialogsMixin:
         phone: str,
         dialog_id: int,
         target_type: str | None = None,
+        *,
+        allow_warm: bool = True,
     ):
         session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
         if target_type is None:
@@ -796,16 +798,32 @@ class DialogsMixin:
             peer = PeerChat(abs(dialog_id))
         else:
             peer = PeerChannel(abs(dialog_id))
-        try:
-            return await self.resolve_entity_with_warm(
-                session,
-                phone,
-                peer,
-                operation="resolve_dialog_entity_peer",
-                use_input_entity=True,
-            )
-        except (ValueError, TypeError):
-            pass
+        if allow_warm:
+            try:
+                return await self.resolve_entity_with_warm(
+                    session,
+                    phone,
+                    peer,
+                    operation="resolve_dialog_entity_peer",
+                    use_input_entity=True,
+                )
+            except (ValueError, TypeError):
+                pass
+        else:
+            # Cache-only probe (#1830): every candidate kind is checked
+            # against the session store before ANY candidate may warm. A
+            # miss here is a plain ValueError — no dialog sweep.
+            try:
+                return await run_with_flood_wait(
+                    session.resolve_input_entity(peer),
+                    operation="resolve_dialog_entity_cached",
+                    phone=phone,
+                    pool=self,
+                    logger_=logger,
+                    timeout=30.0,
+                )
+            except (ValueError, TypeError):
+                pass
 
         dialog = await self._get_cached_dialog(phone, dialog_id)
         username = dialog.get("username") if dialog else None

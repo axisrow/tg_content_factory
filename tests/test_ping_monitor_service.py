@@ -167,7 +167,7 @@ async def test_run_due_first_ping_after_base_threshold():
 
     assert checked == 1
     actions.send_message.assert_awaited_once_with(
-        phone="+1234", recipient=777, text="привет, как ты?"
+        phone="+1234", recipient=777, text="привет, как ты?", is_user=True
     )
     update_kwargs = repo.update.call_args.kwargs
     assert update_kwargs["cycle_count"] == 1

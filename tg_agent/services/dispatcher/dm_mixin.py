@@ -58,6 +58,7 @@ class DmCommandsMixin(_Base):
                 phone=draft.phone,
                 recipient=draft.chat_id,
                 text=draft.reply_text,
+                is_user=True,  # DM-диалог: не пробовать канал первым (#1830)
             )
         except BaseException:
             await drafts.release_claim(draft_id)
