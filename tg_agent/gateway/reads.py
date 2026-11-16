@@ -44,6 +44,8 @@ async def execute_read(access, project, operation):
 
 async def _read_message_page(access, account, session, operation):
     pool = access._pool
+    from telethon_floodgate import TelegramRateLimitedError
+
     from tg_agent.telegram.reactions import fetch_message_reaction_users, format_reaction_users_result
 
     if isinstance(operation.peer, int):
@@ -56,6 +58,7 @@ async def _read_message_page(access, account, session, operation):
     if operation.topic_id is not None:
         options["reply_to"] = operation.topic_id
     messages, reactors, forwards, urls = [], {}, [], {}
+    reaction_users_incomplete = False
     async for item in session.stream_messages(entity, **options):
         channel = next(getattr(entity, field) for field in ("id", "channel_id", "chat_id", "user_id")
                        if getattr(entity, field, None) is not None)
@@ -66,10 +69,18 @@ async def _read_message_page(access, account, session, operation):
         urls[item.id] = [entity.url for entity in getattr(item, "entities", None) or []
                          if getattr(entity, "url", None)]
         if operation.include_reaction_users and getattr(item, "reactions", None):
-            result = await fetch_message_reaction_users(session.raw_client, entity, item.id,
-                                                        limit=operation.reaction_users_limit)
+            try:
+                result = await fetch_message_reaction_users(session, entity, item.id,
+                                                            limit=operation.reaction_users_limit)
+            except TelegramRateLimitedError:
+                # Local budget refusal (#1826): the received messages stay,
+                # the remaining reaction lookups are deferred — never report
+                # partial reaction data as complete.
+                reaction_users_incomplete = True
+                break
             reactors[item.id] = format_reaction_users_result(result)
-    return {"messages": messages, "reaction_users": reactors, "forward_ids": forwards, "urls": urls}
+    return {"messages": messages, "reaction_users": reactors, "forward_ids": forwards, "urls": urls,
+            "reaction_users_incomplete": reaction_users_incomplete}
 
 
 async def _read_dm_history(access, account, session, operation):

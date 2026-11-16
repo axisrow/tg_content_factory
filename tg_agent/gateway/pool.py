@@ -260,7 +260,8 @@ class GatewayPool:
         # contract requires a concrete int >= 0.
         offset_id = offset_id or 0
         account = self.select(phone)
-        result = {"messages": [], "reaction_users": {}, "forward_ids": [], "urls": {}}
+        result = {"messages": [], "reaction_users": {}, "forward_ids": [], "urls": {},
+                  "reaction_users_incomplete": False}
         while len(result["messages"]) < limit:
             size = min(100, limit - len(result["messages"]))
             operation = MessagePage(kind="message_page", account_id=UUID(account["id"]), peer=peer,
@@ -271,6 +272,11 @@ class GatewayPool:
             result["reaction_users"].update(data["reaction_users"])
             result["forward_ids"].extend(data["forward_ids"])
             result["urls"].update(data["urls"])
+            # Any page that deferred reaction lookups (local budget refusal,
+            # #1826) marks the merged read: partial data is not complete.
+            result["reaction_users_incomplete"] = (
+                result["reaction_users_incomplete"] or data.get("reaction_users_incomplete", False)
+            )
             if len(data["messages"]) < size:
                 break
             next_offset = min(row["message_id"] for row in data["messages"])

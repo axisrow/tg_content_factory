@@ -992,6 +992,52 @@ class TestReadMessagesTool:
         assert "пользователи реакций недоступны" in text
 
     @pytest.mark.anyio
+    async def test_reaction_users_budget_refusal_keeps_partial_output(self, mock_db, mock_pool):
+        """A local budget refusal must not discard the read (#1826 review).
+
+        The message stays in the output without reaction users, the fan-out
+        stops (the second message is never processed), and the truncation is
+        explicit instead of surfacing as a generic read error.
+        """
+        from telethon_floodgate import TelegramRateLimitedError
+
+        client = AsyncMock(side_effect=TelegramRateLimitedError("+79001234567", "default", 12.0))
+        _setup_resolve_entity(mock_pool, client)
+
+        def _msg(mid):
+            return SimpleNamespace(
+                id=mid,
+                sender_id=42,
+                date=None,
+                text="Popular post",
+                reactions=SimpleNamespace(
+                    results=[SimpleNamespace(reaction=SimpleNamespace(emoticon="👍"), count=5)],
+                ),
+            )
+
+        async def iter_msgs(*a, **kw):
+            yield _msg(1)
+            yield _msg(2)
+
+        client.iter_messages = iter_msgs
+
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["read_messages"]({
+            "phone": "+79001234567",
+            "chat_id": "@test",
+            "limit": 10,
+            "include_reaction_users": True,
+        })
+
+        text = _text(result)
+        assert "Ошибка чтения сообщений" not in text
+        assert "Popular post | реакции: 👍 5" in text
+        assert "поставили" not in text
+        assert "Пользователи реакций неполные" in text
+        assert "#2" not in text  # fan-out stopped at the refusal
+        assert "Итого: 1 сообщений." in text
+
+    @pytest.mark.anyio
     async def test_none_phone_uses_available_connected_account(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)

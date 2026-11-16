@@ -93,6 +93,10 @@ _GATE_OPERATION_CATEGORIES: dict[str, str] = {
     "telegram_inline_query": "default",
     # Best-effort, high-volume-by-design read acks must not pay send prices.
     "telegram_send_read_acknowledge": "default",
+    # Reaction-user lookups fan out one RPC per reacted message (#1826); the
+    # broad default bucket IS the honest budget — they are read acks of the
+    # same best-effort shape, and the process ceiling paces the fan-out.
+    "telegram_fetch_reaction_users": "default",
     # (telegram_invoke_request has no row either: floodgate 0.1.8 prices it
     # at the calibrated "history" family.)
     # Media/profile/participants/admin-log transfers: no production
@@ -946,6 +950,29 @@ class TelegramTransportSession:
         except ImportError:
             # Telethon not available (e.g. test env with stub backend)
             return None
+
+    async def fetch_message_reaction_users(self, peer: Any, message_id: int, *, limit: int) -> Any:
+        """One gated ``messages.getReactionsList`` dispatch (#1826).
+
+        Reaction-user lookups fan out one RPC per reacted message; routing
+        them through the raw client bypassed both the per-account budget and
+        the process ceiling.  Ceiling and breaker semantics are ``_run``'s;
+        local refusals raise :class:`TelegramRateLimitedError`, Telegram
+        floods surface as :class:`HandledFloodWaitError` after the pool
+        report — callers must not read either as "no reaction data".
+        """
+        from telethon.tl.functions.messages import GetMessageReactionsListRequest
+
+        return await self._run(
+            "telegram_fetch_reaction_users",
+            self._client(
+                GetMessageReactionsListRequest(
+                    peer=peer,
+                    id=int(message_id),
+                    limit=limit,
+                )
+            ),
+        )
 
     async def create_channel(
         self,
