@@ -275,6 +275,7 @@ class TestMessagingToolErrors:
         handlers, pool, _ = msg_err_setup
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("net"))
+        mock_client.get_input_entity = AsyncMock(side_effect=RuntimeError("net"))
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         result = await handlers["send_message"]({
             "phone": "+1111", "recipient": "@u", "text": "hi", "confirm": True,
@@ -292,6 +293,7 @@ class TestMessagingToolErrors:
         handlers, pool, _ = msg_err_setup
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("net"))
+        mock_client.get_input_entity = AsyncMock(side_effect=RuntimeError("net"))
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         result = await handlers["edit_message"]({
             "phone": "+1111", "chat_id": "@ch", "message_id": 1, "text": "x", "confirm": True,
@@ -309,6 +311,7 @@ class TestMessagingToolErrors:
         handlers, pool, _ = msg_err_setup
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("net"))
+        mock_client.get_input_entity = AsyncMock(side_effect=RuntimeError("net"))
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         result = await handlers["delete_message"]({
             "phone": "+1111", "chat_id": "@ch", "message_ids": "1", "confirm": True,
@@ -327,6 +330,7 @@ class TestMessagingToolErrors:
         handlers, pool, _ = msg_err_setup
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("net"))
+        mock_client.get_input_entity = AsyncMock(side_effect=RuntimeError("net"))
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         result = await handlers["forward_messages"]({
             "phone": "+1111", "from_chat": "@a", "to_chat": "@b",
@@ -353,6 +357,7 @@ class TestMessagingToolErrors:
         handlers, pool, _ = msg_err_setup
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("net"))
+        mock_client.get_input_entity = AsyncMock(side_effect=RuntimeError("net"))
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         result = await handlers["pin_message"]({
             "phone": "+1111", "chat_id": "@ch", "message_id": 1, "confirm": True,
@@ -370,6 +375,7 @@ class TestMessagingToolErrors:
         handlers, pool, _ = msg_err_setup
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("net"))
+        mock_client.get_input_entity = AsyncMock(side_effect=RuntimeError("net"))
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         result = await handlers["unpin_message"]({
             "phone": "+1111", "chat_id": "@ch", "confirm": True,
@@ -387,6 +393,7 @@ class TestMessagingToolErrors:
         handlers, pool, _ = msg_err_setup
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("net"))
+        mock_client.get_input_entity = AsyncMock(side_effect=RuntimeError("net"))
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         result = await handlers["download_media"]({
             "phone": "+1111", "chat_id": "@ch", "message_id": 1,
@@ -411,6 +418,7 @@ class TestMessagingToolErrors:
         handlers, pool, _ = msg_err_setup
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("net"))
+        mock_client.get_input_entity = AsyncMock(side_effect=RuntimeError("net"))
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         result = await handlers["get_participants"]({
             "phone": "+1111", "chat_id": "@ch",
@@ -439,6 +447,7 @@ class TestMessagingToolErrors:
         handlers, pool, _ = msg_err_setup
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("net"))
+        mock_client.get_input_entity = AsyncMock(side_effect=RuntimeError("net"))
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         result = await handlers["edit_admin"]({
             "phone": "+1111", "chat_id": "@ch", "user_id": "@u",
@@ -458,6 +467,7 @@ class TestMessagingToolErrors:
         handlers, pool, _ = msg_err_setup
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("net"))
+        mock_client.get_input_entity = AsyncMock(side_effect=RuntimeError("net"))
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         result = await handlers["edit_permissions"]({
             "phone": "+1111", "chat_id": "@ch", "user_id": "@u",
@@ -484,6 +494,7 @@ class TestMessagingToolErrors:
         handlers, pool, _ = msg_err_setup
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("net"))
+        mock_client.get_input_entity = AsyncMock(side_effect=RuntimeError("net"))
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         result = await handlers["kick_participant"]({
             "phone": "+1111", "chat_id": "@ch", "user_id": "@u", "confirm": True,
@@ -501,6 +512,7 @@ class TestMessagingToolErrors:
         handlers, pool, _ = msg_err_setup
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("net"))
+        mock_client.get_input_entity = AsyncMock(side_effect=RuntimeError("net"))
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         result = await handlers["get_broadcast_stats"]({
             "phone": "+1111", "chat_id": "@ch",
@@ -518,6 +530,7 @@ class TestMessagingToolErrors:
         handlers, pool, _ = msg_err_setup
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("net"))
+        mock_client.get_input_entity = AsyncMock(side_effect=RuntimeError("net"))
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         result = await handlers["archive_chat"]({
             "phone": "+1111", "chat_id": "@ch", "confirm": True,
@@ -535,6 +548,7 @@ class TestMessagingToolErrors:
         handlers, pool, _ = msg_err_setup
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("net"))
+        mock_client.get_input_entity = AsyncMock(side_effect=RuntimeError("net"))
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         result = await handlers["unarchive_chat"]({
             "phone": "+1111", "chat_id": "@ch", "confirm": True,
@@ -552,6 +566,7 @@ class TestMessagingToolErrors:
         handlers, pool, _ = msg_err_setup
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("net"))
+        mock_client.get_input_entity = AsyncMock(side_effect=RuntimeError("net"))
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         result = await handlers["mark_read"]({
             "phone": "+1111", "chat_id": "@ch",

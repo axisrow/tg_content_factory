@@ -395,10 +395,18 @@ class TelegramActionService:
             if self._has_explicit_pool_operation(self._pool, "resolve_entity_with_warm"):
                 # Centralized cache-warming resolve so a freshly created chat
                 # (cold entity cache) resolves on retry instead of failing.
+                # Writes only need an InputPeer (#1831): get_input_entity
+                # answers from the session store without a request, while the
+                # full get_entity pays a network resolve on every call — one
+                # unit of the 60/h username budget per write.
                 return await self._pool.resolve_entity_with_warm(
-                    client, phone, identifier, operation="telegram_actions_resolve"
+                    client,
+                    phone,
+                    identifier,
+                    operation="telegram_actions_resolve",
+                    use_input_entity=True,
                 )
-            return await client.get_entity(identifier)
+            return await client.get_input_entity(identifier)
         except HandledFloodWaitError:
             raise
         except Exception as exc:

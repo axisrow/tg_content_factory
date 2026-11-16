@@ -151,19 +151,26 @@ class LiveTelegramAccess:
                 peer = PeerChannel(bare_channel_id(peer))
             else:
                 peer = {"chat": PeerChat, "user": PeerUser}[kind](abs(peer))
-        if isinstance(peer, str):
+        if isinstance(operation, History):
+            # History needs the full entity for its channel id, so it keeps the
+            # full-fetch resolve explicitly (#1831); everything else below only
+            # needs an InputPeer and resolves cache-first — a write by
+            # @username no longer spends one unit of the 60/h username budget
+            # per call when the peer is already known to the session.
             entity = await self._pool.resolve_entity_with_warm(
                 session, str(operation.account_id), peer, operation="gateway_resolve")
-        else:
-            entity = await session.resolve_entity(peer)
-        if isinstance(operation, History):
-            # Telegram IDs and the cursor are normalized; no native object escapes.
             channel_id = abs(int(entity.id))
             messages = [build_message_from_telethon(message, channel_id).model_dump(mode="json")
                         async for message in session.stream_messages(
                             entity, min_id=operation.after_id, reverse=True, limit=operation.limit)]
             return {"messages": messages,
                     "next_id": max((message["message_id"] for message in messages), default=operation.after_id)}
+        if isinstance(peer, str):
+            entity = await self._pool.resolve_entity_with_warm(
+                session, str(operation.account_id), peer, operation="gateway_resolve",
+                use_input_entity=True)
+        else:
+            entity = await session.resolve_input_entity(peer)
         if isinstance(operation, Send):
             message = await session.send_message(entity, operation.text, reply_to=operation.reply_to,
                                                   link_preview=operation.link_preview)

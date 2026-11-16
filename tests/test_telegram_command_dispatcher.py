@@ -31,6 +31,9 @@ class _FakeClient:
     async def get_entity(self, chat_id):
         return MagicMock(id=chat_id)
 
+    async def get_input_entity(self, chat_id):
+        return MagicMock(id=chat_id)
+
     def iter_messages(self, entity, ids):
         msg = MagicMock()
 
@@ -279,6 +282,8 @@ def _dispatcher(db=None, pool=None, **kw):
 def _client_mock():
     c = MagicMock()
     c.get_entity = AsyncMock(return_value="entity")
+    # Writes resolve cache-first (#1831): the input entity is the entry.
+    c.get_input_entity = AsyncMock(return_value="entity")
     return c
 
 
@@ -1052,6 +1057,9 @@ class _PhoneRoutingClient:
         self.sent: list[tuple[object, str]] = []
 
     async def get_entity(self, identifier):
+        return MagicMock(id=identifier, _client_phone=self.phone)
+
+    async def get_input_entity(self, identifier):
         return MagicMock(id=identifier, _client_phone=self.phone)
 
     async def send_message(self, entity, text, **kwargs):
@@ -2825,6 +2833,7 @@ async def test_download_media_message_not_found(tmp_path, monkeypatch):
 
         client.iter_messages = lambda entity, ids: empty_iter()
         client.get_entity = AsyncMock(return_value=MagicMock())
+        client.get_input_entity = AsyncMock(return_value=MagicMock())
         pool.get_native_client_by_phone = AsyncMock(return_value=(client, "+123"))
 
         dispatcher = TelegramCommandDispatcher(db, pool)
@@ -2857,6 +2866,7 @@ async def test_download_media_no_media(tmp_path, monkeypatch):
         client.iter_messages = lambda entity, ids: single_msg()
         client.download_media = AsyncMock(return_value=None)
         client.get_entity = AsyncMock(return_value=MagicMock())
+        client.get_input_entity = AsyncMock(return_value=MagicMock())
         pool.get_native_client_by_phone = AsyncMock(return_value=(client, "+123"))
 
         dispatcher = TelegramCommandDispatcher(db, pool)

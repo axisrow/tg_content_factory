@@ -104,7 +104,9 @@ def _setup_resolve_entity(pool, client, entity=None):
 
     pool.get_native_client_by_phone = AsyncMock(side_effect=_get_native)
     pool.get_client_by_phone = AsyncMock(side_effect=_get_regular)
-    # Non-numeric path
+    # Non-numeric path: writes resolve cache-first (#1831), so the input
+    # entity is the resolver entry — the full entity stays for parity.
+    client.get_input_entity = AsyncMock(return_value=entity)
     client.get_entity = AsyncMock(return_value=entity)
     return entity
 
