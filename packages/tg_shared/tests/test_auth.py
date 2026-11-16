@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,6 +16,54 @@ from tg_shared.auth import (
 )
 
 pytestmark = pytest.mark.native_backend_allowed
+
+
+@pytest.mark.anyio
+async def test_saved_session_preparer_runs_before_connection_and_authorization():
+    auth = TelegramAuth(api_id=123, api_hash="offline")
+    phases = []
+    client = SimpleNamespace(is_user_authorized=AsyncMock(return_value=True))
+
+    def prepare(actual):
+        assert actual is client
+        phases.append("guard")
+
+    async def connect(actual):
+        assert actual is client
+        assert phases == ["guard"]
+        phases.append("connect")
+
+    with patch("tg_shared.auth.TelegramClient", return_value=client), patch(
+        "tg_shared.auth.StringSession", return_value=object()
+    ), patch("tg_shared.auth.connect_with_auth_key_retry", side_effect=connect):
+        result = await auth.create_client_from_session("offline", before_connect=prepare)
+    assert result is client
+    assert phases == ["guard", "connect"]
+    client.is_user_authorized.assert_awaited_once()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure", ["prepare", "connect", "authorization", "cancel"])
+async def test_saved_session_failure_disconnects_the_partial_client(failure):
+    auth = TelegramAuth(api_id=123, api_hash="offline")
+    client = SimpleNamespace(is_user_authorized=AsyncMock(return_value=failure != "authorization"),
+                             disconnect=AsyncMock())
+
+    def prepare(actual):
+        if failure == "prepare":
+            raise ValueError("preparation refused")
+
+    error = (OSError("offline connect failed") if failure == "connect"
+             else asyncio.CancelledError() if failure == "cancel" else None)
+    connect = AsyncMock(side_effect=error)
+    with patch("tg_shared.auth.TelegramClient", return_value=client), patch(
+        "tg_shared.auth.StringSession", return_value=object()
+    ), patch("tg_shared.auth.connect_with_auth_key_retry", connect):
+        with pytest.raises((ValueError, OSError, ConnectionError, asyncio.CancelledError)):
+            await auth.create_client_from_session("offline", before_connect=prepare)
+    client.disconnect.assert_awaited_once()
+    if failure == "prepare":
+        connect.assert_not_awaited()
 
 
 class FakeSentCodeTypeApp:

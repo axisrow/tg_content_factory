@@ -11,6 +11,6 @@ from .json_store import JsonFileStore
 from .models import SharedAccount
 from .storage import SharedAccountStore
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __all__ = ["JsonFileStore", "SharedAccount", "SharedAccountStore", "__version__"]

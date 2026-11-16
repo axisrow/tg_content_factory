@@ -8,6 +8,7 @@ sender is a recording stub; ``get_entity`` / ``get_input_entity`` are never
 stubbed; the only replaced behavior is ``is_connected()`` (offline test).
 """
 
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -135,7 +136,12 @@ def make_recording_client(*, seeded=(), resolve_username_to=None):
             )
         return None
 
-    client._sender.send = send
+    def dispatch(request, ordered=False):
+        if isinstance(request, list):
+            return [asyncio.ensure_future(send(item, ordered=ordered)) for item in request]
+        return asyncio.ensure_future(send(request, ordered=ordered))
+
+    client._sender.send = dispatch
     client.is_connected = lambda: True
     for entity in seeded:
         client.session.process_entities([entity])

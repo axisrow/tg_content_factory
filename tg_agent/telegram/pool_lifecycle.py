@@ -148,7 +148,15 @@ class ClientLifecycleMixin:
         )
         # Sustained-volume windows replay too: the previous process's resolve
         # volume stays against the fresh limiter's budget (floodgate #26).
-        await self.restore_resolve_limiter_snapshot(self._db)
+        # Restore once per pool lifetime. Replaying our own recently persisted
+        # snapshot on a repeated initialize would count every resolve twice.
+        # Share the task so concurrent initializers both wait before connecting.
+        restore = getattr(self, "_resolve_limiter_restore_task", None)
+        if restore is None:
+            restore = self._resolve_limiter_restore_task = asyncio.create_task(
+                self.restore_resolve_limiter_snapshot(self._db)
+            )
+        await asyncio.shield(restore)
         if phones is not None:
             allowed_phones = {str(phone) for phone in phones if str(phone)}
             accounts = [acc for acc in accounts if acc.phone in allowed_phones]

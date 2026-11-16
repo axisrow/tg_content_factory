@@ -3,6 +3,12 @@
 Keep a Changelog format, SemVer. Consumers pin exact versions — the
 `tg-messenger` precedent (`>=0.1.0` with no tags/changelog) is not repeated.
 
+## 0.2.1 (unreleased)
+
+- Optional saved-session `before_connect` callback installs consumer guards
+  before connection and authorization requests. Existing callers remain
+  compatible. Failed preparation/connection/authorization closes the client.
+
 ## [0.2.0] — 2026-10-26
 
 ### Added

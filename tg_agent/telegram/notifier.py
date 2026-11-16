@@ -139,7 +139,7 @@ class Notifier:
         """Invalidate the cached me.id. Call when the notification account changes."""
         self._cached_me_id = None
 
-    async def notify(self, text: str) -> bool:
+    async def notify(self, text: str, *, propagate_throttle: bool = False) -> bool:
         # The send is async and already returns a bool (it swallows its own
         # exceptions), so it runs outside pybreaker; we only feed the outcome
         # through the synchronous state machine. pybreaker owns open/half-open/
@@ -160,7 +160,8 @@ class Notifier:
             # no cooldown. Treat cancellation as a failed probe (re-opens).
             ok = False
             try:
-                ok = await self._attempt_send(text)
+                ok = (await self._attempt_send(text, propagate_throttle=True) if propagate_throttle
+                      else await self._attempt_send(text))
             finally:
                 self._record_outcome(ok)
             return ok
@@ -216,7 +217,7 @@ class Notifier:
     def _raise_probe_error() -> None:
         raise _NotifierProbeError
 
-    async def _attempt_send(self, text: str) -> bool:
+    async def _attempt_send(self, text: str, *, propagate_throttle: bool = False) -> bool:
         try:
             from tg_agent.gateway.pool import GatewayPool, GatewayUncertainError
 
@@ -280,6 +281,11 @@ class Notifier:
         except asyncio.CancelledError:
             raise
         except Exception as e:
+            if propagate_throttle:
+                from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitedError
+
+                if isinstance(e, (HandledFloodWaitError, TelegramRateLimitedError)):
+                    raise
             logger.error("Failed to send notification: %s", e)
             return False
 

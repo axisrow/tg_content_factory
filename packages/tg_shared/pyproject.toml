@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tg-shared"
-version = "0.2.0"
+version = "0.2.1"
 description = "Shared Telegram core for tg-agent (factory) and tg-messenger: account storage contract, auth/sessions, botfather, message identity/media models"
 readme = "README.md"
 license = "MIT"

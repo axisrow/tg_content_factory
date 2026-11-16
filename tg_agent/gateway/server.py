@@ -44,9 +44,15 @@ from tg_agent.gateway.protocol import (
     is_read_operation,
 )
 from tg_agent.gateway.store import EventCursorExpiredError, GatewayConflictError, GatewayStore
+from tg_agent.telegram.rpc_guard import diagnostic_fields, rpc_operation, wait_rpc_report
 
 logger = logging.getLogger(__name__)
 operation_adapter = TypeAdapter(Operation)
+
+
+def _throttle_state(operation, diagnostics):
+    safe = is_read_operation(operation) or diagnostics.get("delivery_state") == "not_sent"
+    return "deferred" if safe else "uncertain"
 
 
 class GatewayDeferredError(Exception):
@@ -117,30 +123,40 @@ class Dispatcher:
                     if isinstance(exc, UsernameResolveFloodWaitDeferredError)
                     else time.time() + max(0.1, exc.retry_after_sec)
                 )
-                state = "deferred" if is_read_operation(operation) else "uncertain"
+                diagnostics = diagnostic_fields(exc)
+                state = _throttle_state(operation, diagnostics)
                 await self.store.transition(project, request, "running", state, {
                     "retry_at": retry_at,
                     "reason": type(exc).__name__,
+                    "diagnostics": diagnostics,
                 })
             except TelegramRateLimitedError as exc:
-                state = "deferred" if is_read_operation(operation) else "uncertain"
+                diagnostics = diagnostic_fields(exc)
+                state = _throttle_state(operation, diagnostics)
                 await self.store.transition(project, request, "running", state, {
                     "retry_at": time.time() + max(0.1, exc.retry_after_sec),
                     "reason": type(exc).__name__,
                     "category": exc.category,
+                    "diagnostics": diagnostics,
                 })
             except HandledFloodWaitError as exc:
-                await self.store.transition(project, request, "running", "deferred", {
+                diagnostics = diagnostic_fields(exc)
+                state = _throttle_state(operation, diagnostics)
+                await self.store.transition(project, request, "running", state, {
                     "retry_at": exc.info.next_available_at_utc.timestamp(),
                     "reason": "FloodWaitError",
                     "wait_seconds": exc.info.wait_seconds,
+                    "diagnostics": diagnostics,
                 })
             except FloodWaitError as exc:
                 until = time.time() + max(1, exc.seconds)
-                await self.store.flood(str(operation.account_id), until)
-                state = "deferred" if is_read_operation(operation) else "uncertain"
+                if not await wait_rpc_report(exc):
+                    await self.store.flood(str(operation.account_id), until)
+                diagnostics = diagnostic_fields(exc)
+                state = _throttle_state(operation, diagnostics)
                 await self.store.transition(project, request, "running", state, {
                     "retry_at": until, "reason": "FloodWaitError", "wait_seconds": max(1, exc.seconds),
+                    "diagnostics": diagnostics,
                 })
             except Exception as exc:
                 from tg_agent.services.telegram_actions import TelegramActionClientUnavailableError
@@ -160,6 +176,9 @@ class Dispatcher:
                     else None
                 )
                 failure_payload = {"error": type(exc).__name__}
+                diagnostics = diagnostic_fields(exc)
+                if diagnostics:
+                    failure_payload["diagnostics"] = diagnostics
                 if site:
                     failure_payload["site"] = site
                 await self.store.transition(project, request, "running", state, failure_payload)
@@ -171,9 +190,11 @@ class Dispatcher:
                                operation.kind, operation.account_id,
                                getattr(operation, "peer", None), type(exc).__name__,
                                exc_info=exc)
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as exc:
                 state = "cancelled" if is_read_operation(operation) else "uncertain"
-                await self.store.transition(project, request, "running", state)
+                diagnostics = diagnostic_fields(exc)
+                result = {"diagnostics": diagnostics} if diagnostics else None
+                await self.store.transition(project, request, "running", state, result)
                 if asyncio.current_task().cancelling():
                     raise
             else:
@@ -197,7 +218,8 @@ class Dispatcher:
         if summary["flood_until"] > time.time():
             # Reads can retry after the global deadline; writes have not started.
             raise GatewayDeferredError(summary["flood_until"])
-        return await self.access.execute(project, operation)
+        with rpc_operation(operation.kind):
+            return await self.access.execute(project, operation)
 
     async def cancel(self, project: str, request: str) -> dict:
         await self.store.operation(project, request)

@@ -7,6 +7,7 @@ responses seed it — ``session.process_entities``. ``get_entity`` /
 ``get_input_entity`` are never stubbed.
 """
 
+import asyncio
 import secrets
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -73,7 +74,12 @@ def make_recording_client(*, seeded=()):
             )
         return None
 
-    client._sender.send = send
+    def dispatch(request, ordered=False):
+        if isinstance(request, list):
+            return [asyncio.ensure_future(send(item, ordered=ordered)) for item in request]
+        return asyncio.ensure_future(send(request, ordered=ordered))
+
+    client._sender.send = dispatch
     # The client is never connected (offline test); report it as connected so
     # the pool's liveness check never attempts a REAL network connect() —
     # that is the only non-Telethon-parsing behavior replaced here.
