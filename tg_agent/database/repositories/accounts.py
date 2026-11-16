@@ -518,6 +518,70 @@ class AccountsRepository:
             (int(is_premium), phone),
         )
 
+    async def set_family_flood(self, phone: str, family: str, until: datetime) -> None:
+        """Записать дедлайн флада семейства (phone, family) — read-side скоупинг #1832.
+
+        В отличие от ``update_account_flood`` (account-wide, блокирует и запись),
+        строка здесь блокирует только запросы своего семейства: паблишинг из
+        того же аккаунта остаётся доступен.
+        """
+        assert self._database is not None, (
+            "AccountsRepository.set_family_flood requires a Database reference"
+        )
+        await self._database.execute_write(
+            """
+            INSERT INTO account_family_floods (phone, family, until, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(phone, family) DO UPDATE SET
+                until = excluded.until,
+                updated_at = excluded.updated_at
+            """,
+            (phone, family, until.isoformat(), datetime.now(timezone.utc).isoformat()),
+        )
+
+    async def list_active_family_floods(
+        self,
+        *,
+        phone: str | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, dict[str, datetime]]:
+        """Активные (until > now) family-флады: {phone: {family: until}}.
+
+        Истёкшие строки не удаляются (фильтруются чтением) — их немного
+        (семейств × аккаунтов), чистит ``clear_family_floods``/``flood-clear``.
+        """
+        assert self._database is not None, (
+            "AccountsRepository.list_active_family_floods requires a Database reference"
+        )
+        current = now or datetime.now(timezone.utc)
+        sql = "SELECT phone, family, until FROM account_family_floods WHERE until > ?"
+        params: list[str] = [current.isoformat()]
+        if phone is not None:
+            sql += " AND phone = ?"
+            params.append(phone)
+        async with self._database.transaction() as conn:
+            cur = await conn.execute(sql, tuple(params))
+            rows = await cur.fetchall()
+        floods: dict[str, dict[str, datetime]] = {}
+        for row in rows:
+            until = parse_datetime(row["until"])
+            if until is None:
+                continue
+            floods.setdefault(row["phone"], {})[row["family"]] = until
+        return floods
+
+    async def clear_family_floods(self, phone: str, *, family: str | None = None) -> None:
+        """Снять family-флады аккаунта (или одного семейства)."""
+        assert self._database is not None, (
+            "AccountsRepository.clear_family_floods requires a Database reference"
+        )
+        sql = "DELETE FROM account_family_floods WHERE phone = ?"
+        params: list[str] = [phone]
+        if family is not None:
+            sql += " AND family = ?"
+            params.append(family)
+        await self._database.execute_write(sql, tuple(params))
+
     @staticmethod
     async def _promote_primary_if_none(conn, *, active_only: bool) -> None:
         """Promote the lowest-id candidate to primary iff no primary exists.

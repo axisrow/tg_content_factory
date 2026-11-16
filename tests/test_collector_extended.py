@@ -22,6 +22,7 @@ def mock_pool():
     pool.get_client_by_phone = AsyncMock(return_value=None)
     pool.release_client = AsyncMock()
     pool.report_flood = AsyncMock()
+    pool.report_family_flood = AsyncMock()
     pool.is_dialogs_fetched = MagicMock(return_value=True)
     pool.wait_for_warm = AsyncMock()
     return pool
@@ -88,7 +89,9 @@ async def test_collect_channel_flood_wait_retry(collector, mock_pool, mock_db):
 
     res = await collector.collect_single_channel(channel)
     assert res == 1
-    mock_pool.report_flood.assert_called_once()
+    # #1832: a collection-history flood scopes to its family, not the account.
+    mock_pool.report_family_flood.assert_called_once()
+    mock_pool.report_flood.assert_not_called()
 
 
 @pytest.mark.anyio

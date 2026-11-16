@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telethon.errors import FloodWaitError, TypeNotFoundError
-from telethon_floodgate import HandledFloodWaitError
+from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitGate
 
 from tests.helpers import AsyncIterMessages, FakeCliTelethonClient
 from tg_agent.models import Account
@@ -156,9 +156,11 @@ async def test_download_media():
 
 @pytest.mark.anyio
 async def test_transport_session_reports_flood_from_awaitable():
+    """Read-family flood (resolve): scoped report, account-wide column untouched (#1832)."""
     err = FloodWaitError(request=None, capture=0)
     err.seconds = 5
     pool = AsyncMock()
+    pool._rate_limit_gate = TelegramRateLimitGate()
     session = TelegramTransportSession(
         FakeCliTelethonClient(entity_resolver=lambda _arg: err),
         phone="+7000",
@@ -169,11 +171,15 @@ async def test_transport_session_reports_flood_from_awaitable():
         await session.get_entity("@channel")
 
     assert exc_info.value.info.wait_seconds == 5
-    pool.report_flood.assert_awaited_once_with("+7000", 5)
+    pool.report_family_flood.assert_awaited_once_with(
+        "+7000", 5, "resolve", operation="telegram_resolve_entity"
+    )
+    pool.report_flood.assert_not_awaited()
 
 
 @pytest.mark.anyio
 async def test_transport_session_reports_flood_from_stream():
+    """Read-family flood (history stream): scoped report (#1832)."""
     err = FloodWaitError(request=None, capture=0)
     err.seconds = 7
 
@@ -185,6 +191,7 @@ async def test_transport_session_reports_flood_from_stream():
             raise err
 
     pool = AsyncMock()
+    pool._rate_limit_gate = TelegramRateLimitGate()
     session = TelegramTransportSession(
         FakeCliTelethonClient(iter_messages_factory=lambda *a, **kw: FloodingIterator()),
         phone="+7001",
@@ -196,7 +203,10 @@ async def test_transport_session_reports_flood_from_stream():
             pass
 
     assert exc_info.value.info.wait_seconds == 7
-    pool.report_flood.assert_awaited_once_with("+7001", 7)
+    pool.report_family_flood.assert_awaited_once_with(
+        "+7001", 7, "history", operation="telegram_stream_messages"
+    )
+    pool.report_flood.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -229,7 +239,8 @@ async def test_transport_session_closes_stream_iterator_on_flood():
             pass
 
     assert iterator.closed is True
-    pool.report_flood.assert_awaited_once_with("+7001", 7)
+    pool.report_family_flood.assert_awaited_once()
+    pool.report_flood.assert_not_awaited()
 
 
 @pytest.mark.anyio

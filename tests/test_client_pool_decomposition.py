@@ -73,6 +73,8 @@ PUBLIC_CONTRACT: frozenset[str] = frozenset(
         "get_mtproto_watchdog_stats",
         # flood-wait rotation
         "report_flood",
+        "report_family_flood",
+        "family_flood_deadline",
         "report_premium_flood",
         "clear_flood",
         "clear_premium_flood",

@@ -591,6 +591,25 @@ async def flood_status_impl(config_path: str) -> None:
             else:
                 resolve_str = f"{int((resolve_until - now).total_seconds())}s"
             print(fmt.format(acc.phone, until_str, remaining_str, resolve_str))
+        family_floods = await db.repos.accounts.list_active_family_floods(now=now)
+        if family_floods:
+            print()
+            print("Per-family read floods (#1832; writes stay available):")
+            fam_fmt = "  {:<16} {:<14} {:<22} {:>10}"
+            print(fam_fmt.format("Phone", "Family", "Until", "Remaining"))
+            for phone, fams in sorted(family_floods.items()):
+                for family, until in sorted(fams.items()):
+                    if until.tzinfo is None:
+                        until = until.replace(tzinfo=timezone.utc)
+                    remaining = int((until - now).total_seconds())
+                    print(
+                        fam_fmt.format(
+                            phone,
+                            family,
+                            until.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                            f"{remaining}s",
+                        )
+                    )
     finally:
         await db.close()
 
@@ -605,7 +624,11 @@ async def flood_clear_impl(config_path: str, *, phone: str) -> None:
             print(f"Account {phone} not found")
             return
         await db.update_account_flood(phone, None)
+        cleared = await db.repos.accounts.list_active_family_floods(phone=phone)
+        await db.repos.accounts.clear_family_floods(phone)
         print(f"Flood wait cleared for {phone}")
+        for family in sorted(cleared.get(phone, {})):
+            print(f"  cleared family flood: {family}")
     finally:
         await db.close()
 

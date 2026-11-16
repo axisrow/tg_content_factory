@@ -179,7 +179,13 @@ async def test_collect_channel_stats_rotates_on_flood_wait(db):
 
     assert result is not None
     assert result.subscriber_count == 123
-    pool.report_flood.assert_awaited_once_with("+7001", 60)
+    # #1832: the stats resolve flood scopes to its family, not the account.
+    # (Mock pool carries no real gate, so the family is the permissive
+    # "default" bucket; production pools resolve the true gate category.)
+    pool.report_family_flood.assert_awaited_once_with(
+        "+7001", 60, "default", operation="telegram_resolve_entity"
+    )
+    pool.report_flood.assert_not_awaited()
     client2.get_entity.assert_awaited_once_with("rotate_chan")
 
 

@@ -34,6 +34,7 @@ from telethon_floodgate import (
 
 from tg_agent.database.live_accounts import load_live_usable_accounts
 from tg_agent.telegram.backends import TelegramTransportSession
+from tg_agent.telegram.flood_scope import family_floods_repo, is_read_family
 from tg_agent.telegram.utils import normalize_utc
 
 if TYPE_CHECKING:
@@ -45,6 +46,12 @@ logger = logging.getLogger(__name__)
 
 # How long a failed premium live re-check suppresses further re-checks (#1749).
 PREMIUM_RECHECK_TTL_SEC = 300.0
+
+# How long the in-memory per-family flood map is trusted before re-reading the
+# DB (#1832). ponytail: 60s staleness window — an external `account flood-clear`
+# (separate CLI process) takes up to a minute to reach a live worker; per-RPC
+# reads were rejected as too hot for the dispatch boundary.
+FAMILY_FLOOD_CACHE_TTL_SEC = 60.0
 
 
 class FloodRotationMixin:
@@ -60,6 +67,10 @@ class FloodRotationMixin:
     _db: Database
     _lease_pool: AccountLeasePool
     _premium_flood_wait_until: dict[str, datetime]
+    # Per-(phone, family) read-flood deadlines (#1832), TTL-cached from
+    # account_family_floods; None until the first load.
+    _family_floods: dict[str, dict[str, datetime]] | None = None
+    _family_floods_loaded_at: float | None = None
     # None = never checked; a plain 0.0 default reads as "just checked" on
     # hosts whose CLOCK_MONOTONIC counts from a recent boot (fresh CI VMs).
     _premium_recheck_at: float | None = None
@@ -124,10 +135,10 @@ class FloodRotationMixin:
         resolve again (#790).
 
         Per phone the readiness is ``max(resolve backoff, generic
-        accounts.flood_wait_until)``; the result is the minimum across
-        connected phones. Returns ``None`` when some account is capable right
-        now (even if transiently leased) or when nothing is connected — the
-        caller then falls back to its own deadline.
+        accounts.flood_wait_until, per-family resolve flood (#1832))``; the
+        result is the minimum across connected phones. Returns ``None`` when
+        some account is capable right now (even if transiently leased) or when
+        nothing is connected — the caller then falls back to its own deadline.
         """
         connected = self._connected_phones()
         if not connected:
@@ -139,6 +150,10 @@ class FloodRotationMixin:
             until = normalize_utc(getattr(account, "flood_wait_until", None))
             if until is not None:
                 generic[account.phone] = until
+        family_floods: dict[str, dict[str, datetime]] = {}
+        repo = family_floods_repo(self._db)
+        if repo is not None:
+            family_floods = await repo.list_active_family_floods()
         earliest: datetime | None = None
         for phone in connected:
             deadlines = [
@@ -146,6 +161,7 @@ class FloodRotationMixin:
                 for until in (
                     self.get_resolve_username_backoff_until(phone),
                     generic.get(phone),
+                    family_floods.get(phone, {}).get("resolve"),
                 )
                 if until is not None and until > now
             ]
@@ -287,11 +303,68 @@ class FloodRotationMixin:
         )
 
     async def report_flood(self, phone: str, wait_seconds: int) -> None:
-        """Mark account as flood-waited."""
+        """Mark account as flood-waited (account-wide, all surfaces)."""
         until = datetime.now(timezone.utc) + timedelta(seconds=wait_seconds)
         await self._db.update_account_flood(phone, until)
         level = logging.INFO if is_transient_flood_wait_seconds(wait_seconds) else logging.WARNING
         logger.log(level, "Flood wait for %s: %d seconds (until %s)", phone, wait_seconds, until)
+
+    async def report_family_flood(
+        self, phone: str, wait_seconds: int, family: str, *, operation: str | None = None
+    ) -> None:
+        """Record a READ-family flood per (phone, family), leaving writes free (#1832).
+
+        Write-family floods never land here (the boundary reports them
+        account-wide via :meth:`report_flood`); the guard keeps the historical
+        behavior for any operation whose flood cannot be scoped narrower.
+        Stores without the family slice (gateway store) keep the conservative
+        account-wide report instead of dropping the flood.
+        """
+        if not is_read_family(operation or "", family):
+            await self.report_flood(phone, wait_seconds)
+            return
+        repo = family_floods_repo(self._db)
+        if repo is None:
+            await self.report_flood(phone, wait_seconds)
+            return
+        until = datetime.now(timezone.utc) + timedelta(seconds=wait_seconds)
+        await repo.set_family_flood(phone, family, until)
+        cache = self._family_floods
+        if cache is None:
+            cache = self._family_floods = {}
+        cache.setdefault(phone, {})[family] = until
+        level = logging.INFO if is_transient_flood_wait_seconds(wait_seconds) else logging.WARNING
+        logger.log(
+            level,
+            "Flood wait (%s family) for %s: %d seconds (until %s); account stays writable",
+            family,
+            phone,
+            wait_seconds,
+            until,
+        )
+
+    async def family_flood_deadline(self, phone: str, family: str) -> datetime | None:
+        """Active per-family flood deadline for *phone*, TTL-cached from the DB.
+
+        Returns None when the family is not flooded. The cache is authoritative
+        between reloads: this process is the only writer of new floods, and an
+        external ``account flood-clear`` propagates within
+        FAMILY_FLOOD_CACHE_TTL_SEC. Stores without the family slice report no
+        family floods.
+        """
+        now = time.monotonic()
+        if (
+            self._family_floods is None
+            or self._family_floods_loaded_at is None
+            or now - self._family_floods_loaded_at >= FAMILY_FLOOD_CACHE_TTL_SEC
+        ):
+            repo = family_floods_repo(self._db)
+            self._family_floods = await repo.list_active_family_floods() if repo is not None else {}
+            self._family_floods_loaded_at = now
+        deadline = (self._family_floods or {}).get(phone, {}).get(family)
+        if deadline is not None and deadline <= datetime.now(timezone.utc):
+            return None
+        return normalize_utc(deadline)
 
     async def report_premium_flood(self, phone: str, wait_seconds: int) -> None:
         """Mark account as premium-search flood-waited without touching generic account state."""
@@ -311,6 +384,11 @@ class FloodRotationMixin:
 
     async def clear_flood(self, phone: str) -> None:
         await self._db.update_account_flood(phone, None)
+        repo = family_floods_repo(self._db)
+        if repo is not None and callable(getattr(repo, "clear_family_floods", None)):
+            await repo.clear_family_floods(phone)
+        if self._family_floods is not None:
+            self._family_floods.pop(phone, None)
 
     def clear_premium_flood(self, phone: str) -> None:
         self._premium_flood_wait_until.pop(phone, None)

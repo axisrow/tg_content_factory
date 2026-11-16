@@ -2697,7 +2697,10 @@ async def test_discover_phone_for_channel_flood():
     result = await collector._discover_phone_for_channel(123, "+7001")
 
     assert result is None
-    pool.report_flood.assert_awaited_once()
+    # The discover loop rebinds the session with phone+pool, so the boundary
+    # translated the flood itself — family-scoped now (#1832), not account-wide.
+    pool.report_family_flood.assert_awaited_once()
+    pool.report_flood.assert_not_awaited()
 
 
 @pytest.mark.anyio

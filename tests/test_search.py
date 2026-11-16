@@ -694,9 +694,13 @@ async def test_search_my_chats_reports_flood_wait_and_marks_account(
     assert result.flood_wait is not None
     assert result.flood_wait.wait_seconds == 33
     assert "Flood wait 33s" in (result.error or "")
+    # #1832: the search (history-family) flood scopes to the family — the
+    # account-wide write timer stays unset and the family row is recorded.
     accounts = await db.get_accounts(active_only=True)
     flooded = next(account for account in accounts if account.phone == phone)
-    assert flooded.flood_wait_until is not None
+    assert flooded.flood_wait_until is None
+    family_floods = await db.repos.accounts.list_active_family_floods(phone=phone)
+    assert phone in family_floods and "history" in family_floods[phone]
 
 
 @pytest.mark.anyio

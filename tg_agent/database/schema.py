@@ -753,4 +753,16 @@ CREATE INDEX IF NOT EXISTS idx_seeding_messages_thread
     ON seeding_messages(thread_id, position);
 CREATE INDEX IF NOT EXISTS idx_seeding_messages_due
     ON seeding_messages(status, planned_at);
+
+-- Per-(phone, family) read-side flood deadlines (#1832): a FloodWait on a read
+-- family (resolve/history/default/...) scopes HERE and never freezes
+-- accounts.flood_wait_until, so publishing stays available. Write-family
+-- floods (send/channel_lifecycle) keep the account-wide column only.
+CREATE TABLE IF NOT EXISTS account_family_floods (
+    phone TEXT NOT NULL,
+    family TEXT NOT NULL,
+    until TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (phone, family)
+);
 """

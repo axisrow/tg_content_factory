@@ -549,6 +549,7 @@ class FakeClientPool(ResolveGuardMixin, MagicMock):
         self.clients = kwargs.pop("clients", {})
         self.release_client = kwargs.pop("release_client", AsyncMock())
         self.report_flood = kwargs.pop("report_flood", AsyncMock())
+        self.report_family_flood = kwargs.pop("report_family_flood", AsyncMock())
         self.get_client_by_phone = kwargs.pop("get_client_by_phone", AsyncMock(return_value=None))
         self.get_available_client = kwargs.pop("get_available_client", AsyncMock(return_value=None))
         self.get_stats_availability = kwargs.pop("get_stats_availability", AsyncMock())
