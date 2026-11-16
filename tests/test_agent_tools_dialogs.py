@@ -339,6 +339,7 @@ class TestDialogsToolJoinChannel:
         mock_db.get_setting = AsyncMock(return_value=None)
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(return_value="entity")
+        mock_client.get_input_entity = AsyncMock(return_value="entity")
         mock_client.join_channel = AsyncMock()
         mock_pool = MagicMock()
         mock_pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+79001234567"))

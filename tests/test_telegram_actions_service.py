@@ -22,6 +22,7 @@ def _pool_with_client(client):
 async def test_send_reaction_resolves_entity_and_releases_client():
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
     client.send_reaction = AsyncMock()
     pool = _pool_with_client(client)
 
@@ -33,7 +34,7 @@ async def test_send_reaction_resolves_entity_and_releases_client():
     )
 
     assert result.phone == "+1"
-    client.get_entity.assert_awaited_once_with("@chat")
+    client.get_input_entity.assert_awaited_once_with("@chat")
     client.send_reaction.assert_awaited_once_with("entity", 42, "🔥")
     pool.release_client.assert_awaited_once_with("+1")
 
@@ -42,6 +43,7 @@ async def test_send_reaction_resolves_entity_and_releases_client():
 async def test_send_reaction_clear_passes_none_and_releases_client():
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
     client.send_reaction = AsyncMock()
     pool = _pool_with_client(client)
 
@@ -53,7 +55,7 @@ async def test_send_reaction_clear_passes_none_and_releases_client():
     )
 
     assert result.phone == "+1"
-    client.get_entity.assert_awaited_once_with("@chat")
+    client.get_input_entity.assert_awaited_once_with("@chat")
     client.send_reaction.assert_awaited_once_with("entity", 42, None)
     pool.release_client.assert_awaited_once_with("+1")
 
@@ -146,6 +148,7 @@ async def test_create_group_passes_megagroup_flags_without_username_update():
 async def test_join_dialog_public_resolves_entity_joins_and_clears_cache():
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
     client.join_channel = AsyncMock()
     pool = _pool_with_client(client)
     pool.invalidate_dialogs_cache = MagicMock()
@@ -158,7 +161,7 @@ async def test_join_dialog_public_resolves_entity_joins_and_clears_cache():
     assert result.phone == "+1"
     assert result.target == "@prog_ai"
     assert result.via_invite is False
-    client.get_entity.assert_awaited_once_with("@prog_ai")
+    client.get_input_entity.assert_awaited_once_with("@prog_ai")
     client.join_channel.assert_awaited_once_with("entity")
     pool.invalidate_dialogs_cache.assert_called_once_with("+1")
     pool.release_client.assert_awaited_once_with("+1")
@@ -186,6 +189,7 @@ async def test_join_dialog_private_invite_uses_import_hash():
 async def test_download_media_looks_up_message_checks_path_and_releases_client(tmp_path):
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
     message = SimpleNamespace(id=7)
 
     async def _iter_messages(entity, ids):
@@ -254,6 +258,7 @@ async def test_action_service_raises_when_client_unavailable():
 async def test_send_message_disables_link_preview_by_default():
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
     client.send_message = AsyncMock(return_value=SimpleNamespace(id=7))
     pool = _pool_with_client(client)
 
@@ -268,6 +273,7 @@ async def test_send_message_disables_link_preview_by_default():
 async def test_edit_message_disables_link_preview_by_default():
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
     client.edit_message = AsyncMock()
     pool = _pool_with_client(client)
 

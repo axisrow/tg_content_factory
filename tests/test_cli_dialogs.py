@@ -211,6 +211,8 @@ def test_cli_dialogs_join(cli_db, capsys):
     pool = _mock_pool()
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value="entity")
+    # Writes resolve cache-first (#1831): the join hands over the input entity.
+    client.get_input_entity = AsyncMock(return_value="entity")
     client.join_channel = AsyncMock()
     pool.get_native_client_by_phone = AsyncMock(return_value=(client, "+1234567890"))
     pool.release_client = AsyncMock()

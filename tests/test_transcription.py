@@ -471,6 +471,7 @@ async def test_service_transcribe_voice_ok_and_cached(db: Database, monkeypatch)
     message = _voice_msg()
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value=PeerChannel(555))
+    client.get_input_entity = AsyncMock(return_value=PeerChannel(555))
     await _fetch_via_iter(client, None, message)
 
     async def fake_engine(cl, entity, msg, engine):
@@ -524,6 +525,7 @@ async def test_service_transcribe_voice_rejects_non_voice_message(db: Database, 
     _no_stt_env(monkeypatch)
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value=PeerChannel(555))
+    client.get_input_entity = AsyncMock(return_value=PeerChannel(555))
     await _fetch_via_iter(client, None, SimpleNamespace(id=42, text="просто текст"))
     service = TelegramActionService(_transcribe_pool(client))
     result = await service.transcribe_voice(
@@ -545,6 +547,7 @@ async def test_service_transcribe_voice_runs_under_flood_wait_wrapper(
     message = _voice_msg()
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value=PeerChannel(555))
+    client.get_input_entity = AsyncMock(return_value=PeerChannel(555))
     await _fetch_via_iter(client, None, message)
 
     async def fake_engine(cl, entity, msg, engine):
@@ -578,6 +581,7 @@ async def test_service_transcribe_voice_telegram_picks_premium_lease(db: Databas
     message = _voice_msg()
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value=PeerChannel(555))
+    client.get_input_entity = AsyncMock(return_value=PeerChannel(555))
     await _fetch_via_iter(client, None, message)
     client.get_me = AsyncMock(return_value=SimpleNamespace(premium=True))
     client.get_input_entity = AsyncMock(return_value=PeerChannel(555))
@@ -627,6 +631,7 @@ async def test_service_transcribe_voice_missing_message(db: Database, monkeypatc
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value=PeerChannel(555))
+    client.get_input_entity = AsyncMock(return_value=PeerChannel(555))
     await _fetch_via_iter(client, None, None)  # id no longer exists
     service = TelegramActionService(_transcribe_pool(client))
     with pytest.raises(TelegramActionMessageNotFoundError):

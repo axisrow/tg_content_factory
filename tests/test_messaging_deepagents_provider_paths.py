@@ -103,6 +103,7 @@ class TestEditAdminTool:
     async def test_promote_success(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
+        mock_client.get_input_entity = AsyncMock(return_value=MagicMock())
         mock_client.edit_admin = AsyncMock()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
@@ -116,6 +117,7 @@ class TestEditAdminTool:
     async def test_with_title(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
+        mock_client.get_input_entity = AsyncMock(return_value=MagicMock())
         mock_client.edit_admin = AsyncMock()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
@@ -132,6 +134,7 @@ class TestEditAdminTool:
     async def test_error_propagates(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(side_effect=Exception("permission denied"))
+        mock_client.get_input_entity = AsyncMock(side_effect=Exception("permission denied"))
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
@@ -195,6 +198,7 @@ class TestEditPermissionsTool:
     async def test_success_path(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
+        mock_client.get_input_entity = AsyncMock(return_value=MagicMock())
         mock_client.edit_permissions = AsyncMock()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
@@ -208,6 +212,7 @@ class TestEditPermissionsTool:
     async def test_with_until_date(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
+        mock_client.get_input_entity = AsyncMock(return_value=MagicMock())
         mock_client.edit_permissions = AsyncMock()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
@@ -224,6 +229,7 @@ class TestEditPermissionsTool:
     async def test_error_propagates(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(side_effect=Exception("forbidden"))
+        mock_client.get_input_entity = AsyncMock(side_effect=Exception("forbidden"))
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
@@ -275,6 +281,7 @@ class TestGetBroadcastStatsTool:
         stats_mock.period = period_mock
         stats_mock.enabled_notifications = "0.5"
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
+        mock_client.get_input_entity = AsyncMock(return_value=MagicMock())
         mock_client.get_broadcast_stats = AsyncMock(return_value=stats_mock)
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
@@ -299,6 +306,7 @@ class TestGetBroadcastStatsTool:
         stats_mock.period = None
         stats_mock.enabled_notifications = None
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
+        mock_client.get_input_entity = AsyncMock(return_value=MagicMock())
         mock_client.get_broadcast_stats = AsyncMock(return_value=stats_mock)
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
@@ -319,6 +327,7 @@ class TestGetBroadcastStatsTool:
         stats_mock.period = None
         stats_mock.enabled_notifications = None
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
+        mock_client.get_input_entity = AsyncMock(return_value=MagicMock())
         mock_client.get_broadcast_stats = AsyncMock(return_value=stats_mock)
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
@@ -330,6 +339,7 @@ class TestGetBroadcastStatsTool:
     async def test_error_propagates(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(side_effect=Exception("chan error"))
+        mock_client.get_input_entity = AsyncMock(side_effect=Exception("chan error"))
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
@@ -384,18 +394,24 @@ class TestUnarchiveChatTool:
     async def test_success(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
+        mock_client.get_input_entity = AsyncMock(return_value=MagicMock())
         mock_client.edit_folder = AsyncMock()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["unarchive_chat"]({"phone": "+79001234567", "chat_id": "chan", "confirm": True})
         assert "разархивирован" in _text(result).lower()
-        mock_client.edit_folder.assert_awaited_once_with(mock_client.get_entity.return_value, 0)
+        # Writes resolve cache-first (#1831): the peer handed to edit_folder
+        # is the input entity.
+        mock_client.edit_folder.assert_awaited_once_with(
+            mock_client.get_input_entity.return_value, 0
+        )
 
     @pytest.mark.anyio
     async def test_error_propagates(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(side_effect=Exception("fail"))
+        mock_client.get_input_entity = AsyncMock(side_effect=Exception("fail"))
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
@@ -430,6 +446,7 @@ class TestDownloadMediaTool:
     async def test_message_not_found(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
+        mock_client.get_input_entity = AsyncMock(return_value=MagicMock())
 
         async def _iter_empty(*a, **kw):
             return
@@ -446,6 +463,7 @@ class TestDownloadMediaTool:
     async def test_no_media_in_message(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
+        mock_client.get_input_entity = AsyncMock(return_value=MagicMock())
         msg_mock = MagicMock()
 
         async def _iter_with_msg(*a, **kw):
@@ -463,6 +481,7 @@ class TestDownloadMediaTool:
     async def test_error_propagates(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(side_effect=Exception("network error"))
+        mock_client.get_input_entity = AsyncMock(side_effect=Exception("network error"))
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
@@ -508,6 +527,7 @@ class TestMarkReadTool:
     async def test_success(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
+        mock_client.get_input_entity = AsyncMock(return_value=MagicMock())
         mock_client.send_read_acknowledge = AsyncMock()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
@@ -519,6 +539,7 @@ class TestMarkReadTool:
     async def test_error_propagates(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(side_effect=Exception("flood"))
+        mock_client.get_input_entity = AsyncMock(side_effect=Exception("flood"))
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)

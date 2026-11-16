@@ -251,6 +251,7 @@ class TestCliSend:
     def test_send_confirmed(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=123))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=123))
         client.send_message = AsyncMock(return_value=SimpleNamespace(id=42))
         _run_cli("send", pool, cli_db, {"phone": _PHONE, "recipient": "@user", "text": "hello", "yes": True})
         assert "Message sent to @user. message_id=42" in capsys.readouterr().out
@@ -264,6 +265,7 @@ class TestCliSend:
     def test_send_confirm_yes(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=123))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=123))
         client.send_message = AsyncMock(return_value=SimpleNamespace(id=42))
         with patch("builtins.input", return_value="y"):
             _run_cli("send", pool, cli_db, {"phone": _PHONE, "recipient": "@user", "text": "hello", "yes": False})
@@ -279,6 +281,7 @@ class TestCliSend:
     def test_send_error(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(side_effect=RuntimeError("entity error"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("entity error"))
         with pytest.raises(typer.Exit):
             _run_cli("send", pool, cli_db, {"phone": _PHONE, "recipient": "@user", "text": "hi", "yes": True})
         assert "Error sending message" in capsys.readouterr().err
@@ -286,6 +289,7 @@ class TestCliSend:
     def test_send_long_text_preview(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.send_message = AsyncMock()
         long_text = "x" * 300
         with patch("builtins.input", return_value="y"):
@@ -315,6 +319,7 @@ class TestCliForward:
     def test_forward_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.forward_messages = AsyncMock()
         _run_cli("forward", pool, cli_db, {
             "phone": _PHONE, "from_chat": "A", "to_chat": "B", "message_ids": ["1,2"], "yes": True,
@@ -341,6 +346,7 @@ class TestCliForward:
     def test_forward_error(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("err"))
         with pytest.raises(typer.Exit):
             _run_cli("forward", pool, cli_db, {
                 "phone": _PHONE, "from_chat": "A", "to_chat": "B", "message_ids": ["1"], "yes": True,
@@ -354,6 +360,7 @@ class TestCliEditMessage:
     def test_edit_message_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.edit_message = AsyncMock()
         _run_cli("edit-message", pool, cli_db, {
             "phone": _PHONE, "chat_id": "@ch", "message_id": 42, "text": "new text", "yes": True,
@@ -380,6 +387,7 @@ class TestCliEditMessage:
     def test_edit_message_error(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(side_effect=RuntimeError("oops"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("oops"))
         with pytest.raises(typer.Exit):
             _run_cli("edit-message", pool, cli_db, {
                 "phone": _PHONE, "chat_id": "@ch", "message_id": 42, "text": "t", "yes": True,
@@ -401,6 +409,7 @@ class TestCliDeleteMessage:
     def test_delete_message_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.delete_messages = AsyncMock()
         _run_cli("delete-message", pool, cli_db, {
             "phone": _PHONE, "chat_id": "@ch", "message_ids": ["1,2"], "yes": True,
@@ -425,6 +434,7 @@ class TestCliDeleteMessage:
     def test_delete_message_error(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("err"))
         with pytest.raises(typer.Exit):
             _run_cli("delete-message", pool, cli_db, {
                 "phone": _PHONE, "chat_id": "@ch", "message_ids": ["1"], "yes": True,
@@ -438,6 +448,7 @@ class TestCliPinUnpin:
     def test_pin_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.pin_message = AsyncMock()
         _run_cli("pin-message", pool, cli_db, {
             "phone": _PHONE, "chat_id": "@ch", "message_id": 10, "notify": False, "yes": True,
@@ -464,6 +475,7 @@ class TestCliPinUnpin:
     def test_pin_error(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("err"))
         with pytest.raises(typer.Exit):
             _run_cli("pin-message", pool, cli_db, {
                 "phone": _PHONE, "chat_id": "@ch", "message_id": 10, "notify": False, "yes": True,
@@ -473,6 +485,7 @@ class TestCliPinUnpin:
     def test_unpin_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.unpin_message = AsyncMock()
         _run_cli("unpin-message", pool, cli_db, {
             "phone": _PHONE, "chat_id": "@ch", "message_id": 10, "yes": True,
@@ -482,6 +495,7 @@ class TestCliPinUnpin:
     def test_unpin_all(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.unpin_message = AsyncMock()
         _run_cli("unpin-message", pool, cli_db, {
             "phone": _PHONE, "chat_id": "@ch", "message_id": None, "yes": True,
@@ -499,6 +513,7 @@ class TestCliPinUnpin:
     def test_unpin_error(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("err"))
         with pytest.raises(typer.Exit):
             _run_cli("unpin-message", pool, cli_db, {
                 "phone": _PHONE, "chat_id": "@ch", "message_id": None, "yes": True,
@@ -514,6 +529,7 @@ class TestCliParticipants:
         p1 = SimpleNamespace(id=1, first_name="Alice", last_name="B", username="alice")
         p2 = SimpleNamespace(id=2, first_name="Bob", last_name=None, username=None)
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.get_participants = AsyncMock(return_value=[p1, p2])
         _run_cli("participants", pool, cli_db, {
             "phone": _PHONE, "chat_id": "@ch", "limit": 200, "search": "",
@@ -526,6 +542,7 @@ class TestCliParticipants:
     def test_participants_empty(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.get_participants = AsyncMock(return_value=[])
         _run_cli("participants", pool, cli_db, {
             "phone": _PHONE, "chat_id": "@ch", "limit": 200, "search": "",
@@ -535,6 +552,7 @@ class TestCliParticipants:
     def test_participants_error(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("err"))
         with pytest.raises(typer.Exit):
             _run_cli("participants", pool, cli_db, {
                 "phone": _PHONE, "chat_id": "@ch", "limit": 200, "search": "",
@@ -559,6 +577,7 @@ class TestCliRead:
         pool, client = _mock_pool()
         pool._auth = TelegramAuth(12345, "fakehash")
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.get_peer_id = AsyncMock(return_value=-100777)
         # tg-messenger 0.1.1: warm-entity resolve перед iter_messages.
         client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
@@ -622,6 +641,7 @@ class TestCliRead:
         pool, client = _mock_pool()
         pool._auth = TelegramAuth(12345, "fakehash")
         client.get_entity = AsyncMock(side_effect=RuntimeError("boom"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("boom"))
         with pytest.raises(typer.Exit):
             _run_cli("read", pool, cli_db, {
                 "phone": _PHONE, "chat_id": "@ch", "limit": 50, "offset_id": 0, "format": "text",
@@ -635,6 +655,7 @@ class TestCliEditAdmin:
     def test_edit_admin_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.edit_admin = AsyncMock()
         _run_cli("edit-admin", pool, cli_db, {
             "phone": _PHONE, "chat_id": "@ch", "user_id": "@u", "is_admin": True, "title": "Boss", "yes": True,
@@ -652,6 +673,7 @@ class TestCliEditAdmin:
     def test_edit_admin_error(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("err"))
         with pytest.raises(typer.Exit):
             _run_cli("edit-admin", pool, cli_db, {
                 "phone": _PHONE, "chat_id": "@ch", "user_id": "@u", "is_admin": True, "title": None, "yes": True,
@@ -665,6 +687,7 @@ class TestCliEditPermissions:
     def test_edit_permissions_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.edit_permissions = AsyncMock()
         _run_cli("edit-permissions", pool, cli_db, {
             "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
@@ -684,6 +707,7 @@ class TestCliEditPermissions:
     def test_edit_permissions_with_until_date(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.edit_permissions = AsyncMock()
         _run_cli("edit-permissions", pool, cli_db, {
             "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
@@ -694,6 +718,7 @@ class TestCliEditPermissions:
     def test_edit_permissions_error(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("err"))
         with pytest.raises(typer.Exit):
             _run_cli("edit-permissions", pool, cli_db, {
                 "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
@@ -708,6 +733,7 @@ class TestCliKick:
     def test_kick_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.kick_participant = AsyncMock()
         _run_cli("kick", pool, cli_db, {
             "phone": _PHONE, "chat_id": "@ch", "user_id": "@u", "yes": True,
@@ -725,6 +751,7 @@ class TestCliKick:
     def test_kick_error(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("err"))
         with pytest.raises(typer.Exit):
             _run_cli("kick", pool, cli_db, {
                 "phone": _PHONE, "chat_id": "@ch", "user_id": "@u", "yes": True,
@@ -738,6 +765,7 @@ class TestCliArchiveUnarchiveMarkRead:
     def test_archive_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.edit_folder = AsyncMock()
         _run_cli("archive", pool, cli_db, {"phone": _PHONE, "chat_id": "@ch"})
         assert "archived" in capsys.readouterr().out
@@ -745,6 +773,7 @@ class TestCliArchiveUnarchiveMarkRead:
     def test_archive_error(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("err"))
         with pytest.raises(typer.Exit):
             _run_cli("archive", pool, cli_db, {"phone": _PHONE, "chat_id": "@ch"})
         assert "Error archiving" in capsys.readouterr().err
@@ -765,6 +794,7 @@ class TestCliArchiveUnarchiveMarkRead:
     def test_unarchive_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.edit_folder = AsyncMock()
         _run_cli("unarchive", pool, cli_db, {"phone": _PHONE, "chat_id": "@ch"})
         assert "unarchived" in capsys.readouterr().out
@@ -772,6 +802,7 @@ class TestCliArchiveUnarchiveMarkRead:
     def test_unarchive_error(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("err"))
         with pytest.raises(typer.Exit):
             _run_cli("unarchive", pool, cli_db, {"phone": _PHONE, "chat_id": "@ch"})
         assert "Error unarchiving" in capsys.readouterr().err
@@ -779,6 +810,7 @@ class TestCliArchiveUnarchiveMarkRead:
     def test_mark_read_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.send_read_acknowledge = AsyncMock()
         _run_cli("mark-read", pool, cli_db, {"phone": _PHONE, "chat_id": "@ch", "max_id": None})
         assert "marked as read" in capsys.readouterr().out
@@ -786,6 +818,7 @@ class TestCliArchiveUnarchiveMarkRead:
     def test_mark_read_with_max_id(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.send_read_acknowledge = AsyncMock()
         _run_cli("mark-read", pool, cli_db, {"phone": _PHONE, "chat_id": "@ch", "max_id": 100})
         assert "marked as read" in capsys.readouterr().out
@@ -793,6 +826,7 @@ class TestCliArchiveUnarchiveMarkRead:
     def test_mark_read_error(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("err"))
         with pytest.raises(typer.Exit):
             _run_cli("mark-read", pool, cli_db, {"phone": _PHONE, "chat_id": "@ch", "max_id": None})
         assert "Error marking" in capsys.readouterr().err
@@ -841,6 +875,7 @@ class TestCliDownloadMedia:
     def test_download_media_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         msg = SimpleNamespace(id=1, media=True)
 
         async def _iter_messages(entity, ids):
@@ -857,6 +892,7 @@ class TestCliDownloadMedia:
     def test_download_media_no_media(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         msg = SimpleNamespace(id=1, media=None)
 
         async def _iter_messages(entity, ids):
@@ -872,6 +908,7 @@ class TestCliDownloadMedia:
     def test_download_media_message_not_found(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
 
         async def _iter_messages(entity, ids):
             return
@@ -887,6 +924,7 @@ class TestCliDownloadMedia:
     def test_download_media_error(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("err"))
         with pytest.raises(typer.Exit):
             _run_cli("download-media", pool, cli_db, {
                 "phone": _PHONE, "chat_id": "@ch", "message_id": 1, "output_dir": "/tmp",
@@ -900,6 +938,7 @@ class TestCliBroadcastStats:
     def test_broadcast_stats_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         stats = SimpleNamespace(
             followers=SimpleNamespace(current=1000, previous=900),
             views_per_post=SimpleNamespace(current=500, previous=400),
@@ -921,6 +960,7 @@ class TestCliBroadcastStats:
     def test_broadcast_stats_error(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
+        client.get_input_entity = AsyncMock(side_effect=RuntimeError("err"))
         with pytest.raises(typer.Exit):
             _run_cli("broadcast-stats", pool, cli_db, {
                 "phone": _PHONE, "chat_id": "@ch",
