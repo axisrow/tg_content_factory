@@ -4,7 +4,11 @@ import inspect
 from typing import Any
 
 from claude_agent_sdk import tool
-from telethon_floodgate import HandledFloodWaitError, run_with_flood_wait_retry
+from telethon_floodgate import (
+    HandledFloodWaitError,
+    TelegramRateLimitedError,
+    run_with_flood_wait_retry,
+)
 
 from tg_agent.agent.tools._formatters import format_sender_identity
 from tg_agent.agent.tools._registry import (
@@ -298,6 +302,7 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
                     reactions = format_message_reactions(msg)
                     reaction_suffix = f" | реакции: {reactions}" if reactions else ""
                     reaction_users_suffix = ""
+                    budget_refused = False
                     if include_reaction_users and reactions:
                         # The lease hands out a raw Telethon client; reaction
                         # lookups go through a bound adapter session so each
@@ -307,22 +312,36 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
                         reaction_session = adapt_transport_session(
                             client, phone=phone, pool=client_pool
                         )
-                        reaction_users = await fetch_message_reaction_users(
-                            reaction_session,
-                            entity,
-                            msg.id,
-                            limit=reaction_users_limit,
-                        )
-                        formatted_users = format_reaction_users_result(reaction_users)
-                        if formatted_users:
-                            if reaction_users.unavailable:
-                                reaction_users_suffix = f" | {formatted_users}"
-                            else:
-                                reaction_users_suffix = f" | поставили: {formatted_users}"
+                        try:
+                            reaction_users = await fetch_message_reaction_users(
+                                reaction_session,
+                                entity,
+                                msg.id,
+                                limit=reaction_users_limit,
+                            )
+                        except TelegramRateLimitedError:
+                            # Local budget refusal (#1826): the message stays
+                            # in the output (without reaction users), the
+                            # fan-out stops, and the truncation is explicit —
+                            # partial data is never read as complete.
+                            budget_refused = True
+                        else:
+                            formatted_users = format_reaction_users_result(reaction_users)
+                            if formatted_users:
+                                if reaction_users.unavailable:
+                                    reaction_users_suffix = f" | {formatted_users}"
+                                else:
+                                    reaction_users_suffix = f" | поставили: {formatted_users}"
                     line = f"#{msg.id} {date_str}{sender}: {preview}{reaction_suffix}{reaction_users_suffix}"
                     lines.append(line)
                     total_chars += len(line)
                     count += 1
+                    if budget_refused:
+                        lines.append(
+                            "\n[Пользователи реакций неполные: локальный лимит исчерпан; "
+                            "повторите позже для остатка]"
+                        )
+                        break
                     if total_chars >= budget:
                         lines.append(f"\n[Вывод обрезан после {count} сообщений, достигнут лимит символов]")
                         break
