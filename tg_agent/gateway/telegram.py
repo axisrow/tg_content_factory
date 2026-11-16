@@ -33,6 +33,7 @@ from tg_agent.gateway.protocol import (
     VoiceSource,
 )
 from tg_agent.gateway.store import GatewayStore
+from tg_agent.parsers import bare_channel_id
 from tg_agent.telegram.backends import TelegramTransportSession
 from tg_agent.telegram.collector_message_parse import build_message_from_telethon
 from tg_shared.auth import TelegramAuth
@@ -142,7 +143,14 @@ class LiveTelegramAccess:
         peer = operation.peer
         kind = getattr(operation, "peer_type", "auto")
         if isinstance(peer, int) and kind != "auto":
-            peer = {"channel": PeerChannel, "chat": PeerChat, "user": PeerUser}[kind](abs(peer))
+            if kind == "channel":
+                # Typed channel peers may arrive Telegram-marked (-100<bare>);
+                # building PeerChannel(abs(peer)) would ask for id 100<bare>,
+                # which exists nowhere (#1829). The helper strips exactly the
+                # marker and leaves bare ids untouched.
+                peer = PeerChannel(bare_channel_id(peer))
+            else:
+                peer = {"chat": PeerChat, "user": PeerUser}[kind](abs(peer))
         if isinstance(peer, str):
             entity = await self._pool.resolve_entity_with_warm(
                 session, str(operation.account_id), peer, operation="gateway_resolve")
