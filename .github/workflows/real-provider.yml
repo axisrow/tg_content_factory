@@ -38,7 +38,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: pip install -e packages/tg_shared -e ".[dev]"
 
       - name: Run real-provider smoke tests
         run: |

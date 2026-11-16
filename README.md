@@ -245,7 +245,7 @@ telethon-cli users get-me --output json
 
  ```bash
  # Install dev dependencies
- pip install -e ".[dev]"
+ pip install -e packages/tg_shared -e ".[dev]"
 
  # Run parallel-safe tests (up to four workers locally)
  pytest tests/ -v -m "not aiosqlite_serial" -n auto

@@ -26,16 +26,15 @@ pip install tg-agent
 ```bash
 git clone https://github.com/axisrow/tg_content_factory.git
 cd tg_content_factory
-pip install -e ".[dev]"
+# Install both packages in one transaction: tg-shared is not on PyPI.
+pip install -e packages/tg_shared -e ".[dev]"
 # Confirm the editable install; isolated tools such as mutmut need this.
 python -m pip show tg-agent
-# The core imports the monorepo shared package at runtime.
-pip install -e packages/tg_shared
 ```
 
 ## Опциональные зависимости
 
-> **Важно для инструментов разработки.** Команда `pip install -e ".[dev]"` обязательна
+> **Важно для инструментов разработки.** Команда `pip install -e packages/tg_shared -e ".[dev]"` обязательна
 > перед запуском инструментов, которые копируют исходники в отдельный каталог
 > (например, `mutmut`). Запуск таких инструментов из корня репозитория может
 > случайно работать за счёт текущего каталога, но не проверяет, что пакет
