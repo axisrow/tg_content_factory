@@ -685,6 +685,24 @@ def _admin_log_request(page: int) -> GetAdminLogRequest:
     )
 
 
+def _chat_photos_request(page: int) -> SearchRequest:
+    """Telethon 1.45 pages channel profile photos via messages.Search."""
+    return SearchRequest(
+        peer=None,
+        q="",
+        filter=tl_types.InputMessagesFilterChatPhotos(),
+        min_date=None,
+        max_date=None,
+        offset_id=0,
+        add_offset=page,
+        limit=100,
+        max_id=0,
+        min_id=0,
+        hash=0,
+        from_id=None,
+    )
+
+
 async def _drain(stream) -> list:
     items = []
     async for item in stream:
@@ -884,6 +902,23 @@ async def test_stream_profile_photos_pages_are_ceiling_accounted() -> None:
     assert await _drain(stream) == [1, 2]
     assert ceiling.acquires == 3  # outer stream + two physical pages
     assert all(isinstance(request, GetUserPhotosRequest) for request in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_stream_profile_photos_channel_pages_are_ceiling_accounted() -> None:
+    """Non-user entities page their photo history via messages.Search (#1833).
+
+    Telethon 1.45's _ProfilePhotoIter only uses GetUserPhotosRequest for
+    users; a channel/chat entity paginates SearchRequest with the
+    chat-photos filter — those pages must not bypass the ceiling.
+    """
+    pool, ceiling = _page_gate_pool()
+    client = _PageDispatchClient(_chat_photos_request, 2, iterator_method="iter_profile_photos")
+    session = TelegramTransportSession(client, phone="+66...2247", pool=pool)
+    stream = session.stream_profile_photos(SimpleNamespace(channel_id=100))
+    assert await _drain(stream) == [1, 2]
+    assert ceiling.acquires == 3  # outer stream + two physical pages
+    assert all(isinstance(request, SearchRequest) for request in client.calls)
 
 
 @pytest.mark.asyncio

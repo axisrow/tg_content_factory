@@ -1105,7 +1105,10 @@ class TelegramTransportSession:
             iterator,
             self,
             operation,
-            request_types=(GetUserPhotosRequest,),
+            # Telethon 1.45 pages USER photos via photos.GetUserPhotos but
+            # CHANNEL/CHAT photo history via messages.Search with the
+            # chat-photos filter — both are this iterator's physical pages.
+            request_types=(GetUserPhotosRequest, SearchRequest),
             page_category=None,
         )
         return self._stream(operation, iterator)
@@ -1115,7 +1118,7 @@ class TelegramTransportSession:
             "get_profile_photos",
             TelegramClient.get_profile_photos,
             "telegram_get_profile_photos",
-            (GetUserPhotosRequest,),
+            (GetUserPhotosRequest, SearchRequest),
             entity,
             **kwargs,
         )
