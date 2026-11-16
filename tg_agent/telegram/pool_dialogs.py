@@ -478,6 +478,10 @@ class DialogsMixin:
                     now=now,
                 )
             }
+            # Family-scoped read floods block the dialog sweep too (#1832):
+            # the sweep IS the read traffic that earned them.
+            family_floods = await self._db.repos.accounts.list_active_family_floods(now=now)
+            flood_waited |= set(family_floods)
         except Exception:
             logger.debug("warm_all_dialogs: failed to load flood-wait status", exc_info=True)
         phones_list = list(self._connected_phones())

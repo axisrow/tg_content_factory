@@ -152,8 +152,13 @@ async def test_native_client_by_phone_returns_flood_aware_session(
     with pytest.raises(HandledFloodWaitError):
         await session.get_entity("@flooded")
 
+    # #1832: a resolve flood scopes to the family, the account stays writable.
     accounts = await harness.db.get_accounts()
-    assert accounts[0].flood_wait_until is not None
+    assert accounts[0].flood_wait_until is None
+    floods = await harness.db.repos.accounts.list_active_family_floods(
+        phone="+70000000001"
+    )
+    assert "+70000000001" in floods and "resolve" in floods["+70000000001"]
 
 
 @pytest.mark.anyio

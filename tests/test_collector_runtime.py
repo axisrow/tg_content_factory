@@ -82,7 +82,13 @@ async def test_collect_single_channel_retries_on_flood_with_second_account(
     assert collected == 1
     accounts = await db.get_accounts()
     flooded = next(account for account in accounts if account.phone == "+7001")
-    assert flooded.flood_wait_until is not None
+    # #1832: the history-stream flood scopes to the family; the account-wide
+    # write timer stays unset so publishing from this account keeps working.
+    assert flooded.flood_wait_until is None
+    family_floods = await harness.db.repos.accounts.list_active_family_floods(
+        phone="+7001"
+    )
+    assert "+7001" in family_floods and "history" in family_floods["+7001"]
 
 
 @pytest.mark.anyio

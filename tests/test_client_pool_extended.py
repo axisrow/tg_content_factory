@@ -20,6 +20,9 @@ def mock_db():
     db.repos.dialog_cache.list_dialogs = AsyncMock(return_value=[])
     db.repos.dialog_cache.replace_dialogs = AsyncMock()
     db.repos.dialog_cache.clear_dialogs = AsyncMock()
+    db.repos.accounts.list_active_family_floods = AsyncMock(return_value={})
+    db.repos.accounts.set_family_flood = AsyncMock()
+    db.repos.accounts.clear_family_floods = AsyncMock()
     return db
 
 
@@ -205,7 +208,9 @@ async def test_resolve_channel_flood_rotation(mock_db, mock_auth):
     with patch.object(pool, "get_available_client", side_effect=[(c1, "+7001"), (c2, "+7002")]):
         res = await pool.resolve_channel("@test")
         assert res["channel_id"] == 123
-        mock_db.update_account_flood.assert_called_once()
+        # #1832: the resolve flood scopes to its family, the account stays writable.
+        mock_db.repos.accounts.set_family_flood.assert_called_once()
+        mock_db.update_account_flood.assert_not_called()
 
 
 @pytest.mark.anyio

@@ -1636,7 +1636,8 @@ async def test_collect_channel_checks_notifications_across_flood_rotation(db):
     updated = await db.get_channel_by_channel_id(stored.channel_id)
     assert updated is not None
     assert updated.last_collected_id == 7
-    pool.report_flood.assert_awaited_once()
+    pool.report_family_flood.assert_awaited_once()
+    pool.report_flood.assert_not_awaited()
     # The notification check ran once per pass, covering BOTH persisted
     # messages — id=6 (pre-flood, pass 1) and id=7 (pass 2). Pre-fix, the
     # flood-branch continue reset all_messages=[6] so only {7} was ever seen.
@@ -2351,7 +2352,8 @@ async def test_collect_channel_retries_after_short_flood_wait(db):
     updated = await db.get_channel_by_channel_id(stored.channel_id)
     assert updated is not None
     assert updated.last_collected_id == 7
-    pool.report_flood.assert_awaited_once()
+    pool.report_family_flood.assert_awaited_once()
+    pool.report_flood.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -2405,7 +2407,8 @@ async def test_collect_channel_waits_when_all_clients_transient_flooded(db, monk
 
     assert count == 2
     assert sleeps == [4.0]
-    pool.report_flood.assert_awaited_once()
+    pool.report_family_flood.assert_awaited_once()
+    pool.report_flood.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -2458,7 +2461,8 @@ async def test_collect_channel_rotates_on_long_flood_wait(db):
     updated = await db.get_channel_by_channel_id(stored.channel_id)
     assert updated is not None
     assert updated.last_collected_id == 7
-    pool.report_flood.assert_awaited_once()
+    pool.report_family_flood.assert_awaited_once()
+    pool.report_flood.assert_not_awaited()
     # Notification should mention rotation, not "skipped"
     notifier.notify.assert_awaited_once()
     assert "rotating" in notifier.notify.call_args[0][0]
@@ -2517,7 +2521,8 @@ async def test_collect_channel_long_flood_all_accounts_flooded_returns(db):
     updated = await db.get_channel_by_channel_id(stored.channel_id)
     assert updated is not None
     assert updated.last_collected_id == 6
-    pool.report_flood.assert_awaited_once()
+    pool.report_family_flood.assert_awaited_once()
+    pool.report_flood.assert_not_awaited()
 
 
 @pytest.mark.anyio

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from tg_agent.database import Database
 from tg_agent.database.live_accounts import load_live_usable_accounts
 from tg_agent.models import Account
+from tg_agent.telegram.flood_scope import family_floods_repo
 from tg_agent.telegram.utils import normalize_utc
 
 
@@ -31,6 +32,18 @@ class AccountLeasePool:
         self._lock = asyncio.Lock()
         self._last_phone: str | None = None
 
+    @staticmethod
+    async def _family_floods(db: Database, now: datetime) -> dict[str, dict[str, datetime]]:
+        """Active per-family floods, empty on stores without the family slice.
+
+        The gateway store's duck-typed accounts repo has no family table; its
+        selection then behaves exactly as before (#1832).
+        """
+        repo = family_floods_repo(db)
+        if repo is None:
+            return {}
+        return await repo.list_active_family_floods(now=now)
+
     async def acquire_available(self, connected_phones: set[str]) -> AccountLease | None:
         """Acquire an account with at most one exclusive reservation per phone."""
         async with self._lock:
@@ -44,6 +57,11 @@ class AccountLeasePool:
                     await self._db.update_account_flood(account.phone, None)
                     account.flood_wait_until = None
 
+            # Collection-level skip (#1832): any active per-family flood row
+            # (read or write) keeps the account out of rotation, matching the
+            # old behavior where any flood blocked selection entirely.
+            family_floods = await self._family_floods(self._db, now)
+
             ordered_accounts = self._round_robin_accounts(accounts)
             if not ordered_accounts:
                 return None
@@ -53,6 +71,8 @@ class AccountLeasePool:
                     continue
                 if account.phone in self._in_use:
                     continue
+                if account.phone in family_floods:
+                    continue
                 if self._is_flood_waited(account, now):
                     continue
                 self._in_use.add(account.phone)
@@ -61,6 +81,8 @@ class AccountLeasePool:
 
             for account in ordered_accounts:
                 if account.phone not in connected_phones:
+                    continue
+                if account.phone in family_floods:
                     continue
                 if self._is_flood_waited(account, now):
                     continue
@@ -73,6 +95,7 @@ class AccountLeasePool:
         async with self._lock:
             now = datetime.now(timezone.utc)
             accounts = await load_live_usable_accounts(self._db, active_only=True)
+            family_floods = await self._family_floods(self._db, now)
             count = 0
             for account in accounts:
                 flood_until = normalize_utc(account.flood_wait_until)
@@ -83,6 +106,8 @@ class AccountLeasePool:
                 if account.phone not in connected_phones:
                     continue
                 if account.phone in self._in_use:
+                    continue
+                if account.phone in family_floods:
                     continue
                 if flood_until is not None and flood_until > now:
                     continue

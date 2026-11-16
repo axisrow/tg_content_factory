@@ -640,8 +640,9 @@ async def test_two_consecutive_stream_floods_rotate_and_keep_progress(db):
     updated = await db.get_channel_by_channel_id(-100601)
     assert updated is not None
     assert updated.last_collected_id == 8
-    # Each of the two flooded passes reported its flood to the pool.
-    assert pool.report_flood.await_count == 2
+    # Each of the two flooded passes reported its flood to the pool (family-scoped, #1832).
+    assert pool.report_family_flood.await_count == 2
+    assert pool.report_flood.await_count == 0
     messages, total = await db.search_messages(channel_id=-100601, limit=100)
     assert sorted(m.message_id for m in messages) == [6, 7, 8]
     assert total == 3
@@ -710,7 +711,8 @@ async def test_all_accounts_flooded_after_multiple_rotations_preserves_cursor(db
     # msg 7 was persisted by the second flooded pass before the rotation hit a
     # dead end; the cursor must not have rewound below it.
     assert updated.last_collected_id == 7
-    assert pool.report_flood.await_count == 2
+    assert pool.report_family_flood.await_count == 2
+    assert pool.report_flood.await_count == 0
 
 
 @pytest.mark.anyio

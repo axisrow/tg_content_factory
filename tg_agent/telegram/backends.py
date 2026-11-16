@@ -6,6 +6,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 
@@ -25,6 +26,7 @@ from telethon_floodgate import (
 from telethon_floodgate.peer import peer_key
 
 from tg_agent.models import Account
+from tg_agent.telegram.flood_scope import is_read_family, resolve_operation_family
 from tg_agent.telegram.mtproto_watchdog import bind_telethon_base_logger
 from tg_agent.telegram.outgoing_ceiling import OutgoingRateCeiling
 from tg_agent.telegram.reactions import normalize_outgoing_reaction_emoji
@@ -321,6 +323,14 @@ class TelegramTransportSession:
         Re-raises ``exc`` unchanged when it is not a FloodWaitError or when no
         phone is bound. Otherwise records the flood wait and returns the wrapped
         error for the caller to ``raise ... from exc``.
+
+        Read-family floods (#1832) are reported per (phone, family) via
+        ``pool.report_family_flood`` and never touch the account-wide
+        ``accounts.flood_wait_until``, so a multi-hour wait earned by a
+        username resolve, a dialog sweep or a history read cannot freeze
+        publishing from the same account. Write-family floods keep the
+        historical account-wide report; unattributed pools (no
+        ``report_family_flood``) fall back to it too.
         """
         from telethon.errors import FloodWaitError
 
@@ -328,6 +338,33 @@ class TelegramTransportSession:
             raise exc
         if self._phone is None:
             raise exc
+        family = resolve_operation_family(
+            operation,
+            gate=self._pool_gate(),
+            app_categories=_GATE_OPERATION_CATEGORIES,
+        )
+        if self._report_flood_wait and is_read_family(operation, family):
+            info = await handle_flood_wait(
+                exc,
+                operation=operation,
+                phone=self._phone,
+                pool=None,
+                logger_=self._logger,
+            )
+            reporter = getattr(self._pool, "report_family_flood", None)
+            if callable(reporter):
+                reported = reporter(self._phone, info.wait_seconds, family, operation=operation)
+                if inspect.isawaitable(reported):
+                    await reported
+            else:
+                # Pool without the family slice: keep the conservative
+                # account-wide report instead of dropping the flood signal.
+                fallback = getattr(self._pool, "report_flood", None)
+                if callable(fallback):
+                    reported = fallback(self._phone, info.wait_seconds)
+                    if inspect.isawaitable(reported):
+                        await reported
+            return HandledFloodWaitError(info)
         info = await handle_flood_wait(
             exc,
             operation=operation,
@@ -361,6 +398,7 @@ class TelegramTransportSession:
             await self._await_outgoing_ceiling()
             if check_flood_breaker:
                 self._check_flood_breaker(operation)
+            await self._check_family_flood(operation)
             if not gate_reserved:
                 self._reserve_gate_slot(operation, category=gate_category, peer=gate_peer)
         except BaseException:
@@ -397,6 +435,7 @@ class TelegramTransportSession:
             # Same ceiling-first order as _run (see there for the rationale).
             await self._await_outgoing_ceiling()
             self._check_flood_breaker(operation)
+            await self._check_family_flood(operation)
             self._reserve_gate_slot(operation)
         except BaseException:
             close = getattr(iterator, "aclose", None)
@@ -504,6 +543,53 @@ class TelegramTransportSession:
             return None
         breaker = getattr(self._pool, "_flood_breaker", None)
         return breaker if isinstance(breaker, FloodCircuitBreaker) else None
+
+    def _pool_gate(self) -> TelegramRateLimitGate | None:
+        """The pool's proactive gate, when this session is bound to one."""
+        if self._pool is None:
+            return None
+        gate = getattr(self._pool, "_rate_limit_gate", None)
+        return gate if isinstance(gate, TelegramRateLimitGate) else None
+
+    async def _check_family_flood(self, operation: str) -> None:
+        """Refuse pre-dispatch when this operation's read family is flooded (#1832).
+
+        Same refusal type as the proactive gate — ``TelegramRateLimitedError`` —
+        so every shared "operation unavailable, move on" handler covers it.
+        Write families are NOT checked here: their account-wide state is
+        enforced at client acquisition (lease pool / ``flood_wait_until``).
+        """
+        if self._pool is None or self._phone is None:
+            return
+        family = resolve_operation_family(
+            operation,
+            gate=self._pool_gate(),
+            app_categories=_GATE_OPERATION_CATEGORIES,
+        )
+        if not is_read_family(operation, family):
+            return
+        deadline_getter = getattr(self._pool, "family_flood_deadline", None)
+        if not callable(deadline_getter):
+            return
+        deadline = deadline_getter(self._phone, family)
+        if inspect.isawaitable(deadline):
+            deadline = await deadline
+        if not isinstance(deadline, datetime):
+            return
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        if deadline <= now:
+            return
+        retry_after = (deadline - now).total_seconds()
+        self._logger.info(
+            "%s: %s family flooded on %s until %s; refused locally",
+            operation,
+            family,
+            self._phone,
+            deadline.isoformat(),
+        )
+        raise TelegramRateLimitedError(self._phone, family, retry_after)
 
     def _check_flood_breaker(self, operation: str) -> None:
         """Refuse the call when this operation is suspended for this account.
