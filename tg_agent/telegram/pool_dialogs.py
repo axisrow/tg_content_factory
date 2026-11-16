@@ -659,6 +659,9 @@ class DialogsMixin:
         )
 
     async def _get_cached_dialog(self, phone: str, dialog_id: int) -> dict | None:
+        # dialog_cache stores bare-positive ids; a Telegram-marked
+        # ``-100<bare>`` argument must still find the row (#1829).
+        dialog_id = bare_channel_id(dialog_id)
         full_entry = self._dialogs_cache.get((phone, "full"))
         if full_entry is not None:
             age = time.monotonic() - full_entry.fetched_at_monotonic
@@ -788,6 +791,13 @@ class DialogsMixin:
         target_type: str | None = None,
     ):
         session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
+        # Normalize once at the resolver boundary (#1829): the Telegram-marked
+        # ``-100<bare>`` form must build ``PeerChannel(bare)``, not
+        # ``PeerChannel(100<bare>)`` — a peer that exists nowhere and turns
+        # every lookup into a miss (and every miss into a dialog sweep). The
+        # existing helper strips exactly the marker and leaves bare ids of any
+        # form untouched, incl. legacy small-group ids that start with 100.
+        dialog_id = bare_channel_id(dialog_id)
         if target_type is None:
             dialog = await self._get_cached_dialog(phone, dialog_id)
             cached_type = str(dialog.get("channel_type") or "") if dialog else ""
