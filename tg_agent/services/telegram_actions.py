@@ -249,8 +249,11 @@ class TelegramActionService:
         stripped = value.strip()
         if not stripped:
             return False
-        if stripped[0] in ("+", "-"):
+        if stripped[0] == "-":
             return stripped[1:].isdigit()
+        # A leading '+' is a PHONE number, not a Telegram id (#1830 review):
+        # numeric-id attempts can never resolve it, so it must reach the
+        # string path where Telethon resolves contacts.
         return stripped.isdigit()
 
     @staticmethod
@@ -372,6 +375,10 @@ class TelegramActionService:
         ):
             dialog_id = int(str(identifier).strip())
             target_types = ("dm",) if is_user else (None, "dm")
+            # Pass 1 — cache-only (#1830): every candidate kind is checked
+            # against the session store BEFORE any candidate may warm, so a
+            # numeric user id known to the session answers with zero RPCs
+            # and zero sweeps.
             for target_type in target_types:
                 try:
                     entity = await self._pool.resolve_dialog_entity(
@@ -379,6 +386,7 @@ class TelegramActionService:
                         phone,
                         dialog_id,
                         target_type,
+                        allow_warm=False,
                     )
                 except HandledFloodWaitError:
                     raise
@@ -390,6 +398,34 @@ class TelegramActionService:
                     ) from exc
                 if entity is not None:
                     return entity
+            # Pass 2 — at most ONE warm attempt, with the preferred candidate;
+            # remaining candidates stay cache-only (#1830): one action never
+            # pays more than one dialog sweep. A rate-limited warm refusal
+            # cannot skip cache candidates — they already ran in pass 1.
+            for index, target_type in enumerate(target_types):
+                try:
+                    entity = await self._pool.resolve_dialog_entity(
+                        client,
+                        phone,
+                        dialog_id,
+                        target_type,
+                        allow_warm=index == 0,
+                    )
+                except HandledFloodWaitError:
+                    raise
+                except (ValueError, TypeError, KeyError):
+                    continue
+                except Exception as exc:
+                    raise TelegramActionEntityResolutionError(
+                        f"Ошибка: не удалось получить entity для {identifier}: {exc}"
+                    ) from exc
+                if entity is not None:
+                    return entity
+            # Both candidates failed: the string fallback below would repeat
+            # the same misses and pay another sweep for it (#1830).
+            raise TelegramActionEntityResolutionError(
+                f"Ошибка: не удалось получить entity для {identifier}"
+            )
 
         try:
             if self._has_explicit_pool_operation(self._pool, "resolve_entity_with_warm"):
@@ -443,14 +479,19 @@ class TelegramActionService:
         text: str,
         link_preview: bool = False,
         reply_to: int | None = None,
+        is_user: bool = False,
     ) -> SendMessageResult:
         # Operator channels never render web previews on links (#1584-adjacent
         # digest flow: a bare URL silently produced one); opt in explicitly.
         # reply_to (seeding publisher #1757): message id of the replica this
         # one answers; omitted for a top-level message so existing callers'
-        # RPC shape is unchanged.
+        # RPC shape is unchanged. is_user (#1830): callers addressing a DM
+        # peer by numeric id must say so — otherwise the resolver tries a
+        # channel first and pays a dialog sweep for it.
         async with self._client(phone=phone, native=True) as (client, acquired_phone):
-            entity = await self._resolve_entity(client, phone=acquired_phone, identifier=recipient)
+            entity = await self._resolve_entity(
+                client, phone=acquired_phone, identifier=recipient, is_user=is_user
+            )
             options: dict[str, Any] = {"link_preview": link_preview}
             if reply_to is not None:
                 options["reply_to"] = reply_to

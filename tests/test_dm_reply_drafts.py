@@ -190,6 +190,11 @@ async def test_handler_claims_sends_once_and_marks_sent(db):
         "sent": True,
     }
     send_message.assert_awaited_once()
+    # The draft's chat_id is a DM peer: the resolver must be told explicitly
+    # (#1830) so a numeric id never costs a channel-first dialog sweep.
+    send_message.assert_awaited_once_with(
+        phone="+10000000001", recipient=556, text="ответ", is_user=True
+    )
     draft = await db.repos.dm_reply_drafts.get(draft_id)
     assert draft.status == "sent"
     assert draft.sent_message_id == 4242
