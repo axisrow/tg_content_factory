@@ -38,13 +38,6 @@ on:
       - "**/*.md"
       - "mkdocs.yml"
 
-# INTERIM (PR #1840): telethon-floodgate 0.1.10 exists only on the floodgate
-# #36 branch (PyPI ends at 0.1.9); pip ignores [tool.uv.sources], so every pip
-# install in every job resolves this constraint. Remove together with
-# constraints/telethon-floodgate-pr36.txt once 0.1.10 publishes to PyPI.
-env:
-  PIP_CONSTRAINT: ${{ github.workspace }}/constraints/telethon-floodgate-pr36.txt
-
 # Cancel an in-progress run when a newer commit is pushed to the same ref
 # (#1051). Without this, every push to an open PR left the previous run burning
 # a runner to completion. Grouping by workflow+ref keeps main and each PR

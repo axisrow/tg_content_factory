@@ -56,11 +56,13 @@ propagation; ordinary `Notifier.notify()` retains its bool default.
 
 ## Release verification
 
-Publish telethon-floodgate 0.1.10 before finishing the application's
-dependency update, then run `uv lock --upgrade-package telethon-floodgate`.
-Do not substitute a Git dependency or guess future artifact hashes. A local
-floodgate wheel is sufficient for developing the integration, but is not
-the final lock-file verification.
+telethon-floodgate 0.1.10 is published on PyPI and `uv.lock` records that
+release, so pip, uv, CI and the Docker image all install the same artifact.
+When the floodgate floor is raised again, publish the release first, then run
+`uv lock --upgrade-package telethon-floodgate`. Do not substitute a Git
+dependency or guess future artifact hashes. A local floodgate wheel is
+sufficient for developing the integration, but is not the final lock-file
+verification.
 
 tg-shared remains a monorepo package, without a separate PyPI publication.
 The uv workspace resolves it locally. Pip users install both source packages
