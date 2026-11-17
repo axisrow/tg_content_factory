@@ -41,14 +41,14 @@ _TYPE_ALIASES: dict[str, set[str]] = {
 # @tool() definitions.
 TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
     ("Диалоги", {
-        "search_dialogs": ToolMeta(ToolCategory.READ, phone_bound=True),
+        "search_dialogs": ToolMeta(ToolCategory.READ, phone_bound=True, flood_category="history"),
         "refresh_dialogs": ToolMeta(ToolCategory.WRITE, phone_bound=True),
-        "leave_dialogs": ToolMeta(ToolCategory.DELETE, phone_bound=True),
-        "delete_dialogs": ToolMeta(ToolCategory.DELETE, phone_bound=True),
-        "join_channel": ToolMeta(ToolCategory.WRITE, phone_bound=True),
-        "join_chat": ToolMeta(ToolCategory.WRITE, phone_bound=True),
-        "subscribe_channel": ToolMeta(ToolCategory.WRITE, phone_bound=True),
-        "create_telegram_channel": ToolMeta(ToolCategory.WRITE, phone_bound=True),
+        "leave_dialogs": ToolMeta(ToolCategory.DELETE, phone_bound=True, flood_category="channel_lifecycle"),
+        "delete_dialogs": ToolMeta(ToolCategory.DELETE, phone_bound=True, flood_category="channel_lifecycle"),
+        "join_channel": ToolMeta(ToolCategory.WRITE, phone_bound=True, flood_category="channel_lifecycle"),
+        "join_chat": ToolMeta(ToolCategory.WRITE, phone_bound=True, flood_category="channel_lifecycle"),
+        "subscribe_channel": ToolMeta(ToolCategory.WRITE, phone_bound=True, flood_category="channel_lifecycle"),
+        "create_telegram_channel": ToolMeta(ToolCategory.WRITE, phone_bound=True, flood_category="channel_lifecycle"),
         "get_forum_topics": ToolMeta(ToolCategory.READ),
         "clear_dialog_cache": ToolMeta(ToolCategory.WRITE, phone_bound=True),
         "get_cache_status": ToolMeta(ToolCategory.READ),

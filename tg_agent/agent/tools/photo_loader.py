@@ -24,8 +24,8 @@ TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
     ("Фото", {
         "list_photo_batches": ToolMeta(ToolCategory.READ),
         "list_photo_items": ToolMeta(ToolCategory.READ),
-        "send_photos_now": ToolMeta(ToolCategory.WRITE, phone_bound=True),
-        "schedule_photos": ToolMeta(ToolCategory.WRITE, phone_bound=True),
+        "send_photos_now": ToolMeta(ToolCategory.WRITE, phone_bound=True, flood_category="send"),
+        "schedule_photos": ToolMeta(ToolCategory.WRITE, phone_bound=True, flood_category="send"),
         "cancel_photo_item": ToolMeta(ToolCategory.WRITE),
         "list_auto_uploads": ToolMeta(ToolCategory.READ),
         "toggle_auto_upload": ToolMeta(ToolCategory.WRITE),

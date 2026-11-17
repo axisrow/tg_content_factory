@@ -35,6 +35,7 @@ from telethon_floodgate import (
 from tg_agent.database.live_accounts import load_live_usable_accounts
 from tg_agent.telegram.backends import TelegramTransportSession
 from tg_agent.telegram.flood_scope import family_floods_repo, is_read_family
+from tg_agent.telegram.tool_flood_scope import current_tool_flood_scope
 from tg_agent.telegram.utils import normalize_utc
 
 if TYPE_CHECKING:
@@ -302,8 +303,29 @@ class FloodRotationMixin:
             next_available_at_utc=earliest,
         )
 
+    def _attribute_tool_flood(self, phone: str, wait_seconds: int) -> None:
+        """Attribute a real flood to the agent tool that dispatched it (#1851).
+
+        Called from the two flood reporters — the single funnel both
+        transports reach — so the tool-keyed breaker learns about floods the
+        tool handler converts into text results. The scope flag is set on
+        the shared scope object, which the tool boundary settles on. A flood
+        on another phone (rotation) is not attributed; the hook never raises.
+        """
+        scope = current_tool_flood_scope()
+        if scope is None or scope.phone != phone:
+            return
+        scope.flooded = True
+        record = getattr(getattr(self, "_flood_breaker", None), "record_flood", None)
+        if callable(record):
+            record(scope.tool_name, phone)
+        note = getattr(getattr(self, "_rate_limit_gate", None), "note_flood", None)
+        if callable(note):
+            note(phone, float(wait_seconds))
+
     async def report_flood(self, phone: str, wait_seconds: int) -> None:
         """Mark account as flood-waited (account-wide, all surfaces)."""
+        self._attribute_tool_flood(phone, wait_seconds)
         until = datetime.now(timezone.utc) + timedelta(seconds=wait_seconds)
         deadlines = getattr(self, "_rpc_account_deadlines", None)
         if not isinstance(deadlines, dict):
@@ -332,6 +354,9 @@ class FloodRotationMixin:
         if repo is None:
             await self.report_flood(phone, wait_seconds)
             return
+        # True read-family path: attribute here — the report_flood fallback
+        # above attributes on its own, so the hook fires exactly once.
+        self._attribute_tool_flood(phone, wait_seconds)
         until = datetime.now(timezone.utc) + timedelta(seconds=wait_seconds)
         previous = await self.family_flood_deadline(phone, family)
         until = max(previous or until, until)

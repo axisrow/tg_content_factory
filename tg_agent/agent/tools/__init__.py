@@ -17,6 +17,7 @@ from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server
 from tg_agent.agent.runtime_context import AgentRuntimeContext
 from tg_agent.agent.tools._categories import TOOL_MODULE_ORDER
 from tg_agent.agent.tools._registry import AgentToolContext, _text_response  # noqa: F401
+from tg_agent.agent.tools.floodgate import wrap_tool_with_floodgate
 
 
 def _wrap_with_session_gate(tool: SdkMcpTool) -> SdkMcpTool:
@@ -109,11 +110,16 @@ def build_agent_tool_registry(
         if module is None:
             module = importlib.import_module(f"tg_agent.agent.tools.{module_name}")
         for tool_obj in module.register(db, client_pool, embedding_service, **extras):
+            # Floodgate boundary inside the session gate: a denied tool must
+            # not reserve gate slots, and the boundary runs after the ACL
+            # check but before any client work (#1851).
+            tool_obj = wrap_tool_with_floodgate(tool_obj, db=db, client_pool=client_pool)
             all_tools.append(_wrap_with_session_gate(tool_obj) if wrap_session_gate else tool_obj)
 
     plugins = getattr(db, "plugins", None)
     if plugins is not None:
         for tool_obj in plugins.tools:
+            tool_obj = wrap_tool_with_floodgate(tool_obj, db=db, client_pool=client_pool)
             all_tools.append(_wrap_with_session_gate(tool_obj) if wrap_session_gate else tool_obj)
     return all_tools
 

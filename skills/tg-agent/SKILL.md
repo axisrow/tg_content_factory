@@ -92,6 +92,11 @@ Sending a wrong message or kicking a wrong member is not reversible by you.
   recipient list and content.
 - On `FloodWait` errors: stop and wait the reported seconds (or tell the user); do not retry
   in a loop.
+- A tool may return a local floodgate deferral reply («Локальный floodgate откладывает
+  "…": повторите через N сек/мин … НЕ повторяйте вызов немедленно (код: FLOODGATE-ERR-…»)
+  before any Telegram work happens (#1851): schedule the retry after the stated delay or
+  switch accounts; retrying sooner just returns the same deferral. Disable with env
+  `TG_AGENT_FLOODGATE=0`.
 
 ## Background collection
 

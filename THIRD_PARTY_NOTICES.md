@@ -72,3 +72,24 @@ The full Apache-2.0 license text is in `LICENSES/apache-2.0.txt`.
 Per the project licensing strategy, the long-term goal is to replace this
 vendored Apache-2.0 code with an original MIT implementation; when a file is
 fully rewritten, its SPDX header becomes MIT and this entry is removed.
+
+## chigwell/telegram-mcp — agent tool floodgate boundary (#1851, 2026-11-17)
+
+The **agent tool dispatch boundary** of `tg_agent/agent/tools/floodgate.py`
+ports the design of
+[chigwell/telegram-mcp#363](https://github.com/chigwell/telegram-mcp/pull/363)
+(merged 2026-11-10, Apache-2.0): the defer/settle protocol around every tool
+call, the reactive circuit breaker fed by real FloodWaitErrors, the
+tool→gate-category registry declared next to each tool, the instructional
+rate-limit reply agents schedule around, and the environment kill switch.
+The behavioral specification in `tests/test_agent_floodgate_boundary.py` is
+a port of the upstream `tests/test_floodgate_runtime.py`. No upstream code
+is vendored verbatim: the gate/breaker primitives come from the MIT-
+licensed `telethon-floodgate` PyPI dependency, composed over the pool-owned
+instances; flood attribution rides the pool's flood reporters via
+`tg_agent/telegram/tool_flood_scope.py` (this codebase's single funnel for
+real FloodWaitErrors) instead of an error-formatter contextvar. The
+boundary **peeks** the gate instead of charging it — the shared dispatch
+guard (#1840) already charges the same buckets one boundary down. Per the
+project licensing strategy, the ported behavior is planned to be rewritten
+as an original MIT implementation once it settles.

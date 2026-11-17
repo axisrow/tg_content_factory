@@ -39,6 +39,7 @@ __all__ = [  # noqa: F822 — TOOL_CATEGORIES & co. are served by module __getat
     "TOOL_CATEGORIES",
     "MODULE_GROUPS",
     "PHONE_BINDED_TOOLS",
+    "TOOL_FLOOD_CATEGORIES",
     "ToolAccessState",
     "ToolCategory",
     "ToolMeta",
@@ -61,11 +62,22 @@ _BUILTIN_GROUP_NAME = "Веб-поиск"
 # ---------------------------------------------------------------------------
 
 _metadata_cache: (
-    tuple[Mapping[str, ToolCategory], Mapping[str, tuple[str, ...]], frozenset[str]] | None
+    tuple[
+        Mapping[str, ToolCategory],
+        Mapping[str, tuple[str, ...]],
+        frozenset[str],
+        Mapping[str, str],
+    ]
+    | None
 ) = None
 
 
-def _build_metadata() -> tuple[Mapping[str, ToolCategory], Mapping[str, tuple[str, ...]], frozenset[str]]:
+def _build_metadata() -> tuple[
+    Mapping[str, ToolCategory],
+    Mapping[str, tuple[str, ...]],
+    frozenset[str],
+    Mapping[str, str],
+]:
     global _metadata_cache  # noqa: PLW0603
     if _metadata_cache is not None:
         return _metadata_cache
@@ -73,6 +85,7 @@ def _build_metadata() -> tuple[Mapping[str, ToolCategory], Mapping[str, tuple[st
     categories: dict[str, ToolCategory] = {}
     groups: OrderedDict[str, list[str]] = OrderedDict()
     phone_bound: set[str] = set()
+    flood_categories: dict[str, str] = {}
 
     for module_name in TOOL_MODULE_ORDER:
         module = importlib.import_module(f"tg_agent.agent.tools.{module_name}")
@@ -100,6 +113,8 @@ def _build_metadata() -> tuple[Mapping[str, ToolCategory], Mapping[str, tuple[st
                 bucket.append(tool_name)
                 if meta.phone_bound:
                     phone_bound.add(tool_name)
+                if meta.flood_category:
+                    flood_categories[tool_name] = meta.flood_category
 
     from tg_agent.plugin_api import permission_groups
 
@@ -109,6 +124,8 @@ def _build_metadata() -> tuple[Mapping[str, ToolCategory], Mapping[str, tuple[st
             categories[tool_name] = meta.category
             if meta.phone_bound:
                 phone_bound.add(tool_name)
+            if meta.flood_category:
+                flood_categories[tool_name] = meta.flood_category
 
     for builtin in BUILTIN_TOOLS:
         categories[builtin] = ToolCategory.READ
@@ -121,6 +138,7 @@ def _build_metadata() -> tuple[Mapping[str, ToolCategory], Mapping[str, tuple[st
         MappingProxyType(categories),
         MappingProxyType(OrderedDict((name, tuple(tools)) for name, tools in groups.items())),
         frozenset(phone_bound),
+        MappingProxyType(flood_categories),
     )
     return _metadata_cache
 
@@ -137,6 +155,16 @@ def _phone_binded_tools() -> frozenset[str]:
     return _build_metadata()[2]
 
 
+def _flood_categories() -> Mapping[str, str]:
+    """Tool name -> floodgate boundary category (#1851).
+
+    Entries exist only for tools that declare ``ToolMeta.flood_category``;
+    unannotated tools take the gate's permissive ``default`` bucket at
+    dispatch (see ``tg_agent.agent.tools.floodgate``).
+    """
+    return _build_metadata()[3]
+
+
 def __getattr__(name: str) -> Any:
     # PEP 562: keep the historical module attributes working for all existing
     # importers while building them lazily (tool modules pull the agent SDK —
@@ -148,6 +176,8 @@ def __getattr__(name: str) -> Any:
         return _module_groups()
     if name == "PHONE_BINDED_TOOLS":
         return _phone_binded_tools()
+    if name == "TOOL_FLOOD_CATEGORIES":
+        return _flood_categories()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
