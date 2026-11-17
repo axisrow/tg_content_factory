@@ -33,8 +33,10 @@ def _iter_py_sources() -> list[Path]:
 # it) — the caller then sleeps forever in an idle loop with its timeout
 # handle gone. The replacement is the asyncio.timeout() context form,
 # whose cancellation goes through the await, so the waiter is always
-# released. ``[^,()]*`` stops at the first comma/paren, so nested calls
-# inside the first argument cannot slip past the guard.
+# released. ``[^,()]*`` keeps the match to a direct argument: a nested
+# call wrapping the ``.wait()`` — e.g. ``wait_for(bar(x).wait(), t)`` —
+# is out of scope for this regex (regex-level convention gate, same as
+# test_sql_conventions.py).
 _WAIT_FOR_EVENT_WAIT_RE = re.compile(
     r"""\b (?:asyncio\.)? wait_for \s* \( \s*
         [^,()]* \. wait \s* \(""",
