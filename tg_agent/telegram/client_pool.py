@@ -206,6 +206,9 @@ class ClientPool(
         self._channel_phone_map: dict[int, str] = {}
         # channel_id (positive MTProto) → phone that has it in dialogs
         self._warming_task: asyncio.Task | None = None
+        # Periodic catch-up loop (#1852); spawned by initialize() when
+        # telegram_runtime.catch_up_interval_sec > 0, cancelled by disconnect_all().
+        self._catch_up_task: asyncio.Task | None = None
         self._dialogs_cache: dict[tuple[str, str], DialogCacheEntry] = {}
         self._dialogs_cache_ttl_sec = 60.0
         self._dialogs_db_cache_ttl_sec = 3600.0  # 1 hour; stale DB cache triggers fresh Telegram fetch

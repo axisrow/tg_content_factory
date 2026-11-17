@@ -166,6 +166,40 @@ class TelegramRuntimeConfig(BaseModel):
     cli_transport: str = "hybrid"
     session_cache_dir: str = "data/telegram_sessions"
     proxy: dict | None = None
+    # Seconds between forced update catch-ups (#1852); 0 = off. Telegram does
+    # not re-push updates that arrived while a client was disconnected, and
+    # Telethon's automatic reconnect does not fetch a difference by itself.
+    catch_up_interval_sec: float = 0.0
+
+
+CATCH_UP_MIN_INTERVAL_SEC = 30.0
+
+
+def parse_catch_up_interval(raw: str | None) -> float:
+    """Parse ``TG_CATCH_UP_INTERVAL`` into seconds between catch-ups; 0 = off.
+
+    Adapted from chigwell/telegram-mcp#409 (SPDX-License-Identifier:
+    Apache-2.0; head commit 259402b, merged 2026-11-16) — see
+    THIRD_PARTY_NOTICES.md.
+
+    Positive values below 30 s are raised to 30 s: each catch-up is one
+    getDifference RPC, so a tighter loop is pure flood risk. Invalid input
+    logs a warning and stays off — a silently ignored typo would look like
+    "the loop is enabled" while nothing runs.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid TG_CATCH_UP_INTERVAL %r — periodic catch-up stays off", raw
+        )
+        return 0.0
+    if value <= 0:
+        return 0.0
+    return max(value, CATCH_UP_MIN_INTERVAL_SEC)
 
 
 def parse_proxy_url(url: str) -> dict | None:
@@ -415,6 +449,11 @@ def load_config(path: str | Path = "config.yaml", *, apply_marker: bool = True) 
     env_proxy = os.environ.get("TG_PROXY", "").strip()
     if env_proxy:
         config.telegram_runtime.proxy = parse_proxy_url(env_proxy)
+    env_catch_up_interval = os.environ.get("TG_CATCH_UP_INTERVAL", "").strip()
+    if env_catch_up_interval:
+        config.telegram_runtime.catch_up_interval_sec = parse_catch_up_interval(
+            env_catch_up_interval
+        )
     if not config.agent.model:
         config.agent.model = os.environ.get("AGENT_MODEL", "").strip()
     if not config.agent.fallback_model:

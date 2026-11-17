@@ -54,6 +54,23 @@ provenance comment listing the source repo, commit, date, and modifications.
     MIT-licensed implementation (algorithms are not licensable); once a file is
     fully rewritten it is marked MIT and removed from this notice.
 
+## chigwell/telegram-mcp (Apache-2.0)
+
+- **Source:** [chigwell/telegram-mcp](https://github.com/chigwell/telegram-mcp),
+  PR #409, head commit `259402b53806801a4e11014410a9025a3eda636f`
+- **License:** Apache-2.0 (full text: [`LICENSES/apache-2.0.txt`](LICENSES/apache-2.0.txt))
+
+- `tg_agent/telegram/pool_lifecycle.py` (catch-up section) + `tg_agent/config.py`
+  (`parse_catch_up_interval`) — update catch-up after reconnect and the optional
+  periodic catch-up loop, adapted from upstream PR #409 (merged 2026-11-16,
+  issue #1852). Modifications: the pool's session map and
+  `telegram_runtime.catch_up_interval_sec` config (via `TG_CATCH_UP_INTERVAL`)
+  replace upstream's module-global client registry and env reader; the
+  acquisition auto-reconnect path (app code here, internal to upstream) also
+  catches up; best-effort error handling instead of print-to-stderr.
+- `tests/test_pool_updates_catchup.py` — behavioral contracts adapted from the
+  upstream tests of the same PR.
+
 The full Apache-2.0 license text is in `LICENSES/apache-2.0.txt`.
 
 Per the project licensing strategy, the long-term goal is to replace this
