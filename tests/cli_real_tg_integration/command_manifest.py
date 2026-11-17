@@ -35,6 +35,7 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
         ("debug", "timing"),
         ("dialogs", "broadcast-stats"),
         ("dialogs", "cache-status"),
+        ("dialogs", "export-history"),
         ("dialogs", "list"),
         ("dialogs", "read"),
         ("dialogs", "resolve"),
