@@ -197,7 +197,11 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         file_path = str(args.get("file", "") or "").strip()
         if not chat_id or message_id is None or not file_path:
             return _text_response("Ошибка: chat_id, message_id и file обязательны.")
+        # A str is forwarded as-is — including "" which the service and the CLI
+        # both treat as "clear the caption"; only a missing/non-str text means
+        # "keep the current caption".
         text = args.get("text")
+        text_value = text if isinstance(text, str) else None
         parse_mode = args.get("parse_mode")
         mode = (str(parse_mode).strip().lower() if parse_mode else "") or None
         if mode is not None and mode not in {"plain", "md", "markdown", "html"}:
@@ -206,7 +210,12 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
             )
         if not await asyncio.to_thread(lambda: os.path.isfile(os.path.expanduser(file_path))):
             return _text_response(f"Ошибка: файл не найден: {file_path}")
-        preview = text if isinstance(text, str) and text else "(текущая подпись сохраняется)"
+        if text_value is None:
+            preview = "(текущая подпись сохраняется)"
+        elif text_value == "":
+            preview = "(подпись будет очищена)"
+        else:
+            preview = text_value
         gate = require_confirmation(
             f"заменит вложение сообщения #{message_id} в чате {chat_id} на «{file_path}» (подпись: «{preview[:120]}»)",
             args,
@@ -219,7 +228,7 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
                 chat_id=chat_id,
                 message_id=message_id,
                 file=file_path,
-                text=text if isinstance(text, str) and text else None,
+                text=text_value,
                 parse_mode=mode,
             )
             return _text_response(f"Вложение сообщения #{message_id} заменено.")

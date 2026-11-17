@@ -34,7 +34,10 @@ EDIT_MESSAGE_MEDIA_SCHEMA = {
     "chat_id": CHAT_ID_ARG,
     "message_id": Annotated[int, "ID сообщения в Telegram"],
     "file": Annotated[str, "Путь к файлу-замене вложения на этой машине"],
-    "text": Annotated[str | None, "Новая подпись (не задано — сохранить текущую с форматированием)"],
+    "text": Annotated[
+        str | None,
+        "Новая подпись; пустая строка — очистить подпись; не задано — сохранить текущую с форматированием",
+    ],
     "parse_mode": Annotated[str | None, "Формат подписи из text: md | html | plain"],
     "confirm": CONFIRM_ARG,
 }

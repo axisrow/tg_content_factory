@@ -402,6 +402,30 @@ class TestEditMessageMedia:
         )
         assert "заменено" in _text(result)
 
+    @pytest.mark.anyio
+    async def test_empty_text_is_forwarded_and_clears_caption(self, mock_db, tmp_path):
+        """text="" must reach the service verbatim (clear the caption), not be
+        remapped to "preserve" (review finding on the #1860 tool body)."""
+        mock_pool, mock_client = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        media = tmp_path / "replacement.png"
+        media.write_text("x")
+        result = await handlers["edit_message_media"](
+            {
+                "phone": "+79001234567",
+                "chat_id": "123",
+                "message_id": 5,
+                "file": str(media),
+                "text": "",
+                "confirm": True,
+            }
+        )
+        assert "заменено" in _text(result)
+        args, kwargs = mock_client.edit_message.await_args
+        assert args[2] == ""  # empty text forwarded verbatim — caption cleared
+        assert kwargs.get("file") == str(media.resolve())
+
 
 class TestDeleteMessage:
     @pytest.mark.anyio

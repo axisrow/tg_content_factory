@@ -393,8 +393,13 @@ async def _dialogs_edit_message_media(args, db, pool) -> None:
     # --file names a path on the CLI's own machine, so like download-media this
     # action has no worker hand-off (see _HANDOFF_COMMANDS): a split-deployment
     # worker could not see the file, and it silently edits nothing.
-    target = args.text if args.text else "(current caption preserved)"
-    preview = target[:200] + ("..." if len(target) > 200 else "")
+    if args.text is None:
+        target = "(current caption preserved)"
+    elif args.text == "":
+        target = "(caption cleared)"
+    else:
+        target = args.text[:200] + ("..." if len(args.text) > 200 else "")
+    preview = target
     if not _confirm_or_abort(
         args,
         f"Replace media of message #{args.message_id} in {args.chat_id} with {args.file}:",

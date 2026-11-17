@@ -71,7 +71,7 @@ TELEGRAM_ACTION_INVENTORY: tuple[TelegramActionInventoryItem, ...] = (
         action="edit_message_media",
         cli="dialogs edit-message-media",
         agent_tool="edit_message_media",
-        backend_method="edit_message",
+        backend_method="edit_message_media",
     ),
     TelegramActionInventoryItem(
         action="delete_messages",

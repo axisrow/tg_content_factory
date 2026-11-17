@@ -551,15 +551,17 @@ class TelegramActionService:
             )
         async with self._client(phone=phone, native=True) as (client, acquired_phone):
             entity = await self._resolve_entity(client, phone=acquired_phone, identifier=chat_id)
-            current = await self._fetch_message_with_flood_wait(
-                client,
-                acquired_phone,
-                entity,
-                int(message_id),
-                operation_prefix="telegram_action_edit_message_media",
-            )
             kwargs: dict[str, Any] = {"file": str(resolved_path)}
             if text is None:
+                # Caption preservation needs the current message's text +
+                # entities; an explicit text (including "") skips the read.
+                current = await self._fetch_message_with_flood_wait(
+                    client,
+                    acquired_phone,
+                    entity,
+                    int(message_id),
+                    operation_prefix="telegram_action_edit_message_media",
+                )
                 new_text = getattr(current, "message", "") or ""
                 kwargs["parse_mode"] = None
                 kwargs["formatting_entities"] = list(getattr(current, "entities", None) or [])
