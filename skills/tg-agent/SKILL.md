@@ -80,8 +80,8 @@ Sending a wrong message or kicking a wrong member is not reversible by you.
   `analytics`): run freely. Exception: `analytics channel-rate` runs an LLM judge — provider
   spend + DB write, calibration tool for `analytics usefulness` (content rating «полезное vs
   вода», deterministic and free); don't batch channel-rate without the user asking for it.
-- **Visible actions** (`send`, `forward`, `edit-message`, `delete-message`, `react`,
-  `pin-message`, `download-media`): only when the user explicitly asked for this action.
+- **Visible actions** (`send`, `forward`, `edit-message`, `edit-message-media`, `delete-message`,
+  `react`, `pin-message`, `download-media`): only when the user explicitly asked for this action.
   Confirm target chat + content before first send in a task.
 - **Destructive / hard to undo** (`delete`, `kick`, `leave`, `edit-admin`, `edit-permissions`,
   `create-channel`, `create-group`, `channel delete`, `filter purge*`/`hard-delete`): always ask

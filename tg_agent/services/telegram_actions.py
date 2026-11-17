@@ -520,6 +520,60 @@ class TelegramActionService:
             await client.edit_message(entity, int(message_id), text, link_preview=link_preview)
             return TelegramActionResult(phone=acquired_phone)
 
+    async def edit_message_media(
+        self,
+        *,
+        phone: str,
+        chat_id: Any,
+        message_id: int,
+        file: str,
+        text: str | None = None,
+        parse_mode: str | None = None,
+    ) -> TelegramActionResult:
+        # Ported from axisrow/telegram-mcp#398 (edit_message_media, merged
+        # 2026-11-10): replace the media attachment of a sent message without
+        # reposting. An omitted ``text`` keeps the current caption and its
+        # formatting entities (a read-then-edit — a concurrent caption change
+        # from another client can be overwritten; pass ``text`` explicitly to
+        # pin its value); an empty ``text`` clears the caption. Upstream's MP4
+        # video-attribute parser is deliberately not ported yet. See
+        # THIRD_PARTY_NOTICES.md.
+        def _resolve_media_file(raw: str) -> Path:
+            return Path(raw).expanduser().resolve()
+
+        resolved_path = await asyncio.to_thread(_resolve_media_file, file)
+        if not resolved_path.is_file():
+            raise FileNotFoundError(f"Файл для замены вложения не найден: {file}")
+        mode = (parse_mode or "").strip().lower() or None
+        if mode is not None and mode not in {"plain", "md", "markdown", "html"}:
+            raise ValueError(
+                f"parse_mode='{parse_mode}' не поддерживается. Используйте 'md', 'html' или 'plain'."
+            )
+        async with self._client(phone=phone, native=True) as (client, acquired_phone):
+            entity = await self._resolve_entity(client, phone=acquired_phone, identifier=chat_id)
+            current = await self._fetch_message_with_flood_wait(
+                client,
+                acquired_phone,
+                entity,
+                int(message_id),
+                operation_prefix="telegram_action_edit_message_media",
+            )
+            kwargs: dict[str, Any] = {"file": str(resolved_path)}
+            if text is None:
+                new_text = getattr(current, "message", "") or ""
+                kwargs["parse_mode"] = None
+                kwargs["formatting_entities"] = list(getattr(current, "entities", None) or [])
+            else:
+                new_text = text
+                if mode == "plain":
+                    kwargs["parse_mode"] = None
+                elif mode is not None:
+                    kwargs["parse_mode"] = mode
+                # mode None (not given) passes nothing: Telethon keeps its
+                # default (Markdown) parsing, same as upstream captions.
+            await client.edit_message(entity, int(message_id), new_text, **kwargs)
+            return TelegramActionResult(phone=acquired_phone)
+
     async def delete_messages(
         self,
         *,

@@ -321,6 +321,88 @@ class TestEditMessage:
         assert "обязательны" in text
 
 
+class TestEditMessageMedia:
+    @pytest.mark.anyio
+    async def test_no_pool_returns_gate(self, mock_db):
+        handlers = _get_tool_handlers(mock_db, client_pool=None)
+        result = await handlers["edit_message_media"](
+            {"phone": "+79001234567", "chat_id": "123", "message_id": 1, "file": "/tmp/x.png"}
+        )
+        assert "CLI-режиме" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_no_confirm_returns_gate(self, mock_db, tmp_path):
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        media = tmp_path / "replacement.png"
+        media.write_text("x")
+        result = await handlers["edit_message_media"](
+            {"phone": "+79001234567", "chat_id": "123", "message_id": 1, "file": str(media)}
+        )
+        assert "confirm=true" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_missing_file_returns_error(self, mock_db, tmp_path):
+        mock_pool, mock_client = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["edit_message_media"](
+            {
+                "phone": "+79001234567",
+                "chat_id": "123",
+                "message_id": 5,
+                "file": str(tmp_path / "nope.png"),
+                "confirm": True,
+            }
+        )
+        assert "не найден" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_bad_parse_mode_returns_error(self, mock_db, tmp_path):
+        mock_pool, mock_client = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        media = tmp_path / "replacement.png"
+        media.write_text("x")
+        result = await handlers["edit_message_media"](
+            {
+                "phone": "+79001234567",
+                "chat_id": "123",
+                "message_id": 5,
+                "file": str(media),
+                "text": "new",
+                "parse_mode": "rich",
+                "confirm": True,
+            }
+        )
+        assert "parse_mode" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_with_confirm_success_preserves_caption(self, mock_db, tmp_path):
+        mock_pool, mock_client = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        message = SimpleNamespace(id=5, message="old caption", entities=[])
+
+        async def _iter_messages(entity, ids):
+            yield message
+
+        mock_client.iter_messages = MagicMock(return_value=_iter_messages(123456, 5))
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        media = tmp_path / "replacement.png"
+        media.write_text("x")
+        result = await handlers["edit_message_media"](
+            {
+                "phone": "+79001234567",
+                "chat_id": "123",
+                "message_id": 5,
+                "file": str(media),
+                "confirm": True,
+            }
+        )
+        assert "заменено" in _text(result)
+
+
 class TestDeleteMessage:
     @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):

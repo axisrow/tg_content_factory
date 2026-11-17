@@ -258,6 +258,11 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
         "real_provider_smoke-gated (#1545)"
     ),
     ("dialogs", "edit-admin"): "Telegram-visible admin mutation",
+    ("dialogs", "edit-message-media"): (
+        "Telegram-visible post mutation (replaces a sent message's media attachment); "
+        "covered by offline unit/integration tests with fakes (test_telegram_actions_service.py, "
+        "test_regression_dialogs_cli.py, test_agent_tools_messaging.py)"
+    ),
     ("dialogs", "edit-permissions"): "Telegram-visible permissions mutation",
     ("dialogs", "join"): "Telegram-visible join/subscribe action",
     ("dialogs", "kick"): "Telegram-visible participant mutation",

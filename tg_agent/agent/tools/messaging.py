@@ -27,6 +27,7 @@ TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
         "send_reactions": ToolMeta(ToolCategory.WRITE, phone_bound=True),
         "forward_messages": ToolMeta(ToolCategory.WRITE, phone_bound=True),
         "edit_message": ToolMeta(ToolCategory.WRITE, phone_bound=True),
+        "edit_message_media": ToolMeta(ToolCategory.WRITE, phone_bound=True),
         "delete_message": ToolMeta(ToolCategory.DELETE, phone_bound=True),
         "pin_message": ToolMeta(ToolCategory.WRITE, phone_bound=True),
         "unpin_message": ToolMeta(ToolCategory.WRITE, phone_bound=True),

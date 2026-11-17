@@ -386,6 +386,37 @@ async def _dialogs_edit_message(args, db, pool) -> None:
         cli_error(f"Error editing message: {exc}")
 
 
+async def _dialogs_edit_message_media(args, db, pool) -> None:
+    phone = await _resolve_phone(db, pool, args)
+    if phone is None:
+        return
+    # --file names a path on the CLI's own machine, so like download-media this
+    # action has no worker hand-off (see _HANDOFF_COMMANDS): a split-deployment
+    # worker could not see the file, and it silently edits nothing.
+    target = args.text if args.text else "(current caption preserved)"
+    preview = target[:200] + ("..." if len(target) > 200 else "")
+    if not _confirm_or_abort(
+        args,
+        f"Replace media of message #{args.message_id} in {args.chat_id} with {args.file}:",
+        f"  {preview}",
+    ):
+        return
+    try:
+        await TelegramActionService(pool).edit_message_media(
+            phone=phone,
+            chat_id=args.chat_id,
+            message_id=args.message_id,
+            file=args.file,
+            text=args.text,
+            parse_mode=args.parse_mode,
+        )
+        print(f"Media of message #{args.message_id} replaced.")
+    except TelegramActionClientUnavailableError:
+        cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")
+    except Exception as exc:
+        cli_error(f"Error replacing message media: {exc}")
+
+
 async def _dialogs_delete_message(args, db, pool) -> None:
     phone = await _resolve_phone(db, pool, args)
     if phone is None:
@@ -1260,6 +1291,7 @@ _DIALOGS_HANDLERS: dict[str, tuple[Callable[..., Awaitable[None]], bool]] = {
     "send": (_dialogs_send, False),
     "forward": (_dialogs_forward, False),
     "edit-message": (_dialogs_edit_message, False),
+    "edit-message-media": (_dialogs_edit_message_media, False),
     "delete-message": (_dialogs_delete_message, False),
     "react": (_dialogs_react, False),
     "pin-message": (_dialogs_pin_message, False),
@@ -1531,6 +1563,26 @@ def dialogs_edit_message(
 ) -> None:
     """Edit a sent message."""
     _run_dialogs(ctx, "edit-message", chat_id=chat_id, message_id=message_id, text=text, phone=phone, yes=yes)
+
+
+@dialogs_app.command("edit-message-media", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_edit_message_media(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    message_id: int = typer.Argument(..., help="Message ID to replace the media of"),
+    file: str = typer.Argument(..., help="Path to the replacement media file on this machine"),
+    text: str | None = typer.Option(
+        None, "--text", help="New caption (omit to keep the current caption and formatting)"
+    ),
+    parse_mode: str | None = typer.Option(None, "--parse-mode", help="Caption format for --text: md | html | plain"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Replace the media attachment of a sent message (no repost, metrics kept)."""
+    _run_dialogs(
+        ctx, "edit-message-media", chat_id=chat_id, message_id=message_id, file=file,
+        text=text, parse_mode=parse_mode, phone=phone, yes=yes,
+    )
 
 
 @dialogs_app.command("delete-message", context_settings=_NEG_ID_POSITIONAL)
