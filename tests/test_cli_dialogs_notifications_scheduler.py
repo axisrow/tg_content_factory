@@ -1025,7 +1025,7 @@ class TestServeCommand:
             patch("tg_agent.cli.commands.serve.pid_file_path") as mock_pid_path,
             patch("tg_agent.cli.commands.serve.register_current_process"),
             patch("tg_agent.cli.commands.serve.unregister_current_process"),
-            patch("tg_agent.cli.commands.serve.uvicorn.run") as mock_uvicorn,
+            patch("uvicorn.run") as mock_uvicorn,
         ):
 
             config = AppConfig()
@@ -1050,7 +1050,7 @@ class TestServeCommand:
             patch("tg_agent.cli.commands.serve.pid_file_path") as mock_pid_path,
             patch("tg_agent.cli.commands.serve.register_current_process") as mock_register,
             patch("tg_agent.cli.commands.serve.unregister_current_process") as mock_unregister,
-            patch("tg_agent.cli.commands.serve.uvicorn.run"),
+            patch("uvicorn.run"),
         ):
 
             config = AppConfig()

@@ -7,8 +7,10 @@ import typer
 
 from tg_agent.cli.commands.common import apply_startup, cli_error, run_async
 from tg_agent.config import global_marker_path, global_store_root
-from tg_agent.gateway.catalog import GatewayAdministrator
-from tg_agent.gateway.runtime import endpoint, ensure_gateway, restart_gateway, stop_gateway
+
+# gateway.catalog/gateway.runtime are imported lazily in their call sites:
+# runtime imports the gateway server stack (uvicorn/fastapi/telethon) and must
+# not load for every other CLI subcommand's startup.
 
 gateway_app = typer.Typer(no_args_is_help=True, help="Manage the shared Telegram gateway")
 accounts_app = typer.Typer(no_args_is_help=True, help="Shared account administration")
@@ -28,6 +30,8 @@ def require_shared(shared):
 
 
 async def administer(path, payload):
+    from tg_agent.gateway.catalog import GatewayAdministrator
+
     client = await GatewayAdministrator.connect(current_store_root())
     try:
         return await client.call(path, payload)
@@ -40,6 +44,8 @@ def accounts_list(ctx: typer.Context):
     apply_startup(ctx)
 
     async def listing():
+        from tg_agent.gateway.catalog import GatewayAdministrator
+
         client = await GatewayAdministrator.connect(current_store_root())
         try:
             response = await client.http.get("/v1/admin/accounts")
@@ -90,6 +96,8 @@ def accounts_export(ctx: typer.Context, phone: str, shared: bool = typer.Option(
     apply_startup(ctx)
 
     async def exporting():
+        from tg_agent.gateway.catalog import GatewayAdministrator
+
         client = await GatewayAdministrator.connect(current_store_root())
         try:
             response = await client.http.get("/v1/admin/accounts/export", params={"phone": phone})
@@ -113,6 +121,8 @@ def accounts_replace(ctx: typer.Context, phone: str, session_file: Path = typer.
 @gateway_app.command("start")
 def gateway_start(ctx: typer.Context):
     apply_startup(ctx)
+    from tg_agent.gateway.runtime import ensure_gateway
+
     print(ensure_gateway(current_store_root()))
 
 
@@ -149,6 +159,8 @@ def gateway_reply_owner(ctx: typer.Context, phone: str, dialog_id: int,
 @gateway_app.command("status")
 def gateway_status(ctx: typer.Context):
     apply_startup(ctx)
+    from tg_agent.gateway.runtime import endpoint
+
     status = endpoint(current_store_root())
     print(json.dumps(status or {"state": "down"}))
 
@@ -158,6 +170,8 @@ def gateway_stop(ctx: typer.Context, shared: bool = typer.Option(False, "--share
     apply_startup(ctx)
     if not shared:
         cli_error("Shared gateway stop requires --shared; `stop` controls only this project's worker")
+    from tg_agent.gateway.runtime import stop_gateway
+
     stop_gateway(current_store_root(), shared=True)
     print("Shared gateway stopped")
 
@@ -167,4 +181,6 @@ def gateway_restart(ctx: typer.Context, shared: bool = typer.Option(False, "--sh
     apply_startup(ctx)
     if not shared:
         cli_error("Shared gateway restart requires --shared; `restart` controls only this project's worker")
+    from tg_agent.gateway.runtime import restart_gateway
+
     print(restart_gateway(current_store_root(), shared=True))
