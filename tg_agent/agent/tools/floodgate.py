@@ -158,7 +158,11 @@ def wrap_tool_with_floodgate(
         if pair is None:
             return await original_handler(*args, **kwargs)
         gate, breaker = pair
-        phone = normalize_phone(kwargs.get("phone"))
+        # The SDK invokes handlers as handler(arguments) — one positional dict
+        # (plugin_tools.run_tool); kwargs carries nothing. Read the phone from
+        # args[0], falling back to kwargs for direct fn(**kwargs) callers.
+        arguments = args[0] if args and isinstance(args[0], dict) else kwargs
+        phone = normalize_phone(arguments.get("phone"))
         if not phone:
             try:
                 phone, _err = await resolve_phone(db, "")

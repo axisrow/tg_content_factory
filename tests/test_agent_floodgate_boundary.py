@@ -199,6 +199,20 @@ async def test_missing_phone_resolves_the_default_account():
     assert gate.seen == [("+70000000001", (("send", None),))]
 
 
+async def test_explicit_phone_wins_over_the_default_account():
+    """The SDK passes the argument dict positionally (args[0]); an explicit
+    phone must gate the explicit account, not the DB default (#1861 review)."""
+    calls = []
+    gate = _FakeGate(deferred={"+79990000002"})
+    pool = _pool(gate=gate)
+    wrapped = _wrapped(calls, pool=pool)
+
+    result = await wrapped.handler({"phone": "+79990000002"})
+
+    assert "FLOODGATE-ERR-" in result["content"][0]["text"]
+    assert gate.seen == [("+79990000002", (("send", None),))]
+
+
 async def test_successful_call_releases_the_breaker_trial():
     """A granted half-open trial must not wedge when the call simply works."""
 
