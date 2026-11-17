@@ -36,6 +36,19 @@ provenance comment listing the source repo, commit, date, and modifications.
   `format_tool_result`/`_json_default` dropped (this project feeds plain-text
   prompts, not JSON tool-result envelopes).
 
+- `TelegramActionService.edit_message_media` (issue #1853) — the
+  replace-attachment-without-repost behaviour (read the current message first and re-apply
+  its caption text + formatting entities with `parse_mode=None`, `file=` on the edit call,
+  omitted-caption preservation vs empty-caption clear) follows
+  `telegram_mcp/tools/media.py::edit_message_media` from PR
+  chigwell/telegram-mcp#398 (merged 2026-11-10). Modifications: implemented as a method of
+  our own MIT-licensed `TelegramActionService` rather than a vendored file — the flow runs
+  through the shared entity resolver, flood-wait wrapper and transport session, so no
+  upstream code is carried verbatim; upstream's MP4 video-attribute parser and the
+  MessageIDs append to send responses are not ported. Local-file existence check added.
+  Long-term plan: treat this as already-rewritten (nothing left to relicense) — the entry
+  records provenance only.
+
 - `tg_agent/telegram/transcription.py` — vendored from `telegram_mcp/transcription.py`
   at the same upstream commit `e224762671897c1df53deadb51be84eaaaf2cea3`
   (2026-10-16, issue #1545).

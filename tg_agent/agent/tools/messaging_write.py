@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 from typing import Annotated, Any
 
 from claude_agent_sdk import tool
@@ -20,6 +22,7 @@ from tg_agent.agent.tools._registry import (
 from tg_agent.agent.tools._telegram_runtime import prepare_telegram_tool
 from tg_agent.agent.tools.messaging_schemas import (
     DELETE_MESSAGE_SCHEMA,
+    EDIT_MESSAGE_MEDIA_SCHEMA,
     EDIT_MESSAGE_SCHEMA,
     FORWARD_MESSAGES_SCHEMA,
     SEND_MESSAGE_SCHEMA,
@@ -168,6 +171,73 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
             return _text_response(f"Ошибка редактирования сообщения: {e}")
 
     tools.append(edit_message)
+
+    @tool(
+        "edit_message_media",
+        "Replace the media attachment (photo/video/document) of a previously sent message "
+        "without reposting — views and reactions stay on the same message. "
+        "file = path on this machine. Omit text to keep the current caption and its "
+        "formatting; pass text (optionally parse_mode: md | html | plain) to replace it. "
+        "chat_id accepts @username, t.me link, numeric ID, or 'me'. "
+        "Ask user for confirmation first.",
+        EDIT_MESSAGE_MEDIA_SCHEMA,
+    )
+    async def edit_message_media(args):
+        live_gate = ctx.require_live_runtime("Замена вложения сообщения", tool_name="edit_message_media")
+        if live_gate:
+            return live_gate
+        phone, err = await ctx.resolve_phone(args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await ctx.require_phone_permission(phone, "edit_message_media")
+        if perm_gate:
+            return perm_gate
+        chat_id = args.get("chat_id", "")
+        message_id = _coerce_exact_int(args.get("message_id"))
+        file_path = str(args.get("file", "") or "").strip()
+        if not chat_id or message_id is None or not file_path:
+            return _text_response("Ошибка: chat_id, message_id и file обязательны.")
+        # A str is forwarded as-is — including "" which the service and the CLI
+        # both treat as "clear the caption"; only a missing/non-str text means
+        # "keep the current caption".
+        text = args.get("text")
+        text_value = text if isinstance(text, str) else None
+        parse_mode = args.get("parse_mode")
+        mode = (str(parse_mode).strip().lower() if parse_mode else "") or None
+        if mode is not None and mode not in {"plain", "md", "markdown", "html"}:
+            return _text_response(
+                f"Ошибка: parse_mode='{parse_mode}' не поддерживается. Используйте 'md', 'html' или 'plain'."
+            )
+        if not await asyncio.to_thread(lambda: os.path.isfile(os.path.expanduser(file_path))):
+            return _text_response(f"Ошибка: файл не найден: {file_path}")
+        if text_value is None:
+            preview = "(текущая подпись сохраняется)"
+        elif text_value == "":
+            preview = "(подпись будет очищена)"
+        else:
+            preview = text_value
+        gate = require_confirmation(
+            f"заменит вложение сообщения #{message_id} в чате {chat_id} на «{file_path}» (подпись: «{preview[:120]}»)",
+            args,
+        )
+        if gate:
+            return gate
+        try:
+            await TelegramActionService(client_pool).edit_message_media(
+                phone=phone,
+                chat_id=chat_id,
+                message_id=message_id,
+                file=file_path,
+                text=text_value,
+                parse_mode=mode,
+            )
+            return _text_response(f"Вложение сообщения #{message_id} заменено.")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
+        except Exception as e:
+            return _text_response(f"Ошибка замены вложения: {e}")
+
+    tools.append(edit_message_media)
 
     @tool(
         "delete_message",

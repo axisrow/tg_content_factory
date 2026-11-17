@@ -232,6 +232,7 @@
 | Отправить сообщение | `dialogs send` | `POST /dialogs/send` | `send_message` |
 | Переслать сообщение | `dialogs forward` | `POST /dialogs/forward-messages` | `forward_messages` |
 | Редактировать | `dialogs edit-message` | `POST /dialogs/edit-message` | `edit_message` |
+| Заменить вложение | `dialogs edit-message-media` | — | `edit_message_media` |
 | Удалить | `dialogs delete-message` | `POST /dialogs/delete-message` | `delete_message` |
 | Закрепить | `dialogs pin-message` | `POST /dialogs/pin-message` | `pin_message` |
 | Открепить | `dialogs unpin-message` | `POST /dialogs/unpin-message` | `unpin_message` |

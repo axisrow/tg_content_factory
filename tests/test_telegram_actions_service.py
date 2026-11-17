@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tg_agent.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
+from tg_agent.services.telegram_actions import (
+    TelegramActionClientUnavailableError,
+    TelegramActionMessageNotFoundError,
+    TelegramActionService,
+)
 
 
 def _pool_with_client(client):
@@ -283,3 +287,147 @@ async def test_edit_message_disables_link_preview_by_default():
 
     client.edit_message.assert_awaited_once_with("entity", 9, "new", link_preview=False)
     pool.release_client.assert_awaited_once_with("+1")
+
+
+def _edit_media_client(caption="old caption", entities=("entity-a",)):
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
+    message = SimpleNamespace(id=7, message=caption, entities=entities)
+
+    async def _iter_messages(entity, ids):
+        assert ids == 7
+        yield message
+
+    client.iter_messages = MagicMock(return_value=_iter_messages("entity", 7))
+    client.edit_message = AsyncMock()
+    return client
+
+
+@pytest.mark.anyio
+async def test_edit_message_media_preserves_caption_and_entities(tmp_path):
+    client = _edit_media_client()
+    pool = _pool_with_client(client)
+    media = tmp_path / "replacement.png"
+    media.write_text("x")
+
+    await TelegramActionService(pool).edit_message_media(
+        phone="+1", chat_id="@chat", message_id=7, file=str(media)
+    )
+
+    client.edit_message.assert_awaited_once_with(
+        "entity", 7, "old caption", file=str(media), parse_mode=None, formatting_entities=["entity-a"]
+    )
+    pool.release_client.assert_awaited_once_with("+1")
+
+
+@pytest.mark.anyio
+async def test_edit_message_media_empty_text_clears_caption(tmp_path):
+    client = _edit_media_client(caption="", entities=[])
+    pool = _pool_with_client(client)
+    media = tmp_path / "replacement.png"
+    media.write_text("x")
+
+    await TelegramActionService(pool).edit_message_media(
+        phone="+1", chat_id="@chat", message_id=7, file=str(media)
+    )
+
+    client.edit_message.assert_awaited_once_with(
+        "entity", 7, "", file=str(media), parse_mode=None, formatting_entities=[]
+    )
+
+
+@pytest.mark.anyio
+async def test_edit_message_media_replaces_caption_with_parse_mode(tmp_path):
+    client = _edit_media_client()
+    pool = _pool_with_client(client)
+    media = tmp_path / "replacement.png"
+    media.write_text("x")
+
+    await TelegramActionService(pool).edit_message_media(
+        phone="+1", chat_id="@chat", message_id=7, file=str(media), text="**new**", parse_mode="md"
+    )
+
+    client.edit_message.assert_awaited_once_with("entity", 7, "**new**", file=str(media), parse_mode="md")
+
+
+@pytest.mark.anyio
+async def test_edit_message_media_plain_text_disables_parsing(tmp_path):
+    client = _edit_media_client()
+    pool = _pool_with_client(client)
+    media = tmp_path / "replacement.png"
+    media.write_text("x")
+
+    await TelegramActionService(pool).edit_message_media(
+        phone="+1", chat_id="@chat", message_id=7, file=str(media), text="literal **x**", parse_mode="plain"
+    )
+
+    client.edit_message.assert_awaited_once_with(
+        "entity", 7, "literal **x**", file=str(media), parse_mode=None
+    )
+
+
+@pytest.mark.anyio
+async def test_edit_message_media_default_parse_mode_keeps_telethon_default(tmp_path):
+    client = _edit_media_client()
+    pool = _pool_with_client(client)
+    media = tmp_path / "replacement.png"
+    media.write_text("x")
+
+    await TelegramActionService(pool).edit_message_media(
+        phone="+1", chat_id="@chat", message_id=7, file=str(media), text="plain words"
+    )
+
+    client.edit_message.assert_awaited_once_with("entity", 7, "plain words", file=str(media))
+
+
+@pytest.mark.anyio
+async def test_edit_message_media_rejects_unknown_parse_mode(tmp_path):
+    client = _edit_media_client()
+    pool = _pool_with_client(client)
+    media = tmp_path / "replacement.png"
+    media.write_text("x")
+
+    with pytest.raises(ValueError, match="parse_mode"):
+        await TelegramActionService(pool).edit_message_media(
+            phone="+1", chat_id="@chat", message_id=7, file=str(media), text="new", parse_mode="rich"
+        )
+
+    client.edit_message.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_edit_message_media_requires_an_existing_local_file(tmp_path):
+    client = _edit_media_client()
+    pool = _pool_with_client(client)
+
+    with pytest.raises(FileNotFoundError, match="replacement.png"):
+        await TelegramActionService(pool).edit_message_media(
+            phone="+1", chat_id="@chat", message_id=7, file=str(tmp_path / "replacement.png")
+        )
+
+    client.edit_message.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_edit_message_media_missing_message_raises(tmp_path):
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
+
+    async def _iter_messages(entity, ids):
+        return
+        yield
+
+    client.iter_messages = MagicMock(return_value=_iter_messages("entity", 7))
+    client.edit_message = AsyncMock()
+    pool = _pool_with_client(client)
+    media = tmp_path / "replacement.png"
+    media.write_text("x")
+
+    with pytest.raises(TelegramActionMessageNotFoundError):
+        await TelegramActionService(pool).edit_message_media(
+            phone="+1", chat_id="@chat", message_id=7, file=str(media)
+        )
+
+    client.edit_message.assert_not_awaited()

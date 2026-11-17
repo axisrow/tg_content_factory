@@ -46,6 +46,7 @@ ENTRYPOINT_FILES = {
 ENTRYPOINT_FORBIDDEN_ACTION_CALLS = {
     "send_message",
     "edit_message",
+    "edit_message_media",
     "delete_messages",
     "forward_messages",
     "pin_message",
@@ -73,6 +74,7 @@ def test_telegram_action_inventory_has_unique_complete_actions():
     assert "download_media" in actions
     assert "join_channel" in actions
     assert "leave_dialogs" in actions
+    assert "edit_message_media" in actions
     for item in TELEGRAM_ACTION_INVENTORY:
         assert item.backend_method, item.action
         assert any((item.cli, item.web_command, item.agent_tool, item.pipeline_node)), item.action

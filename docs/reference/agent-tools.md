@@ -232,6 +232,7 @@
 | `clear_pending_telegram_commands` | WRITE | Массовая отмена ожидающих заданий очереди (по типу/телефону) |
 | `forward_messages` | WRITE | Переслать сообщения |
 | `edit_message` | WRITE | Редактировать |
+| `edit_message_media` | WRITE | Заменить вложение отправленного сообщения (без репоста) |
 | `delete_message` | DELETE | Удалить (⚠️ destructive) |
 | `pin_message` | WRITE | Закрепить сообщение |
 | `unpin_message` | WRITE | Открепить |

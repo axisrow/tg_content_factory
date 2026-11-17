@@ -232,6 +232,48 @@ class TestMyTelegramActions:
         out = capsys.readouterr().out
         assert "edited" in out.lower()
 
+    def test_edit_message_media_action(self, capsys, tmp_path):
+        pool = _make_pool_with_clients()
+        mock_client = AsyncMock()
+        pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
+
+        async def _iter_messages(entity, ids):
+            yield SimpleNamespace(id=42, message="old caption", entities=[])
+
+        mock_client.iter_messages = MagicMock(return_value=_iter_messages("@ch", 42))
+        media = tmp_path / "replacement.png"
+        media.write_text("x")
+        self._run_action(
+            "edit-message-media", pool=pool,
+            extra_args={
+                "chat_id": "@ch",
+                "message_id": 42,
+                "file": str(media),
+                "text": None,
+                "parse_mode": None,
+            },
+        )
+        out = capsys.readouterr().out
+        assert "replaced" in out.lower()
+
+    def test_edit_message_media_missing_file(self, capsys, tmp_path):
+        pool = _make_pool_with_clients()
+        mock_client = AsyncMock()
+        pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
+        with pytest.raises(typer.Exit):
+            self._run_action(
+                "edit-message-media", pool=pool,
+                extra_args={
+                    "chat_id": "@ch",
+                    "message_id": 42,
+                    "file": str(tmp_path / "nope.png"),
+                    "text": None,
+                    "parse_mode": None,
+                },
+            )
+        err = capsys.readouterr().err
+        assert "nope.png" in err
+
     def test_delete_message_action(self, capsys):
         pool = _make_pool_with_clients()
         mock_client = AsyncMock()

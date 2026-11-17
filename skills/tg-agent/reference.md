@@ -240,7 +240,7 @@ search-query list | get | add | edit | delete | toggle | run | stats
 
 ```
 dialogs list | refresh | resolve | topics
-dialogs read | send | forward | edit-message | delete-message | react | pin-message | unpin-message
+dialogs read | send | forward | edit-message | edit-message-media | delete-message | react | pin-message | unpin-message
 dialogs download-media | transcribe | mark-read | archive | unarchive
 dialogs participants | edit-admin | edit-permissions | kick
 dialogs create-channel | create-group | leave | join | delete
@@ -271,6 +271,11 @@ is refused by the session lock (`tg-agent stop` first — see Session lock above
 command and the agent tool (which carry no directory by contract) land files in the runtime
 data root (`./data/downloads`, overridable via `TG_AGENT_DATA_DIR`) — never inside the
 installed package (#1595).
+`dialogs edit-message-media <chat> <message-id> <file> [--text CAPTION] [--parse-mode md|html|plain]`
+replaces the media attachment of a sent message without reposting (views/reactions stay).
+Omit `--text` to keep the current caption and its formatting; `--text ""` clears the caption.
+The file is read on this machine, so like `dialogs download-media` the command has no worker
+hand-off — while the daemon runs it is refused (`tg-agent stop` first, or `TGCF_CLI_DIRECT=1`).
 
 ## dm — incoming-DM journal, archive, reply drafts (#1429, #1580)
 
