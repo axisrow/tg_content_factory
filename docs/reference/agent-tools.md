@@ -233,6 +233,8 @@
 | `forward_messages` | WRITE | Переслать сообщения |
 | `edit_message` | WRITE | Редактировать |
 | `edit_message_media` | WRITE | Заменить вложение отправленного сообщения (без репоста) |
+| `save_draft` | WRITE | Сохранить черновик с форматированием (html/md/plain) |
+| `get_drafts` | READ | Список черновиков (у форматированных — message_html) |
 | `delete_message` | DELETE | Удалить (⚠️ destructive) |
 | `pin_message` | WRITE | Закрепить сообщение |
 | `unpin_message` | WRITE | Открепить |

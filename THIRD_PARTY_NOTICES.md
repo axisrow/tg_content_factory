@@ -49,6 +49,22 @@ provenance comment listing the source repo, commit, date, and modifications.
   Long-term plan: treat this as already-rewritten (nothing left to relicense) — the entry
   records provenance only.
 
+- `tg_agent/telegram/outgoing_text.py` and the drafts flow
+  (`TelegramActionService.save_draft`/`list_drafts`, CLI `dialogs draft-save|draft-list`,
+  agent tools `save_draft`/`get_drafts`, issue #1854) — the drafts-keep-formatting
+  behaviour (html/md pre-parse into real entities via telethon.extensions, unknown
+  parse_mode refused before any request, `message_html` = html.unparse of a draft's raw
+  entities that round-trips through save_draft(parse_mode="html")) follows
+  `telegram_mcp/tools/messages.py::save_draft`/`get_drafts` from PR
+  chigwell/telegram-mcp#364 (merged 2026-11-07). Modifications: implemented in our own
+  MIT-licensed layers (raw `SaveDraftRequest`/`GetAllDraftsRequest` in
+  `tg_agent/telegram/backends.py` because telethon 1.45 has no client.edit_draft and its
+  Draft wrapper drops entities; entity titles come from the same reply instead of a
+  second resolve; sanitize_user_content replaces upstream's sanitizer). Upstream's
+  unified formatting module (their PR #367) was still open at port time and is not
+  ported. Long-term plan: treat this as already-rewritten (nothing left to relicense) —
+  the entry records provenance only.
+
 - `tg_agent/telegram/transcription.py` — vendored from `telegram_mcp/transcription.py`
   at the same upstream commit `e224762671897c1df53deadb51be84eaaaf2cea3`
   (2026-10-16, issue #1545).

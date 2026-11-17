@@ -42,6 +42,19 @@ EDIT_MESSAGE_MEDIA_SCHEMA = {
     "confirm": CONFIRM_ARG,
 }
 
+SAVE_DRAFT_SCHEMA = {
+    "phone": PHONE_ARG,
+    "chat_id": CHAT_ID_ARG,
+    "text": Annotated[str, "Текст черновика (разметка по parse_mode)"],
+    "parse_mode": Annotated[str | None, "Формат: md | html | plain (по умолчанию plain; html даёт подчёркивание)"],
+    "reply_to": Annotated[int | None, "ID сообщения, на которое черновик отвечает"],
+    "no_webpage": Annotated[bool, "Отключить превью ссылки в черновике"],
+}
+
+GET_DRAFTS_SCHEMA = {
+    "phone": PHONE_ARG,
+}
+
 DELETE_MESSAGE_SCHEMA = {
     "phone": PHONE_ARG,
     "chat_id": CHAT_ID_ARG,

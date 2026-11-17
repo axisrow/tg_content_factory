@@ -233,6 +233,8 @@
 | Переслать сообщение | `dialogs forward` | `POST /dialogs/forward-messages` | `forward_messages` |
 | Редактировать | `dialogs edit-message` | `POST /dialogs/edit-message` | `edit_message` |
 | Заменить вложение | `dialogs edit-message-media` | — | `edit_message_media` |
+| Сохранить черновик | `dialogs draft-save` | — | `save_draft` |
+| Список черновиков | `dialogs draft-list` | — | `get_drafts` |
 | Удалить | `dialogs delete-message` | `POST /dialogs/delete-message` | `delete_message` |
 | Закрепить | `dialogs pin-message` | `POST /dialogs/pin-message` | `pin_message` |
 | Открепить | `dialogs unpin-message` | `POST /dialogs/unpin-message` | `unpin_message` |

@@ -616,6 +616,31 @@ async def test_dialogs_edit_message():
     pool.release_client.assert_awaited()
 
 
+async def test_dialogs_draft_save():
+    pool = _mock_pool()
+    c = _client_mock()
+    c.save_draft = AsyncMock(return_value=True)
+    pool.get_native_client_by_phone.return_value = (c, "+1")
+    d = _dispatcher(pool=pool)
+    r = await d._handle_dialogs_draft_save(
+        {"phone": "+1", "chat_id": "@ch", "text": "<b>bold</b>", "parse_mode": "html",
+         "reply_to": None, "no_webpage": False}
+    )
+    assert r == {"phone": "+1"}
+    pool.release_client.assert_awaited()
+
+
+async def test_dialogs_draft_list():
+    pool = _mock_pool()
+    c = _client_mock()
+    c.get_all_drafts = AsyncMock(return_value=MagicMock(updates=[]))
+    pool.get_native_client_by_phone.return_value = (c, "+1")
+    d = _dispatcher(pool=pool)
+    r = await d._handle_dialogs_draft_list({"phone": "+1"})
+    assert r == {"phone": "+1", "drafts": []}
+    pool.release_client.assert_awaited()
+
+
 async def test_dialogs_delete_message():
     pool = _mock_pool()
     c = _client_mock()

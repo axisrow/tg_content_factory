@@ -17,7 +17,6 @@ from tg_agent.models import MessagesResult
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.telegram.dm_history import read_dialog_history
 from tg_agent.telegram.outgoing_text import parse_outgoing_text, unparse_outgoing_html
-from tg_agent.utils.sanitize import sanitize_user_content
 from tg_agent.telegram.transcription import (
     ENGINES,
     engine_config_error,
@@ -26,6 +25,7 @@ from tg_agent.telegram.transcription import (
     transcribe_cached,
 )
 from tg_agent.utils.introspection import explicit_pool_method
+from tg_agent.utils.sanitize import sanitize_user_content
 
 logger = logging.getLogger(__name__)
 

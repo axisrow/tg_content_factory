@@ -427,6 +427,68 @@ class TestEditMessageMedia:
         assert kwargs.get("file") == str(media.resolve())
 
 
+class TestSaveDraft:
+    @pytest.mark.anyio
+    async def test_no_pool_returns_gate(self, mock_db):
+        handlers = _get_tool_handlers(mock_db, client_pool=None)
+        result = await handlers["save_draft"]({"phone": "+79001234567", "chat_id": "123", "text": "x"})
+        assert "CLI-режиме" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_missing_text_returns_error(self, mock_db):
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["save_draft"]({"phone": "+79001234567", "chat_id": "123"})
+        assert "обязательны" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_bad_parse_mode_returns_error(self, mock_db):
+        mock_pool, mock_client = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["save_draft"](
+            {"phone": "+79001234567", "chat_id": "123", "text": "x", "parse_mode": "rich"}
+        )
+        assert "parse_mode" in _text(result)
+        mock_client.save_draft.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_success_keeps_formatting(self, mock_db):
+        mock_pool, mock_client = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["save_draft"](
+            {"phone": "+79001234567", "chat_id": "123", "text": "<b>bold</b>", "parse_mode": "html"}
+        )
+        assert "Черновик сохранён" in _text(result)
+        args, kwargs = mock_client.save_draft.await_args
+        assert args[1] == "bold"
+        assert kwargs["entities"]
+
+
+class TestGetDrafts:
+    @pytest.mark.anyio
+    async def test_returns_json_with_message_html(self, mock_db):
+        mock_pool, mock_client = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        updates = SimpleNamespace(updates=[], users=[], chats=[])
+        mock_client.get_all_drafts = AsyncMock(return_value=updates)
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["get_drafts"]({"phone": "+79001234567"})
+        payload = json.loads(_text(result))
+        assert payload == {"drafts": [], "count": 0}
+
+    @pytest.mark.anyio
+    async def test_client_unavailable(self, mock_db):
+        mock_pool = MagicMock()
+        mock_pool.get_native_client_by_phone = AsyncMock(return_value=None)
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["get_drafts"]({"phone": "+79001234567"})
+        assert "flood-wait" in _text(result)
+
+
 class TestDeleteMessage:
     @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):

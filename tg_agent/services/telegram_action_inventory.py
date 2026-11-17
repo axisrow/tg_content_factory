@@ -74,6 +74,18 @@ TELEGRAM_ACTION_INVENTORY: tuple[TelegramActionInventoryItem, ...] = (
         backend_method="edit_message_media",
     ),
     TelegramActionInventoryItem(
+        action="save_draft",
+        cli="dialogs draft-save",
+        agent_tool="save_draft",
+        backend_method="save_draft",
+    ),
+    TelegramActionInventoryItem(
+        action="list_drafts",
+        cli="dialogs draft-list",
+        agent_tool="get_drafts",
+        backend_method="get_all_drafts",
+    ),
+    TelegramActionInventoryItem(
         action="delete_messages",
         cli="dialogs delete-message",
         web_command="dialogs.delete_message",

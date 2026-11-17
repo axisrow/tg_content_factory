@@ -30,6 +30,8 @@ _WORKER_READS: dict[str, frozenset[str]] = {
     "dialogs.join": frozenset({"target"}),
     "dialogs.resolve": frozenset({"identifier"}),
     "dialogs.edit_message": frozenset({"chat_id", "message_id", "text"}),
+    "dialogs.draft_save": frozenset({"chat_id", "text", "parse_mode", "reply_to", "no_webpage"}),
+    "dialogs.draft_list": frozenset(),
     "dialogs.delete_message": frozenset({"chat_id", "message_ids"}),
     "dialogs.forward_messages": frozenset({"from_chat", "to_chat", "message_ids"}),
     "dialogs.pin_message": frozenset({"chat_id", "message_id", "notify"}),

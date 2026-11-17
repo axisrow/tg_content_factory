@@ -334,8 +334,7 @@ class TestMyTelegramActions:
     def _drafts_updates(self):
         from telethon import types as tt
 
-        text, entities = tt.MessageEntityBold(offset=0, length=4), None
-        bold = text
+        bold = tt.MessageEntityBold(offset=0, length=4)
         return tt.Updates(
             updates=[tt.UpdateDraftMessage(peer=tt.PeerUser(42), draft=tt.DraftMessage(
                 message="01 CASE", date=None, entities=[bold]))],
