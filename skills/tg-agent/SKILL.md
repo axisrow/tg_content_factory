@@ -76,13 +76,15 @@ Task → group (details in [reference.md](reference.md)):
 `dialogs *` commands perform **real actions** from the user's account to real chats.
 Sending a wrong message or kicking a wrong member is not reversible by you.
 
-- **Read-only** (`dialogs list/read/topics/participants`, `channel *`, `search`, `messages read`,
-  `analytics`): run freely. Exception: `analytics channel-rate` runs an LLM judge — provider
-  spend + DB write, calibration tool for `analytics usefulness` (content rating «полезное vs
-  вода», deterministic and free); don't batch channel-rate without the user asking for it.
-- **Visible actions** (`send`, `forward`, `edit-message`, `edit-message-media`, `delete-message`,
-  `react`, `pin-message`, `download-media`): only when the user explicitly asked for this action.
-  Confirm target chat + content before first send in a task.
+- **Read-only** (`dialogs list/read/topics/participants`, `dialogs draft-list`, `channel *`,
+  `search`, `messages read`, `analytics`): run freely. Exception: `analytics channel-rate` runs
+  an LLM judge — provider spend + DB write, calibration tool for `analytics usefulness`
+  (content rating «полезное vs вода», deterministic and free); don't batch channel-rate
+  without the user asking for it.
+- **Visible actions** (`send`, `forward`, `edit-message`, `edit-message-media`,
+  `delete-message`, `react`, `pin-message`, `download-media`, `draft-save`): only when the
+  user explicitly asked for this action. Confirm target chat + content before first send in
+  a task.
 - **Destructive / hard to undo** (`delete`, `kick`, `leave`, `edit-admin`, `edit-permissions`,
   `create-channel`, `create-group`, `channel delete`, `filter purge*`/`hard-delete`): always ask
   an explicit yes/no confirmation naming the exact target before running, even if the user

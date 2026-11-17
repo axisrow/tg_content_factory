@@ -424,6 +424,69 @@ async def _dialogs_edit_message_media(args, db, pool) -> None:
         cli_error(f"Error replacing message media: {exc}")
 
 
+def _print_drafts(drafts: list[dict], *, output_format: str) -> None:
+    if output_format == "json":
+        print(json.dumps({"drafts": drafts, "count": len(drafts)}, ensure_ascii=False))
+        return
+    if not drafts:
+        print("No drafts found.")
+        return
+    for draft in drafts:
+        header = f"peer_id={draft.get('peer_id', '')}"
+        if draft.get("username"):
+            header += f" @{draft['username']}"
+        if draft.get("title"):
+            header += f" {draft['title']}"
+        elif draft.get("first_name"):
+            header += f" {draft['first_name']}"
+        print(header)
+        print(f"  {draft.get('message', '')}")
+        if "message_html" in draft:
+            print(f"  html: {draft['message_html']}")
+
+
+async def _dialogs_draft_save(args, db, pool) -> None:
+    phone = await _resolve_phone(db, pool, args)
+    if phone is None:
+        return
+    # An empty SaveDraftRequest deletes the chat's existing draft by TL
+    # semantics — possibly one typed on another device, an unrecoverable loss.
+    # Refuse here so the CLI matches the agent tool's surface; clearing a draft
+    # is a deliberate separate action, never a side effect of an empty arg.
+    if not str(args.text).strip():
+        cli_error("Empty draft text is refused: saving an empty draft would delete the existing one.")
+        return
+    # A draft is account-local (nobody receives it) and re-editable, so unlike
+    # sends/edits it does not prompt for confirmation.
+    try:
+        await TelegramActionService(pool).save_draft(
+            phone=phone,
+            chat_id=args.chat_id,
+            text=args.text,
+            parse_mode=args.parse_mode,
+            reply_to=args.reply_to,
+            no_webpage=bool(args.no_webpage),
+        )
+        print(f"Draft saved to {args.chat_id}. Open the chat in Telegram to see and send it.")
+    except TelegramActionClientUnavailableError:
+        cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")
+    except Exception as exc:
+        cli_error(f"Error saving draft: {exc}")
+
+
+async def _dialogs_draft_list(args, db, pool) -> None:
+    phone = await _resolve_phone(db, pool, args)
+    if phone is None:
+        return
+    try:
+        result = await TelegramActionService(pool).list_drafts(phone=phone)
+        _print_drafts(result.drafts, output_format=getattr(args, "format", "text"))
+    except TelegramActionClientUnavailableError:
+        cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")
+    except Exception as exc:
+        cli_error(f"Error listing drafts: {exc}")
+
+
 async def _dialogs_delete_message(args, db, pool) -> None:
     phone = await _resolve_phone(db, pool, args)
     if phone is None:
@@ -1114,6 +1177,9 @@ _HANDOFF_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "join": ("dialogs.join", ("target",)),
     "resolve": ("dialogs.resolve", ("identifier",)),
     "edit-message": ("dialogs.edit_message", ("chat_id", "message_id", "text")),
+    # Drafts carry no local paths, so both actions hand off like sends do.
+    "draft-save": ("dialogs.draft_save", ("chat_id", "text", "parse_mode", "reply_to", "no_webpage")),
+    "draft-list": ("dialogs.draft_list", ()),
     "delete-message": ("dialogs.delete_message", ("chat_id", "message_ids")),
     "forward": ("dialogs.forward_messages", ("from_chat", "to_chat", "message_ids")),
     "pin-message": ("dialogs.pin_message", ("chat_id", "message_id", "notify")),
@@ -1196,12 +1262,12 @@ _HANDOFF_STRING_BOOL_FIELDS = frozenset({"send_messages", "send_media"})
 # DB-only views: while a daemon owns the sessions they run without a pool
 # instead of being refused by ``init_pool`` (#1521).
 _POOL_FREE_WHILE_DAEMON_ACTIONS = frozenset({"queue", "cache-status"})
-_HANDOFF_WAIT_ACTIONS = frozenset({"resolve", "participants", "broadcast-stats", "refresh"})
+_HANDOFF_WAIT_ACTIONS = frozenset({"resolve", "participants", "broadcast-stats", "refresh", "draft-list"})
 _HANDOFF_WAIT_TIMEOUT_SEC = 900.0
 _HANDOFF_POLL_INTERVAL_SEC = 1.0
 
 
-async def _wait_for_handoff_command(db, command_id: int, action: str) -> None:
+async def _wait_for_handoff_command(db, command_id: int, action: str, *, output_format: str = "text") -> None:
     """Wait for a read hand-off and print the worker's persisted result."""
     terminal = {
         TelegramCommandStatus.SUCCEEDED,
@@ -1226,7 +1292,7 @@ async def _wait_for_handoff_command(db, command_id: int, action: str) -> None:
                 # be replaced by the shared unfiltered snapshot for this chat.
                 if snapshot and not (action == "participants" and "participants" in result):
                     result = {**result, **snapshot.payload}
-            _print_handoff_result(action, result)
+            _print_handoff_result(action, result, output_format=output_format)
             return
         if asyncio.get_running_loop().time() >= deadline:
             print(
@@ -1237,7 +1303,7 @@ async def _wait_for_handoff_command(db, command_id: int, action: str) -> None:
         await asyncio.sleep(_HANDOFF_POLL_INTERVAL_SEC)
 
 
-def _print_handoff_result(action: str, result: dict) -> None:
+def _print_handoff_result(action: str, result: dict, *, output_format: str = "text") -> None:
     if action == "resolve":
         entity = result.get("entity") or {}
         print(f"Title: {entity.get('title', '')}")
@@ -1272,6 +1338,8 @@ def _print_handoff_result(action: str, result: dict) -> None:
             )
         else:
             print(f"Dialogs refreshed: {result.get('dialogs_count', 0)} total.")
+    elif action == "draft-list":
+        _print_drafts(result.get("drafts") or [], output_format=output_format)
 
 
 async def _handoff_dialog_action(args: argparse.Namespace, db) -> bool:
@@ -1313,7 +1381,9 @@ async def _handoff_dialog_action(args: argparse.Namespace, db) -> bool:
     )
     print(f"Сервер запущен: команда {command_type} #{command_id} поставлена в очередь воркера.")
     if getattr(args, "wait", False) and args.dialogs_action in _HANDOFF_WAIT_ACTIONS:
-        await _wait_for_handoff_command(db, command_id, args.dialogs_action)
+        await _wait_for_handoff_command(
+            db, command_id, args.dialogs_action, output_format=getattr(args, "format", "text")
+        )
     return True
 
 
@@ -1331,6 +1401,8 @@ _DIALOGS_HANDLERS: dict[str, tuple[Callable[..., Awaitable[None]], bool]] = {
     "forward": (_dialogs_forward, False),
     "edit-message": (_dialogs_edit_message, False),
     "edit-message-media": (_dialogs_edit_message_media, False),
+    "draft-save": (_dialogs_draft_save, False),
+    "draft-list": (_dialogs_draft_list, False),
     "delete-message": (_dialogs_delete_message, False),
     "react": (_dialogs_react, False),
     "pin-message": (_dialogs_pin_message, False),
@@ -1623,6 +1695,36 @@ def dialogs_edit_message_media(
         ctx, "edit-message-media", chat_id=chat_id, message_id=message_id, file=file,
         text=text, parse_mode=parse_mode, phone=phone, yes=yes,
     )
+
+
+@dialogs_app.command("draft-save", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_draft_save(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    text: str = typer.Argument(..., help="Draft text (markup per --parse-mode)"),
+    parse_mode: str | None = typer.Option(
+        None, "--parse-mode", help="md | html | plain (default: plain; html is the only way to get underline)"
+    ),
+    reply_to: int | None = typer.Option(None, "--reply-to", help="Message ID the draft replies to"),
+    no_webpage: bool = typer.Option(False, "--no-webpage", help="Disable link preview in the draft"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
+) -> None:
+    """Save a message draft (optionally formatted) to a chat's input box."""
+    _run_dialogs(
+        ctx, "draft-save", chat_id=chat_id, text=text, parse_mode=parse_mode,
+        reply_to=reply_to, no_webpage=no_webpage, phone=phone,
+    )
+
+
+@dialogs_app.command("draft-list")
+def dialogs_draft_list(
+    ctx: typer.Context,
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format", help="Output format (default: text)"),
+    wait: bool = typer.Option(False, "--wait", help="When handed to the worker, wait and print the result"),
+) -> None:
+    """List all drafts for the account (formatted drafts include message_html)."""
+    _run_dialogs(ctx, "draft-list", phone=phone, format=output_format.value, wait=wait)
 
 
 @dialogs_app.command("delete-message", context_settings=_NEG_ID_POSITIONAL)

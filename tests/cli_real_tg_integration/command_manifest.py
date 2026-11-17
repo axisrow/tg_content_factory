@@ -264,6 +264,15 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
         "covered by offline unit/integration tests with fakes (test_telegram_actions_service.py, "
         "test_regression_dialogs_cli.py, test_agent_tools_messaging.py)"
     ),
+    ("dialogs", "draft-save"): (
+        "account-local draft write (nothing is sent to anyone); covered by offline "
+        "unit/integration tests with fakes (test_telegram_drafts.py, test_regression_dialogs_cli.py, "
+        "test_agent_tools_messaging.py)"
+    ),
+    ("dialogs", "draft-list"): (
+        "read-only account draft listing; covered by offline tests with fakes "
+        "(test_telegram_drafts.py, test_regression_dialogs_cli.py)"
+    ),
     ("dialogs", "edit-permissions"): "Telegram-visible permissions mutation",
     ("dialogs", "join"): "Telegram-visible join/subscribe action",
     ("dialogs", "kick"): "Telegram-visible participant mutation",

@@ -28,6 +28,8 @@ TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
         "forward_messages": ToolMeta(ToolCategory.WRITE, phone_bound=True, flood_category="send"),
         "edit_message": ToolMeta(ToolCategory.WRITE, phone_bound=True, flood_category="send"),
         "edit_message_media": ToolMeta(ToolCategory.WRITE, phone_bound=True, flood_category="send"),
+        "save_draft": ToolMeta(ToolCategory.WRITE, phone_bound=True, flood_category="send"),
+        "get_drafts": ToolMeta(ToolCategory.READ, phone_bound=True),
         "delete_message": ToolMeta(ToolCategory.DELETE, phone_bound=True, flood_category="send"),
         "pin_message": ToolMeta(ToolCategory.WRITE, phone_bound=True, flood_category="send"),
         "unpin_message": ToolMeta(ToolCategory.WRITE, phone_bound=True, flood_category="send"),

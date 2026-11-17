@@ -138,6 +138,21 @@ class DialogsCommandsMixin(_Base):
         )
         return {"phone": result.phone}
 
+    async def _handle_dialogs_draft_save(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result = await TelegramActionService(self._pool).save_draft(
+            phone=str(payload["phone"]),
+            chat_id=payload["chat_id"],
+            text=payload["text"],
+            parse_mode=payload.get("parse_mode"),
+            reply_to=payload.get("reply_to"),
+            no_webpage=bool(payload.get("no_webpage", False)),
+        )
+        return {"phone": result.phone}
+
+    async def _handle_dialogs_draft_list(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result = await TelegramActionService(self._pool).list_drafts(phone=str(payload["phone"]))
+        return {"phone": result.phone, "drafts": result.drafts}
+
     async def _handle_dialogs_delete_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         result = await TelegramActionService(self._pool).delete_messages(
             phone=str(payload["phone"]),

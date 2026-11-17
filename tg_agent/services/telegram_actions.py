@@ -16,6 +16,7 @@ from tg_agent.database import Database
 from tg_agent.models import MessagesResult
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.telegram.dm_history import read_dialog_history
+from tg_agent.telegram.outgoing_text import parse_outgoing_text, unparse_outgoing_html
 from tg_agent.telegram.transcription import (
     ENGINES,
     engine_config_error,
@@ -24,6 +25,7 @@ from tg_agent.telegram.transcription import (
     transcribe_cached,
 )
 from tg_agent.utils.introspection import explicit_pool_method
+from tg_agent.utils.sanitize import sanitize_user_content
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,12 @@ class TelegramActionResult:
 class SendMessageResult:
     phone: str
     message_id: int | None
+
+
+@dataclass(frozen=True)
+class DraftListResult:
+    phone: str
+    drafts: list[dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -182,6 +190,62 @@ def classify_media_kind(message: Any) -> str:
 
 def media_subdir(kind: str) -> str:
     return _MEDIA_SUBDIRS.get(kind, "files")
+
+
+def _serialize_drafts(updates: Any) -> list[dict[str, Any]]:
+    """Flatten a messages.GetAllDrafts Updates reply into plain dicts (#1854).
+
+    Follows axisrow/telegram-mcp#364's get_drafts: a formatted draft also gets
+    ``message_html`` (html.unparse of the draft's raw entities) that round-trips
+    through save_draft(parse_mode="html"); ``message`` stays the plain text.
+    Entity title/username come from the same reply's users/chats lists, so a
+    listing costs no per-peer resolves.
+    """
+    from telethon import types, utils
+
+    users = getattr(updates, "users", None) or []
+    chats = getattr(updates, "chats", None) or []
+    peers: dict[int, Any] = {}
+    for entity in [*users, *chats]:
+        try:
+            peers[utils.get_peer_id(entity)] = entity
+        except (ValueError, TypeError):
+            continue
+
+    drafts: list[dict[str, Any]] = []
+    for update in getattr(updates, "updates", None) or []:
+        if not isinstance(update, types.UpdateDraftMessage) or update.draft is None:
+            continue
+        draft = update.draft
+        message = getattr(draft, "message", "") or ""
+        entities = getattr(draft, "entities", None) or []
+        if not message and not entities:
+            continue
+        peer_id = utils.get_peer_id(update.peer)
+        entry: dict[str, Any] = {
+            "peer_id": peer_id,
+            "message": sanitize_user_content(message, preserve_emoji=True),
+        }
+        entity = peers.get(peer_id)
+        if entity is not None:
+            for field in ("title", "username", "first_name"):
+                value = getattr(entity, field, None)
+                if value:
+                    entry[field] = value
+        if entities:
+            entry["message_html"] = sanitize_user_content(
+                unparse_outgoing_html(message, entities), max_length=16384, preserve_emoji=True
+            )
+        date = getattr(draft, "date", None)
+        if date:
+            entry["date"] = date.isoformat()
+        entry["no_webpage"] = bool(getattr(draft, "no_webpage", False))
+        reply = getattr(draft, "reply_to", None)
+        reply_id = getattr(reply, "reply_to_msg_id", None) if reply is not None else None
+        if reply_id:
+            entry["reply_to_msg_id"] = reply_id
+        drafts.append(entry)
+    return drafts
 
 
 @dataclass(frozen=True)
@@ -575,6 +639,34 @@ class TelegramActionService:
                 # default (Markdown) parsing, same as upstream captions.
             await client.edit_message(entity, int(message_id), new_text, **kwargs)
             return TelegramActionResult(phone=acquired_phone)
+
+    async def save_draft(
+        self,
+        *,
+        phone: str,
+        chat_id: Any,
+        text: str,
+        parse_mode: str | None = None,
+        reply_to: int | None = None,
+        no_webpage: bool = False,
+    ) -> TelegramActionResult:
+        # Ported from axisrow/telegram-mcp#364 (save_draft parse_mode): the
+        # markup pre-parses into real Telegram entities so a draft keeps its
+        # formatting in the chat's input box; a bad parse_mode raises before
+        # any client work, never producing a request. See
+        # THIRD_PARTY_NOTICES.md.
+        parsed, entities = parse_outgoing_text(text, parse_mode)
+        async with self._client(phone=phone, native=True) as (client, acquired_phone):
+            entity = await self._resolve_entity(client, phone=acquired_phone, identifier=chat_id)
+            await client.save_draft(
+                entity, parsed, entities=entities, reply_to=reply_to, no_webpage=no_webpage
+            )
+            return TelegramActionResult(phone=acquired_phone)
+
+    async def list_drafts(self, *, phone: str) -> DraftListResult:
+        async with self._client(phone=phone, native=True) as (client, acquired_phone):
+            updates = await client.get_all_drafts()
+            return DraftListResult(phone=acquired_phone, drafts=_serialize_drafts(updates))
 
     async def delete_messages(
         self,

@@ -296,6 +296,121 @@ class TestMyTelegramActions:
         out = capsys.readouterr().out
         assert "pinned" in out.lower()
 
+    def test_draft_save_action(self, capsys):
+        pool = _make_pool_with_clients()
+        mock_client = AsyncMock()
+        pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
+        self._run_action(
+            "draft-save", pool=pool,
+            extra_args={
+                "chat_id": "@ch",
+                "text": "<b>bold</b>",
+                "parse_mode": "html",
+                "reply_to": None,
+                "no_webpage": False,
+            },
+        )
+        out = capsys.readouterr().out
+        assert "Draft saved" in out
+
+    def test_draft_save_bad_parse_mode(self, capsys):
+        pool = _make_pool_with_clients()
+        mock_client = AsyncMock()
+        pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
+        with pytest.raises(typer.Exit):
+            self._run_action(
+                "draft-save", pool=pool,
+                extra_args={
+                    "chat_id": "@ch",
+                    "text": "x",
+                    "parse_mode": "rich",
+                    "reply_to": None,
+                    "no_webpage": False,
+                },
+            )
+        err = capsys.readouterr().err
+        assert "parse_mode" in err
+
+    def test_draft_save_empty_text_is_refused(self, capsys):
+        """An empty SaveDraftRequest deletes the existing draft (TL semantics) —
+        the CLI must refuse like the agent tool instead of clearing silently
+        (review finding on the #1863 handler)."""
+        pool = _make_pool_with_clients()
+        mock_client = AsyncMock()
+        pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
+        with pytest.raises(typer.Exit):
+            self._run_action(
+                "draft-save", pool=pool,
+                extra_args={
+                    "chat_id": "@ch",
+                    "text": "   ",
+                    "parse_mode": None,
+                    "reply_to": None,
+                    "no_webpage": False,
+                },
+            )
+        err = capsys.readouterr().err
+        assert "Empty draft text" in err
+        mock_client.save_draft.assert_not_awaited()
+
+    def _drafts_updates(self):
+        from telethon import types as tt
+
+        bold = tt.MessageEntityBold(offset=0, length=4)
+        return tt.Updates(
+            updates=[tt.UpdateDraftMessage(peer=tt.PeerUser(42), draft=tt.DraftMessage(
+                message="01 CASE", date=None, entities=[bold]))],
+            users=[tt.User(id=42, first_name="Alice", username="alice42")],
+            chats=[],
+            date=None,
+            seq=0,
+        )
+
+    def test_draft_list_action(self, capsys):
+        pool = _make_pool_with_clients()
+        mock_client = AsyncMock()
+        pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
+        mock_client.get_all_drafts = AsyncMock(return_value=self._drafts_updates())
+        self._run_action(
+            "draft-list", pool=pool,
+            extra_args={"format": "text", "wait": False},
+        )
+        out = capsys.readouterr().out
+        assert "alice42" in out
+        assert "01 CASE" in out
+        assert "html:" in out
+
+    def test_draft_list_json_format(self, capsys):
+        import json as json_mod
+
+        pool = _make_pool_with_clients()
+        mock_client = AsyncMock()
+        pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
+        mock_client.get_all_drafts = AsyncMock(return_value=self._drafts_updates())
+        self._run_action(
+            "draft-list", pool=pool,
+            extra_args={"format": "json", "wait": False},
+        )
+        payload = json_mod.loads(capsys.readouterr().out)
+        assert payload["count"] == 1
+        assert payload["drafts"][0]["peer_id"] == 42
+
+    def test_print_handoff_draft_list_respects_json_format(self, capsys):
+        """--format json must survive the worker hand-off print path instead of
+        being hardcoded to text (review finding on the #1863 handoff branch)."""
+        import json as json_mod
+
+        from tg_agent.cli.commands import dialogs as dialogs_cli
+
+        dialogs_cli._print_handoff_result(
+            "draft-list",
+            {"drafts": [{"peer_id": 42, "message": "hi", "message_html": "<b>hi</b>"}]},
+            output_format="json",
+        )
+        payload = json_mod.loads(capsys.readouterr().out)
+        assert payload["count"] == 1
+        assert payload["drafts"][0]["message_html"] == "<b>hi</b>"
+
     def test_unpin_message_action(self, capsys):
         pool = _make_pool_with_clients()
         mock_client = AsyncMock()

@@ -80,6 +80,8 @@ _GATE_OPERATION_CATEGORIES: dict[str, str] = {
     "telegram_unpin_message": "send",
     "telegram_delete_messages": "send",
     "telegram_delete_scheduled_messages": "send",
+    # Saving a draft is a per-peer write of the same shape as edit_message.
+    "telegram_save_draft": "send",
     # Dialog removal is a lifecycle mutation like delete_channel/delete_chat;
     # the tight lifecycle budget is deliberate for bulk-leave shapes.
     "telegram_remove_dialog": "channel_lifecycle",
@@ -95,6 +97,7 @@ _GATE_OPERATION_CATEGORIES: dict[str, str] = {
     "telegram_get_permissions": "default",
     "telegram_get_drafts": "default",
     "telegram_stream_drafts": "default",
+    "telegram_get_all_drafts": "default",
     "telegram_set_receive_updates": "default",
     "telegram_run_until_disconnected": "default",
     "telegram_catch_up": "default",
@@ -1221,6 +1224,43 @@ class TelegramTransportSession:
 
     async def get_drafts(self) -> Any:
         return await self._run("telegram_get_drafts", self._client.get_drafts())
+
+    async def get_all_drafts(self) -> Any:
+        """Raw messages.GetAllDraftsRequest: the raw entities are needed for
+        message_html round-trips (#1854) — the client.get_drafts() wrapper
+        drops them on the floor (telethon's Draft keeps only markdown-unparsed
+        text)."""
+        from telethon.tl.functions.messages import GetAllDraftsRequest
+
+        return await self._run("telegram_get_all_drafts", self._client(GetAllDraftsRequest()))
+
+    async def save_draft(
+        self,
+        entity: Any,
+        message: str,
+        *,
+        entities: list | None = None,
+        reply_to: int | None = None,
+        no_webpage: bool = False,
+    ) -> Any:
+        """Raw messages.SaveDraftRequest — telethon 1.45 has no client.edit_draft (#1854)."""
+        from telethon.tl.functions.messages import SaveDraftRequest
+        from telethon.tl.types import InputReplyToMessage
+
+        peer = await self.resolve_input_entity(entity)
+        reply_to_peer = InputReplyToMessage(reply_to_msg_id=int(reply_to)) if reply_to is not None else None
+        return await self._run(
+            "telegram_save_draft",
+            self._client(
+                SaveDraftRequest(
+                    peer=peer,
+                    message=message,
+                    no_webpage=no_webpage,
+                    reply_to=reply_to_peer,
+                    entities=list(entities) if entities else None,
+                )
+            ),
+        )
 
     def conversation(self, entity: Any, **kwargs: Any) -> Any:
         return self._client.conversation(entity, **kwargs)
