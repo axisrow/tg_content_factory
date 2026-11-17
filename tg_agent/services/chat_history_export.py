@@ -1,15 +1,16 @@
-"""Telegram-Desktop-style live chat-history export (#1855).
+"""Live chat-history export to a structured JSON dataset file (#1855).
 
-Adapted from chigwell/telegram-mcp#384 (SPDX-License-Identifier: Apache-2.0;
-head commit 081a6db, merged 2026-11-07) — see THIRD_PARTY_NOTICES.md.
+One export run turns one or more chats into a single JSON file shaped as
+``{"chats": {"<marked dialog id>": {chat_id, chat_title, messages_exported,
+messages}}}``. The walk goes newest→oldest in :data:`EXPORT_PAGE_SIZE`
+batches through the existing ``read_history`` action — the same action the
+CLI's ``dialogs read`` uses, so the native pool and the gateway's
+``RemoteActionService`` serve it alike and this module adds no new Telegram
+RPC surface.
 
-Walks one or more chats newest→oldest in pages of :data:`EXPORT_PAGE_SIZE`
-messages through the existing ``read_history`` action and writes a structured
-JSON file: ``{"chats": {"<marked dialog id>": {chat_id, chat_title,
-messages_exported, messages}}}``. The file doubles as resume state — a re-run
-with ``resume=True`` skips every chat already present under its marked id, so
-a partial export (flood-wait break, crash, Ctrl-C) continues instead of
-starting over.
+The output file doubles as resume state: a re-run with ``resume=True``
+skips every chat already present under its marked id, so a partial export
+(flood-wait break, crash, Ctrl-C) continues instead of starting over.
 
 The walker composes only :meth:`TelegramActionService.read_history`, which
 both the native pool and the gateway's ``RemoteActionService`` already serve
