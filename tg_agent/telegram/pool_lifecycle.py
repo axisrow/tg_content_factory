@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, cast
 
 from telethon_floodgate import run_with_flood_wait
 
+from tg_agent.config import CATCH_UP_MIN_INTERVAL_SEC
 from tg_agent.database.live_accounts import load_live_usable_accounts
 from tg_agent.models import Account, TelegramUserInfo
 from tg_agent.telegram.account_lease_pool import AccountLease
@@ -139,8 +140,8 @@ class ClientLifecycleMixin:
         dropped transport connections internally, so those gaps get no
         explicit catch-up from the reconnect paths. Each sweep is one
         getDifference per connected account; with nothing missed the server
-        returns an empty difference, which is why the interval floor
-        (config-side 30 s clamp) matters.
+        returns an empty difference, which is why the 30-second floor is
+        enforced here (a config.yaml value bypasses the env parser's clamp).
         """
         interval = 0.0
         raw = getattr(getattr(self, "_runtime_config", None), "catch_up_interval_sec", 0.0)
@@ -150,6 +151,7 @@ class ClientLifecycleMixin:
             interval = 0.0
         if interval <= 0:
             return
+        interval = max(interval, CATCH_UP_MIN_INTERVAL_SEC)
         existing = getattr(self, "_catch_up_task", None)
         if existing is not None and not existing.done():
             return
@@ -170,9 +172,9 @@ class ClientLifecycleMixin:
             for phone, session in connected:
                 try:
                     await session.raw_client.catch_up()
-                except Exception as exc:
+                except Exception:
                     logger.warning(
-                        "Update catch-up failed for %s: %s", mask_phone(phone), exc
+                        "Update catch-up failed for %s", mask_phone(phone), exc_info=True
                     )
 
     def _direct_session(self, phone: str) -> TelegramTransportSession | None:

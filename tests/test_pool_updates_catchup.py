@@ -268,6 +268,56 @@ async def test_initialize_starts_periodic_catch_up(real_pool_harness_factory):
 
 
 @pytest.mark.anyio
+async def test_start_periodic_catch_up_clamps_interval(pool):
+    """A too-tight interval is lifted to the 30 s floor regardless of where it
+    came from — a config.yaml value bypasses the env parser, so the pool must
+    enforce the floor itself (#1859 review)."""
+    captured: dict[str, float] = {}
+
+    async def _fake_loop(interval: float) -> None:
+        captured["interval"] = interval
+        await asyncio.sleep(3600)
+
+    pool._periodic_catch_up = _fake_loop
+    pool._runtime_config.catch_up_interval_sec = 1.0
+    pool._start_periodic_catch_up()
+    # Let the spawned task run to its first await point (interval recorded there).
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert captured["interval"] == 30.0
+    task = pool._catch_up_task
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.anyio
+async def test_periodic_catch_up_failure_log_carries_traceback(pool, caplog):
+    """The per-client catch-all warning carries exc_info — an empty str(exc)
+    must not be the only failure evidence (#1859 review)."""
+    import logging
+
+    failing = _RoundClient(error=RuntimeError("boom"))
+    pool.clients = {
+        "+7001": TelegramTransportSession(failing, disconnect_on_close=False)
+    }
+
+    task = asyncio.create_task(pool._periodic_catch_up(0.01))
+    try:
+        while failing.catch_ups < 1:
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(0.02)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings, "expected a warning for the failing catch-up"
+    assert all(r.exc_info for r in warnings), "catch-all warnings must carry the traceback"
+
+
+@pytest.mark.anyio
 async def test_disconnect_all_cancels_catch_up_task():
     """Teardown cancels the loop — no leaked task keeps operating on dead clients."""
     pool = ClientPool.__new__(ClientPool)
