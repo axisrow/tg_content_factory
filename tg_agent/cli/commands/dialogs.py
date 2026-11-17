@@ -1776,8 +1776,8 @@ def dialogs_export_history(
 ) -> None:
     """Export live chat history to a structured JSON file (read-only).
 
-    Walks each chat newest→oldest in 100-message pages through the worker's
-    established read path and writes {"chats": {...}} keyed by dialog id.
+    Walks each chat newest→oldest in 100-message pages through the shared
+    read_history action and writes {"chats": {...}} keyed by dialog id.
     The output file doubles as resume state — re-run to skip exported chats.
     Run it with the worker STOPPED (or pass --direct) — it opens a live
     Telegram connection.
