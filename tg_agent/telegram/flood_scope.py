@@ -68,10 +68,12 @@ def is_read_family(operation: str, family: str) -> bool:
 def family_floods_repo(db: Any) -> Any:
     """The accounts repo that implements the family-flood slice, or None.
 
-    The gateway store's duck-typed accounts repo has no family table: there
-    flood scoping degrades to the historical account-wide report instead of
-    dropping the flood signal. Test doubles that stub only legacy methods
-    (plain MagicMock repos) also read as None and keep the old behavior.
+    Both real stores implement it: the project database
+    (``AccountsRepository``) and the gateway's ``GatewayPoolStorage`` (#1844).
+    A store without the slice — and a test double that stubs only legacy
+    methods (plain MagicMock repos) — reads as None; flood scoping then
+    degrades to the historical account-wide report instead of dropping the
+    flood signal.
     """
     repo = getattr(getattr(db, "repos", None), "accounts", None)
     if not inspect.iscoroutinefunction(getattr(repo, "list_active_family_floods", None)):

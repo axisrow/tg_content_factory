@@ -317,7 +317,7 @@ class FloodRotationMixin:
         Write-family floods never land here (the boundary reports them
         account-wide via :meth:`report_flood`); the guard keeps the historical
         behavior for any operation whose flood cannot be scoped narrower.
-        Stores without the family slice (gateway store) keep the conservative
+        Stores without the family slice keep the conservative
         account-wide report instead of dropping the flood.
         """
         if not is_read_family(operation or "", family):
