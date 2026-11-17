@@ -119,8 +119,8 @@ def _load_prior_export(path: Path) -> dict:
     """Load a previous export file for resume; unreadable → start fresh.
 
     A corrupted prior file is not silently overwritten with a bare ``{}``:
-    the caller logs what it loaded, and the fresh export still goes to the
-    same path only after the walk completes.
+    the caller logs what it loaded, and the export overwrites the path only
+    once its own first chat completes.
     """
     if not path.exists():
         return {}
@@ -131,6 +131,18 @@ def _load_prior_export(path: Path) -> dict:
         logger.warning("Could not read prior export at %s — starting fresh", path)
         return {}
     return prior if isinstance(prior, dict) else {}
+
+
+async def _persist_export(path: Path, result: dict) -> None:
+    """Write the export file atomically-enough: whole payload, one call.
+
+    Called after every processed chat, so a crash/Ctrl-C/failing page mid-run
+    keeps everything exported before the failure — the resume promise holds
+    for interrupted runs, not only completed ones.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(result, indent=2, ensure_ascii=False)
+    await asyncio.to_thread(path.write_text, payload, "utf-8")
 
 
 async def export_chat_history(
@@ -184,10 +196,8 @@ async def export_chat_history(
         }
         stats["processed"] += 1
         stats["messages"] += len(records)
-
-    out.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(result, indent=2, ensure_ascii=False)
-    await asyncio.to_thread(out.write_text, payload, "utf-8")
+        # Persist after every chat: an interrupted run keeps its finished chats.
+        await _persist_export(out, result)
 
     return ChatHistoryExportReport(
         output_path=str(out),

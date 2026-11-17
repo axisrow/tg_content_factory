@@ -200,6 +200,42 @@ async def test_export_empty_chat_writes_empty_list(tmp_path):
     assert data["chats"]["1007"]["messages"] == []
 
 
+class _BoomOnSecondChat(FakeActions):
+    """FakeActions whose walk of the second chat dies mid-run."""
+
+    async def read_history(self, *, phone, chat_id, limit=50, offset_id=0):
+        if chat_id == "chat-2002":
+            raise RuntimeError("boom")
+        return await super().read_history(
+            phone=phone, chat_id=chat_id, limit=limit, offset_id=offset_id
+        )
+
+
+async def test_export_persists_each_chat_incrementally(tmp_path):
+    """A crash mid-run must not discard chats exported earlier in the run —
+    the resume promise holds for interrupted runs, not only completed ones
+    (#1862 review)."""
+    actions = _BoomOnSecondChat(
+        {
+            2001: [_msg(1, dialog_id=2001), _msg(2, dialog_id=2001)],
+            2002: [_msg(3, dialog_id=2002)],
+        }
+    )
+    actions.resolve = {"chat-2001": 2001, "chat-2002": 2002}
+    out = tmp_path / "partial.json"
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await export_chat_history(
+            actions, phone="+7000", chat_identifiers=["chat-2001", "chat-2002"],
+            output_path=out,
+        )
+
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert "2001" in data["chats"]
+    assert data["chats"]["2001"]["messages_exported"] == 2
+    assert "2002" not in data["chats"]
+
+
 async def test_export_multiple_chats_and_subdir_output(tmp_path):
     actions = _fake_actions(
         {
