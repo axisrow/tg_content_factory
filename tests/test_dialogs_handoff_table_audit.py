@@ -26,7 +26,7 @@ from tg_agent.services.telegram_command_dispatcher import TelegramCommandDispatc
 # `phone` is intentionally excluded everywhere — `_handoff_dialog_action` always
 # sets it separately from `_HANDOFF_COMMANDS`' field tuple.
 _WORKER_READS: dict[str, frozenset[str]] = {
-    "dialogs.send": frozenset({"recipient", "text"}),
+    "dialogs.send": frozenset({"recipient", "text", "silent"}),
     "dialogs.join": frozenset({"target"}),
     "dialogs.resolve": frozenset({"identifier"}),
     "dialogs.edit_message": frozenset({"chat_id", "message_id", "text"}),

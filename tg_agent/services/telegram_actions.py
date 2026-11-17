@@ -552,6 +552,7 @@ class TelegramActionService:
         link_preview: bool = False,
         reply_to: int | None = None,
         is_user: bool = False,
+        silent: bool = False,
     ) -> SendMessageResult:
         # Operator channels never render web previews on links (#1584-adjacent
         # digest flow: a bare URL silently produced one); opt in explicitly.
@@ -559,7 +560,8 @@ class TelegramActionService:
         # one answers; omitted for a top-level message so existing callers'
         # RPC shape is unchanged. is_user (#1830): callers addressing a DM
         # peer by numeric id must say so — otherwise the resolver tries a
-        # channel first and pays a dialog sweep for it.
+        # channel first and pays a dialog sweep for it. silent (upstream #395
+        # port, #1856): send without a notification sound.
         async with self._client(phone=phone, native=True) as (client, acquired_phone):
             entity = await self._resolve_entity(
                 client, phone=acquired_phone, identifier=recipient, is_user=is_user
@@ -567,6 +569,8 @@ class TelegramActionService:
             options: dict[str, Any] = {"link_preview": link_preview}
             if reply_to is not None:
                 options["reply_to"] = reply_to
+            if silent:
+                options["silent"] = True
             message = await client.send_message(entity, text, **options)
             return SendMessageResult(phone=acquired_phone, message_id=getattr(message, "id", None))
 

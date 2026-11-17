@@ -69,6 +69,26 @@ async def test_edit_message():
 
 
 @pytest.mark.anyio
+async def test_publish_files_silent_reaches_send_file():
+    sent = SimpleNamespace(id=1)
+    session = _session(send_file_side_effect=lambda *a, **kw: sent)
+    got = await session.publish_files("chat", "p.png", silent=True)
+    assert got is sent
+    session.raw_client.send_file.assert_awaited_once_with(
+        "chat", "p.png", caption=None, schedule=None, silent=True
+    )
+
+
+@pytest.mark.anyio
+async def test_publish_files_without_silent_keeps_kwargs_unchanged():
+    sent = SimpleNamespace(id=2)
+    session = _session(send_file_side_effect=lambda *a, **kw: sent)
+    got = await session.publish_files("chat", "p.png")
+    assert got is sent
+    session.raw_client.send_file.assert_awaited_once_with("chat", "p.png", caption=None, schedule=None)
+
+
+@pytest.mark.anyio
 async def test_pin_message():
     session = _session(pin_message_side_effect=lambda *a, **kw: None)
     await session.pin_message("chat", 42, notify=True)

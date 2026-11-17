@@ -10,6 +10,7 @@ SEND_MESSAGE_SCHEMA = {
     "phone": PHONE_ARG,
     "recipient": Annotated[str, "Получатель (@username, телефон или числовой ID)"],
     "text": Annotated[str, "Текст сообщения"],
+    "silent": Annotated[bool, "Отправить без звука уведомления (по умолчанию False)"],
     "confirm": CONFIRM_ARG,
 }
 

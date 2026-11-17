@@ -192,6 +192,17 @@ class TestMyTelegramActions:
         out = capsys.readouterr().out
         assert "sent" in out.lower()
 
+    def test_send_action_silent(self, capsys):
+        pool = _make_pool_with_clients()
+        mock_client = AsyncMock()
+        pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
+        self._run_action(
+            "send", pool=pool,
+            extra_args={"recipient": "@user", "text": "hello", "silent": True},
+        )
+        _, kwargs = mock_client.send_message.await_args
+        assert kwargs.get("silent") is True
+
     def test_send_no_client(self, capsys):
         pool = _make_pool_with_clients()
         pool.get_native_client_by_phone = AsyncMock(return_value=None)

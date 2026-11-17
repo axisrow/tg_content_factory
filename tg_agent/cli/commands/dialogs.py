@@ -325,6 +325,7 @@ async def _dialogs_send(args, db, pool) -> None:
             phone=phone,
             recipient=recipient,
             text=text,
+            silent=bool(getattr(args, "silent", False)),
         )
         message_id = f" message_id={result.message_id}" if result.message_id is not None else ""
         print(f"Message sent to {recipient}.{message_id}")
@@ -1173,7 +1174,7 @@ async def _dialogs_queue(args, db, pool) -> None:
 # how to execute. Actions absent here have no queue equivalent (local views such
 # as `cache-status`, or the `queue` group itself) and keep running in-process.
 _HANDOFF_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
-    "send": ("dialogs.send", ("recipient", "text")),
+    "send": ("dialogs.send", ("recipient", "text", "silent")),
     "join": ("dialogs.join", ("target",)),
     "resolve": ("dialogs.resolve", ("identifier",)),
     "edit-message": ("dialogs.edit_message", ("chat_id", "message_id", "text")),
@@ -1643,10 +1644,11 @@ def dialogs_send(
     recipient: str = typer.Argument(..., help="Recipient: @username, phone number, or numeric ID"),
     text: str = typer.Argument(..., help="Message text to send"),
     phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
+    silent: bool = typer.Option(False, "--silent", help="Send without a notification sound"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Send a direct message to a user or chat."""
-    _run_dialogs(ctx, "send", recipient=recipient, text=text, phone=phone, yes=yes)
+    _run_dialogs(ctx, "send", recipient=recipient, text=text, phone=phone, silent=silent, yes=yes)
 
 
 @dialogs_app.command("forward", context_settings=_NEG_ID_POSITIONAL)

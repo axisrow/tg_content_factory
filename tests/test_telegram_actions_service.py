@@ -274,6 +274,19 @@ async def test_send_message_disables_link_preview_by_default():
 
 
 @pytest.mark.anyio
+async def test_send_message_silent_passes_through_to_the_client():
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
+    client.send_message = AsyncMock(return_value=SimpleNamespace(id=8))
+    pool = _pool_with_client(client)
+
+    await TelegramActionService(pool).send_message(phone="+1", recipient="@u", text="hi", silent=True)
+
+    client.send_message.assert_awaited_once_with("entity", "hi", link_preview=False, silent=True)
+
+
+@pytest.mark.anyio
 async def test_edit_message_disables_link_preview_by_default():
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value="entity")

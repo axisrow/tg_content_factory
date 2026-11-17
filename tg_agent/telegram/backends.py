@@ -921,6 +921,7 @@ class TelegramTransportSession:
         schedule: Any = None,
         reply_to: int | None = None,
         force_document: bool = False,
+        silent: bool = False,
     ) -> Any:
         peer = peer_key(entity)
         options = {}
@@ -928,6 +929,8 @@ class TelegramTransportSession:
             options["reply_to"] = reply_to
         if force_document:
             options["force_document"] = True
+        if silent:
+            options["silent"] = True
         return await self._run(
             "telegram_publish_files",
             self._client.send_file(entity, files, caption=caption, schedule=schedule, **options),

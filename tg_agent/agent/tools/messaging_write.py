@@ -104,7 +104,9 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
     @tool(
         "send_message",
         "Send a message from a connected account (phone = sender's phone). "
-        "recipient accepts @username, phone number, or numeric ID. Ask user for confirmation first.",
+        "recipient accepts @username, phone number, or numeric ID. "
+        "silent=true sends without a notification sound (night/scheduled posts). "
+        "Ask user for confirmation first.",
         SEND_MESSAGE_SCHEMA,
     )
     async def send_message(args):
@@ -125,6 +127,7 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
                 phone=phone,
                 recipient=recipient,
                 text=text,
+                silent=bool(args.get("silent", False)),
             )
             return _text_response(f"Сообщение отправлено: {recipient}")
         except TelegramActionClientUnavailableError:

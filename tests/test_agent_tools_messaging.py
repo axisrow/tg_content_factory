@@ -90,6 +90,17 @@ class TestSendMessage:
         assert "отправлено" in text
 
     @pytest.mark.anyio
+    async def test_silent_passes_through_to_the_client(self, mock_db):
+        mock_pool, mock_client = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        await handlers["send_message"](
+            {"phone": "+79001234567", "recipient": "@user", "text": "hello", "silent": True, "confirm": True}
+        )
+        _, kwargs = mock_client.send_message.await_args
+        assert kwargs.get("silent") is True
+
+    @pytest.mark.anyio
     async def test_missing_recipient_or_text_returns_error(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
