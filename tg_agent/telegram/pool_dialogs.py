@@ -189,6 +189,31 @@ class DialogCacheEntry:
     dialogs: list[dict]
 
 
+async def cached_input_peer(session: object, peer: object) -> object | None:
+    """Answer an InputPeer from the local session store, or ``None`` (#1842).
+
+    A lookup the session store can answer dispatches no request, so it must
+    not pay the gates that protect network resolves: the per-account
+    username budget (``run_live_username_resolve``) and the resolve-family
+    flood check at the transport boundary (#1832). Without this step a
+    write by a cached ``@username`` spent a budget unit per call, and a
+    resolve-side FloodWait still blocked publishing to known peers.
+
+    ``None`` means "the store cannot answer" — the caller continues on its
+    regular, gated path, unchanged. Only real InputPeer objects are
+    returned: a test double's stray return value never counts as a hit.
+    """
+    lookup = getattr(session, "resolve_cached_input_entity", None)
+    if lookup is None:
+        return None
+    try:
+        cached = await lookup(peer)
+    except (AttributeError, ValueError, TypeError):
+        return None
+    # 0xc91c90b6 == crc32(b'InputPeer') — Telethon's InputPeer family tag.
+    return cached if getattr(cached, "SUBCLASS_OF_ID", None) == 0xC91C90B6 else None
+
+
 class DialogsMixin:
     """Dialog cache, entity resolution, channel↔phone routing, dialog fetch.
 
@@ -698,6 +723,12 @@ class DialogsMixin:
         (resolve_input_entity) instead of a full entity.
         """
         session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
+        if use_input_entity:
+            # Cache first (#1842): a known peer costs no request, so it skips
+            # the username budget and the resolve-family flood check below.
+            cached = await cached_input_peer(session, peer)
+            if cached is not None:
+                return cached
         resolver = session.resolve_input_entity if use_input_entity else session.resolve_entity
         is_live_username = self._is_live_username_peer(peer)
 
@@ -812,6 +843,12 @@ class DialogsMixin:
             peer = PeerChat(abs(dialog_id))
         else:
             peer = PeerChannel(abs(dialog_id))
+        # Cache first (#1842): the session store answers a known peer without a
+        # request, so the lookup must not run under the gated resolve tag — a
+        # resolve-family flood (#1832) would refuse it and block the write.
+        cached = await cached_input_peer(session, peer)
+        if cached is not None:
+            return cached
         if allow_warm:
             try:
                 return await self.resolve_entity_with_warm(
