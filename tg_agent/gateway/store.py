@@ -324,8 +324,12 @@ class GatewayStore:
 
     async def clear_account_flood(self, account: str) -> list[str]:
         """Drop an account's flood state: the account-wide timer and every family."""
-        families = sorted((await self.family_floods()).get(account, {}))
         async with self.transaction() as db:
+            # Snapshot inside the delete transaction: a flood landing between a
+            # pre-read and the delete would be cleared but never reported.
+            async with db.execute("SELECT family FROM account_family_floods WHERE phone=? AND until>?",
+                                  (account, time.time())) as cur:
+                families = sorted(row["family"] for row in await cur.fetchall())
             await db.execute("UPDATE accounts SET flood_until=0 WHERE id=?", (account,))
             await db.execute("DELETE FROM account_family_floods WHERE phone=?", (account,))
         return families
