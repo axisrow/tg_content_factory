@@ -330,6 +330,75 @@ def test_cli_dialogs_archive_history_rejects_non_numeric_chat_id(cli_db, capsys)
     fake_backfill.assert_not_awaited()
 
 
+def test_cli_dialogs_export_history_runs_export(tmp_path, cli_db, capsys):
+    """#1855: `dialogs export-history` зовёт экспорт с распарсенными id и
+    печатает итоговую строку."""
+    from tg_agent.services.chat_history_export import ChatHistoryExportReport
+
+    pool = _mock_pool()
+    report = ChatHistoryExportReport(
+        output_path=str(tmp_path / "h.json"),
+        chats_processed=2,
+        chats_skipped=1,
+        messages_exported=7,
+    )
+    with (
+        patch(
+            "tg_agent.cli.commands.dialogs.export_chat_history",
+            new_callable=AsyncMock,
+            return_value=report,
+        ) as fake_export,
+    ):
+        _run(
+            _ns(
+                dialogs_action="export-history",
+                phone="+1234567890",
+                chat_ids="100111, @other",
+                output=str(tmp_path / "h.json"),
+                limit=None,
+                offset_date=None,
+                resume=True,
+            ),
+            pool,
+            cli_db,
+        )
+
+    out = capsys.readouterr().out
+    assert "Exported 2 chat(s), skipped 1" in out
+    assert fake_export.await_args.kwargs["chat_identifiers"] == ["100111", "@other"]
+    assert fake_export.await_args.kwargs["phone"] == "+1234567890"
+    assert fake_export.await_args.kwargs["resume"] is True
+
+
+def test_cli_dialogs_export_history_rejects_bad_offset_date(tmp_path, cli_db, capsys):
+    """Мусорная --offset-date — дружелюбное сообщение, а не traceback."""
+    pool = _mock_pool()
+    with (
+        patch(
+            "tg_agent.cli.commands.dialogs.export_chat_history",
+            new_callable=AsyncMock,
+            side_effect=ValueError("--offset-date must be ISO"),
+        ),
+    ):
+        with pytest.raises(typer.Exit):
+            _run(
+                _ns(
+                    dialogs_action="export-history",
+                    phone="+1234567890",
+                    chat_ids="100111",
+                    output=str(tmp_path / "h.json"),
+                    limit=None,
+                    offset_date="garbage",
+                    resume=True,
+                ),
+                pool,
+                cli_db,
+            )
+
+    err = capsys.readouterr().err
+    assert "offset-date" in err
+
+
 def test_cli_dialogs_archive_history_incomplete_gate(cli_db, capsys):
     """Насыщенный гейт помечает прогон незавершённым — CLI не печатает «готово» молча."""
     pool = _mock_pool()

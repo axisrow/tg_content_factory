@@ -22,8 +22,10 @@ from tg_agent.cli.commands.common import (
 )
 from tg_agent.cli.worker_handoff import serve_is_running
 from tg_agent.models import DialogMessage, TelegramCommandStatus
+from tg_agent.parsers import parse_identifiers
 from tg_agent.services.account_service import resolve_default_phone
 from tg_agent.services.channel_service import ChannelService
+from tg_agent.services.chat_history_export import export_chat_history
 from tg_agent.services.telegram_actions import (
     BROADCAST_STAT_FIELDS,
     TelegramActionClientUnavailableError,
@@ -726,6 +728,38 @@ async def _dialogs_archive_history(args, db, pool) -> None:
         )
 
 
+async def _dialogs_export_history(args, db, pool) -> None:
+    """Telegram-Desktop-style live history export to a JSON file (#1855)."""
+    phone = await _resolve_phone(db, pool, args)
+    if phone is None:
+        return
+    identifiers = parse_identifiers(args.chat_ids)
+    if not identifiers:
+        cli_error("No chat identifiers given.")
+    try:
+        report = await export_chat_history(
+            TelegramActionService(pool),
+            phone=phone,
+            chat_identifiers=identifiers,
+            output_path=args.output,
+            resume=args.resume,
+            limit=args.limit,
+            offset_date=args.offset_date,
+        )
+    except TelegramActionClientUnavailableError:
+        cli_error(f"Client for {phone} unavailable.")
+    except ValueError as exc:
+        cli_error(str(exc))
+    except Exception as exc:
+        cli_error(f"Error exporting history: {exc}")
+        return
+    print(
+        f"Exported {report.chats_processed} chat(s), "
+        f"skipped {report.chats_skipped} (already exported), "
+        f"{report.messages_exported} messages -> {report.output_path}"
+    )
+
+
 async def _dialogs_participants(args, db, pool) -> None:
     phone = await _resolve_phone(db, pool, args)
     if phone is None:
@@ -1304,6 +1338,7 @@ _DIALOGS_HANDLERS: dict[str, tuple[Callable[..., Awaitable[None]], bool]] = {
     "download-media": (_dialogs_download_media, False),
     "transcribe": (_dialogs_transcribe, False),
     "read": (_dialogs_read, False),
+    "export-history": (_dialogs_export_history, False),
     "archive-history": (_dialogs_archive_history, False),
     "participants": (_dialogs_participants, False),
     "edit-admin": (_dialogs_edit_admin, False),
@@ -1723,6 +1758,34 @@ def dialogs_archive_history(
     worker STOPPED — it opens a second connection on the same session.
     """
     _run_dialogs(ctx, "archive-history", phone=phone, chat_id=chat_id)
+
+
+@dialogs_app.command("export-history", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_export_history(
+    ctx: typer.Context,
+    chat_ids: str = typer.Argument(..., help="Chat ID(s)/@username/t.me link — several separated by comma"),
+    output: str = typer.Option(..., "--output", "-o", help="Output JSON file path"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
+    limit: int | None = typer.Option(None, "--limit", help="Max messages per chat (default: full history)"),
+    offset_date: str | None = typer.Option(
+        None, "--offset-date", help="Only messages before this ISO date (YYYY-MM-DD[THH:MM:SS])"
+    ),
+    resume: bool = typer.Option(
+        True, "--resume/--no-resume", help="Skip chats already present in the output file (default: resume)"
+    ),
+) -> None:
+    """Export live chat history to a structured JSON file (read-only).
+
+    Walks each chat newest→oldest in 100-message pages through the worker's
+    established read path and writes {"chats": {...}} keyed by dialog id.
+    The output file doubles as resume state — re-run to skip exported chats.
+    Run it with the worker STOPPED (or pass --direct) — it opens a live
+    Telegram connection.
+    """
+    _run_dialogs(
+        ctx, "export-history", chat_ids=chat_ids, output=output, phone=phone,
+        limit=limit, offset_date=offset_date, resume=resume,
+    )
 
 
 @dialogs_app.command("participants", context_settings=_NEG_ID_POSITIONAL)

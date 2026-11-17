@@ -240,7 +240,7 @@ search-query list | get | add | edit | delete | toggle | run | stats
 
 ```
 dialogs list | refresh | resolve | topics
-dialogs read | send | forward | edit-message | edit-message-media | delete-message | react | pin-message | unpin-message
+dialogs read | export-history | send | forward | edit-message | edit-message-media | delete-message | react | pin-message | unpin-message
 dialogs download-media | transcribe | mark-read | archive | unarchive
 dialogs participants | edit-admin | edit-permissions | kick
 dialogs create-channel | create-group | leave | join | delete
@@ -254,6 +254,13 @@ All of these touch the user's live Telegram account — see Safety in SKILL.md.
 Telegram web preview); `dialogs queue` (with the
 `status`, `cancel`, `clear-pending` subcommands) manages the send queue.
 `dialogs read` supports history reads with limits.
+`dialogs export-history <chat_ids> --output FILE [--limit N] [--offset-date ISO] [--no-resume] [--phone P]`
+exports live chat history to a structured JSON file ({"chats": {...}} keyed by dialog id),
+read-only: walks newest→oldest in 100-message pages through the established read path.
+`--limit` bounds messages per chat (default: full history); `--offset-date` keeps only
+messages before an ISO date; the output file doubles as resume state — a re-run skips
+already-exported chats (disable with `--no-resume`). Run it with the worker stopped or
+pass `--direct` (it opens a live Telegram connection, like `dialogs read`).
 `dialogs transcribe <chat> <message-id> [--engine telegram|groq|openai|whisper]` returns the
 text of a voice note / video note, cached in the DB (a repeat call costs nothing). Engines:
 `groq` (default, needs GROQ_API_KEY — sends audio to a third party), `telegram` (native,

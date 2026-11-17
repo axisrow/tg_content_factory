@@ -67,6 +67,26 @@ provenance comment listing the source repo, commit, date, and modifications.
     MIT-licensed implementation (algorithms are not licensable); once a file is
     fully rewritten it is marked MIT and removed from this notice.
 
+## chigwell/telegram-mcp (Apache-2.0)
+
+- **Source:** [chigwell/telegram-mcp](https://github.com/chigwell/telegram-mcp),
+  PR #384, head commit `081a6db60d00c586f4837ed319fb57e4299d3402`
+- **License:** Apache-2.0 (full text: [`LICENSES/apache-2.0.txt`](LICENSES/apache-2.0.txt))
+
+- `tg_agent/services/chat_history_export.py` — Telegram-Desktop-style live
+  history export (page walk newest→oldest, `{"chats": ...}` file schema,
+  resume keyed by chat id, `limit`/`offset_date` bounds), adapted from
+  upstream PR #384 (merged 2026-11-07, issue #1855). Modifications: pages go
+  through the established `read_history` action (works for the gateway's
+  RemoteActionService too) instead of a raw `get_messages` loop on a bare
+  client; chat records reuse the project's `DialogMessage` mapping; resume
+  loads/saves via the project conventions; `include_media_metadata` dropped
+  (`media_type` is always present on records); chat_title carries the
+  caller's identifier string (no extra entity fetch).
+- `tests/test_chat_history_export.py` — behavioral scenarios (pagination,
+  limit, offset-date, resume, empty chat, multi-chat) adapted from the
+  upstream tests of the same PR.
+
 The full Apache-2.0 license text is in `LICENSES/apache-2.0.txt`.
 
 Per the project licensing strategy, the long-term goal is to replace this
