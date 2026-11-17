@@ -166,6 +166,37 @@ class TelegramRuntimeConfig(BaseModel):
     cli_transport: str = "hybrid"
     session_cache_dir: str = "data/telegram_sessions"
     proxy: dict | None = None
+    # Seconds between forced update catch-ups (#1852); 0 = off. Telegram does
+    # not re-push updates that arrived while a client was disconnected, and
+    # Telethon's automatic reconnect does not fetch a difference by itself.
+    catch_up_interval_sec: float = 0.0
+
+
+CATCH_UP_MIN_INTERVAL_SEC = 30.0
+
+
+def parse_catch_up_interval(raw: str | None) -> float:
+    """Value of ``TG_CATCH_UP_INTERVAL`` in seconds; ``0`` = sweep disabled.
+
+    Anything positive below ``CATCH_UP_MIN_INTERVAL_SEC`` is lifted to that
+    floor: one sweep is one getDifference RPC per connected account, so
+    tighter loops only buy flood risk. A non-numeric value logs a warning
+    and keeps the sweep off — turning it off silently on a typo would leave
+    the operator believing the sweep runs when it does not.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid TG_CATCH_UP_INTERVAL %r — periodic catch-up stays off", raw
+        )
+        return 0.0
+    if value <= 0:
+        return 0.0
+    return max(value, CATCH_UP_MIN_INTERVAL_SEC)
 
 
 def parse_proxy_url(url: str) -> dict | None:
@@ -415,6 +446,11 @@ def load_config(path: str | Path = "config.yaml", *, apply_marker: bool = True) 
     env_proxy = os.environ.get("TG_PROXY", "").strip()
     if env_proxy:
         config.telegram_runtime.proxy = parse_proxy_url(env_proxy)
+    env_catch_up_interval = os.environ.get("TG_CATCH_UP_INTERVAL", "").strip()
+    if env_catch_up_interval:
+        config.telegram_runtime.catch_up_interval_sec = parse_catch_up_interval(
+            env_catch_up_interval
+        )
     if not config.agent.model:
         config.agent.model = os.environ.get("AGENT_MODEL", "").strip()
     if not config.agent.fallback_model:

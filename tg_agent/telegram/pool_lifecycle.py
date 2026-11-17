@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, cast
 
 from telethon_floodgate import run_with_flood_wait
 
+from tg_agent.config import CATCH_UP_MIN_INTERVAL_SEC
 from tg_agent.database.live_accounts import load_live_usable_accounts
 from tg_agent.models import Account, TelegramUserInfo
 from tg_agent.telegram.account_lease_pool import AccountLease
@@ -81,6 +82,7 @@ class ClientLifecycleMixin:
         # for the type checker.
         _mtproto_watchdog: MTProtoSecurityWatchdog
         _warming_task: asyncio.Task | None
+        _catch_up_task: asyncio.Task | None
         _dialog_refresh_tasks: dict[tuple[str, str], asyncio.Task[list[dict]]]
 
         def invalidate_dialogs_cache(self, phone: str | None = None) -> None: ...
@@ -108,6 +110,72 @@ class ClientLifecycleMixin:
 
     def _connected_phones(self) -> set[str]:
         return set(self.clients.keys())
+
+    # -- updates catch-up (#1852) --------------------------------------------
+    # Telegram does not re-deliver updates that arrived while a client was
+    # offline, and Telethon only requests a difference on its own after ~15
+    # minutes without updates — so the pool asks for one explicitly wherever
+    # it sees a connection come back, plus an optional periodic sweep.
+
+    async def _catch_up_after_reconnect(self, phone: str, client: object) -> None:
+        """Fetch the difference after a reconnect; never fails the reconnect.
+
+        The reconnect itself already succeeded — losing that fact to a
+        catch-up error would make the caller report a healthy client as
+        broken. Any exception is logged; when the periodic sweep is enabled
+        it retries shortly anyway.
+        """
+        try:
+            await client.catch_up()  # type: ignore[attr-defined]
+            logger.debug("Post-reconnect catch-up done for %s", mask_phone(phone))
+        except Exception:
+            logger.warning(
+                "Post-reconnect catch-up failed for %s", mask_phone(phone), exc_info=True
+            )
+
+    def _start_periodic_catch_up(self) -> None:
+        """Start the periodic updates sweep when ``catch_up_interval_sec`` > 0.
+
+        Covers the reconnects the pool never sees: Telethon re-establishes
+        dropped transport connections internally, so those gaps get no
+        explicit catch-up from the reconnect paths. Each sweep is one
+        getDifference per connected account; with nothing missed the server
+        returns an empty difference, which is why the 30-second floor is
+        enforced here (a config.yaml value bypasses the env parser's clamp).
+        """
+        interval = 0.0
+        raw = getattr(getattr(self, "_runtime_config", None), "catch_up_interval_sec", 0.0)
+        try:
+            interval = float(raw)
+        except (TypeError, ValueError):
+            interval = 0.0
+        if interval <= 0:
+            return
+        interval = max(interval, CATCH_UP_MIN_INTERVAL_SEC)
+        existing = getattr(self, "_catch_up_task", None)
+        if existing is not None and not existing.done():
+            return
+        self._catch_up_task = asyncio.create_task(
+            self._periodic_catch_up(interval), name="pool-periodic-catch-up"
+        )
+
+    async def _periodic_catch_up(self, interval: float) -> None:
+        """Sweep all connected accounts for missed updates every ``interval``."""
+        while True:
+            await asyncio.sleep(interval)
+            connected = [
+                (phone, session)
+                for phone, session in list(self.clients.items())
+                if isinstance(session, TelegramTransportSession)
+                and session.raw_client.is_connected()
+            ]
+            for phone, session in connected:
+                try:
+                    await session.raw_client.catch_up()
+                except Exception:
+                    logger.warning(
+                        "Update catch-up failed for %s", mask_phone(phone), exc_info=True
+                    )
 
     def _direct_session(self, phone: str) -> TelegramTransportSession | None:
         candidate = self.clients.get(phone)
@@ -205,6 +273,7 @@ class ClientLifecycleMixin:
         # cheap fetch_me for ALL connected accounts at every pool start — new
         # and previously connected — so a stale stored flag cannot survive it.
         await self._refresh_premium_flags(stored={acc.phone: acc.is_premium for acc in accounts})
+        self._start_periodic_catch_up()
 
     async def _refresh_premium_flags(self, *, stored: dict[str, bool] | None = None) -> None:
         """Live ``is_premium`` refresh via fetch_me for every connected account (#1749).
@@ -368,6 +437,7 @@ class ClientLifecycleMixin:
             if not client.is_connected():
                 logger.info("Reconnecting client for %s", phone)
                 await client.connect()
+                await self._catch_up_after_reconnect(phone, client)
             # NB: no warm-flag reset here. A reconnect reuses the *same*
             # session object, and the StringSession entity cache
             # (``session._entities``, the fallback that resolves numeric
@@ -407,6 +477,7 @@ class ClientLifecycleMixin:
             if not await client.is_user_authorized():
                 logger.error("Force reconnect of %s: session no longer authorized", mask_phone(phone))
                 return False
+            await self._catch_up_after_reconnect(phone, client)
             return bool(client.is_connected())
         except Exception:
             logger.exception("Force reconnect failed for %s", mask_phone(phone))
@@ -492,6 +563,14 @@ class ClientLifecycleMixin:
                     task.cancel()
                     bg_tasks.append(task)
             refresh_tasks.clear()
+        catch_up_task = getattr(self, "_catch_up_task", None)
+        if (
+            catch_up_task is not None
+            and not catch_up_task.done()
+            and catch_up_task is not asyncio.current_task()
+        ):
+            catch_up_task.cancel()
+            bg_tasks.append(catch_up_task)
         if bg_tasks:
             await asyncio.gather(*bg_tasks, return_exceptions=True)
         had_clients = bool(self.clients)
@@ -562,6 +641,7 @@ class ClientLifecycleMixin:
             logger.warning("Client for %s disconnected, attempting auto-reconnect", phone)
             try:
                 await direct_session.raw_client.connect()
+                await self._catch_up_after_reconnect(phone, direct_session.raw_client)
             except Exception:
                 logger.exception("Auto-reconnect failed for %s, falling back to backend", phone)
                 self.clients.pop(phone, None)

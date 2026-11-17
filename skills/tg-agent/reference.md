@@ -5,6 +5,8 @@ Every group and command has `--help`. Where a `--format text|json|csv` flag exis
 `json` when you need to parse output. Config comes from `config.yaml` + `.env` in the working
 directory (auto-loaded). `TG_PROXY=socks5://user:pass@host:port` (or `http://...`) routes all
 Telegram traffic through that proxy when MTProto is blocked; unset = direct.
+`TG_CATCH_UP_INTERVAL=<seconds>` (min 30; unset/0 = off) makes the worker daemon re-poll missed
+updates every N seconds after connection gaps, instead of relying on reconnect-time catch-up.
 
 Groups below mirror `tg-agent --help`. This file lists common commands and their notable
 flags; anything not listed — check `--help`.
