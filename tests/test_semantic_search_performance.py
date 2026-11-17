@@ -53,7 +53,8 @@ async def test_invalidation_during_build_does_not_publish_stale_index():
 
     repo.iter_embedding_json_batches = batches
     task = asyncio.create_task(search._ensure_numpy_index())
-    await asyncio.wait_for(started.wait(), 2)
+    async with asyncio.timeout(2):
+        await started.wait()
     search.invalidate_numpy_index()
     release.set()
     index = await asyncio.wait_for(task, 5)

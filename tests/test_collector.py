@@ -1855,13 +1855,15 @@ async def test_collect_channel_cancels_pending_stream_read_on_shutdown(db):
     collector = Collector(pool, db, config)
 
     task = asyncio.create_task(collector._collect_channel(stored, force=True))
-    await asyncio.wait_for(stream.started.wait(), timeout=_HANG_GUARD_SEC)
+    async with asyncio.timeout(_HANG_GUARD_SEC):
+        await stream.started.wait()
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    await asyncio.wait_for(stream.cancelled.wait(), timeout=_HANG_GUARD_SEC)
+    async with asyncio.timeout(_HANG_GUARD_SEC):
+        await stream.cancelled.wait()
     pool.release_client.assert_awaited_with("+7004")
 
 
