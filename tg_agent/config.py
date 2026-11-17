@@ -176,16 +176,13 @@ CATCH_UP_MIN_INTERVAL_SEC = 30.0
 
 
 def parse_catch_up_interval(raw: str | None) -> float:
-    """Parse ``TG_CATCH_UP_INTERVAL`` into seconds between catch-ups; 0 = off.
+    """Value of ``TG_CATCH_UP_INTERVAL`` in seconds; ``0`` = sweep disabled.
 
-    Adapted from chigwell/telegram-mcp#409 (SPDX-License-Identifier:
-    Apache-2.0; head commit 259402b, merged 2026-11-16) — see
-    THIRD_PARTY_NOTICES.md.
-
-    Positive values below 30 s are raised to 30 s: each catch-up is one
-    getDifference RPC, so a tighter loop is pure flood risk. Invalid input
-    logs a warning and stays off — a silently ignored typo would look like
-    "the loop is enabled" while nothing runs.
+    Anything positive below ``CATCH_UP_MIN_INTERVAL_SEC`` is lifted to that
+    floor: one sweep is one getDifference RPC per connected account, so
+    tighter loops only buy flood risk. A non-numeric value logs a warning
+    and keeps the sweep off — turning it off silently on a typo would leave
+    the operator believing the sweep runs when it does not.
     """
     raw = (raw or "").strip()
     if not raw:

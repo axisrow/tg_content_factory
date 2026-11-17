@@ -110,50 +110,44 @@ class ClientLifecycleMixin:
     def _connected_phones(self) -> set[str]:
         return set(self.clients.keys())
 
-    # -- catch-up of updates missed while the connection was down (#1852) ----
-    # Adapted from chigwell/telegram-mcp#409 (SPDX-License-Identifier:
-    # Apache-2.0; head commit 259402b, merged 2026-11-16) — see
-    # THIRD_PARTY_NOTICES.md; restructured for the pool's session map and
-    # runtime config instead of upstream's module globals + env reader.
+    # -- updates catch-up (#1852) --------------------------------------------
+    # Telegram does not re-deliver updates that arrived while a client was
+    # offline, and Telethon only requests a difference on its own after ~15
+    # minutes without updates — so the pool asks for one explicitly wherever
+    # it sees a connection come back, plus an optional periodic sweep.
 
-    async def _catch_up_missed_updates(self, phone: str, client: object) -> None:
-        """Issue one getDifference after a reconnect (best-effort).
+    async def _catch_up_after_reconnect(self, phone: str, client: object) -> None:
+        """Fetch the difference after a reconnect; never fails the reconnect.
 
-        Telegram does not push again the updates that arrived while the
-        connection was down, and a fresh connection gets no getDifference of
-        its own: without this, an update received during the outage reaches
-        event handlers (dm_listener) only after Telethon's ~15-minute
-        no-updates timeout, if at all. A failure here never fails the
-        reconnect that already succeeded — the periodic catch-up loop, when
-        enabled, retries.
+        The reconnect itself already succeeded — losing that fact to a
+        catch-up error would make the caller report a healthy client as
+        broken. Any exception is logged; when the periodic sweep is enabled
+        it retries shortly anyway.
         """
         try:
             await client.catch_up()  # type: ignore[attr-defined]
-            logger.debug("Caught up missed updates for %s after reconnect", mask_phone(phone))
+            logger.debug("Post-reconnect catch-up done for %s", mask_phone(phone))
         except Exception:
             logger.warning(
                 "Post-reconnect catch-up failed for %s", mask_phone(phone), exc_info=True
             )
 
-    def _catch_up_interval(self) -> float:
-        """Configured seconds between periodic catch-ups; 0 = off."""
-        config = getattr(self, "_runtime_config", None)
-        raw = getattr(config, "catch_up_interval_sec", 0.0)
+    def _start_periodic_catch_up(self) -> None:
+        """Start the periodic updates sweep when ``catch_up_interval_sec`` > 0.
+
+        Covers the reconnects the pool never sees: Telethon re-establishes
+        dropped transport connections internally, so those gaps get no
+        explicit catch-up from the reconnect paths. Each sweep is one
+        getDifference per connected account; with nothing missed the server
+        returns an empty difference, which is why the interval floor
+        (config-side 30 s clamp) matters.
+        """
+        interval = 0.0
+        raw = getattr(getattr(self, "_runtime_config", None), "catch_up_interval_sec", 0.0)
         try:
             interval = float(raw)
         except (TypeError, ValueError):
-            return 0.0
-        return interval if interval > 0 else 0.0
-
-    def _start_periodic_catch_up(self) -> None:
-        """Spawn the periodic catch-up loop when ``catch_up_interval_sec`` > 0.
-
-        Telethon's internal reconnects are invisible to app code, so drops
-        nobody observes never see the post-reconnect catch-up above; the
-        periodic loop bounds how late such an update can arrive. When nothing
-        was missed, each tick is one empty getDifference.
-        """
-        interval = self._catch_up_interval()
+            interval = 0.0
         if interval <= 0:
             return
         existing = getattr(self, "_catch_up_task", None)
@@ -164,15 +158,18 @@ class ClientLifecycleMixin:
         )
 
     async def _periodic_catch_up(self, interval: float) -> None:
-        """Catch up missed updates every ``interval`` seconds until cancelled."""
+        """Sweep all connected accounts for missed updates every ``interval``."""
         while True:
             await asyncio.sleep(interval)
-            for phone, session in list(self.clients.items()):
-                client = getattr(session, "raw_client", None)
-                if client is None or not client.is_connected():
-                    continue
+            connected = [
+                (phone, session)
+                for phone, session in list(self.clients.items())
+                if isinstance(session, TelegramTransportSession)
+                and session.raw_client.is_connected()
+            ]
+            for phone, session in connected:
                 try:
-                    await client.catch_up()
+                    await session.raw_client.catch_up()
                 except Exception as exc:
                     logger.warning(
                         "Update catch-up failed for %s: %s", mask_phone(phone), exc
@@ -438,7 +435,7 @@ class ClientLifecycleMixin:
             if not client.is_connected():
                 logger.info("Reconnecting client for %s", phone)
                 await client.connect()
-                await self._catch_up_missed_updates(phone, client)
+                await self._catch_up_after_reconnect(phone, client)
             # NB: no warm-flag reset here. A reconnect reuses the *same*
             # session object, and the StringSession entity cache
             # (``session._entities``, the fallback that resolves numeric
@@ -478,7 +475,7 @@ class ClientLifecycleMixin:
             if not await client.is_user_authorized():
                 logger.error("Force reconnect of %s: session no longer authorized", mask_phone(phone))
                 return False
-            await self._catch_up_missed_updates(phone, client)
+            await self._catch_up_after_reconnect(phone, client)
             return bool(client.is_connected())
         except Exception:
             logger.exception("Force reconnect failed for %s", mask_phone(phone))
@@ -642,7 +639,7 @@ class ClientLifecycleMixin:
             logger.warning("Client for %s disconnected, attempting auto-reconnect", phone)
             try:
                 await direct_session.raw_client.connect()
-                await self._catch_up_missed_updates(phone, direct_session.raw_client)
+                await self._catch_up_after_reconnect(phone, direct_session.raw_client)
             except Exception:
                 logger.exception("Auto-reconnect failed for %s, falling back to backend", phone)
                 self.clients.pop(phone, None)
