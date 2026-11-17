@@ -34,7 +34,9 @@ async def test_saved_session_preparer_runs_before_connection_and_authorization()
         phases.append("connect")
 
     with patch("tg_shared.auth.TelegramClient", return_value=client), patch(
-        "tg_shared.auth.StringSession", return_value=object()
+        # #1843: saved pool clients use FreshEntityStringSession (one current
+        # row per peer/username), not the plain StringSession.
+        "tg_shared.auth.FreshEntityStringSession", return_value=object()
     ), patch("tg_shared.auth.connect_with_auth_key_retry", side_effect=connect):
         result = await auth.create_client_from_session("offline", before_connect=prepare)
     assert result is client
@@ -57,7 +59,9 @@ async def test_saved_session_failure_disconnects_the_partial_client(failure):
              else asyncio.CancelledError() if failure == "cancel" else None)
     connect = AsyncMock(side_effect=error)
     with patch("tg_shared.auth.TelegramClient", return_value=client), patch(
-        "tg_shared.auth.StringSession", return_value=object()
+        # #1843: saved pool clients use FreshEntityStringSession, not the
+        # plain StringSession.
+        "tg_shared.auth.FreshEntityStringSession", return_value=object()
     ), patch("tg_shared.auth.connect_with_auth_key_retry", connect):
         with pytest.raises((ValueError, OSError, ConnectionError, asyncio.CancelledError)):
             await auth.create_client_from_session("offline", before_connect=prepare)
