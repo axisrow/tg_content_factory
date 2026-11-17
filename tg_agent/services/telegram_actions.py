@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitedError, run_with_flood_wait
+from telethon_floodgate import HandledFloodWaitError, run_with_flood_wait
 
 from tg_agent.database import Database
 from tg_agent.models import MessagesResult
@@ -388,7 +388,7 @@ class TelegramActionService:
                         target_type,
                         allow_warm=False,
                     )
-                except (HandledFloodWaitError, TelegramRateLimitedError):
+                except HandledFloodWaitError:
                     raise
                 except (ValueError, TypeError, KeyError):
                     continue
@@ -411,7 +411,7 @@ class TelegramActionService:
                         target_type,
                         allow_warm=index == 0,
                     )
-                except (HandledFloodWaitError, TelegramRateLimitedError):
+                except HandledFloodWaitError:
                     raise
                 except (ValueError, TypeError, KeyError):
                     continue
@@ -443,7 +443,7 @@ class TelegramActionService:
                     use_input_entity=True,
                 )
             return await client.get_input_entity(identifier)
-        except (HandledFloodWaitError, TelegramRateLimitedError):
+        except HandledFloodWaitError:
             raise
         except Exception as exc:
             raise TelegramActionEntityResolutionError(

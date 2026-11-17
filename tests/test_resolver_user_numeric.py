@@ -8,7 +8,6 @@ built by real Telethon code; ``get_entity`` / ``get_input_entity`` are never
 stubbed; the only replaced behavior is ``is_connected()`` (offline test).
 """
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -29,6 +28,7 @@ from telethon.tl.types import (
     users as tl_users,
 )
 
+from tests.helpers import sender_responder_to_send
 from tg_agent.services.ping_monitor_service import PingMonitorService
 from tg_agent.services.telegram_actions import (
     TelegramActionEntityResolutionError,
@@ -46,7 +46,7 @@ def make_recording_client(*, seeded=()):
     client = TelegramClient(StringSession(), 1, "x")
     dispatched = []
 
-    async def send(request, ordered=False):
+    def send(request, ordered=False):
         dispatched.append(request)
         if isinstance(request, GetChannelsRequest):
             raise ChannelInvalidError(request=None)
@@ -88,12 +88,8 @@ def make_recording_client(*, seeded=()):
             )
         return None
 
-    def dispatch(request, ordered=False):
-        if isinstance(request, list):
-            return [asyncio.ensure_future(send(item, ordered=ordered)) for item in request]
-        return asyncio.ensure_future(send(request, ordered=ordered))
-
-    client._sender.send = dispatch
+    # The dispatch gate inspects sender.send's Future (MTProto contract).
+    client._sender.send = sender_responder_to_send(send)
     client.is_connected = lambda: True
     for entity in seeded:
         client.session.process_entities([entity])

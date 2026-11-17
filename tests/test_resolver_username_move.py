@@ -15,6 +15,7 @@ import pytest
 from telethon.tl.functions.messages import SendMessageRequest
 from telethon.tl.types import Channel, UpdateShortSentMessage
 
+from tests.helpers import sender_responder_to_send
 from tg_agent.services.telegram_actions import TelegramActionService
 from tg_shared.sessions import FreshEntityStringSession
 
@@ -38,7 +39,7 @@ def make_recording_client():
     client = TelegramClient(FreshEntityStringSession(), 1, "x")
     dispatched = []
 
-    async def send(request, ordered=False):
+    def send(request, ordered=False):
         dispatched.append(request)
         if isinstance(request, SendMessageRequest):
             return UpdateShortSentMessage(
@@ -46,7 +47,8 @@ def make_recording_client():
             )
         return None
 
-    client._sender.send = send
+    # The dispatch gate inspects sender.send's Future (MTProto contract).
+    client._sender.send = sender_responder_to_send(send)
     # Offline: never attempt a real connect() from the pool's liveness check.
     client.is_connected = lambda: True
     return client, dispatched

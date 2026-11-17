@@ -8,7 +8,6 @@ sender is a recording stub; ``get_entity`` / ``get_input_entity`` are never
 stubbed; the only replaced behavior is ``is_connected()`` (offline test).
 """
 
-import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -42,6 +41,7 @@ from telethon.tl.types import (
 )
 from telethon_floodgate.peer import peer_key
 
+from tests.helpers import sender_responder_to_send
 from tg_agent.services.telegram_actions import TelegramActionService
 
 PHONE = "+70000000284"
@@ -89,11 +89,7 @@ def make_recording_client(*, seeded=(), resolve_username_to=None):
             updates=entries, users=[], chats=[], seq=0, date=datetime.now(timezone.utc)
         )
 
-    async def send(request, ordered=False):
-        if isinstance(request, list):
-            # Telethon's client([...]) batch call (e.g. delete chunks) —
-            # dispatch each item through the same stub.
-            return [await send(item) for item in request]
+    def send(request, ordered=False):
         dispatched.append(request)
         if isinstance(request, ResolveUsernameRequest):
             if resolve_username_to is None:
@@ -136,12 +132,9 @@ def make_recording_client(*, seeded=(), resolve_username_to=None):
             )
         return None
 
-    def dispatch(request, ordered=False):
-        if isinstance(request, list):
-            return [asyncio.ensure_future(send(item, ordered=ordered)) for item in request]
-        return asyncio.ensure_future(send(request, ordered=ordered))
-
-    client._sender.send = dispatch
+    # The dispatch gate inspects sender.send's Future (MTProto contract);
+    # batch calls map to a list of Futures like the real sender does.
+    client._sender.send = sender_responder_to_send(send)
     client.is_connected = lambda: True
     for entity in seeded:
         client.session.process_entities([entity])

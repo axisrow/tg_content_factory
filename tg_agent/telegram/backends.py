@@ -665,7 +665,7 @@ class TelegramTransportSession:
         Write families are NOT checked here: their account-wide state is
         enforced at client acquisition (lease pool / ``flood_wait_until``).
         """
-        if has_rpc_guard(self._client) or self._pool is None or self._phone is None:
+        if self._pool is None or self._phone is None:
             return
         family = resolve_operation_family(
             operation,

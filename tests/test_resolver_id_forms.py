@@ -7,7 +7,6 @@ responses seed it — ``session.process_entities``. ``get_entity`` /
 ``get_input_entity`` are never stubbed.
 """
 
-import asyncio
 import secrets
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -25,6 +24,7 @@ from telethon.tl.types import (
     messages as tl_messages,
 )
 
+from tests.helpers import sender_responder_to_send
 from tg_agent.gateway.protocol import Send
 from tg_agent.gateway.store import GatewayStore
 from tg_agent.gateway.telegram import LiveTelegramAccess
@@ -50,7 +50,7 @@ def make_recording_client(*, seeded=()):
     client = TelegramClient(StringSession(), 1, "x")
     dispatched = []
 
-    async def send(request, ordered=False):
+    def send(request, ordered=False):
         dispatched.append(request)
         if isinstance(request, GetChannelsRequest):
             wanted = request.id[0].channel_id
@@ -74,12 +74,8 @@ def make_recording_client(*, seeded=()):
             )
         return None
 
-    def dispatch(request, ordered=False):
-        if isinstance(request, list):
-            return [asyncio.ensure_future(send(item, ordered=ordered)) for item in request]
-        return asyncio.ensure_future(send(request, ordered=ordered))
-
-    client._sender.send = dispatch
+    # The dispatch gate inspects sender.send's Future (MTProto contract).
+    client._sender.send = sender_responder_to_send(send)
     # The client is never connected (offline test); report it as connected so
     # the pool's liveness check never attempts a REAL network connect() —
     # that is the only non-Telethon-parsing behavior replaced here.
