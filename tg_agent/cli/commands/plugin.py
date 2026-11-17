@@ -11,9 +11,10 @@ from click.core import ParameterSource
 
 from tg_agent.cli import runtime
 from tg_agent.cli.typer_app import apply_startup, run_async
-from tg_agent.plugin_api import start_plugins
-from tg_agent.services.plugin_schema import PluginSchema, PluginSchemaError
-from tg_agent.services.plugin_tools import PluginToolError, PluginTools
+
+# plugin_api/plugin_schema/plugin_tools are imported lazily in their call
+# sites: plugin_api pulls claude_agent_sdk, plugin_schema pulls jsonschema —
+# neither belongs in every CLI subcommand's startup.
 
 plugin_app = typer.Typer(no_args_is_help=True, help='Installed plugin tools')
 
@@ -21,6 +22,9 @@ plugin_app = typer.Typer(no_args_is_help=True, help='Installed plugin tools')
 @asynccontextmanager
 async def plugin_host(config_path, with_pool=False):
     config, db = await runtime.init_db(config_path)
+    from tg_agent.plugin_api import start_plugins
+    from tg_agent.services.plugin_tools import PluginTools
+
     async with AsyncExitStack() as cleanup:
         cleanup.push_async_callback(db.close)
         pool = None
@@ -35,6 +39,8 @@ async def plugin_host(config_path, with_pool=False):
 
 
 def parse_tool_flags(descriptor, flags):
+    from tg_agent.services.plugin_schema import PluginSchema, PluginSchemaError
+
     parameters = []
     names = set()
     source_names = {}
@@ -97,6 +103,8 @@ def plugin_run(
     with_pool: bool = typer.Option(False, '--with-pool'),
 ):
     """Run TOOL using flags generated from its schema; arrays/objects accept JSON."""
+    from tg_agent.services.plugin_tools import PluginToolError
+
     apply_startup(ctx)
     try:
         result = run_async(run_impl(ctx.obj.config, tool, ctx.args, with_pool))

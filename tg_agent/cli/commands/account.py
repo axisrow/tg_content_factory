@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING
 import typer
 
 from tg_agent.agent.runtime_context import AgentRuntimeContext
-from tg_agent.agent.tools.accounts import get_live_account_info_text
 from tg_agent.cli import runtime
 from tg_agent.cli.commands.common import (
     apply_startup,
@@ -416,6 +415,10 @@ async def info_impl(config_path: str, *, phone: str | None = None) -> None:
             config, db, phones=(phone_filter,) if phone_filter else None
         )
         ctx = AgentRuntimeContext.build(db=db, config=config, client_pool=pool)
+        # Lazy: importing the agent-tools package eagerly pulls the whole tool
+        # registry (claude_agent_sdk + mcp + telethon) into every CLI startup.
+        from tg_agent.agent.tools.accounts import get_live_account_info_text
+
         print(await get_live_account_info_text(ctx, phone_filter or ""))
     finally:
         if pool is not None:

@@ -133,7 +133,7 @@ def test_restart_stops_previous_store_daemon_before_starting(
     legacy_pid = _write_fake_registration(legacy_store / "tg_search.pid")
     started: list[object] = []
     monkeypatch.setattr(
-        "tg_agent.cli.commands.worker.run_worker", lambda cfg: started.append(cfg)
+        "tg_agent.runtime.worker.run_worker", lambda cfg: started.append(cfg)
     )
 
     result = runner.invoke(app, ["restart"])
@@ -248,7 +248,7 @@ def test_worker_start_refuses_while_project_daemon_lives_on_previous_store(
     _write_fake_registration(legacy_pid)
     started: list[object] = []
     monkeypatch.setattr(
-        "tg_agent.cli.commands.worker.run_worker", lambda cfg: started.append(cfg)
+        "tg_agent.runtime.worker.run_worker", lambda cfg: started.append(cfg)
     )
 
     with caplog.at_level("ERROR"):

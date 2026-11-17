@@ -4,8 +4,6 @@ import argparse
 import logging
 import sys
 
-import uvicorn
-
 from tg_agent.cli.process_control import (
     ensure_no_sibling_daemon,
     pid_file_path,
@@ -98,6 +96,10 @@ def serve_web(config_path: str, *, web_pass: str | None = None, no_worker: bool 
         sys.exit(1)
 
     try:
+        # Lazy: uvicorn drags starlette/anyio into every CLI startup; only the
+        # legacy `serve` command needs it.
+        import uvicorn
+
         uvicorn.run(app, host=config.web.host, port=config.web.port, timeout_graceful_shutdown=150)
     except KeyboardInterrupt:
         pass

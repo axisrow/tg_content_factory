@@ -69,9 +69,9 @@ def test_serve_starts_server():
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
          patch_serve_create_app(return_value=app), \
          patch("tg_agent.cli.commands.serve.register_current_process"), \
-         patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv, \
+         patch("uvicorn.run") as mock_uv, \
          patch("tg_agent.cli.commands.serve.unregister_current_process") as mock_unreg:
-        mock_uv.run = MagicMock(side_effect=KeyboardInterrupt)
+        mock_uv.side_effect = KeyboardInterrupt
         run(_args(web_pass=None))
         assert app.state.embed_worker is True
         mock_unreg.assert_called_once()
@@ -84,9 +84,8 @@ def test_serve_no_worker_disables_embedded_worker():
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
          patch_serve_create_app(return_value=app), \
          patch("tg_agent.cli.commands.serve.register_current_process"), \
-         patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv, \
+         patch("uvicorn.run"), \
          patch("tg_agent.cli.commands.serve.unregister_current_process") as mock_unreg:
-        mock_uv.run = MagicMock()
         run(_args(web_pass=None, no_worker=True))
 
     assert app.state.embed_worker is False
@@ -99,9 +98,8 @@ def test_serve_with_web_pass_override():
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
          patch_serve_create_app(return_value=MagicMock()), \
          patch("tg_agent.cli.commands.serve.register_current_process"), \
-         patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv, \
+         patch("uvicorn.run"), \
          patch("tg_agent.cli.commands.serve.unregister_current_process"):
-        mock_uv.run = MagicMock()
         run(_args(web_pass="newpass-strong-enough"))
     assert cfg.web.password == "newpass-strong-enough"
 
@@ -119,11 +117,11 @@ def test_serve_non_loopback_with_weak_password_exits():
     cfg.web.password = "changeme"
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
          patch_serve_create_app() as mock_create_app, \
-         patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv:
+         patch("uvicorn.run") as mock_uv:
         with pytest.raises(SystemExit):
             run(_args(web_pass=None))
     mock_create_app.assert_not_called()
-    mock_uv.run.assert_not_called()
+    mock_uv.assert_not_called()
 
 
 def test_serve_loopback_with_weak_password_still_starts():
@@ -136,9 +134,9 @@ def test_serve_loopback_with_weak_password_still_starts():
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
          patch_serve_create_app(return_value=app), \
          patch("tg_agent.cli.commands.serve.register_current_process"), \
-         patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv, \
+         patch("uvicorn.run") as mock_uv, \
          patch("tg_agent.cli.commands.serve.unregister_current_process") as mock_unreg:
-        mock_uv.run = MagicMock(side_effect=KeyboardInterrupt)
+        mock_uv.side_effect = KeyboardInterrupt
         run(_args(web_pass=None))
     assert app.state.embed_worker is True
     mock_unreg.assert_called_once()
@@ -156,11 +154,11 @@ def test_serve_non_loopback_with_short_password_exits():
     cfg.web.password = "1234567"  # 7 chars — below the minimum, not in the denylist
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
          patch_serve_create_app() as mock_create_app, \
-         patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv:
+         patch("uvicorn.run") as mock_uv:
         with pytest.raises(SystemExit):
             run(_args(web_pass=None))
     mock_create_app.assert_not_called()
-    mock_uv.run.assert_not_called()
+    mock_uv.assert_not_called()
 
 
 @pytest.mark.parametrize("weak_password", ["12345678", "aaaaaaaa", "        "])
@@ -177,11 +175,11 @@ def test_serve_non_loopback_with_low_entropy_password_exits(weak_password):
     cfg.web.password = weak_password
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
          patch_serve_create_app() as mock_create_app, \
-         patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv:
+         patch("uvicorn.run") as mock_uv:
         with pytest.raises(SystemExit):
             run(_args(web_pass=None))
     mock_create_app.assert_not_called()
-    mock_uv.run.assert_not_called()
+    mock_uv.assert_not_called()
 
 
 @pytest.mark.parametrize("weak_password", ["Aa1!b", "abcdefgh", "hgfedcba"])
@@ -193,11 +191,11 @@ def test_serve_non_loopback_rejects_short_or_partial_sequences(weak_password):
     cfg.web.password = weak_password
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
          patch_serve_create_app() as mock_create_app, \
-         patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv:
+         patch("uvicorn.run") as mock_uv:
         with pytest.raises(SystemExit):
             run(_args(web_pass=None))
     mock_create_app.assert_not_called()
-    mock_uv.run.assert_not_called()
+    mock_uv.assert_not_called()
 
 
 def test_serve_non_loopback_with_strong_password_starts_with_warning(caplog):
@@ -210,9 +208,9 @@ def test_serve_non_loopback_with_strong_password_starts_with_warning(caplog):
     with patch("tg_agent.cli.commands.serve.load_config", return_value=cfg), \
          patch_serve_create_app(return_value=app), \
          patch("tg_agent.cli.commands.serve.register_current_process"), \
-         patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv, \
+         patch("uvicorn.run") as mock_uv, \
          patch("tg_agent.cli.commands.serve.unregister_current_process") as mock_unreg:
-        mock_uv.run = MagicMock(side_effect=KeyboardInterrupt)
+        mock_uv.side_effect = KeyboardInterrupt
         with caplog.at_level("WARNING"):
             run(_args(web_pass=None))
     assert app.state.embed_worker is True
@@ -226,7 +224,7 @@ def test_worker_starts_runtime():
     cfg = make_app_config()
     with patch("tg_agent.cli.commands.worker.load_config", return_value=cfg), \
          patch("tg_agent.cli.commands.worker.register_current_process"), \
-         patch("tg_agent.cli.commands.worker.run_worker") as mock_run_worker, \
+         patch("tg_agent.runtime.worker.run_worker") as mock_run_worker, \
          patch("tg_agent.cli.commands.worker.unregister_current_process") as mock_unreg:
         run(_args())
 
@@ -242,7 +240,7 @@ def test_worker_registers_pid_and_survives_keyboard_interrupt():
     with patch("tg_agent.cli.commands.worker.load_config", return_value=cfg), \
          patch("tg_agent.cli.commands.worker.pid_file_path", return_value="/tmp/test.pid"), \
          patch("tg_agent.cli.commands.worker.register_current_process") as mock_reg, \
-         patch("tg_agent.cli.commands.worker.run_worker", side_effect=KeyboardInterrupt), \
+         patch("tg_agent.runtime.worker.run_worker", side_effect=KeyboardInterrupt), \
          patch("tg_agent.cli.commands.worker.unregister_current_process") as mock_unreg:
         run(_args())  # KeyboardInterrupt is swallowed — same as serve
 
@@ -340,14 +338,14 @@ def test_serve_without_tg_webui_exits_with_install_hint(caplog):
     load_config = MagicMock()
     with hide_packages("tg_webui"), \
          patch("tg_agent.cli.commands.serve.load_config", load_config), \
-         patch("tg_agent.cli.commands.serve.uvicorn") as mock_uv, \
+         patch("uvicorn.run") as mock_uv, \
          pytest.raises(SystemExit) as exc_info:
         run(_args(web_pass=None))
 
     assert exc_info.value.code == 1
     assert "pip install tg-webui" in caplog.text
     load_config.assert_not_called()
-    mock_uv.run.assert_not_called()
+    mock_uv.assert_not_called()
 
 
 def test_serve_propagates_broken_import_inside_installed_tg_webui():

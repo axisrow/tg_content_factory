@@ -11,7 +11,6 @@ from tg_agent.cli.process_control import (
     unregister_current_process,
 )
 from tg_agent.config import load_config
-from tg_agent.runtime.worker import run_worker
 
 
 def serve_worker(config_path: str) -> None:
@@ -37,6 +36,10 @@ def serve_worker(config_path: str) -> None:
         sys.exit(1)
 
     try:
+        # Lazy: the worker runtime (bootstrap, dispatchers, agent backends)
+        # must not load for every other CLI subcommand's startup.
+        from tg_agent.runtime.worker import run_worker
+
         run_worker(config)
     except KeyboardInterrupt:
         pass
