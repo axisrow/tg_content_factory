@@ -66,10 +66,15 @@ class ScopedPool:
     async def get_premium_unavailability_reason(self):
         return "This project's selected account does not have Telegram Premium"
 
-    async def report_flood(self, phone, seconds):
+    # Wrapper contract (#1841): every method below that shadows a ClientPool
+    # method keeps the pool's parameter names and forwards keyword arguments.
+    # Core code calls these exactly as it calls the pool; a wrapper that lags
+    # behind a pool signature raises TypeError, which the numeric resolver
+    # reads as a cache miss. tests/test_gateway_scoped_pool.py pins the contract.
+    async def report_flood(self, phone, wait_seconds):
         if phone != self.account:
             raise PermissionError("Cross-account flood update denied")
-        await self.pool.report_flood(phone, seconds)
+        await self.pool.report_flood(phone, wait_seconds)
 
     def is_dialogs_fetched(self, phone):
         return self.pool.is_dialogs_fetched(phone)
@@ -77,10 +82,14 @@ class ScopedPool:
     def mark_dialogs_fetched(self, phone):
         self.pool.mark_dialogs_fetched(phone)
 
-    async def run_live_username_resolve(self, client, phone, username, **kwargs):
+    async def run_live_username_resolve(self, awaitable_factory, *, phone, username, **kwargs):
         if phone != self.account:
             raise PermissionError("Cross-account resolution denied")
-        return await self.pool.run_live_username_resolve(client, phone, username, **kwargs)
+        # phone / username are keyword-only on the pool: forwarding them
+        # positionally raised TypeError on every call (#1841).
+        return await self.pool.run_live_username_resolve(
+            awaitable_factory, phone=phone, username=username, **kwargs
+        )
 
     async def get_client_by_phone(self, phone, **kwargs):
         if phone != self.account:
@@ -93,11 +102,13 @@ class ScopedPool:
     async def release_client(self, phone, **kwargs):
         await self.pool.release_client(phone, **kwargs)
 
-    async def resolve_dialog_entity(self, session, phone, dialog, target_type=None):
-        return await self.pool.resolve_dialog_entity(session, phone, dialog, target_type)
+    async def resolve_dialog_entity(self, session, phone, dialog_id, target_type=None, **kwargs):
+        # **kwargs carries allow_warm (#1838): without it every numeric
+        # recipient failed on the gateway side with zero requests (#1841).
+        return await self.pool.resolve_dialog_entity(session, phone, dialog_id, target_type, **kwargs)
 
-    async def resolve_entity_with_warm(self, session, phone, identifier, **kwargs):
-        return await self.pool.resolve_entity_with_warm(session, phone, identifier, **kwargs)
+    async def resolve_entity_with_warm(self, session, phone, peer, **kwargs):
+        return await self.pool.resolve_entity_with_warm(session, phone, peer, **kwargs)
 
     async def leave_channels(self, phone, dialogs):
         if phone != self.account:

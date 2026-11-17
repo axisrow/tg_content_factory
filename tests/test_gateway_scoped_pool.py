@@ -22,7 +22,8 @@ from uuid import uuid4
 import pytest
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import SendMessageRequest
-from telethon.tl.types import Channel, UpdateShortSentMessage, User
+from telethon.tl.functions.users import GetUsersRequest
+from telethon.tl.types import Channel, InputUserSelf, UpdateShortSentMessage, User
 
 from tg_agent.gateway.actions import ScopedPool
 from tg_agent.gateway.protocol import ACTION_MODELS
@@ -148,6 +149,20 @@ def _recording_client(*seeded):
     return client, dispatched
 
 
+def _action_requests(dispatched):
+    """Requests the action itself dispatched.
+
+    Connecting a gateway account schedules a premium re-check (#1749) — one
+    ``users.getUsers(self)`` that belongs to the connection, not to the send.
+    Any other ``getUsers`` would be a resolve attempt and stays in the trace.
+    """
+    return [
+        type(request).__name__
+        for request in dispatched
+        if not (isinstance(request, GetUsersRequest) and request.id == [InputUserSelf()])
+    ]
+
+
 def _channel():
     return Channel(id=BARE, title="known", access_hash=5, photo=None, date=None)
 
@@ -197,8 +212,8 @@ async def test_gateway_send_message_resolves_numeric_chat_ids(tmp_path, monkeypa
     result = await _execute_send(tmp_path, monkeypatch, client, recipient=recipient, text="hi")
 
     assert result["message_id"] == 77
-    assert [type(request).__name__ for request in dispatched] == ["SendMessageRequest"]
-    assert dispatched[0].peer.channel_id == BARE
+    assert _action_requests(dispatched) == ["SendMessageRequest"]
+    assert dispatched[-1].peer.channel_id == BARE
 
 
 @pytest.mark.anyio
@@ -212,5 +227,5 @@ async def test_gateway_send_message_resolves_numeric_user_id(tmp_path, monkeypat
     )
 
     assert result["message_id"] == 77
-    assert [type(request).__name__ for request in dispatched] == ["SendMessageRequest"]
-    assert dispatched[0].peer.user_id == USER_ID
+    assert _action_requests(dispatched) == ["SendMessageRequest"]
+    assert dispatched[-1].peer.user_id == USER_ID
