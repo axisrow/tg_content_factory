@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS accounts (
  id TEXT PRIMARY KEY, phone TEXT UNIQUE NOT NULL, session TEXT NOT NULL,
  active INTEGER NOT NULL DEFAULT 1, flood_until REAL NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS account_family_floods(
+ phone TEXT NOT NULL,family TEXT NOT NULL,until REAL NOT NULL,PRIMARY KEY(phone,family)
+);
 CREATE TABLE IF NOT EXISTS grants (
  project_id TEXT NOT NULL REFERENCES projects(id),
  account_id TEXT NOT NULL REFERENCES accounts(id),
@@ -303,6 +306,29 @@ class GatewayStore:
     async def flood(self, account: str, until: float) -> None:
         async with self.transaction() as db:
             await db.execute("UPDATE accounts SET flood_until=MAX(flood_until,?) WHERE id=?", (until, account))
+
+    async def family_floods(self) -> dict[str, dict[str, float]]:
+        """Active read-family flood deadlines (#1845): {account_id: {family: until_epoch}}.
+
+        Written by the gateway pool's family-flood slice (#1844); the account
+        UUID in ``account_family_floods.phone`` matches ``accounts.id``.
+        """
+        async with self.transaction() as db:
+            async with db.execute("SELECT phone,family,until FROM account_family_floods WHERE until>?",
+                                  (time.time(),)) as cur:
+                rows = await cur.fetchall()
+        floods: dict[str, dict[str, float]] = {}
+        for row in rows:
+            floods.setdefault(row["phone"], {})[row["family"]] = row["until"]
+        return floods
+
+    async def clear_account_flood(self, account: str) -> list[str]:
+        """Drop an account's flood state: the account-wide timer and every family."""
+        families = sorted((await self.family_floods()).get(account, {}))
+        async with self.transaction() as db:
+            await db.execute("UPDATE accounts SET flood_until=0 WHERE id=?", (account,))
+            await db.execute("DELETE FROM account_family_floods WHERE phone=?", (account,))
+        return families
 
     async def submit(self, project: str, request_id: str, payload: dict) -> dict:
         serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))

@@ -108,6 +108,11 @@ class TelegramGatewayClient:
         response = await self.http.patch(f"/v1/accounts/{account_id}", json={"active": active, "primary": primary})
         response.raise_for_status()
 
+    async def clear_flood(self, account_id: str) -> dict:
+        response = await self.http.post(f"/v1/accounts/{account_id}/flood-clear")
+        response.raise_for_status()
+        return response.json()
+
     async def detach(self, account_id: str) -> None:
         response = await self.http.delete(f"/v1/accounts/{account_id}")
         response.raise_for_status()
