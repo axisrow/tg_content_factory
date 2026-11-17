@@ -35,12 +35,12 @@ async def upload_file(pool, path, intent):
 
 
 async def publish_files(pool, *, phone, peer, files, intent, caption=None, schedule=None, reply_to=None,
-                        force_document=False, peer_type="auto"):
+                        force_document=False, silent=False, peer_type="auto"):
     account = pool.select(phone)
     if account["phone"] != phone:
         raise PermissionError("Publishing account is not granted to this project")
     artifacts = [await upload_file(pool, path, f"{intent}:file:{index}") for index, path in enumerate(files)]
     operation = Publish(kind="publish", account_id=UUID(account["id"]), peer=peer, peer_type=peer_type,
                         artifact_ids=artifacts, caption=caption, schedule=schedule, reply_to=reply_to,
-                        force_document=force_document)
+                        force_document=force_document, silent=silent)
     return await pool.request(operation, intent)

@@ -17,6 +17,7 @@ from tg_agent.telegram.session_lock import release_all_session_locks
 class LocalClient:
     def __init__(self):
         self.sent = []
+        self.sent_options = []
         self.disconnected = False
         self.handlers = []
         self.files = []
@@ -52,6 +53,7 @@ class LocalClient:
 
     async def send_message(self, entity, text, **kwargs):
         self.sent.append((entity.id, text))
+        self.sent_options.append(kwargs)
         return SimpleNamespace(id=len(self.sent))
 
     async def disconnect(self):
@@ -127,6 +129,34 @@ async def test_two_projects_borrow_one_live_connection(tmp_path, monkeypatch):
         assert len(auth.connections) == 1
         await access.close()
         assert auth.connections[0].disconnected
+    finally:
+        await access.close()
+        await store.close()
+        release_all_session_locks()
+
+
+async def test_send_and_publish_operations_carry_silent(tmp_path, monkeypatch):
+    monkeypatch.setenv("TGCF_SESSION_LOCK_DIR", str(tmp_path / "locks"))
+    store = GatewayStore(tmp_path / "gateway")
+    await store.open()
+    auth = LocalAuth()
+    access = LiveTelegramAccess(store, auth)
+    try:
+        account = await store.import_account("+102", "local-transport-session")
+        project = str(uuid4())
+        await store.register_project(project, tmp_path / project, secrets.token_urlsafe(32))
+        await store.grant(project, account)
+        await access.execute(project, Send(kind="send", account_id=UUID(account), peer=123,
+                                           text="quiet", silent=True))
+        assert auth.connections[0].sent_options[-1].get("silent") is True
+        storage, artifact, temporary = ArtifactStore(store.root), uuid4(), uuid4()
+        with storage.create(project, temporary) as handle:
+            handle.write(b"image")
+        storage.finish(project, artifact, storage.path(project, temporary),
+                       filename="photo.png", content_type="image/png", digest="test")
+        await access.execute(project, Publish(kind="publish", account_id=UUID(account), peer=123,
+                                              peer_type="channel", artifact_ids=[artifact], silent=True))
+        assert auth.connections[0].files[0][1]["silent"] is True
     finally:
         await access.close()
         await store.close()

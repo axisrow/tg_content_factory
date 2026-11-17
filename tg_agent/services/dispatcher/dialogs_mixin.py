@@ -117,6 +117,7 @@ class DialogsCommandsMixin(_Base):
             phone=str(payload["phone"]),
             recipient=payload["recipient"],
             text=payload["text"],
+            silent=bool(payload.get("silent", False)),
         )
         return {"phone": result.phone, "message_id": result.message_id}
 

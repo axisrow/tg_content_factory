@@ -86,6 +86,7 @@ class Send(Payload):
     reply_to: int | None = None
     automatic: bool = False
     link_preview: bool = False
+    silent: bool = False
 
 
 class Acknowledgement(BaseModel):
@@ -115,6 +116,7 @@ class Publish(Payload):
     schedule: datetime | None = None
     reply_to: int | None = None
     force_document: bool = False
+    silent: bool = False
 
 
 class BusinessAction(Payload):

@@ -179,7 +179,7 @@ class LiveTelegramAccess:
                 entity = await session.resolve_input_entity(peer)
         if isinstance(operation, Send):
             message = await session.send_message(entity, operation.text, reply_to=operation.reply_to,
-                                                  link_preview=operation.link_preview)
+                                                  link_preview=operation.link_preview, silent=operation.silent)
             return {"message_id": message.id}
         if isinstance(operation, Edit):
             message = await session.edit_message(entity, operation.message_id, operation.text)
@@ -206,7 +206,8 @@ class LiveTelegramAccess:
                     paths.append(str(target))
                 sent = await session.publish_files(entity, paths, caption=operation.caption,
                                                    schedule=operation.schedule, reply_to=operation.reply_to,
-                                                   force_document=operation.force_document)
+                                                   force_document=operation.force_document,
+                                                   silent=operation.silent)
                 messages = sent if isinstance(sent, list) else [sent]
                 return {"message_ids": [message.id for message in messages]}
             finally:

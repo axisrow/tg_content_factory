@@ -580,6 +580,19 @@ async def test_dialogs_send():
     assert r["message_id"] == 42
 
 
+async def test_dialogs_send_silent():
+    pool = _mock_pool()
+    c = _client_mock()
+    msg = MagicMock(id=43)
+    c.send_message = AsyncMock(return_value=msg)
+    pool.get_native_client_by_phone.return_value = (c, "+1")
+    d = _dispatcher(pool=pool)
+    r = await d._handle_dialogs_send({"phone": "+1", "recipient": "-100", "text": "hi", "silent": True})
+    assert r["message_id"] == 43
+    _, kwargs = c.send_message.await_args
+    assert kwargs.get("silent") is True
+
+
 async def test_dialogs_join():
     pool = _mock_pool()
     d = _dispatcher(pool=pool)
