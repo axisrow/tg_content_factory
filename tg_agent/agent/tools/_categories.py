@@ -26,6 +26,24 @@ class ToolCategory(str, Enum):
 # importing the heavy tool/SDK modules.
 SECRET_RESULT_TOOLS: frozenset[str] = frozenset({"export_session"})
 
+# Valid flood categories for the agent tool floodgate boundary (#1851) — the
+# sliding-window buckets ``TelegramRateLimitGate`` configures by default (the
+# pool gate is built without ``category_limits`` overrides beyond history, so
+# these are exactly the buckets a tool-level peek can consult). "resolve" and
+# "reaction" are deliberately absent: the package registers them as no-op
+# categories without buckets, so mapping a tool there would silently disable
+# its pacing.
+FLOOD_TOOL_CATEGORIES: frozenset[str] = frozenset({
+    "send",
+    "admin_action",
+    "channel_lifecycle",
+    "history",
+    "dialogs",
+    "dialog_sweep",
+    "dialogs_page",
+    "default",
+})
+
 
 class ToolAccessState(str, Enum):
     ALLOWED = "allowed"
@@ -40,10 +58,23 @@ class ToolMeta:
     ``phone_bound`` marks tools that bind to a specific Telegram account and
     route through ``require_phone_permission`` / ``prepare_telegram_tool`` —
     the tri-state access policy treats them fail-closed for absent ACL phones.
+
+    ``flood_category`` names the agent tool floodgate boundary bucket the
+    tool's Telegram work is paced in (#1851); empty string (the default)
+    means the permissive ``default`` bucket. Validated at declaration so a
+    typo fails at import, not as a silent no-op at dispatch.
     """
 
     category: ToolCategory
     phone_bound: bool = False
+    flood_category: str = ""
+
+    def __post_init__(self) -> None:
+        if self.flood_category and self.flood_category not in FLOOD_TOOL_CATEGORIES:
+            raise ValueError(
+                f"flood_category {self.flood_category!r} is not one of "
+                f"{sorted(FLOOD_TOOL_CATEGORIES)}"
+            )
 
 
 # Registration order — single source of truth consumed by BOTH
