@@ -171,6 +171,12 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 tg-shared = { workspace = true }
+# INTERIM (PR #1840): 0.1.10 exists only as axisrow/telethon-floodgate#36
+# (fix/transactional-rpc-dispatch); PyPI ends at 0.1.9. Drop this pin once
+# 0.1.10 publishes, then `uv lock --upgrade-package telethon-floodgate`.
+# pip installs use constraints/telethon-floodgate-pr36.txt instead (pip
+# ignores [tool.uv.sources]).
+telethon-floodgate = { git = "https://github.com/axisrow/telethon-floodgate", rev = "14aeab1975ca38d9b0c791456c5f570a4ab3cb2f" }
 
 [tool.setuptools]
 include-package-data = true

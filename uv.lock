@@ -4886,15 +4886,11 @@ wheels = [
 
 [[package]]
 name = "telethon-floodgate"
-version = "0.1.8"
-source = { registry = "https://pypi.org/simple" }
+version = "0.1.10"
+source = { git = "https://github.com/axisrow/telethon-floodgate?rev=14aeab1975ca38d9b0c791456c5f570a4ab3cb2f#14aeab1975ca38d9b0c791456c5f570a4ab3cb2f" }
 dependencies = [
     { name = "pydantic" },
     { name = "telethon" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/42/b5/b997d76c1707d181132ad76329d6ac1c7e46d6f0cfd9686c44fcd9aba767/telethon_floodgate-0.1.8.tar.gz", hash = "sha256:a669b941d389213d59c2996be2deffeb929693a27519ff37b6e697ee9746070a", size = 87949, upload-time = "2026-11-14T04:07:31.709Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/ab/de0f2de9d220affc1dcf7a4b5fd5154df121a8e4baf4c0b3e9fd830bea6b/telethon_floodgate-0.1.8-py3-none-any.whl", hash = "sha256:061a6f3b2b36ea6d68ab4f554127ae5b36ff5246bdaa91ad0a4e8630ad31a8c7", size = 37738, upload-time = "2026-11-14T04:07:30.147Z" },
 ]
 
 [[package]]
@@ -4974,6 +4970,7 @@ dependencies = [
     { name = "telethon-floodgate" },
     { name = "tenacity" },
     { name = "tg-messenger" },
+    { name = "tg-shared" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -5065,9 +5062,10 @@ requires-dist = [
     { name = "setuptools", marker = "extra == 'dev'", specifier = ">=77.0" },
     { name = "telethon", specifier = ">=1.43.2" },
     { name = "telethon-cli", specifier = ">=0.1.1" },
-    { name = "telethon-floodgate", specifier = ">=0.1.8,<0.2" },
+    { name = "telethon-floodgate", git = "https://github.com/axisrow/telethon-floodgate?rev=14aeab1975ca38d9b0c791456c5f570a4ab3cb2f" },
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "tg-messenger", specifier = ">=0.1.0" },
+    { name = "tg-shared", editable = "packages/tg_shared" },
     { name = "typer", specifier = ">=0.12.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.48.0" },
     { name = "vulture", marker = "extra == 'dev'", specifier = ">=2.16" },
@@ -5093,7 +5091,7 @@ wheels = [
 
 [[package]]
 name = "tg-shared"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "packages/tg_shared" }
 dependencies = [
     { name = "pydantic" },

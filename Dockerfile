@@ -3,12 +3,17 @@ WORKDIR /app
 
 # Node.js 22 + Claude Code CLI
 ARG TARGETARCH
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates xz-utils && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates xz-utils git && rm -rf /var/lib/apt/lists/*
 RUN ARCH=$(case "${TARGETARCH}" in arm64) echo "arm64";; *) echo "x64";; esac) && \
     curl -fsSL https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-${ARCH}.tar.xz | tar -xJ --strip-components=1 -C /usr/local
 RUN for i in 1 2 3 4 5; do npm install -g @anthropic-ai/claude-code@latest && break || sleep 10; done
 
 COPY pyproject.toml .
+# INTERIM (PR #1840): floodgate 0.1.10 lives only on the floodgate #36 branch
+# (PyPI ends at 0.1.9); remove together with the constraints file once 0.1.10
+# publishes to PyPI.
+COPY constraints/telethon-floodgate-pr36.txt constraints/
+ENV PIP_CONSTRAINT=/app/constraints/telethon-floodgate-pr36.txt
 COPY packages/tg_shared ./packages/tg_shared
 RUN pip install --no-cache-dir . ./packages/tg_shared
 COPY . .
