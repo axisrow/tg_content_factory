@@ -643,7 +643,8 @@ async def test_shutdown_waits_for_active_collection_and_leaves_queued_pending(tm
         queue = _make_queue(collector, db)
         first_id = await queue.enqueue(by_id[-1001])
         second_id = await queue.enqueue(by_id[-1002])
-        await asyncio.wait_for(collector.started.wait(), timeout=1.0)
+        async with asyncio.timeout(1.0):
+            await collector.started.wait()
 
         caplog.set_level(logging.WARNING, logger="tg_agent.collection_queue")
         shutdown_task = asyncio.create_task(queue.shutdown(grace_timeout=2.0))
@@ -679,7 +680,8 @@ async def test_shutdown_timeout_requeues_active_collection_task(tmp_path):
         collector = _BlockingCollector()
         queue = _make_queue(collector, db)
         task_id = await queue.enqueue(channel)
-        await asyncio.wait_for(collector.started.wait(), timeout=1.0)
+        async with asyncio.timeout(1.0):
+            await collector.started.wait()
 
         await queue.shutdown(grace_timeout=0.01)
 
@@ -778,7 +780,8 @@ async def test_pause_lets_running_task_finish_and_holds_next(tmp_path):
         queue = _make_queue(collector, db)
         first_id = await queue.enqueue(by_id[-1001])
         second_id = await queue.enqueue(by_id[-1002])
-        await asyncio.wait_for(collector.started.wait(), timeout=1.0)
+        async with asyncio.timeout(1.0):
+            await collector.started.wait()
 
         # Pause while the first task is mid-collection.
         queue.pause()

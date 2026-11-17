@@ -1157,13 +1157,15 @@ class TestAgentRuntimeContextRunSync:
         token = set_request_context(request_ctx)
         try:
             task = asyncio.create_task(asyncio.to_thread(ctx.run_sync, "test_tool", _op))
-            await asyncio.wait_for(started.wait(), timeout=2.0)
+            async with asyncio.timeout(2.0):
+                await started.wait()
 
             cancel_event.set()
 
             with pytest.raises(AgentToolRuntimeError, match="отменён"):
                 await asyncio.wait_for(task, timeout=2.0)
-            await asyncio.wait_for(cancelled.wait(), timeout=2.0)
+            async with asyncio.timeout(2.0):
+                await cancelled.wait()
         finally:
             reset_request_context(token)
 
@@ -1190,11 +1192,13 @@ class TestAgentRuntimeContextRunSync:
                 raise
 
         task = asyncio.create_task(asyncio.to_thread(ctx.run_sync, "test_tool", _op))
-        await asyncio.wait_for(started.wait(), timeout=2.0)
+        async with asyncio.timeout(2.0):
+            await started.wait()
 
         with pytest.raises(AgentToolRuntimeError, match="был остановлен"):
             await asyncio.wait_for(task, timeout=2.0)
-        await asyncio.wait_for(cancelled.wait(), timeout=2.0)
+        async with asyncio.timeout(2.0):
+            await cancelled.wait()
 
     @pytest.mark.anyio
     async def test_generate_image_sync_bridge_allows_adapter_timeout_before_runtime_timeout(self):
@@ -1259,7 +1263,8 @@ class TestAgentRuntimeContextRunSync:
         token = set_request_context(request_ctx)
         try:
             task = asyncio.create_task(asyncio.to_thread(ctx.run_sync, "test_tool", _op))
-            await asyncio.wait_for(started.wait(), timeout=2.0)
+            async with asyncio.timeout(2.0):
+                await started.wait()
             await asyncio.sleep(0.12)
             assert not task.done()
 

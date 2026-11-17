@@ -1979,7 +1979,8 @@ class TestAgentManagerChatStreamErrors:
                     continue
 
         task = asyncio.create_task(_stubborn_task())
-        await asyncio.wait_for(started.wait(), timeout=1.0)
+        async with asyncio.timeout(1.0):
+            await started.wait()
         mgr._active_tasks[123] = task
 
         started_at = time.monotonic()
