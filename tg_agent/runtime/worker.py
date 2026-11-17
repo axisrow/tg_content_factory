@@ -417,8 +417,12 @@ async def _run_worker_async(config: AppConfig) -> None:
                 # is still processing queued tasks even if snapshots fail.
                 logger.exception("Worker _publish_snapshots failed")
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=HEARTBEAT_INTERVAL_SEC)
-            except asyncio.TimeoutError:
+                # asyncio.timeout, not wait_for: the 3.11 wait_for can leak an
+                # unreleased waiter when the event fires as the timeout lands
+                # (fixed in 3.12) — the heartbeat loop would sleep forever.
+                async with asyncio.timeout(HEARTBEAT_INTERVAL_SEC):
+                    await stop_event.wait()
+            except TimeoutError:
                 continue
     finally:
         await stop_container(container)

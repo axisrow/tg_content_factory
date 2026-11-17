@@ -37,6 +37,16 @@ storage, no `AppContainer`.
   `BackendRouter` (≈983–1183). Choosing and leasing a client per account is
   pool-specific; the messenger passes its single client directly.
 
+## Saved-session client preparation (0.2.1)
+
+`TelegramAuth.create_client_from_session(..., before_connect=prepare)` accepts
+an optional synchronous callback. It receives the new native client before
+connection and authorization RPCs, allowing consumers to attach dispatch
+guards. Existing calls without the callback retain their signature and flow.
+Preparation, connection or authorization failures disconnect the partial
+client before propagating the original error. Pool-owned guard disposal
+remains the pool's responsibility.
+
 ## Storage contract
 
 The formalization of `tg_agent/database/live_accounts.py`: the shared layer

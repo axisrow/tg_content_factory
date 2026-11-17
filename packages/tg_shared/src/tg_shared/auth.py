@@ -534,11 +534,14 @@ class TelegramAuth:
         session_string: str,
         *,
         base_logger: logging.Logger | None = None,
+        before_connect: Callable[[TelegramClient], None] | None = None,
     ) -> TelegramClient:
         """Create and connect a client from saved session string.
 
         ``base_logger`` routes the client's Telethon loggers under a per-phone
         name so the MTProto security watchdog can attribute warnings (#556).
+        ``before_connect`` prepares the new client before any connection or
+        authorization request. Failed acquisition disconnects the client.
         """
         extra_kwargs = {"base_logger": base_logger} if base_logger is not None else {}
         client = TelegramClient(
@@ -550,10 +553,19 @@ class TelegramAuth:
             proxy=self._proxy,
             **extra_kwargs,
         )
-        await connect_with_auth_key_retry(client)
-        if not await client.is_user_authorized():
-            raise ConnectionError("Session is no longer valid")
-        return client
+        try:
+            if before_connect is not None:
+                before_connect(client)
+            await connect_with_auth_key_retry(client)
+            if not await client.is_user_authorized():
+                raise ConnectionError("Session is no longer valid")
+            return client
+        except BaseException:
+            try:
+                await client.disconnect()
+            except Exception:
+                logger.debug("Saved-session client cleanup failed", exc_info=True)
+            raise
 
     async def cleanup(self) -> None:
         """Disconnect any pending clients."""

@@ -37,6 +37,7 @@ class GatewayOperationError(RuntimeError):
     def __init__(self, state, result):
         result = result or {}
         self.code = result.get("error")
+        self.diagnostics = result.get("diagnostics") or {}
         site = result.get("site")
         super().__init__(
             f"Gateway operation {state}: {self.code or state}" + (f" ({site})" if site else "")
@@ -50,11 +51,15 @@ class GatewayReadDeferredError(AllCollectionClientsFloodedError):
         super().__init__(max(1, ceil(result["retry_at"] - time.time())),
                          datetime.fromtimestamp(result["retry_at"], timezone.utc))
         self.reason = result.get("reason", "account_unavailable")
+        self.diagnostics = result.get("diagnostics") or {}
         self.wait_seconds = result.get("wait_seconds", self.retry_after_sec)
-        self.local = self.reason in {
+        self.local = self.diagnostics.get("source") == "local" or self.reason in {
             "TelegramRateLimitedError", "TelegramOperationSuspendedError", "TelegramPeerRateLimitedError",
+            "TelegramRpcDeferredError", "UsernameResolveRateLimitedError",
         }
-        self.args = (f"{self.reason}; retry at {self.next_available_at.isoformat()} "
+        rpc = self.diagnostics.get("rpc")
+        label = f"{self.reason} ({rpc})" if rpc else self.reason
+        self.args = (f"{label}; retry at {self.next_available_at.isoformat()} "
                      f"(in {self.retry_after_sec}s)",)
 
 
@@ -335,7 +340,9 @@ class GatewayPool:
         if state == "deferred":
             raise GatewayReadDeferredError(receipt["result"])
         if state == "uncertain":
-            raise GatewayUncertainError("Telegram delivery is unconfirmed; verify before creating another intent")
+            exc = GatewayUncertainError("Telegram delivery is unconfirmed; verify before creating another intent")
+            exc.diagnostics = (receipt.get("result") or {}).get("diagnostics") or {}
+            raise exc
         if state != "succeeded":
             from tg_agent.services import telegram_actions
 

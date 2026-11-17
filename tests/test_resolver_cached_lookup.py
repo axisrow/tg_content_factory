@@ -23,6 +23,7 @@ from telethon.tl.functions.messages import SendMessageRequest
 from telethon.tl.types import Channel, PeerUser, UpdateShortSentMessage, User
 from telethon.tl.types import contacts as tl_contacts
 
+from tests.helpers import sender_responder_to_send
 from tg_agent.services.telegram_actions import (
     TelegramActionEntityResolutionError,
     TelegramActionService,
@@ -45,7 +46,7 @@ def make_recording_client(*seeded):
     client = TelegramClient(StringSession(), 1, "x")
     dispatched = []
 
-    async def send(request, ordered=False):
+    def send(request, ordered=False):
         dispatched.append(request)
         if isinstance(request, ResolveUsernameRequest):
             user = User(
@@ -59,7 +60,8 @@ def make_recording_client(*seeded):
             )
         return None
 
-    client._sender.send = send
+    # The dispatch gate inspects sender.send's Future (MTProto contract).
+    client._sender.send = sender_responder_to_send(send)
     # Offline: never attempt a real connect() from the pool's liveness check.
     client.is_connected = lambda: True
     client.session.process_entities(list(seeded))

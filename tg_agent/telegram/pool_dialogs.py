@@ -866,7 +866,7 @@ class DialogsMixin:
             # miss here is a plain ValueError — no dialog sweep.
             try:
                 return await run_with_flood_wait(
-                    session.resolve_input_entity(peer),
+                    session.resolve_cached_input_entity(peer),
                     operation="resolve_dialog_entity_cached",
                     phone=phone,
                     pool=self,
@@ -874,7 +874,7 @@ class DialogsMixin:
                     timeout=30.0,
                 )
             except (ValueError, TypeError):
-                pass
+                raise
 
         dialog = await self._get_cached_dialog(phone, dialog_id)
         username = dialog.get("username") if dialog else None

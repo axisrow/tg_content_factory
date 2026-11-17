@@ -156,6 +156,7 @@ class ClientPool(
         if not getattr(type(db), "_gateway_owner", False) and read_binding(global_marker_path()) is not None:
             raise RuntimeError("This project uses a shared gateway; opening a local Telegram ClientPool is forbidden")
         self._auth = auth
+        self._require_rpc_guard = True
         self._db = db
         self._max_flood_wait_sec = max_flood_wait_sec
         self._runtime_config = self._normalize_runtime_config(runtime_config)
@@ -173,13 +174,15 @@ class ClientPool(
         # reconnect of the silently-bricked client.
         self._mtproto_watchdog = MTProtoSecurityWatchdog(self._on_mtproto_security_brick)
         self._native_backend = NativeTelethonBackend(
-            auth, client_logger_provider=self._mtproto_watchdog.register_phone
+            auth, client_logger_provider=self._mtproto_watchdog.register_phone,
+            client_preparer=self._prepare_rpc_client,
         )
         self._primary_backend = TelethonCliBackend(
             auth,
             self._materializer,
             transport=self._runtime_config.cli_transport,
             client_logger_provider=self._mtproto_watchdog.register_phone,
+            client_preparer=self._prepare_rpc_client,
         )
         self._backend_router = BackendRouter(
             mode=self._runtime_config.backend_mode,
@@ -232,6 +235,15 @@ class ClientPool(
         self._resolve_ramp_up_until_utc: dict[str, datetime] = {}
         self._resolve_ramp_up_last_call_utc: dict[str, datetime] = {}
         self._resolve_ramp_up_min_interval_sec: float = 5.0
+
+    def _prepare_rpc_client(self, client, account) -> None:
+        from tg_agent.telegram.rpc_guard import bind_rpc_guard
+
+        deadlines = getattr(self, "_rpc_account_deadlines", None)
+        if not isinstance(deadlines, dict):
+            deadlines = self._rpc_account_deadlines = {}
+        deadlines[account.phone] = account.flood_wait_until
+        bind_rpc_guard(client, self, account.phone)
 
     @staticmethod
     def _normalize_runtime_config(

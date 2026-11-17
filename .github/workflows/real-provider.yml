@@ -18,6 +18,9 @@ jobs:
 
     env:
       RUN_REAL_PROVIDER_SMOKE: "1"
+      # INTERIM (PR #1840): see constraints/telethon-floodgate-pr36.txt; remove
+      # once telethon-floodgate 0.1.10 publishes to PyPI.
+      PIP_CONSTRAINT: ${{ github.workspace }}/constraints/telethon-floodgate-pr36.txt
       ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
@@ -38,7 +41,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: pip install -e packages/tg_shared -e ".[dev]"
 
       - name: Run real-provider smoke tests
         run: |

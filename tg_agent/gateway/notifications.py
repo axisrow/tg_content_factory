@@ -56,7 +56,7 @@ async def execute_notification(access, project, operation):
     storage = BotStorage(access.store, project)
     service = NotificationService(storage, target, operation.bot_name_prefix, operation.bot_username_prefix)
     if operation.action == "send":
-        delivered = await Notifier(target, operation.chat_id, storage).notify(operation.text)
+        delivered = await Notifier(target, operation.chat_id, storage).notify(operation.text, propagate_throttle=True)
         if not delivered:
             raise TimeoutError("Notification delivery was not confirmed")
         return {"delivered": True}

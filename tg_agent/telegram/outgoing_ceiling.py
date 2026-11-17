@@ -71,6 +71,15 @@ class OutgoingRateCeiling:
             **kwargs,
         )
         self._sleep = sleep_func
+        self.max_calls = spec.max_calls
+
+    def peek_batch(self, members) -> float:
+        """Non-spending check for the upstream dispatch transaction."""
+        return self._limiter.peek_many(_PROCESS_KEY, len(members))
+
+    def commit_batch(self, members) -> None:
+        """Spend the accepted physical-RPC batch without another await."""
+        self._limiter.record_many(_PROCESS_KEY, len(members))
 
     async def acquire(self) -> None:
         """Consume one process-wide slot, sleeping while the window is full."""

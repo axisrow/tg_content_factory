@@ -305,6 +305,11 @@ class FloodRotationMixin:
     async def report_flood(self, phone: str, wait_seconds: int) -> None:
         """Mark account as flood-waited (account-wide, all surfaces)."""
         until = datetime.now(timezone.utc) + timedelta(seconds=wait_seconds)
+        deadlines = getattr(self, "_rpc_account_deadlines", None)
+        if not isinstance(deadlines, dict):
+            deadlines = self._rpc_account_deadlines = {}
+        until = max(normalize_utc(deadlines.get(phone)) or until, until)
+        deadlines[phone] = until
         await self._db.update_account_flood(phone, until)
         level = logging.INFO if is_transient_flood_wait_seconds(wait_seconds) else logging.WARNING
         logger.log(level, "Flood wait for %s: %d seconds (until %s)", phone, wait_seconds, until)
@@ -328,11 +333,13 @@ class FloodRotationMixin:
             await self.report_flood(phone, wait_seconds)
             return
         until = datetime.now(timezone.utc) + timedelta(seconds=wait_seconds)
-        await repo.set_family_flood(phone, family, until)
+        previous = await self.family_flood_deadline(phone, family)
+        until = max(previous or until, until)
         cache = self._family_floods
         if cache is None:
             cache = self._family_floods = {}
         cache.setdefault(phone, {})[family] = until
+        await repo.set_family_flood(phone, family, until)
         level = logging.INFO if is_transient_flood_wait_seconds(wait_seconds) else logging.WARNING
         logger.log(
             level,

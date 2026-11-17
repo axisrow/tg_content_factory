@@ -38,6 +38,13 @@ on:
       - "**/*.md"
       - "mkdocs.yml"
 
+# INTERIM (PR #1840): telethon-floodgate 0.1.10 exists only on the floodgate
+# #36 branch (PyPI ends at 0.1.9); pip ignores [tool.uv.sources], so every pip
+# install in every job resolves this constraint. Remove together with
+# constraints/telethon-floodgate-pr36.txt once 0.1.10 publishes to PyPI.
+env:
+  PIP_CONSTRAINT: ${{ github.workspace }}/constraints/telethon-floodgate-pr36.txt
+
 # Cancel an in-progress run when a newer commit is pushed to the same ref
 # (#1051). Without this, every push to an open PR left the previous run burning
 # a runner to completion. Grouping by workflow+ref keeps main and each PR
@@ -175,7 +182,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: pip install -e packages/tg_shared -e ".[dev]"
 
       - name: Ruff
         run: ruff check tg_agent tests packages/tg_shared conftest.py
@@ -218,10 +225,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
-
-      - name: Install monorepo package (tg-shared #1421)
-        run: pip install -e packages/tg_shared
+        run: pip install -e packages/tg_shared -e ".[dev]"
 
       - name: Import architecture contracts
         run: lint-imports --config .importlinter
@@ -312,10 +316,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
-
-      - name: Install monorepo package (tg-shared #1421)
-        run: pip install -e packages/tg_shared
+        run: pip install -e packages/tg_shared -e ".[dev]"
 
       - name: Pytest (smoke preflight)
         run: pytest tests -q -m smoke
@@ -356,10 +357,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
-
-      - name: Install monorepo package (tg-shared #1421)
-        run: pip install -e packages/tg_shared
+        run: pip install -e packages/tg_shared -e ".[dev]"
 
       # On CI conftest.py uses every runner core (the load throttle is
       # dev-only), so `-n auto` fans out across all vCPUs. --durations surfaces
@@ -387,10 +385,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
-
-      - name: Install monorepo package (tg-shared #1421)
-        run: pip install -e packages/tg_shared
+        run: pip install -e packages/tg_shared -e ".[dev]"
 
       - name: Pytest (aiosqlite serial, per-file parallel)
         run: pytest tests -q -m aiosqlite_serial -n auto --dist=loadfile

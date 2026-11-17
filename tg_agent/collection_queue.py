@@ -353,8 +353,13 @@ class CollectionQueue:
                 await self._maybe_arm_cancel_events_from_db()
                 if not self._resume_gate.is_set():
                     try:
-                        await asyncio.wait_for(self._resume_gate.wait(), timeout=1.0)
-                    except asyncio.TimeoutError:
+                        # asyncio.timeout, not wait_for: the 3.11 wait_for can
+                        # leak an unreleased waiter when the event fires as the
+                        # timeout lands (fixed in 3.12) — the loop then sleeps
+                        # forever in an idle loop.
+                        async with asyncio.timeout(1.0):
+                            await self._resume_gate.wait()
+                    except TimeoutError:
                         continue
                     if self._shutdown_requested:
                         break
@@ -480,8 +485,11 @@ class CollectionQueue:
                 break
             if not self._resume_gate.is_set():
                 try:
-                    await asyncio.wait_for(self._resume_gate.wait(), timeout=1.0)
-                except asyncio.TimeoutError:
+                    # See the supervisor loop above: asyncio.timeout avoids the
+                    # 3.11 wait_for unreleased-waiter leak.
+                    async with asyncio.timeout(1.0):
+                        await self._resume_gate.wait()
+                except TimeoutError:
                     continue
                 if self._shutdown_requested or self._stop_workers:
                     break
@@ -1225,8 +1233,11 @@ class CollectionQueue:
             except Exception:
                 logger.exception("[collection-queue] DB pull failed")
             try:
-                await asyncio.wait_for(self._pull_stop.wait(), timeout=interval)
-            except asyncio.TimeoutError:
+                # asyncio.timeout avoids the 3.11 wait_for unreleased-waiter
+                # leak (see the supervisor loop above).
+                async with asyncio.timeout(interval):
+                    await self._pull_stop.wait()
+            except TimeoutError:
                 continue
 
     def _drain_memory_queue(self) -> set[int]:

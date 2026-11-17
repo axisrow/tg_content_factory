@@ -420,7 +420,8 @@ class ResolveGuardMixin:
         timeout: float | None = 30.0,
     ) -> object:
         """Run a live username resolve behind the shared FloodWait guard."""
-        retry_after = self.reserve_resolve_username_call(phone)
+        guarded = getattr(self, "_rpc_guard_enabled", False) is True
+        retry_after = 0.0 if guarded else self.reserve_resolve_username_call(phone)
         if retry_after > 0:
             raise UsernameResolveRateLimitedError(phone, retry_after)
         try:
@@ -428,11 +429,16 @@ class ResolveGuardMixin:
                 awaitable_factory(),
                 operation=operation,
                 phone=phone,
-                pool=self,
+                pool=None if guarded else self,
                 logger_=logger_ or logger,
                 timeout=timeout,
             )
         except HandledFloodWaitError as exc:
+            if guarded:
+                from tg_agent.telegram.rpc_guard import wait_rpc_report
+
+                await wait_rpc_report(exc.__cause__ or exc)
+                raise
             next_available_at = self._record_resolve_username_flood(
                 exc.info.wait_seconds, phone=phone
             )

@@ -46,6 +46,15 @@ from tg_agent.telegram.flood_scope import is_read_family, resolve_operation_fami
 from tg_agent.telegram.mtproto_watchdog import bind_telethon_base_logger
 from tg_agent.telegram.outgoing_ceiling import OutgoingRateCeiling
 from tg_agent.telegram.reactions import normalize_outgoing_reaction_emoji
+from tg_agent.telegram.rpc_guard import (
+    FLOOD_ERRORS,
+    bind_rpc_guard,
+    diagnostic_fields,
+    dispose_rpc_guard,
+    has_rpc_guard,
+    rpc_operation,
+    wait_rpc_report,
+)
 from tg_agent.telegram.schema_drift import translate_schema_drift
 from tg_agent.telegram.session_lock import acquire_session_lock
 from tg_shared.auth import TelegramAuth, connect_with_auth_key_retry
@@ -198,6 +207,8 @@ class _PageGateClient:
         return getattr(self._client, name)
 
     def __call__(self, request: Any) -> Any:
+        if has_rpc_guard(self._client):
+            return self._client(request)
         # Telethon keeps this client on emitted Dialog/Draft/Message objects.
         # Those objects may later use the client for unrelated requests; only
         # the iterator's own page requests belong to the page budget.
@@ -242,6 +253,8 @@ def _bind_page_request_gate(
     page_category: str | None,
 ) -> Any:
     """Bind a page-request proxy to a Telethon ``RequestIter`` when possible."""
+    if has_rpc_guard(session._client):
+        return iterator
     pool = getattr(session, "_pool", None)
     phone = getattr(session, "_phone", None)
     if (
@@ -299,6 +312,8 @@ async def _disconnect_client_safely(client: Any, *, phone: str) -> None:
             await result
     except Exception:
         logger.debug("Failed to disconnect partially acquired client for %s", phone, exc_info=True)
+    finally:
+        await dispose_rpc_guard(client)
 
 
 class BackendAcquireError(RuntimeError):
@@ -352,6 +367,7 @@ class TelegramTransportSession:
         self._pool = pool
         self._logger = logger_ or logger
         self._report_flood_wait = report_flood_wait
+        bind_rpc_guard(client, pool, phone)
 
     @property
     def raw_client(self) -> Any:
@@ -389,12 +405,21 @@ class TelegramTransportSession:
         historical account-wide report; unattributed pools (no
         ``report_family_flood``) fall back to it too.
         """
-        from telethon.errors import FloodWaitError
 
-        if not isinstance(exc, FloodWaitError):
+        if not isinstance(exc, FLOOD_ERRORS):
             raise exc
         if self._phone is None:
             raise exc
+        if await wait_rpc_report(exc):
+            info = await handle_flood_wait(exc, operation=operation, phone=self._phone, logger_=self._logger)
+            info.rpc, info.source = getattr(exc, "rpc", None), "telegram"
+            info.delivery_state = diagnostic_fields(exc).get("delivery_state")
+            translated = HandledFloodWaitError(info)
+            translated.flood_reported = True
+            translated.rpc = info.rpc
+            translated.rpc_category = getattr(exc, "rpc_category", None)
+            translated.source = "telegram"
+            return translated
         family = resolve_operation_family(
             operation,
             gate=self._pool_gate(),
@@ -431,7 +456,12 @@ class TelegramTransportSession:
         )
         return HandledFloodWaitError(info)
 
-    async def _run(
+    async def _run(self, operation: str, awaitable: Any, **kwargs: Any) -> Any:
+        with rpc_operation(operation) as current:
+            current.tracked = current.tracked or has_rpc_guard(self._client)
+            return await self._run_impl(operation, awaitable, **kwargs)
+
+    async def _run_impl(
         self,
         operation: str,
         awaitable: Any,
@@ -488,6 +518,20 @@ class TelegramTransportSession:
         return result
 
     async def _stream(self, operation: str, iterator: AsyncIterator[Any]) -> AsyncIterator[Any]:
+        stream = self._stream_impl(operation, iterator)
+        try:
+            while True:
+                with rpc_operation(operation) as current:
+                    current.tracked = current.tracked or has_rpc_guard(self._client)
+                    try:
+                        item = await anext(stream)
+                    except StopAsyncIteration:
+                        return
+                yield item
+        finally:
+            await stream.aclose()
+
+    async def _stream_impl(self, operation: str, iterator: AsyncIterator[Any]) -> AsyncIterator[Any]:
         try:
             # Same ceiling-first order as _run (see there for the rationale).
             await self._await_outgoing_ceiling()
@@ -551,6 +595,11 @@ class TelegramTransportSession:
         """Reserve a proactive slot; unbound adapter sessions remain no-op safe."""
         if self._pool is None or self._phone is None:
             return
+        if has_rpc_guard(self._client) and operation not in {
+            "telegram_stream_messages", "telegram_stream_dialogs", "telegram_warm_dialog_cache",
+            "telegram_fetch_me", "telegram_invoke_request",
+        }:
+            return
         gate = getattr(self._pool, "_rate_limit_gate", None)
         if not isinstance(gate, TelegramRateLimitGate):
             return
@@ -587,7 +636,7 @@ class TelegramTransportSession:
         caller needs a new exception handler.  Unbound adapter sessions remain
         no-op safe, mirroring ``_reserve_gate_slot``.
         """
-        if self._pool is None or self._phone is None:
+        if has_rpc_guard(self._client) or self._pool is None or self._phone is None:
             return
         ceiling = getattr(self._pool, "_outgoing_ceiling", None)
         if not isinstance(ceiling, OutgoingRateCeiling):
@@ -654,11 +703,15 @@ class TelegramTransportSession:
         Telegram publishes no rate limits to pre-empt, so this reacts to being
         throttled rather than trying to predict it (#1330/#1368).
         """
+        if has_rpc_guard(self._client):
+            return
         breaker = self._flood_breaker()
         if breaker is not None:
             breaker.check(operation, self._phone)
 
     def _record_flood_breaker(self, operation: str, *, flooded: bool) -> None:
+        if has_rpc_guard(self._client):
+            return
         breaker = self._flood_breaker()
         if breaker is None:
             return
@@ -673,7 +726,10 @@ class TelegramTransportSession:
 
     async def close(self) -> None:
         if self._disconnect_on_close:
-            await self._client.disconnect()
+            try:
+                await self._client.disconnect()
+            finally:
+                await dispose_rpc_guard(self._client)
 
     async def abort(self) -> None:
         """Disconnect the underlying client, cancelling pending requests."""
@@ -1389,6 +1445,7 @@ def adapt_transport_session(
             candidate._phone = phone
         if pool is not None:
             candidate._pool = pool
+        bind_rpc_guard(candidate._client, candidate._pool, candidate._phone)
         return candidate
     return TelegramTransportSession(
         candidate,
@@ -1425,8 +1482,10 @@ class NativeTelethonBackend(TelegramBackend):
         self,
         auth: TelegramAuth,
         client_logger_provider: Callable[[str], logging.Logger] | None = None,
+        client_preparer: Callable[[Any, Account], None] | None = None,
     ):
         self._auth = auth
+        self.client_preparer = client_preparer
         # Per-phone Telethon base loggers for the MTProto watchdog (#556).
         self.client_logger_provider = client_logger_provider
 
@@ -1442,9 +1501,24 @@ class NativeTelethonBackend(TelegramBackend):
             if self.client_logger_provider is not None and not ephemeral
             else None
         )
-        client = await self._auth.create_client_from_session(
-            account.session_string, base_logger=base_logger
-        )
+        prepare = self.client_preparer
+        prepared = []
+
+        def before_connect(client):
+            prepared.append(client)
+            prepare(client, account)
+
+        extra = {"before_connect": before_connect} if prepare else {}
+        try:
+            client = await self._auth.create_client_from_session(
+                account.session_string, base_logger=base_logger, **extra
+            )
+        except BaseException:
+            for candidate in prepared:
+                await _disconnect_client_safely(candidate, phone=account.phone)
+            raise
+        if prepare is not None:
+            prepare(client, account)  # idempotent; also supports transport doubles
         # Surface every FloodWaitError so run_with_flood_wait can call
         # pool.report_flood and rotate accounts (#495). Telethon's default
         # silently sleeps on waits ≤ threshold and hides the flood from us.
@@ -1465,8 +1539,10 @@ class TelethonCliBackend(TelegramBackend):
         materializer: SessionMaterializer,
         transport: str = "hybrid",
         client_logger_provider: Callable[[str], logging.Logger] | None = None,
+        client_preparer: Callable[[Any, Account], None] | None = None,
     ):
         self._auth = auth
+        self.client_preparer = client_preparer
         self._materializer = materializer
         self._transport = transport
         # Per-phone Telethon base loggers for the MTProto watchdog (#556).
@@ -1493,6 +1569,8 @@ class TelethonCliBackend(TelegramBackend):
             client._connection_retries = None
             client._retry_delay = 2
             client.flood_sleep_threshold = 0
+            if self.client_preparer is not None:
+                self.client_preparer(client, account)
             # Network-level MTProto proxy (TG_PROXY → Telethon proxy= dict);
             # safe before connect(). Unrelated to _PageGateClient,
             # whose "proxy" is a request wrapper, not a network route.

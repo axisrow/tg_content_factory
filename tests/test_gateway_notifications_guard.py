@@ -158,7 +158,9 @@ async def test_flood_keeps_structured_cause_and_deadline(caplog):
     pool = _guarded_pool()
     wired = _connected_target(pool, send=lambda *_a, **_k: _flood(120))
 
-    with pytest.raises(TimeoutError):
+    from telethon_floodgate import HandledFloodWaitError
+
+    with pytest.raises(HandledFloodWaitError) as caught:
         await execute_notification(
             SimpleNamespace(store=_FakeStore(), connection=AsyncMock(return_value=wired.session)),
             "proj",
@@ -166,6 +168,7 @@ async def test_flood_keeps_structured_cause_and_deadline(caplog):
         )
 
     pool.report_flood.assert_awaited_once()
+    assert caught.value.info.wait_seconds == 120
     phone, seconds = pool.report_flood.await_args.args
     assert phone == ACC and seconds == 120
     # Structured cause survived the notification handling (not a bare message).

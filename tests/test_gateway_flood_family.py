@@ -25,11 +25,13 @@ from telethon.tl.types import Channel, UpdateShortSentMessage
 from telethon.tl.types import messages as tl_messages
 from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitedError
 
+from tests.helpers import sender_responder_to_send
 from tg_agent.gateway.pool_storage import GatewayPoolStorage
 from tg_agent.gateway.protocol import ACTION_MODELS, History, Send
 from tg_agent.gateway.store import GatewayStore
 from tg_agent.gateway.telegram import LiveTelegramAccess
 from tg_agent.telegram.flood_scope import family_floods_repo
+from tg_agent.telegram.rpc_guard import dispose_rpc_guard
 from tg_agent.telegram.session_lock import release_all_session_locks
 
 BARE = 1111111111
@@ -47,7 +49,7 @@ def make_recording_client():
     dispatched = []
     flood_on = set()
 
-    async def send(request, ordered=False):
+    def send(request, ordered=False):
         dispatched.append(request)
         if type(request) in flood_on:
             raise FloodWaitError(request=request, capture=3600)
@@ -63,7 +65,8 @@ def make_recording_client():
             )
         return None
 
-    client._sender.send = send
+    # The dispatch gate inspects sender.send's Future (MTProto contract).
+    client._sender.send = sender_responder_to_send(send)
     # Offline: never attempt a real connect() from the pool's liveness check.
     client.is_connected = lambda: True
     client.session.process_entities([_channel()])
@@ -237,6 +240,9 @@ async def test_family_flood_survives_a_gateway_restart_and_clears_with_the_accou
         await gw.access.execute(gw.project, _history(gw))
     gw.flood_on.clear()
     await gw.access.close()
+    # A real restart discards the old client (and its guard) entirely; the
+    # recording client is reused, so release its guard explicitly.
+    await dispose_rpc_guard(gw.client)
 
     restarted = gw.open_access()
     gw.dispatched.clear()

@@ -39,6 +39,37 @@ def make_resolve_limiter(**kwargs: object) -> ResolveRateLimiter:
     return ResolveRateLimiter(**kwargs)  # type: ignore[arg-type]
 
 
+def sender_responder_to_send(respond: Callable[[Any], Any]) -> Callable[[Any, bool], Any]:
+    """Adapt a sync request responder to the real ``MTProtoSender.send`` contract.
+
+    The real sender returns a done-or-pending Future per request (a list of
+    Futures for batch calls); telethon awaits it and the RPC dispatch guard
+    (telethon-floodgate 0.1.10) inspects ``future.done()`` /
+    ``add_done_callback`` on whatever the sender returns. A
+    coroutine-returning double breaks the gate — responders must be sync and
+    Future-wrapped, exactly like the PR's own rpc-guard fakes.
+    """
+
+    def _settle(future: "asyncio.Future[Any]", produce: Callable[[], Any]) -> None:
+        try:
+            future.set_result(produce())
+        except BaseException as exc:
+            future.set_exception(exc)
+
+    def send(request: Any, ordered: bool = False) -> Any:
+        loop = asyncio.get_running_loop()
+        if isinstance(request, list):
+            futures = [loop.create_future() for _ in request]
+            for future, item in zip(futures, request, strict=True):
+                _settle(future, lambda item=item: respond(item))
+            return futures
+        future = loop.create_future()
+        _settle(future, lambda: respond(request))
+        return future
+
+    return send
+
+
 def cli_ns(**kwargs) -> argparse.Namespace:
     """Build a CLI Namespace with config default for use in CLI tests."""
     defaults = {"config": "config.yaml"}

@@ -28,6 +28,7 @@ from telethon.tl.types import (
     users as tl_users,
 )
 
+from tests.helpers import sender_responder_to_send
 from tg_agent.services.ping_monitor_service import PingMonitorService
 from tg_agent.services.telegram_actions import (
     TelegramActionEntityResolutionError,
@@ -45,7 +46,7 @@ def make_recording_client(*, seeded=()):
     client = TelegramClient(StringSession(), 1, "x")
     dispatched = []
 
-    async def send(request, ordered=False):
+    def send(request, ordered=False):
         dispatched.append(request)
         if isinstance(request, GetChannelsRequest):
             raise ChannelInvalidError(request=None)
@@ -87,7 +88,8 @@ def make_recording_client(*, seeded=()):
             )
         return None
 
-    client._sender.send = send
+    # The dispatch gate inspects sender.send's Future (MTProto contract).
+    client._sender.send = sender_responder_to_send(send)
     client.is_connected = lambda: True
     for entity in seeded:
         client.session.process_entities([entity])
