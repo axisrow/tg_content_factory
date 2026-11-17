@@ -34,6 +34,8 @@ from telethon.tl.types.auth import (
 from tenacity import AsyncRetrying, RetryCallState, retry_if_exception_type, stop_after_attempt
 from tenacity.wait import wait_exponential
 
+from .sessions import FreshEntityStringSession
+
 logger = logging.getLogger(__name__)
 
 AUTH_CONNECT_TIMEOUT_SECONDS = 30
@@ -540,7 +542,10 @@ class TelegramAuth:
         """
         extra_kwargs = {"base_logger": base_logger} if base_logger is not None else {}
         client = TelegramClient(
-            StringSession(session_string), self._api_id, self._api_hash,
+            # Long-lived pool clients resolve cached usernames from the session
+            # store without asking Telegram; the store must therefore keep one
+            # current row per peer and per username (#1843).
+            FreshEntityStringSession(session_string), self._api_id, self._api_hash,
             connection_retries=None, retry_delay=2,
             proxy=self._proxy,
             **extra_kwargs,

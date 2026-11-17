@@ -36,8 +36,8 @@ class AccountLeasePool:
     async def _family_floods(db: Database, now: datetime) -> dict[str, dict[str, datetime]]:
         """Active per-family floods, empty on stores without the family slice.
 
-        The gateway store's duck-typed accounts repo has no family table; its
-        selection then behaves exactly as before (#1832).
+        A store without the slice (see ``family_floods_repo``) selects exactly
+        as before (#1832).
         """
         repo = family_floods_repo(db)
         if repo is None:

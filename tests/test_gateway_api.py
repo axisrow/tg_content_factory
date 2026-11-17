@@ -623,6 +623,48 @@ async def test_read_rotation_uses_only_granted_accounts(gateway, tmp_path, monke
         await db.close()
 
 
+@pytest.mark.aiosqlite_serial
+async def test_read_rotation_moves_past_an_account_deferred_by_a_family_flood(gateway, tmp_path, monkeypatch):
+    """A read refused by a per-family flood (#1832/#1844) is deferred, and the project rotates.
+
+    The gateway refuses the flooded family before dispatch with
+    TelegramRateLimitedError; the server turns that into a ``deferred`` receipt
+    and the project-side rotation takes the next granted account — no retry
+    storm on the flooded one, no Telegram traffic for the refusal.
+    """
+    from telethon_floodgate import TelegramRateLimitedError
+
+    from tg_agent.config import AppConfig
+    from tg_agent.gateway.pool import GatewayPool
+
+    store, transport, first, clients = gateway
+    project = await store.authenticate(clients[0].http.headers["Authorization"].removeprefix("Bearer "))
+    second = await store.import_account("+200", "second-session")
+    await store.grant(project, second)
+    seen = []
+
+    async def execute(project, operation):
+        seen.append(str(operation.account_id))
+        if str(operation.account_id) == first:
+            raise TelegramRateLimitedError(first, "history", 3600.0)
+        return {"messages": [{"message_id": 7, "channel_id": 123, "text": "from the other account",
+                              "date": "2026-10-29T00:00:00Z"}], "next_id": 7}
+
+    monkeypatch.setattr(transport, "execute", execute)
+    db = Database(str(tmp_path / "family-rotation.db"))
+    await db.initialize()
+    pool = GatewayPool(AppConfig(), db, client=clients[0])
+    try:
+        await pool.initialize()
+        result = await pool.read_request(History(kind="history", account_id=UUID(first), peer=123),
+                                         "collection-page", rotate=True)
+        assert result["messages"][0]["text"] == "from the other account"
+        assert seen == [first, second]
+    finally:
+        await pool.disconnect_all()
+        await db.close()
+
+
 async def test_gateway_auth_preserves_two_factor_challenge(gateway, monkeypatch):
     from types import SimpleNamespace
 

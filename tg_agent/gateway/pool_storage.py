@@ -12,6 +12,11 @@ CACHE_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS dialog_cache(id INTEGER PRIMARY KEY,phone TEXT NOT NULL,dialog_id INTEGER NOT NULL,"
     "title TEXT,username TEXT,channel_type TEXT NOT NULL,deactivate INTEGER NOT NULL DEFAULT 0,"
     "is_own INTEGER NOT NULL DEFAULT 0,cached_at TEXT NOT NULL DEFAULT (datetime('now')),UNIQUE(phone,dialog_id))",
+    # Read-side flood deadlines per (account, family) — the gateway half of the
+    # #1832 scoping (#1844). `phone` carries the gateway account UUID, `until`
+    # is epoch seconds like accounts.flood_until.
+    "CREATE TABLE IF NOT EXISTS account_family_floods(phone TEXT NOT NULL,family TEXT NOT NULL,"
+    "until REAL NOT NULL,PRIMARY KEY(phone,family))",
 )
 
 
@@ -62,6 +67,39 @@ class GatewayPoolStorage:
     async def update_account_flood(self, phone, until):
         await self.execute_write("UPDATE accounts SET flood_until=? WHERE id=?",
                                  (until.timestamp() if until else 0, phone))
+
+    # Family-flood slice (#1844) — the same contract as AccountsRepository, so
+    # flood_scope.family_floods_repo() detects it and the gateway's pool scopes
+    # a read-side FloodWait to its family instead of freezing the account.
+    async def set_family_flood(self, phone, family, until):
+        """Record the flood deadline of one read family for a gateway account."""
+        await self.execute_write(
+            "INSERT INTO account_family_floods VALUES (?,?,?) ON CONFLICT(phone,family) "
+            "DO UPDATE SET until=excluded.until", (phone, family, until.timestamp()))
+
+    async def list_active_family_floods(self, *, phone=None, now=None):
+        """Active (until > now) family floods as {phone: {family: until}}."""
+        current = (now or datetime.now(timezone.utc)).timestamp()
+        sql, params = "SELECT phone,family,until FROM account_family_floods WHERE until>?", [current]
+        if phone is not None:
+            sql += " AND phone=?"
+            params.append(phone)
+        async with self.transaction() as conn:
+            async with conn.execute(sql, params) as cur:
+                rows = await cur.fetchall()
+        floods = {}
+        for row in rows:
+            floods.setdefault(row["phone"], {})[row["family"]] = datetime.fromtimestamp(
+                row["until"], timezone.utc)
+        return floods
+
+    async def clear_family_floods(self, phone, *, family=None):
+        """Drop the family floods of a gateway account (or one family)."""
+        sql, params = "DELETE FROM account_family_floods WHERE phone=?", [phone]
+        if family is not None:
+            sql += " AND family=?"
+            params.append(family)
+        await self.execute_write(sql, params)
 
     async def update_account_premium(self, account_id, value):
         # In gateway storage `Account.phone` carries the gateway account UUID,

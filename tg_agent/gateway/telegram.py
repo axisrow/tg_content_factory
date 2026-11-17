@@ -36,6 +36,7 @@ from tg_agent.gateway.store import GatewayStore
 from tg_agent.parsers import bare_channel_id
 from tg_agent.telegram.backends import TelegramTransportSession
 from tg_agent.telegram.collector_message_parse import build_message_from_telethon
+from tg_agent.telegram.pool_dialogs import cached_input_peer
 from tg_shared.auth import TelegramAuth
 
 logger = logging.getLogger(__name__)
@@ -170,7 +171,12 @@ class LiveTelegramAccess:
                 session, str(operation.account_id), peer, operation="gateway_resolve",
                 use_input_entity=True)
         else:
-            entity = await session.resolve_input_entity(peer)
+            # Cache first (#1842): a typed peer the session store knows needs
+            # no request, so it must not run under the gated resolve tag — a
+            # resolve-family flood would refuse the lookup and block the write.
+            entity = await cached_input_peer(session, peer)
+            if entity is None:
+                entity = await session.resolve_input_entity(peer)
         if isinstance(operation, Send):
             message = await session.send_message(entity, operation.text, reply_to=operation.reply_to,
                                                   link_preview=operation.link_preview)
