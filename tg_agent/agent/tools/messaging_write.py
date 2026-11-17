@@ -291,6 +291,9 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         GET_DRAFTS_SCHEMA,
     )
     async def get_drafts(args):
+        live_gate = ctx.require_live_runtime("Получение черновиков", tool_name="get_drafts")
+        if live_gate:
+            return live_gate
         phone, err = await ctx.resolve_phone(args.get("phone", ""))
         if err:
             return err

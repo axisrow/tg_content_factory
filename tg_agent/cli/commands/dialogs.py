@@ -449,6 +449,13 @@ async def _dialogs_draft_save(args, db, pool) -> None:
     phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
+    # An empty SaveDraftRequest deletes the chat's existing draft by TL
+    # semantics — possibly one typed on another device, an unrecoverable loss.
+    # Refuse here so the CLI matches the agent tool's surface; clearing a draft
+    # is a deliberate separate action, never a side effect of an empty arg.
+    if not str(args.text).strip():
+        cli_error("Empty draft text is refused: saving an empty draft would delete the existing one.")
+        return
     # A draft is account-local (nobody receives it) and re-editable, so unlike
     # sends/edits it does not prompt for confirmation.
     try:
@@ -1260,7 +1267,7 @@ _HANDOFF_WAIT_TIMEOUT_SEC = 900.0
 _HANDOFF_POLL_INTERVAL_SEC = 1.0
 
 
-async def _wait_for_handoff_command(db, command_id: int, action: str) -> None:
+async def _wait_for_handoff_command(db, command_id: int, action: str, *, output_format: str = "text") -> None:
     """Wait for a read hand-off and print the worker's persisted result."""
     terminal = {
         TelegramCommandStatus.SUCCEEDED,
@@ -1285,7 +1292,7 @@ async def _wait_for_handoff_command(db, command_id: int, action: str) -> None:
                 # be replaced by the shared unfiltered snapshot for this chat.
                 if snapshot and not (action == "participants" and "participants" in result):
                     result = {**result, **snapshot.payload}
-            _print_handoff_result(action, result)
+            _print_handoff_result(action, result, output_format=output_format)
             return
         if asyncio.get_running_loop().time() >= deadline:
             print(
@@ -1296,7 +1303,7 @@ async def _wait_for_handoff_command(db, command_id: int, action: str) -> None:
         await asyncio.sleep(_HANDOFF_POLL_INTERVAL_SEC)
 
 
-def _print_handoff_result(action: str, result: dict) -> None:
+def _print_handoff_result(action: str, result: dict, *, output_format: str = "text") -> None:
     if action == "resolve":
         entity = result.get("entity") or {}
         print(f"Title: {entity.get('title', '')}")
@@ -1332,7 +1339,7 @@ def _print_handoff_result(action: str, result: dict) -> None:
         else:
             print(f"Dialogs refreshed: {result.get('dialogs_count', 0)} total.")
     elif action == "draft-list":
-        _print_drafts(result.get("drafts") or [], output_format="text")
+        _print_drafts(result.get("drafts") or [], output_format=output_format)
 
 
 async def _handoff_dialog_action(args: argparse.Namespace, db) -> bool:
@@ -1374,7 +1381,9 @@ async def _handoff_dialog_action(args: argparse.Namespace, db) -> bool:
     )
     print(f"Сервер запущен: команда {command_type} #{command_id} поставлена в очередь воркера.")
     if getattr(args, "wait", False) and args.dialogs_action in _HANDOFF_WAIT_ACTIONS:
-        await _wait_for_handoff_command(db, command_id, args.dialogs_action)
+        await _wait_for_handoff_command(
+            db, command_id, args.dialogs_action, output_format=getattr(args, "format", "text")
+        )
     return True
 
 

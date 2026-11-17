@@ -469,6 +469,12 @@ class TestSaveDraft:
 
 class TestGetDrafts:
     @pytest.mark.anyio
+    async def test_no_pool_returns_gate(self, mock_db):
+        handlers = _get_tool_handlers(mock_db, client_pool=None)
+        result = await handlers["get_drafts"]({"phone": "+79001234567"})
+        assert "CLI-режиме" in _text(result)
+
+    @pytest.mark.anyio
     async def test_returns_json_with_message_html(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
