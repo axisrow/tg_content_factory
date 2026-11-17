@@ -87,9 +87,14 @@ class Dispatcher:
             self.wake.clear()
             pending = await self.store.pending()
             if not pending:
+                # asyncio.timeout, not wait_for: the 3.11 wait_for can leak an
+                # unreleased waiter when the event fires as the timeout lands
+                # (fixed in 3.12) — the dispatcher then sleeps forever in an
+                # idle loop with the timeout handle gone (CI serial hang).
                 try:
-                    await asyncio.wait_for(self.wake.wait(), 1)
-                except asyncio.TimeoutError:
+                    async with asyncio.timeout(1):
+                        await self.wake.wait()
+                except TimeoutError:
                     pass
                 continue
             projects = list(dict.fromkeys(row["project_id"] for row in pending))
