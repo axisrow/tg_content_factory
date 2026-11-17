@@ -400,6 +400,14 @@ def create_app(store: GatewayStore, access: TelegramAccess) -> FastAPI:
             raise HTTPException(404, "Project account not found") from exc
         return {"updated": True}
 
+    @app.post("/v1/accounts/{account_id}/flood-clear")
+    async def clear_account_flood(account_id: UUID, identity: str = Depends(project)):
+        """Operator flood-clear (#1845): the account-wide timer and every family."""
+        if str(account_id) not in {row["id"] for row in await store.accounts(identity)}:
+            raise HTTPException(403, "Account is not available to this project")
+        families = await store.clear_account_flood(str(account_id))
+        return {"cleared": True, "families": families}
+
     @app.delete("/v1/accounts/{account_id}")
     async def detach_account(account_id: UUID, identity: str = Depends(project)):
         await store.revoke(identity, str(account_id))
@@ -418,6 +426,11 @@ def create_app(store: GatewayStore, access: TelegramAccess) -> FastAPI:
         if start is not None:
             await start()
         rows = await store.accounts(identity)
+        # Per-family read floods (#1845): the project side routes reads past a
+        # family-flooded account instead of paying a deferred round trip. An
+        # extra row key is backward-compatible for older clients both ways.
+        floods = await store.family_floods()
+        rows = [{**row, "family_floods": floods.get(row["id"], {})} for row in rows]
         account_status = getattr(access, "account_status", None)
         if account_status is not None:
             rows = [{**row, **account_status(row["id"])} for row in rows]

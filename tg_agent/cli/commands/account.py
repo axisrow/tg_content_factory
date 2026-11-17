@@ -557,10 +557,55 @@ async def delete_impl(config_path: str, *, account_id: int, notify_to: str | Non
         await db.close()
 
 
+def _flood_columns(deadline: datetime | None, now: datetime) -> tuple[str, str]:
+    """(until_str, remaining_str) for a flood deadline; OK when absent or expired."""
+    if deadline is None:
+        return "OK", ""
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    if deadline > now:
+        return deadline.strftime("%Y-%m-%d %H:%M:%S UTC"), f"{int((deadline - now).total_seconds())}s"
+    return "OK (expired)", ""
+
+
+async def _gateway_flood_status(config) -> None:
+    """Gateway mode: the shared gateway process owns the flood state (#1845)."""
+    from tg_agent.gateway.client import TelegramGatewayClient
+
+    client = await TelegramGatewayClient.from_config(config)
+    try:
+        accounts = (await client.status())["accounts"]
+    finally:
+        await client.close()
+    now = datetime.now(timezone.utc)
+    fmt = "{:<16} {:<28} {:<14} {:<18}"
+    print(fmt.format("Phone", "Flood wait until", "Remaining", "Resolve backoff"))
+    print("-" * 78)
+    for row in accounts:
+        until_str, remaining_str = _flood_columns(
+            datetime.fromtimestamp(row["flood_until"], timezone.utc) if row["flood_until"] else None, now)
+        backoff = row.get("resolve_backoff_remaining_sec") or 0
+        print(fmt.format(row["phone"], until_str, remaining_str, f"{int(backoff)}s" if backoff else ""))
+    flooded = {row["phone"]: row.get("family_floods") or {} for row in accounts}
+    flooded = {phone: fams for phone, fams in flooded.items() if fams}
+    if flooded:
+        print()
+        print("Per-family read floods (#1832; writes stay available):")
+        fam_fmt = "  {:<16} {:<14} {:<22} {:>10}"
+        print(fam_fmt.format("Phone", "Family", "Until", "Remaining"))
+        for phone, fams in sorted(flooded.items()):
+            for family, epoch in sorted(fams.items()):
+                until_str, remaining_str = _flood_columns(datetime.fromtimestamp(epoch, timezone.utc), now)
+                print(fam_fmt.format(phone, family, until_str, remaining_str))
+
+
 async def flood_status_impl(config_path: str) -> None:
     """Show per-account flood-wait and resolve-backoff timers."""
-    _, db = await runtime.init_db(config_path)
+    config, db = await runtime.init_db(config_path)
     try:
+        if isinstance(getattr(config, "gateway", None), dict) and config.gateway:
+            await _gateway_flood_status(config)
+            return
         accounts = await db.get_account_summaries(active_only=False)
         if not accounts:
             print("No accounts found.")
@@ -571,20 +616,7 @@ async def flood_status_impl(config_path: str) -> None:
         print(fmt.format("Phone", "Flood wait until", "Remaining", "Resolve backoff"))
         print("-" * 78)
         for acc in accounts:
-            if acc.flood_wait_until is None:
-                until_str = "OK"
-                remaining_str = ""
-            else:
-                flood_until = acc.flood_wait_until
-                if flood_until.tzinfo is None:
-                    flood_until = flood_until.replace(tzinfo=timezone.utc)
-                if flood_until > now:
-                    delta = flood_until - now
-                    remaining_str = f"{int(delta.total_seconds())}s"
-                    until_str = flood_until.strftime("%Y-%m-%d %H:%M:%S UTC")
-                else:
-                    until_str = "OK (expired)"
-                    remaining_str = ""
+            until_str, remaining_str = _flood_columns(acc.flood_wait_until, now)
             resolve_until = resolve_backoffs.get(acc.phone)
             if resolve_until is None:
                 resolve_str = ""
@@ -616,12 +648,24 @@ async def flood_status_impl(config_path: str) -> None:
 
 async def flood_clear_impl(config_path: str, *, phone: str) -> None:
     """Clear the flood-wait timer for an account."""
-    _, db = await runtime.init_db(config_path)
+    config, db = await runtime.init_db(config_path)
     try:
         accounts = await db.get_account_summaries(active_only=False)
         acc = next((a for a in accounts if a.phone == phone), None)
         if not acc:
             print(f"Account {phone} not found")
+            return
+        if isinstance(getattr(config, "gateway", None), dict) and config.gateway:
+            # The shared gateway owns the timer; clearing only the local mirror
+            # would be overwritten by the next catalog refresh (#1845).
+            from tg_agent.gateway.catalog import project_catalog
+
+            async with project_catalog(config, db) as catalog:
+                result = await catalog.client.clear_flood(await catalog.reference(acc.id))
+                await catalog.refresh()
+            print(f"Flood wait cleared for {phone}")
+            for family in result.get("families", []):
+                print(f"  cleared family flood: {family}")
             return
         await db.update_account_flood(phone, None)
         cleared = await db.repos.accounts.list_active_family_floods(phone=phone)

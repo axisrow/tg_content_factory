@@ -182,7 +182,13 @@ class GatewayPool:
                     if phone is None or row["phone"] == phone), default=0)
 
     async def available_collection_client_count(self):
-        return sum(row["flood_until"] <= time.time() for row in self.clients.values())
+        # Collection reads are history pages (#1845): an account family-flooded
+        # for history is as unusable to the scheduler as an account-wide one.
+        # ponytail: only the "history" family is subtracted; a dialog_sweep
+        # flood still surfaces through the warm pass's own skip logic.
+        now = time.time()
+        return sum(row["flood_until"] <= now and (row.get("family_floods") or {}).get("history", 0) <= now
+                   for row in self.clients.values())
 
     available_stats_client_count = available_collection_client_count
 
@@ -209,7 +215,7 @@ class GatewayPool:
         return result
 
     async def get_dialogs_for_phone(self, phone, *, include_dm=False, refresh=False, mode="full"):
-        account = self.select(phone)
+        account = self.select(phone, family="dialog_sweep")
         if account["phone"] != phone:
             raise PermissionError("Account is not available to this project")
         result = await self.request(Dialogs(kind="dialogs", account_id=UUID(account["id"]),
@@ -224,7 +230,7 @@ class GatewayPool:
 
     async def inspect_peer(self, peer, *, channel_type=None, phone=None, statistics=False, topics=False,
                            wait_for_limits=False):
-        account = self.select(phone)
+        account = self.select(phone, family="resolve")
         # Rotate across the project's connected accounts when the first pick
         # cannot resolve the peer: a private channel may be visible only to the
         # account that collected it, and preferred_phone is often unknown
@@ -245,7 +251,7 @@ class GatewayPool:
 
     async def resolve_any_entity(self, identifier, phone=None):
         peer = int(identifier) if str(identifier).lstrip("-").isdigit() else identifier
-        account = self.select(phone)
+        account = self.select(phone, family="resolve")
         return await self.request(InspectPeer(kind="inspect_peer", account_id=UUID(account["id"]), peer=peer,
                                              peer_type="auto"), f"resolve:{uuid4()}")
 
@@ -264,7 +270,7 @@ class GatewayPool:
         # CLI --offset-id is None when unspecified (#1752); the MessagePage
         # contract requires a concrete int >= 0.
         offset_id = offset_id or 0
-        account = self.select(phone)
+        account = self.select(phone, family="history")
         result = {"messages": [], "reaction_users": {}, "forward_ids": [], "urls": {},
                   "reaction_users_incomplete": False}
         while len(result["messages"]) < limit:
@@ -290,14 +296,34 @@ class GatewayPool:
             offset_id = next_offset
         return result
 
-    def select(self, preferred_phone=None, *, exclude=()):
+    # Protocol read kind -> the flood family the gateway's pre-dispatch check
+    # refuses on (#1845). Only the dominant family per kind is routed around;
+    # a rarer path (e.g. a search-classified message page under "default")
+    # still recovers through the deferred-rotation below. Write kinds map to
+    # nothing: family floods never gate writes (#1832).
+    FAMILY_BY_READ_KIND = {
+        "history": "history",
+        "message_page": "history",
+        "dialogs": "dialog_sweep",
+        "inspect_peer": "resolve",
+    }
+
+    def select(self, preferred_phone=None, *, exclude=(), family=None):
         available = [row for row in self.clients.values() if row["active"] and row["id"] not in exclude]
         if not available:
             raise NoActiveCollectionClientsError("Shared gateway has no connected project accounts")
-        usable = [row for row in available if row["flood_until"] <= time.time()]
+        now = time.time()
+
+        def binding_deadline(row):
+            deadline = row["flood_until"]
+            if family is not None:
+                deadline = max(deadline, (row.get("family_floods") or {}).get(family, 0))
+            return deadline
+
+        usable = [row for row in available if binding_deadline(row) <= now]
         if not usable:
-            until = min(row["flood_until"] for row in available)
-            raise AllCollectionClientsFloodedError(max(1, int(until - time.time())),
+            until = min(binding_deadline(row) for row in available)
+            raise AllCollectionClientsFloodedError(max(1, int(until - now)),
                                                    datetime.fromtimestamp(until, timezone.utc))
         return next((row for row in usable if row["phone"] == preferred_phone),
                     next((row for row in usable if row.get("is_primary")), usable[0]))
@@ -381,7 +407,8 @@ class GatewayPool:
                 else:
                     unavailable.add(account)
                 try:
-                    replacement = self.select(exclude=excluded)
+                    replacement = self.select(exclude=excluded,
+                                              family=self.FAMILY_BY_READ_KIND.get(operation.kind))
                 except (NoActiveCollectionClientsError, AllCollectionClientsFloodedError):
                     if floods:
                         retryable_waits = [
@@ -406,7 +433,7 @@ class GatewayPool:
 
     async def collect_channel(self, channel, *, full=False, cancel_event=None, progress_callback=None,
                               intent_key=None, page_callback=None):
-        account = self.select(channel.preferred_phone)
+        account = self.select(channel.preferred_phone, family="history")
         cursor = 0 if full else channel.last_collected_id
         key = intent_key or f"collect:{uuid4()}"
         collected = 0

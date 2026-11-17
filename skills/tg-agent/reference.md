@@ -502,7 +502,7 @@ runs — `tg-agent stop` first); without `--with-pool` they fail with
 ```
 account list | info | toggle | set-primary | delete | add
 account send-code | verify-code        # interactive first-time auth — user does this themselves
-account flood-status | flood-clear     # flood-status also lists per-family read floods (#1832); flood-clear clears them with the account-wide timer
+account flood-status | flood-clear     # flood-status also lists per-family read floods (#1832); flood-clear clears them with the account-wide timer. Gateway mode: both act on the shared gateway's timers (#1845)
 global enable | disable | status       # shared account store across projects (#1683)
 # global: `enable` attaches the current project to the machine-wide account
 # gateway (~/.tg-agent, TG_AGENT_GLOBAL_DIR overrides) via a .tg-agent-global
