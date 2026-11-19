@@ -1611,18 +1611,16 @@ async def collect_impl(
     *,
     identifier: str,
     full: bool,
-    direct: bool = False,
     wait: bool = False,
 ) -> None:
     """``channel collect`` — one-shot collection of a single channel.
 
-    When a managed ``serve`` process is live it owns the Telegram session files,
-    so collecting here would open them a second time and hit ``database is
-    locked``. In that case the channel is handed to the running worker through
-    the collection queue instead; ``--direct`` forces the in-process path anyway.
+    With a live daemon the channel goes to its collection queue (collection is
+    the daemon's job, sequenced there); ``--wait`` polls the task. Without a
+    daemon this process collects itself.
     """
     config, db = await runtime.init_db(config_path)
-    if not direct and worker_handoff.serve_is_running(config):
+    if worker_handoff.serve_is_running(config):
         try:
             await _handoff_collect_to_worker(db, identifier=identifier, full=full, wait=wait)
         finally:
@@ -1631,7 +1629,7 @@ async def collect_impl(
 
     pool = None
     try:
-        _, pool = await runtime.init_pool(config, db, allow_live_daemon=direct)
+        _, pool = await runtime.init_pool(config, db)
         if not pool.clients:
             logging.error("No connected accounts.")
             return
@@ -1785,7 +1783,6 @@ def run(args: argparse.Namespace) -> None:
             config_path,
             identifier=args.identifier,
             full=bool(getattr(args, "full", False)),
-            direct=bool(getattr(args, "direct", False)),
             wait=bool(getattr(args, "wait", False)),
         )
     else:
@@ -1866,24 +1863,16 @@ def channel_collect(
     ctx: typer.Context,
     identifier: str = typer.Argument(..., help="Channel pk, channel_id, or @username"),
     full: bool = typer.Option(False, "--full", help="Explicitly backfill the full channel history"),
-    direct: bool = typer.Option(
-        False,
-        "--direct",
-        help="Collect in this process even while a server is running (may hit session locks)",
-    ),
     wait: bool = typer.Option(
         False, "--wait", help="When handed to the worker, poll until the task finishes"
     ),
 ) -> None:
     """Collect a single channel one-shot.
 
-    Hands the channel to a running ``serve`` worker when one is live, since that
-    process owns the Telegram session files.
+    Hands the channel to the running daemon's collection queue when one is live.
     """
     apply_startup(ctx)
-    run_async(
-        collect_impl(ctx.obj.config, identifier=identifier, full=full, direct=direct, wait=wait)
-    )
+    run_async(collect_impl(ctx.obj.config, identifier=identifier, full=full, wait=wait))
 
 
 @channel_app.command("stats", context_settings=_NEG_ID_POSITIONAL)

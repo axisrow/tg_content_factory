@@ -1646,6 +1646,46 @@ class TelethonCliBackend(TelegramBackend):
             raise
 
 
+class RelayBackend(TelegramBackend):
+    """Clients without an auth key: the session owner's connection does the I/O (#1868)."""
+
+    name = "relay"
+
+    def __init__(
+        self,
+        connection: Any,
+        *,
+        api_id: int = 0,
+        api_hash: str = "",
+        client_preparer: Callable[[Any, Account], None] | None = None,
+    ):
+        self._connection = connection
+        self._api_id = api_id
+        self._api_hash = api_hash
+        self.client_preparer = client_preparer
+
+    async def acquire_client(self, account: Account, *, ephemeral: bool = False) -> BackendClientLease:
+        from tg_agent.telegram.relay import RelayAccountUnavailableError, RelayTelegramClient
+
+        if account.phone not in self._connection.phones:
+            raise RelayAccountUnavailableError(
+                f"the session owner has no live connection for {account.phone}"
+            )
+        client = RelayTelegramClient(self._connection, account.phone, self._api_id, self._api_hash)
+        if self.client_preparer is not None:
+            self.client_preparer(client, account)
+        client.flood_sleep_threshold = 0
+        await client.connect()
+        if not ephemeral:
+            # Cached peers resolve offline, like on the owner's own session.
+            await client.load_owner_entities()
+        return BackendClientLease(
+            phone=account.phone,
+            session=TelegramTransportSession(client),
+            backend_name=self.name,
+        )
+
+
 class BackendRouter:
     def __init__(
         self,
@@ -1653,10 +1693,12 @@ class BackendRouter:
         mode: str,
         primary: TelegramBackend,
         native: NativeTelethonBackend,
+        relay: RelayBackend | None = None,
     ):
         self._mode = mode
         self._primary = primary
         self._native = native
+        self._relay = relay
 
     async def acquire_client(
         self,
@@ -1664,9 +1706,12 @@ class BackendRouter:
         *,
         force_native: bool = False,
     ) -> BackendClientLease:
-        # Cross-process guard (#1548): while the worker daemon holds this
-        # session, a one-shot CLI process must not open a second MTProto
-        # connection with the same auth key (AuthKeyDuplicatedError risk).
+        if self._relay is not None:
+            # A relayed pool never touches the auth key: no lock, no session
+            # file, no native client — the owner holds the only connection.
+            return await self._relay.acquire_client(account, ephemeral=force_native)
+        # Cross-process guard (#1548): two processes must never open MTProto
+        # connections with the same auth key (AuthKeyDuplicatedError risk).
         # Waits out the holder within the configured grace, then raises
         # SessionLockError naming the holder PID. No-op for a fresh/empty
         # session string (interactive auth flows), re-entrant in-process.
@@ -1698,5 +1743,8 @@ class BackendRouter:
     async def release(self, lease: BackendClientLease) -> None:
         if lease.backend_name == "direct":
             return  # persistent session, nothing to release
+        if self._relay is not None and lease.backend_name == self._relay.name:
+            await self._relay.release(lease)
+            return
         backend = self._native if lease.backend_name == self._native.name else self._primary
         await backend.release(lease)

@@ -111,22 +111,15 @@ required, managed via a PID file (`tg-agent stop` halts it). Check scheduler sta
 directory that does not own the daemon is refused, and a failed restart says so loudly).
 See [reference.md](reference.md) → "Daemon lifecycle".
 
-While the daemon runs, most `dialogs` actions (`send`, `forward`, `react`, `refresh`, …),
-`channel collect`, `collect --channel-id`, `channel stats` and the scheduler mutations
-(`scheduler start`, `trigger`, `task-cancel`, `clear-pending`) are handed
-off to the worker automatically — the CLI queues them (or writes the scheduler setting and
-pokes the worker) instead of connecting directly; the command returns "queued" with the
-command id, the worker
-does the Telegram work. Commands that must open their own connection and have no
-queue equivalent (`messages read --live`, `dialogs read`, `dialogs download-media`,
-`account info`, `search --mode telegram`, `notification …`, `channel add`/`import`/`probe`,
-`pipeline publish`, …) are **refused at once** with exit 1 (`Error: A running tg-agent daemon
-(PID N) owns the Telegram sessions …`) — no Telegram connection is attempted: Telegram
-kills sessions seen from two connections at once. Stop the daemon (`tg-agent stop`) for
-those, then `tg-agent restart`. `pipeline run`/`generate` keep working next to the daemon
-but without Telegram access (Telegram-side nodes — react/forward/delete/edit — fail
-without a pool, so pipelines containing them need the daemon stopped); `dialogs queue …` and
-`dialogs cache-status` are DB-only and always work. Details: [reference.md](reference.md) → "Session lock" and
+While the daemon runs it owns every account connection, and live commands run on that
+connection through its local relay — `messages read --live`, every `dialogs` action,
+`account info`, `search --mode telegram`, `channel add`/`import`/`probe`, `pipeline
+run`/`generate`/`publish`, … all work next to the daemon exactly as without it (same
+output, synchronous, no second login). Collection (`channel collect`, `collect`) and
+`ping run-due` go to the daemon's own queues. After upgrading tg-agent, restart the daemon
+once (`tg-agent restart`): an older daemon serves no relay, and live commands fail at once
+with exit 1 (`Error: The running tg-agent daemon (PID N) does not serve the CLI relay …`).
+Details: [reference.md](reference.md) → "Live commands next to the running daemon" and
 "scheduling & background".
 
 ## Legacy surfaces — do not use for integration

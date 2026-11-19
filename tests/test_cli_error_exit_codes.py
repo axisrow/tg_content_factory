@@ -261,9 +261,7 @@ class TestDialogsExitCodes:
         from tg_agent.cli.commands import dialogs
 
         args = _dlg_args(config="config.yaml", chat_id="not-a-number")
-        with patch.object(dialogs, "serve_is_running", return_value=False), patch.object(
-            dialogs.runtime, "load_config", return_value=AppConfig()
-        ):
+        with patch.object(dialogs.runtime, "load_config", return_value=AppConfig()):
             with pytest.raises(typer.Exit) as excinfo:
                 asyncio.run(dialogs._dialogs_archive_history(args, MagicMock(), _dlg_pool()))
         _assert_exit(excinfo, capsys, "Invalid --chat-id")

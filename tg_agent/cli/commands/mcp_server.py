@@ -50,8 +50,7 @@ async def _serve(config_path: str, *, with_pool: bool) -> None:
         pool = None
         if with_pool:
             try:
-                # Legacy long-lived surface (frozen): keeps its pre-#1521 behaviour.
-                auth, pool = await init_pool(config, db, allow_live_daemon=True)
+                auth, pool = await init_pool(config, db)
                 if auth is not None:
                     cleanup.push_async_callback(auth.cleanup)
                 if pool is not None:

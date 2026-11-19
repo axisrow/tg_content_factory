@@ -387,6 +387,7 @@ async def _run_worker_async(config: AppConfig) -> None:
         await _publish_worker_down_snapshot(container, exc)
         await stop_container(container)
         return
+    relay = await _start_owner_relay(container, config)
     publish_timeout = resolve_snapshot_publish_timeout(config.scheduler.snapshot_publish_timeout_sec)
     try:
         while not stop_event.is_set():
@@ -425,7 +426,27 @@ async def _run_worker_async(config: AppConfig) -> None:
             except TimeoutError:
                 continue
     finally:
+        if relay is not None:
+            await relay.stop()
         await stop_container(container)
+
+
+async def _start_owner_relay(container, config: AppConfig):
+    """Serve this worker's connections to the project's CLI processes (#1868).
+
+    Only a worker that owns real connections publishes a relay; in gateway mode
+    the gateway is the owner and serves its own.
+    """
+    from tg_agent.telegram.client_pool import ClientPool
+    from tg_agent.telegram.relay import relay_endpoint_path, serve_pool_relay
+
+    if not isinstance(container.pool, ClientPool):
+        return None
+    try:
+        return await serve_pool_relay(container.pool, relay_endpoint_path(config.database.path))
+    except OSError:
+        logger.exception("session owner relay failed to start; CLI live commands will be refused")
+        return None
 
 
 def run_worker(config: AppConfig) -> None:

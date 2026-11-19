@@ -267,7 +267,6 @@ def test_cli_dialogs_archive_history_runs_backfill(cli_db, capsys):
     """#1453: `dialogs archive-history` зовёт бэкфилл и печатает итог+разбивку."""
     pool = _mock_pool()
     with (
-        patch("tg_agent.cli.commands.dialogs.serve_is_running", return_value=False),
         patch(
             "tg_agent.cli.commands.dialogs.backfill_account",
             new_callable=AsyncMock,
@@ -284,25 +283,10 @@ def test_cli_dialogs_archive_history_runs_backfill(cli_db, capsys):
     assert fake_backfill.await_args.kwargs["chat_ids"] is None
 
 
-def test_cli_dialogs_archive_history_refuses_running_worker(cli_db, capsys):
-    """Второй MTProto-коннект на сессии живого воркера = silent brick — отказ."""
-    pool = _mock_pool()
-    with (
-        patch("tg_agent.cli.commands.dialogs.serve_is_running", return_value=True),
-        patch("tg_agent.cli.commands.dialogs.backfill_account", new_callable=AsyncMock) as fake_backfill,
-    ):
-        _run(_ns(dialogs_action="archive-history", phone="+1234567890", chat_id=None), pool, cli_db)
-
-    out = capsys.readouterr().out
-    assert "stop it first" in out
-    fake_backfill.assert_not_awaited()
-
-
 def test_cli_dialogs_archive_history_single_chat(cli_db, capsys):
     """--chat-id сужает прогон до одного диалога."""
     pool = _mock_pool()
     with (
-        patch("tg_agent.cli.commands.dialogs.serve_is_running", return_value=False),
         patch(
             "tg_agent.cli.commands.dialogs.backfill_account",
             new_callable=AsyncMock,
@@ -318,7 +302,6 @@ def test_cli_dialogs_archive_history_rejects_non_numeric_chat_id(cli_db, capsys)
     """Не-числовой --chat-id — дружелюбное сообщение, а не traceback (ревью #1455)."""
     pool = _mock_pool()
     with (
-        patch("tg_agent.cli.commands.dialogs.serve_is_running", return_value=False),
         patch("tg_agent.cli.commands.dialogs.backfill_account", new_callable=AsyncMock) as fake_backfill,
     ):
         with pytest.raises(typer.Exit):
@@ -403,7 +386,6 @@ def test_cli_dialogs_archive_history_incomplete_gate(cli_db, capsys):
     """Насыщенный гейт помечает прогон незавершённым — CLI не печатает «готово» молча."""
     pool = _mock_pool()
     with (
-        patch("tg_agent.cli.commands.dialogs.serve_is_running", return_value=False),
         patch(
             "tg_agent.cli.commands.dialogs.backfill_account",
             new_callable=AsyncMock,

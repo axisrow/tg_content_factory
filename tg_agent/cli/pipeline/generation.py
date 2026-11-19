@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import sys
 from typing import TYPE_CHECKING
 
-from tg_agent.cli import runtime, worker_handoff
+from tg_agent.cli import runtime
 
 if TYPE_CHECKING:
     from tg_agent.telegram.client_pool import ClientPool
@@ -20,23 +19,7 @@ from tg_agent.services.pipeline_service import (
 
 
 async def _generation_pool(config, db) -> ClientPool | None:
-    """Telegram pool for generation, or ``None`` while a daemon owns the sessions.
-
-    Generation itself needs no Telegram; Telegram-side nodes (react/forward/
-    delete-message/edit-message) fail loudly without a pool, so a pipeline
-    containing them must run with the daemon stopped. Pipelines without them
-    run pool-less next to a live daemon instead of being refused by
-    ``init_pool`` (#1521).
-    """
-    if not worker_handoff.direct_requested() and worker_handoff.serve_is_running(config):
-        print(
-            "A running tg-agent daemon owns the Telegram sessions: generating without "
-            "Telegram access. Telegram-side nodes (react/forward/delete-message/"
-            "edit-message) will fail — stop the daemon (`tg-agent stop`) to run "
-            "pipelines containing them.",
-            file=sys.stderr,
-        )
-        return None
+    """Telegram pool for generation; next to a live daemon it runs on its relay (#1868)."""
     _, pool = await runtime.init_pool(config, db)
     return pool
 

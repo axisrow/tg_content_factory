@@ -143,6 +143,8 @@ class ClientLifecycleMixin:
         returns an empty difference, which is why the 30-second floor is
         enforced here (a config.yaml value bypasses the env parser's clamp).
         """
+        if vars(self).get("_relay") is not None:
+            return  # a relayed pool receives no updates; the owner catches up
         interval = 0.0
         raw = getattr(getattr(self, "_runtime_config", None), "catch_up_interval_sec", 0.0)
         try:
@@ -272,7 +274,9 @@ class ClientLifecycleMixin:
         # Premium flags are a cached Telegram fact (#1749): verified live with a
         # cheap fetch_me for ALL connected accounts at every pool start — new
         # and previously connected — so a stale stored flag cannot survive it.
-        await self._refresh_premium_flags(stored={acc.phone: acc.is_premium for acc in accounts})
+        if vars(self).get("_relay") is None:
+            # The owner already verified the flags at its own start.
+            await self._refresh_premium_flags(stored={acc.phone: acc.is_premium for acc in accounts})
         self._start_periodic_catch_up()
 
     async def _refresh_premium_flags(self, *, stored: dict[str, bool] | None = None) -> None:
@@ -586,8 +590,11 @@ class ClientLifecycleMixin:
                 self.reset_dialogs_warm(phone)
             except Exception:
                 logger.debug("Error disconnecting %s", phone, exc_info=True)
+        relay = vars(self).get("_relay")
+        if relay is not None:
+            await relay.close()
         # Allow Telethon internal tasks (_send_loop, _recv_loop) to finish
-        if had_clients:
+        elif had_clients:
             await asyncio.sleep(0.25)
 
     async def _acquire_phone_lease(

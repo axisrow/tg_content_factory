@@ -135,36 +135,41 @@ async def init_db(config_path: str):
     return config, db
 
 
-class DaemonOwnsSessionsError(click.ClickException):
-    """A live worker daemon owns the Telegram sessions; refuse a second pool (#1521).
+class DaemonRelayUnavailableError(click.ClickException):
+    """A live daemon owns the sessions but serves no usable relay (#1868).
 
     A ``ClickException`` so ``main()`` prints it to stderr and exits 1 without a
-    traceback; callers that deliberately swallow pool-init failures (best-effort
-    warm-ups) keep doing so and get a readable ``str(exc)``.
+    traceback. It only happens across an upgrade: the daemon still runs the old
+    version (no relay, or another relay protocol) and must be restarted.
     """
 
 
-def _refuse_if_daemon_owns_sessions(config, *, allow_live_daemon: bool) -> None:
-    """Fail fast instead of building a pool next to a live daemon (#1521).
+async def _daemon_relay(config):
+    """The relay of this project's live daemon, or ``None`` when no daemon runs.
 
-    The daemon holds every account session for its lifetime (#1548 session
-    lock), so an in-process pool here would wait out the lock grace per account
-    and end up empty — or, without the lock, put a second MTProto connection on
-    the same auth key. Commands with a queue equivalent hand off to the worker
-    *before* reaching this point; everything else is refused here, in the one
-    entry point all of them share.
+    While a daemon runs it owns every account connection; this process then runs
+    its Telegram requests on the daemon's connections instead of opening its own
+    (#1868). A daemon that is still starting gets a short grace to publish its
+    relay; one that has none is an older version and must be restarted.
     """
-    if allow_live_daemon or worker_handoff.direct_requested():
-        return
     if not worker_handoff.serve_is_running(config):
-        return
+        return None
+    from tg_agent.telegram.relay import RelayConnection, RelayError
+
     pid = worker_handoff.running_daemon_pid(config)
-    holder = f"PID {pid}" if pid is not None else "the PID file"
-    raise DaemonOwnsSessionsError(
-        f"A running tg-agent daemon ({holder}) owns the Telegram sessions, and this "
-        "command needs its own connection (it has no worker hand-off). Stop the "
-        "daemon first (`tg-agent stop`), run the command, then `tg-agent restart`."
-    )
+    holder = f"PID {pid}" if pid is not None else "see `tg-agent daemon status`"
+    endpoint = await worker_handoff.wait_for_daemon_relay(config)
+    if endpoint is None:
+        raise DaemonRelayUnavailableError(
+            f"The running tg-agent daemon ({holder}) does not serve the CLI relay — it predates "
+            "this tg-agent version. Restart it once: `tg-agent restart`."
+        )
+    try:
+        return await RelayConnection.open(endpoint)
+    except (RelayError, OSError) as exc:
+        raise DaemonRelayUnavailableError(
+            f"Cannot use the running tg-agent daemon ({holder}): {exc}. Restart it: `tg-agent restart`."
+        ) from exc
 
 
 async def init_pool(
@@ -172,13 +177,12 @@ async def init_pool(
     db: Database,
     *,
     phones: Iterable[str] | None = None,
-    allow_live_daemon: bool = False,
 ):
     """Build and initialize this process's ``ClientPool``.
 
-    Refuses with :class:`DaemonOwnsSessionsError` while a worker daemon is live,
-    unless ``allow_live_daemon`` (an explicit ``--direct``, or a long-lived
-    legacy surface with its own lifecycle) or ``TGCF_CLI_DIRECT=1`` is set.
+    With a live daemon the pool runs on the daemon's connections through its
+    relay; otherwise it connects the accounts itself. Gateway-bound projects use
+    the shared gateway.
     """
     if isinstance(config.gateway, dict) and config.gateway:
         from tg_agent.gateway.pool import GatewayPool
@@ -186,7 +190,7 @@ async def init_pool(
         pool = GatewayPool(config, db)
         await pool.initialize()
         return None, pool
-    _refuse_if_daemon_owns_sessions(config, allow_live_daemon=allow_live_daemon)
+    relay = await _daemon_relay(config)
     api_id = config.telegram.api_id
     api_hash = config.telegram.api_hash
     if api_id == 0 or not api_hash:
@@ -207,6 +211,7 @@ async def init_pool(
         db,
         config.scheduler.max_flood_wait_sec,
         runtime_config=config.telegram_runtime,
+        relay=relay,
     )
     await pool.initialize(phones=phones)
     return auth, pool

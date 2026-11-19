@@ -151,7 +151,7 @@ def test_collect_hands_off_to_worker_when_serve_is_running(channel_cli, capsys):
     ):
         from tg_agent.cli.commands.channel import run
 
-        run(_ns(channel_action="collect", identifier=str(pk), full=False, direct=False, wait=False))
+        run(_ns(channel_action="collect", identifier=str(pk), full=False, wait=False))
 
     init_pool.assert_not_awaited()
 
@@ -185,7 +185,7 @@ def test_collect_runs_directly_when_serve_is_not_running(channel_cli, capsys):
         collector_cls.return_value.collect_single_channel = AsyncMock(return_value=7)
         from tg_agent.cli.commands.channel import run
 
-        run(_ns(channel_action="collect", identifier=str(pk), full=False, direct=False, wait=False))
+        run(_ns(channel_action="collect", identifier=str(pk), full=False, wait=False))
 
     assert "Collected 7 messages" in capsys.readouterr().out
 
@@ -193,33 +193,6 @@ def test_collect_runs_directly_when_serve_is_not_running(channel_cli, capsys):
     tasks = asyncio.run(db.get_collection_tasks(limit=1))
     assert tasks[0].status == CollectionTaskStatus.COMPLETED
     assert tasks[0].messages_collected == 7
-
-
-def test_direct_flag_overrides_running_serve(channel_cli, capsys):
-    """`--direct` is the deliberate escape hatch for debugging a live server."""
-    db = channel_cli
-    pk = _add_channel(db, 5003, "ForcedDirect")
-
-    pool = AsyncMock()
-    pool.clients = {"+70001112233": MagicMock()}
-    pool.disconnect_all = AsyncMock()
-
-    async def fake_init_pool(config, db_arg, **_kwargs):
-        from tg_shared.auth import TelegramAuth
-
-        return TelegramAuth(0, ""), pool
-
-    with (
-        patch("tg_agent.cli.commands.channel.worker_handoff.serve_is_running", return_value=True),
-        patch("tg_agent.cli.commands.channel.runtime.init_pool", side_effect=fake_init_pool),
-        patch("tg_agent.cli.commands.channel.Collector") as collector_cls,
-    ):
-        collector_cls.return_value.collect_single_channel = AsyncMock(return_value=3)
-        from tg_agent.cli.commands.channel import run
-
-        run(_ns(channel_action="collect", identifier=str(pk), full=False, direct=True, wait=False))
-
-    assert "Collected 3 messages" in capsys.readouterr().out
 
 
 def test_handoff_reports_already_active_task(channel_cli, capsys):
@@ -237,7 +210,7 @@ def test_handoff_reports_already_active_task(channel_cli, capsys):
     ):
         from tg_agent.cli.commands.channel import run
 
-        args = dict(channel_action="collect", identifier=str(pk), full=False, direct=False, wait=False)
+        args = dict(channel_action="collect", identifier=str(pk), full=False, wait=False)
         run(_ns(**args))
         capsys.readouterr()
         _ensure_db_open(db)
@@ -265,7 +238,7 @@ def test_worker_picks_up_a_cli_enqueued_task(channel_cli):
     ):
         from tg_agent.cli.commands.channel import run
 
-        run(_ns(channel_action="collect", identifier=str(pk), full=False, direct=False, wait=False))
+        run(_ns(channel_action="collect", identifier=str(pk), full=False, wait=False))
 
     _ensure_db_open(db)
     pending = asyncio.run(db.get_pending_channel_tasks())
@@ -335,34 +308,6 @@ def test_collect_channel_id_unknown_channel(collect_cli, capsys):
         asyncio.run(collect_impl("config.yaml", channel_id=999999, full=False))
 
     assert "not found in DB" in capsys.readouterr().out
-
-
-def test_collect_channel_id_tgcf_cli_direct_forces_pool(collect_cli, capsys, monkeypatch):
-    """TGCF_CLI_DIRECT=1 is the escape hatch; it takes the direct path."""
-    db = collect_cli
-    _add_channel(db, 5008, "ForcedDirectCollect")
-
-    pool = AsyncMock()
-    pool.clients = {"+70001112233": MagicMock()}
-    pool.disconnect_all = AsyncMock()
-
-    async def fake_init_pool(config, db_arg, **_kwargs):
-        from tg_shared.auth import TelegramAuth
-
-        return TelegramAuth(0, ""), pool
-
-    monkeypatch.setenv(worker_handoff.DIRECT_ENV_VAR, "1")
-    with (
-        patch("tg_agent.cli.commands.collect.worker_handoff.serve_is_running", return_value=True),
-        patch("tg_agent.cli.commands.collect.runtime.init_pool", side_effect=fake_init_pool),
-        patch("tg_agent.cli.commands.collect.Collector") as collector_cls,
-    ):
-        collector_cls.return_value.collect_single_channel = AsyncMock(return_value=5)
-        from tg_agent.cli.commands.collect import collect_impl
-
-        asyncio.run(collect_impl("config.yaml", channel_id=5008, full=False))
-
-    assert "Collected 5 messages" in capsys.readouterr().out
 
 
 def test_collect_enqueue_all_hands_off_when_serve_is_running(collect_cli, capsys):
