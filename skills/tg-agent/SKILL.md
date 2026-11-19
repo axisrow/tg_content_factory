@@ -98,7 +98,10 @@ Sending a wrong message or kicking a wrong member is not reversible by you.
   "…": повторите через N сек/мин … НЕ повторяйте вызов немедленно (код: FLOODGATE-ERR-…»)
   before any Telegram work happens (#1851): schedule the retry after the stated delay or
   switch accounts; retrying sooner just returns the same deferral. Disable with env
-  `TG_AGENT_FLOODGATE=0`.
+  `TG_AGENT_FLOODGATE=0`. The local guards' spent budget (rate windows incl. the
+  hour-long ones, open flood breakers, the outgoing ceiling) survives a daemon restart
+  and carries over between CLI runs without a daemon, so restarting is not a way around a
+  deferral. Next to a running daemon (or gateway) its guards gate every command.
 
 ## Background collection
 

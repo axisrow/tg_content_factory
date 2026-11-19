@@ -36,6 +36,9 @@ from tg_agent.telegram.resolve_guard import ResolveGuardMixin
 # silently break a consumer (web shim, collector, agent tools, CLI runtime).
 PUBLIC_CONTRACT: frozenset[str] = frozenset(
     {
+        # flood-guard state across processes (FloodSnapshotMixin, #1868)
+        "persist_flood_guard_snapshot",
+        "restore_flood_guard_snapshot",
         # channel ↔ phone routing map
         "is_dialogs_fetched",
         "mark_dialogs_fetched",

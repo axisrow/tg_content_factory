@@ -108,6 +108,11 @@ class ClientLifecycleMixin:
 
         async def persist_resolve_limiter_snapshot(self) -> None: ...
 
+        # FloodSnapshotMixin (flood_snapshot.py), same signatures.
+        async def restore_flood_guard_snapshot(self, db: object) -> None: ...
+
+        async def persist_flood_guard_snapshot(self) -> None: ...
+
     def _connected_phones(self) -> set[str]:
         return set(self.clients.keys())
 
@@ -227,6 +232,14 @@ class ClientLifecycleMixin:
                 self.restore_resolve_limiter_snapshot(self._db)
             )
         await asyncio.shield(restore)
+        # The proactive gate, breaker and outgoing ceiling replay the same way,
+        # once per pool lifetime (their merge does not de-duplicate stamps).
+        flood_restore = getattr(self, "_flood_guard_restore_task", None)
+        if flood_restore is None:
+            flood_restore = self._flood_guard_restore_task = asyncio.create_task(
+                self.restore_flood_guard_snapshot(self._db)
+            )
+        await asyncio.shield(flood_restore)
         if phones is not None:
             allowed_phones = {str(phone) for phone in phones if str(phone)}
             accounts = [acc for acc in accounts if acc.phone in allowed_phones]
@@ -546,6 +559,7 @@ class ClientLifecycleMixin:
         # (floodgate #26). Best-effort; fires before clients disconnect so a
         # failing DB write cannot block the teardown path.
         await self.persist_resolve_limiter_snapshot()
+        await self.persist_flood_guard_snapshot()
         # Detach the watchdog handler from the global telethon.tgcf logger so
         # a torn-down pool is not kept alive by it (#817 review F1); a later
         # initialize() re-installs it. getattr: doubles built via __new__.

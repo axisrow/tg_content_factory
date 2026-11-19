@@ -12,6 +12,7 @@ from tg_agent.database.repositories.accounts import AccountSessionDecryptError
 from tg_agent.models import RuntimeSnapshot
 from tg_agent.runtime.bootstrap import build_worker_container, start_container, stop_container
 from tg_agent.services.runtime_diagnostics import HEARTBEAT_INTERVAL_SEC, resolve_snapshot_publish_timeout
+from tg_agent.telegram.flood_snapshot import FLOOD_GUARD_PERSIST_INTERVAL_SEC
 
 logger = logging.getLogger(__name__)
 # HEARTBEAT_INTERVAL_SEC is the single source of truth in runtime_diagnostics.
@@ -184,8 +185,12 @@ async def _run_worker_async(config: AppConfig) -> None:
         return
     relay = await _start_owner_relay(container, config)
     publish_timeout = resolve_snapshot_publish_timeout(config.scheduler.snapshot_publish_timeout_sec)
+    flood_guards_saved_at = loop.time()
     try:
         while not stop_event.is_set():
+            if loop.time() - flood_guards_saved_at >= FLOOD_GUARD_PERSIST_INTERVAL_SEC:
+                flood_guards_saved_at = loop.time()
+                await _persist_flood_guards(container)
             try:
                 await asyncio.wait_for(
                     _publish_snapshots(container, stop_event=stop_event),
@@ -224,6 +229,13 @@ async def _run_worker_async(config: AppConfig) -> None:
         if relay is not None:
             await relay.stop()
         await stop_container(container)
+
+
+async def _persist_flood_guards(container) -> None:
+    """Save the pool's flood-guard state, so a restart keeps the spent budget."""
+    persist = getattr(container.pool, "persist_flood_guard_snapshot", None)
+    if callable(persist):
+        await persist()  # best-effort by contract: it never raises
 
 
 async def _start_owner_relay(container, config: AppConfig):

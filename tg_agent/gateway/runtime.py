@@ -25,6 +25,7 @@ import tg_shared
 from tg_agent.gateway.server import GatewayHub
 from tg_agent.gateway.store import GatewayStore, private_key
 from tg_agent.gateway.telegram import LiveTelegramAccess
+from tg_agent.telegram.flood_snapshot import FLOOD_GUARD_PERSIST_INTERVAL_SEC
 from tg_agent.telegram.relay import (
     RELAY_PROTOCOL,
     RelayEndpoint,
@@ -218,15 +219,19 @@ async def serve(root: Path, *, access_factory=None) -> None:
         if start is not None:
             await start()
 
-        async def expire_events():
+        async def housekeeping():
+            persist_flood_guards = getattr(access, "persist_flood_guards", None)
             while True:
                 try:
                     await store.expire_events(now=time.time())
                 except Exception as exc:  # noqa: BLE001 - housekeeping must never stop the gateway
                     logger.warning("Gateway event expiry delayed: %s", type(exc).__name__)
-                await asyncio.sleep(60)
+                if callable(persist_flood_guards):
+                    # The shared accounts' spent flood budget survives a gateway restart.
+                    await persist_flood_guards()
+                await asyncio.sleep(FLOOD_GUARD_PERSIST_INTERVAL_SEC)
 
-        cleanup = asyncio.create_task(expire_events(), name="gateway-event-expiry")
+        cleanup = asyncio.create_task(housekeeping(), name="gateway-housekeeping")
         server = RelayServer(hub, ops=hub.ops)
         port = await server.start()
         record = {"port": port, "instance": secrets.token_urlsafe(32), "pid": os.getpid(),

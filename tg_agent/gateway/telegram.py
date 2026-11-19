@@ -68,6 +68,11 @@ class LiveTelegramAccess:
                                                    if self._pool is not None else 0),
                 "warming": self._pool.is_warming() if self._pool is not None else False}
 
+    async def persist_flood_guards(self) -> None:
+        """Save the shared pool's flood-guard state (best-effort; housekeeping calls it)."""
+        if self._pool is not None:
+            await self._pool.persist_flood_guard_snapshot()
+
     async def remove_account(self, account: str):
         if self._pool is not None:
             await self._pool.remove_client(account)
