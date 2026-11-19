@@ -28,7 +28,7 @@ Claude Code: `/plugin marketplace add https://github.com/axisrow/tg_content_fact
 # Каналы
 tg-agent channel add @durov
 tg-agent channel import channels.txt
-tg-agent channel collect --channel-id -1001234567890
+tg-agent channel collect -1001234567890   # при работающем демоне — в его очередь сбора
 
 # Поиск
 tg-agent search "ключевое слово" --limit 20
@@ -42,13 +42,16 @@ tg-agent scheduler start
 
 ## Сбор по расписанию
 
-Разовые действия агенту-демону не нужны. Непрерывный сбор и очереди — фоновый процесс:
+Разовым действиям демон не нужен. Непрерывный сбор и очереди — фоновый воркер-демон:
 
 ```bash
-tg-agent worker           # шедулер, очереди, диспетчеры
-tg-agent scheduler status # проверка состояния
+tg-agent restart          # остановить прежний демон и запустить воркер (держите в фоне / tmux / systemd)
+tg-agent daemon status    # read-only: поднят ли демон
+tg-agent scheduler status # состояние планировщика
 ```
 
-## Легаси-пути
+Пока демон работает, он владеет Telegram-подключениями аккаунтов, а живые команды (`messages read --live`, все `dialogs`, `account info`, `search --mode telegram`, …) выполняются на его подключении через локальный relay — тот же вывод, без второго входа. После обновления tg-agent перезапустите демон один раз (`tg-agent restart`).
 
-Веб-панель, TUI, встроенный агент-чат и MCP-сервер — легаси: работают, но заморожены (bug fixes only). См. [Агенты и Telegram](../features/agent.md).
+## Удалённые поверхности
+
+Веб-панель (`serve`), встроенный агент-чат с TUI (`agent …`) и MCP-сервер (`mcp-server`) удалены в #1868 — CLI + скилл единственный интерфейс. См. [Агенты и Telegram](../features/agent.md).

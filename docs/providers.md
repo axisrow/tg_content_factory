@@ -1,6 +1,6 @@
 Provider adapters and environment variables
 
-This project includes lightweight HTTP adapters for common LLM providers and a mechanism to register adapters automatically from environment variables. For operator‑managed provider configurations (per-provider models, encrypted secrets), use the web UI: Settings → Developer → Providers.
+This project includes lightweight HTTP adapters for common LLM providers and a mechanism to register adapters automatically from environment variables. For operator‑managed provider configurations (per-provider models, encrypted secrets), use the `tg-agent provider` CLI group (the web UI was removed in #1868).
 
 Supported env vars (examples)
 
@@ -18,9 +18,9 @@ Env-based registration
 
 - On startup, tg_agent/services/provider_service.py auto-registers lightweight adapters for providers with appropriate env vars set. This is convenient for single-provider deployments or CI testing.
 
-Settings UI
+Provider CLI
 
-- Use the Settings → Developer → Providers form to add, edit or remove provider configurations. Secret fields are encrypted before storage using SESSION_ENCRYPTION_KEY; when this key is not set the UI is read-only for provider secrets.
+- Use `tg-agent provider add NAME --api-key KEY [--base-url URL]` to add or update a provider configuration, `provider delete NAME` to remove it, `provider list` to show them, and `provider probe NAME` / `provider refresh [NAME]` / `provider test-all` to check them and refresh their model lists. Secret fields are encrypted before storage using SESSION_ENCRYPTION_KEY; when this key is not set, `provider add` / `provider delete` refuse to change provider configurations.
 - The provider registry uses canonical provider names (e.g. "openai", "cohere", "ollama", "huggingface", "context7").
 - For local Ollama testing, set OLLAMA_BASE to your server URL and optionally OLLAMA_DEFAULT_MODEL.
 

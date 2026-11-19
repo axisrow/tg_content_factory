@@ -2,7 +2,7 @@
 
 Отчёт о покрытии кода docstring'ами — какие функции, классы и модули **не
 задокументированы**. Это «долг документации»: что стоит описать, чтобы
-авто-доки (mkdocstrings, Swagger) были полнее. Часть эпика автодокументации
+авто-доки (mkdocstrings) были полнее. Часть эпика автодокументации
 ([#1022](https://github.com/axisrow/tg_content_factory/issues/1022)).
 
 Под капотом — [`interrogate`](https://interrogate.readthedocs.io/), обёрнутый в
@@ -28,7 +28,7 @@
 python scripts/doc_coverage.py
 
 # Другой путь / больше строк в топах
-python scripts/doc_coverage.py --path packages/tg_webui/src/tg_webui --top 40
+python scripts/doc_coverage.py --path packages/tg_shared/src/tg_shared --top 40
 
 # CI-гейт: ненулевой exit, если покрытие ниже порога
 python scripts/doc_coverage.py --fail-under 23

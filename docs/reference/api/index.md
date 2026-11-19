@@ -2,8 +2,7 @@
 
 Автоматически сгенерированная документация Python-API из docstring через
 [mkdocstrings](https://mkdocstrings.github.io/). Эти страницы покрывают
-**не-FastAPI поверхности**, которые не попадают в FastAPI `/docs`
-(см. [parity-матрицу](../parity.md)):
+внутренние Python-поверхности ядра (см. [CLI / Agent Tool Parity](../parity.md)):
 
 - **[Services](services.md)** — сервисный слой (`tg_agent/services/`): оркестрация
   сбора, пайплайнов, генерации контента, изображений, уведомлений, провайдеров.

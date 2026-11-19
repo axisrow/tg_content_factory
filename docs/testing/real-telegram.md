@@ -140,7 +140,7 @@ flood-waited accounts.
 
 `process_control/`
 
-- Process-control commands such as `serve`, `worker`, `stop`, `restart`.
+- Process-control commands: `worker`, `stop`, `restart`.
 - Gate: `RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MANUAL=1 RUN_CLI_PROCESS_CONTROL=1`.
 
 `manual/`
@@ -235,7 +235,7 @@ The mutation-safe inventory discovers targets from the live DB/cache, like the r
 `CLI_REAL_TG_REACT_EMOJI` can override the default reaction emoji for react tests.
 `CLI_REAL_TG_MUTATION_CHAT` can pin scratch-message tests to a specific test chat, and
 `CLI_REAL_TG_MUTATION_PHONE` can pin the connected account used for that chat.
-If the test account was just toggled/authenticated from the UI, the fixture waits up to
+If the test account was just toggled/authenticated (`account toggle` / `account add`), the fixture waits up to
 `CLI_REAL_TG_CONNECT_WAIT_SECONDS` for a real `account info --phone` probe before running mutation-safe commands.
 Use `CLI_REAL_TG_CONNECT_WAIT_SECONDS=180` only as an explicit poor-network override, not as the default.
 
@@ -264,4 +264,4 @@ python3 -m pytest tests/cli_real_tg_integration/manual -v
 - Do not run mutation-safe mark-read without `--max-id`.
 - Do not clean up mutation-safe scratch messages with `delete-message`; use a final `edit-message` only.
 - Do not rely on “first live row” directly from tests; add a named live fixture with skip guards and cleanup expectations.
-- Do not run process-control inventory against a config that already has a managed server PID file; use a separate config or stop the server first.
+- Do not run process-control inventory against a config that already has a managed daemon PID file; use a separate config or stop the daemon first (`daemon status` shows it).

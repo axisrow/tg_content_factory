@@ -160,5 +160,3 @@ interrupted marker commit, active session owners and concurrent gateway startup.
 **Live acceptance needs Telegram credentials:** offline results do not prove a real
 two-project deployment. Run the two-project scenario against a test account before
 relying on it.
-
-![Offline gateway status preview](images/shared-gateway-status.png)

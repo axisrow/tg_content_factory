@@ -54,31 +54,18 @@ export SESSION_ENCRYPTION_KEY="<один-и-тот-же-секрет>"
 
 ### Export
 
-=== "CLI"
-    ```bash
-    # По id или по телефону (ровно один из флагов)
-    python -m tg_agent.main account export-session --id 3
-    python -m tg_agent.main account export-session --phone +71234567890
+```bash
+# По id или по телефону (ровно один из флагов)
+python -m tg_agent.main account export-session --id 3
+python -m tg_agent.main account export-session --phone +71234567890
 
-    # Машиночитаемый вывод {phone, session_string}
-    python -m tg_agent.main account export-session --id 3 --json
-    ```
-    Строка печатается в **stdout**; предупреждение «this session string grants
-    full access to the account» — в **stderr**. Подтверждения не запрашивается —
-    сам вызов `export-session` уже является явным разрешением.
+# Машиночитаемый вывод {phone, session_string}
+python -m tg_agent.main account export-session --id 3 --json
+```
 
-=== "Web / REST"
-    ```http
-    POST /settings/{account_id}/export-session
-    ```
-    Метод — **POST** (не GET), чтобы секрет не попал в URL и access-log. Ответ —
-    JSON `{"phone": "...", "session_string": "..."}`. Защищён той же
-    panel-авторизацией (`WEB_PASS`, HTTP Basic). Экспорт пишет в audit-лог
-    `account.export_session account_id=<id> by=web` — **без самой строки**.
-
-    Коды ошибок: `404 {"error": "account_not_found"}`,
-    `409 {"error": "session_decrypt_failed", "status": ...}` (ключ отсутствует /
-    не совпадает), `409 {"error": "no_session"}`.
+Строка печатается в **stdout**; предупреждение «this session string grants
+full access to the account» — в **stderr**. Подтверждения не запрашивается —
+сам вызов `export-session` уже является явным разрешением.
 
 !!! tip "Точечная расшифровка"
     Export расшифровывает **только выбранный** аккаунт, поэтому повреждённая
@@ -87,79 +74,54 @@ export SESSION_ENCRYPTION_KEY="<один-и-тот-же-секрет>"
 
 ### Import
 
-=== "CLI"
-    ```bash
-    # Предпочтительно: секрет со stdin (не попадает в argv / историю shell)
-    python -m tg_agent.main account import --phone +71234567890 --session-string-stdin
+```bash
+# Предпочтительно: секрет со stdin (не попадает в argv / историю shell)
+python -m tg_agent.main account import --phone +71234567890 --session-string-stdin
 
-    # Либо строкой-аргументом (⚠️ попадёт в историю shell)
-    python -m tg_agent.main account import --phone +71234567890 --session-string "<...>"
+# Либо строкой-аргументом (⚠️ попадёт в историю shell)
+python -m tg_agent.main account import --phone +71234567890 --session-string "<...>"
 
-    # Перезаписать уже существующий аккаунт для этого телефона
-    python -m tg_agent.main account import --phone +71234567890 --session-string-stdin --force
-    ```
-    Импорт **валидирует** строку в telegram-слое (`auth_key`, `dc_id`,
-    `server_address`, `port`) до записи; затем сохраняет через обычный путь
-    `add_account`, который шифрует сессию at-rest. Сырая строка не выводится и не
-    логируется.
+# Перезаписать уже существующий аккаунт для этого телефона
+python -m tg_agent.main account import --phone +71234567890 --session-string-stdin --force
+```
 
-=== "Web"
-    ```http
-    POST /auth/import-session
-    Content-Type: application/x-www-form-urlencoded
+Импорт **валидирует** строку в telegram-слое (`auth_key`, `dc_id`,
+`server_address`, `port`) до записи; затем сохраняет через обычный путь
+`add_account`, который шифрует сессию at-rest. Сырая строка не выводится и не
+логируется.
 
-    phone=+71234567890&session_string=<...>
-    ```
-    Форма доступна на странице входа панели (`login.html`). Поля `phone` и
-    `session_string` приходят в теле POST (никогда в URL). Защищена той же
-    panel-авторизацией. Строка **валидируется** структурно
-    (`validate_session_string`), затем сохраняется через
-    `add_account_if_absent` — атомарный **insert-only** (`ON CONFLICT DO
-    NOTHING`): на уже существующий телефон импорт **отказывает** («Аккаунт уже
-    существует. Удалите его перед импортом.»), не затирая рабочую сессию. Импорт
-    не логирует значение строки (`account.import_session phone-added by=web`).
+!!! warning "Защита от перезаписи (anti data-loss)"
+    `account import` (`add_account`, UPSERT по `phone`) не даёт молча затереть
+    рабочий аккаунт: без `--force` импорт отказывается («Account already exists;
+    import would overwrite its session…»); с `--force` — **осознанно**
+    перезаписывает сессию и сбрасывает `is_active`/`is_premium`.
 
-!!! warning "Защита от перезаписи (anti data-loss) — разная у CLI и Web"
-    Оба пути не дают молча затереть рабочий аккаунт, но по-разному:
-
-    - **Web** (`add_account_if_absent`, `ON CONFLICT DO NOTHING`): на
-      существующий телефон — отказ, перезапись невозможна (нет `--force`).
-      Атомарно, без TOCTOU.
-    - **CLI** (`add_account`, UPSERT по `phone`): без `--force` импорт
-      отказывается («Account already exists; import would overwrite its
-      session…»); с `--force` — **осознанно** перезаписывает сессию и сбрасывает
-      `is_active`/`is_premium`.
-
-    Чтобы заменить сессию через Web — сначала удалите аккаунт, затем импортируйте.
+    Web-форма импорта (insert-only, без `--force`) удалена вместе с веб-панелью
+    в #1868.
 
 ## Security guidelines
 
 Соберём правила в одном месте — соблюдайте их при любом переносе сессий.
 
 !!! danger "Обязательные правила"
-    - **Никогда не логируйте** session string. Код этого не делает (REST пишет в
-      audit только `account_id` + actor); не добавляйте логирование значения сами.
+    - **Никогда не логируйте** session string. Код этого не делает; не добавляйте
+      логирование значения сами.
     - **Только защищённый канал.** Передавайте строку через зашифрованный
       транспорт (нельзя — по e-mail/мессенджеру/тикету открытым текстом).
-    - **REST только по HTTPS.** Panel-авторизация — HTTP Basic (пароль уходит в
-      каждом запросе). На HTTP-деплое и пароль, и `session_string` в ответе видны
-      в plaintext. Ставьте инстанс за TLS-терминирующим reverse-proxy
-      (nginx/caddy) с заголовком `x-forwarded-proto: https` — приложение
-      **не делает** принудительного HTTP→HTTPS редиректа само.
     - **Предпочитайте `--session-string-stdin`** аргументу `--session-string`,
       чтобы секрет не оседал в истории shell и в списке процессов.
     - **`--force` — осознанно.** Это операция, способная затереть рабочий аккаунт.
 
 !!! note "Что считать чувствительным"
-    `export-session` (CLI и REST) и `--json`-вывод раскрывают plaintext-сессию —
+    `export-session` и его `--json`-вывод раскрывают plaintext-сессию —
     относитесь к ним как к выдаче приватного ключа. Удаляйте временные файлы и
     очищайте буфер обмена после переноса.
 
 !!! info "Local-only оговорка"
-    Проект рассчитан на локальное / доверенное развёртывание. HTTPS не
-    форсируется самим приложением; на публичном деплое TLS — обязанность
-    оператора (reverse-proxy). До настройки TLS не используйте REST-export по
-    сети — пользуйтесь CLI на той же машине или способом 1.
+    Проект рассчитан на локальное / доверенное развёртывание. HTTP-эндпоинта
+    экспорта больше нет (веб-панель удалена в #1868): экспорт — только CLI на
+    той же машине. Между машинами передавайте строку лишь по зашифрованному
+    каналу или пользуйтесь способом 1.
 
 ## Известные ограничения импорта
 
@@ -176,8 +138,8 @@ export SESSION_ENCRYPTION_KEY="<один-и-тот-же-секрет>"
 !!! warning "2. Импорт НЕ проверяет live-ownership"
     Валидация при импорте — **только структурная** (`auth_key`, `dc_id`,
     `server_address`, `port` присутствуют и парсятся). Реальная принадлежность /
-    активность сессии в Telegram **не проверяется**: web-контейнер by-design не
-    держит TG-коннектов, а CLI-импорт — оффлайн DB+crypto путь. Поэтому **import
+    активность сессии в Telegram **не проверяется**: CLI-импорт — оффлайн
+    DB+crypto путь. Поэтому **import
     = доверенный оффлайн-канал**: импортируйте только сессии из источника,
     которому доверяете. Битая или отозванная строка пройдёт импорт и проявится
     лишь при первой реальной операции.
@@ -186,4 +148,4 @@ export SESSION_ENCRYPTION_KEY="<один-и-тот-же-секрет>"
 
 - [Configuration → `SESSION_ENCRYPTION_KEY`](../getting-started/configuration.md)
 - [CLI Reference → `account`](../reference/cli.md)
-- [CLI / Web Parity](../reference/parity.md)
+- [CLI / Agent Tool Parity](../reference/parity.md)

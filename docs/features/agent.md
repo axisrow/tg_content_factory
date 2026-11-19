@@ -2,76 +2,46 @@
 
 ## Нативный путь: CLI + скилл для агентов кодирования
 
-tg-agent спроектирован как зависимость для агентов кодирования (Claude Code, OpenCode, Codex): агент получает полный спектр действий в Telegram через `tg-agent` CLI, а скилл обучает его каталогу команд и правилам безопасности. Каждая команда самодостаточна — открывает подключение, делает работу, завершается; демон не нужен.
+tg-agent спроектирован как зависимость для агентов кодирования (Claude Code, OpenCode, Codex): агент получает полный спектр действий в Telegram через `tg-agent` CLI, а скилл обучает его каталогу команд и правилам безопасности. Каждая команда самодостаточна — делает работу и завершается; демон не нужен. Пока работает воркер-демон, живые команды выполняются на его Telegram-подключении через локальный relay (#1868) — тот же вывод, без второго входа и без очереди.
 
 - Установка и настройка: [Быстрый старт](../getting-started/quickstart.md)
 - Каталог команд для агентов: [`skills/tg-agent/reference.md`](https://github.com/axisrow/tg_content_factory/blob/main/skills/tg-agent/reference.md)
 - Безопасность: реальные действия агент выполняет только после явного подтверждения пользователя — правила зашиты в скилл
-- Сбор по расписанию: фоновый `tg-agent worker`; разовые действия — обычный вызов CLI
+- Сбор по расписанию: воркер-демон (`tg-agent restart`); разовые действия — обычный вызов CLI
 
-## Встроенный AI-агент (легаси, заморожен)
+## Удалено в #1868
 
-Встроенный AI-агент с 100+ MCP-инструментами, покрывающими все операции системы. Работает; с 2026-09 разработка приостановлена — нативный путь для агентов выше.
+Встроенный агент-чат (`agent chat`, интерактивный TUI, треды, контекст, остановка; web `/agent`), MCP-сервер (`mcp-server`) и построенные на нём агентные бэкенды Codex SDK и Google ADK (dev-точка `adk/` и extra `adk`) удалены без замены. Инструменты управления тредами (`list/create/delete/rename_agent_thread`, `get_thread_messages`) удалены вместе с ними. Codex как **провайдер изображений** (`image generate --model codex:…`, extra `codex`) остаётся.
+
+## Агент контент-пайплайнов
+
+Движок агента (`AgentManager` с реестром агент-инструментов) остаётся для контент-пайплайнов: пайплайн с `--generation-backend deep_agents` (`pipeline add` / `pipeline edit`) генерирует текст через него.
+
+```bash
+python -m tg_agent.main pipeline add NAME --prompt-template TEXT --source CHANNEL_ID --target DIALOG_ID --generation-backend deep_agents
+python -m tg_agent.main pipeline generate ID
+python -m tg_agent.main settings agent                       # показать текущий бэкенд и шаблон промпта
+python -m tg_agent.main settings agent --prompt-template TEXT
+```
 
 ## Backends
 
 | Backend | Условие активации |
 |---------|------------------|
+| `deepagents` | Есть рабочие конфиги провайдеров в БД (`tg-agent provider add`); иначе — fallback по `AGENT_FALLBACK_MODEL` / `AGENT_FALLBACK_API_KEY` |
 | `claude-agent-sdk` | `ANTHROPIC_API_KEY` или `CLAUDE_CODE_OAUTH_TOKEN` в окружении |
-| `deepagents` | Fallback, если Claude недоступен |
-| `codex` | Codex SDK (`pip install -e ".[codex]"`) + авторизованный Codex CLI; только через Developer Override |
-| `adk` | Google ADK (`pip install -e ".[adk]"`) + `GOOGLE_API_KEY` / `GEMINI_API_KEY` (модели Gemini); только через Developer Override |
 
-Автовыбор использует только `claude-agent-sdk` и `deepagents`. Бэкенды `codex` и `adk` запускают тяжёлый out-of-process `mcp-server` subprocess, поэтому в авто-цепочку не входят и включаются только вручную через Developer Override.
+Автовыбор: `deepagents` при рабочих конфигах провайдеров в БД, затем `claude-agent-sdk`, затем `deepagents` как fallback. `ANTHROPIC_API_KEY` и `CLAUDE_CODE_OAUTH_TOKEN` не переиспользуются `deepagents`.
 
-Переключение: Web UI → Settings → Agent → Developer Override.
-
-## ADK dev UI и eval flow
-
-ADK получает тот же реестр инструментов через MCP. Для локальной разработки
-установите optional extra и запустите штатный ADK Web UI из корня репозитория:
-
-```bash
-pip install -e ".[adk]"
-TG_CONFIG_PATH=/path/to/config.yaml adk web adk
-```
-
-В UI откройте вкладку **Eval**, создайте eval set и сохраните текущую сессию
-как eval case. После редактирования кейсов тот же набор можно запускать без UI:
-
-```bash
-adk eval adk/tg_content_factory path/to/evalset.evalset.json --print_detailed_results
-```
-
-`adk/tg_content_factory/agent.py` — тонкий ADK entrypoint: он экспортирует `root_agent` и
-переиспользует MCP wiring из `AdkSdkBackend`. Dev UI запускается без
-in-process Telegram pool (`--no-pool`), поэтому database-backed tools доступны,
-а pool-dependent tools возвращают штатный ответ о недоступности. Eval runs
-подхватывают сохранённый `agent_prompt_template` (переменные контекста без
-сессии заменяются пустыми значениями) и следует выполнять с тестовыми данными
-и отдельным конфигом. Это opt-in flow и не входит в обычный CI без
-установленного ADK и Google credentials.
-
-## Запуск
-
-=== "CLI"
-    ```bash
-    python -m tg_agent.main agent chat "собери сообщения из @channel"
-    python -m tg_agent.main agent threads          # список тредов
-    python -m tg_agent.main agent thread-create --title "Анализ"
-    python -m tg_agent.main agent messages 1       # сообщения треда
-    ```
-
-=== "Web"
-    `GET /agent/` — чат-интерфейс с тредами
+Переключение: `tg-agent settings agent --backend auto|claude|deepagents` (старое написание `claude-agent-sdk` принимается как `claude`). Override действует только в режиме разработчика: `tg-agent settings set agent_dev_mode_enabled 1`.
 
 ## Категории инструментов
 
 | Категория | Кол-во | Примеры |
 |-----------|--------|---------|
-| READ | 40+ | `search_messages`, `list_channels`, `get_participants` |
-| WRITE | 50+ | `collect_channel`, `send_message`, `generate_draft` |
-| DELETE | 10+ | `delete_message`, `kick_participant`, `delete_channel` |
+| READ | 78 | `search_messages`, `list_channels`, `get_participants` |
+| WRITE | 92 | `collect_channel`, `send_message`, `generate_draft` |
+| DELETE | 16 | `delete_message`, `kick_participant`, `delete_channel` |
 
 ## Права доступа
 
@@ -81,7 +51,7 @@ in-process Telegram pool (`--no-pool`), поэтому database-backed tools д�
 - **WRITE** — запись и изменения
 - **DELETE** — удаление (требует явного включения)
 
-Настройка: Web UI → Settings → Agent → Tool Permissions (вкладка по каждому аккаунту).
+Права хранятся в DB-настройке `agent_tool_permissions` (JSON; без неё все инструменты разрешены) — читаются и пишутся через `tg-agent settings get` / `tg-agent settings set`. Интерактивного запроса доступа (`PermissionGate` в Web/TUI-сессии) больше нет: если ACL сохранён, инструмент без явной записи (`REQUESTABLE`) скрыт от модели и не выполняется, пока доступ не выдан явно.
 
 ## Полный список инструментов
 

@@ -1,13 +1,14 @@
 # Архитектура
 
-> **2026-09, доктрина CLI-first:** CLI — нативная поверхность (агенты кодирования: `tg-agent` CLI + скилл); Web UI и встроенный агент — легаси, заморожены. См. Positioning в корневом `CLAUDE.md`.
+> **CLI — единственная поверхность** (агенты кодирования: `tg-agent` CLI + скилл). Веб-панель, встроенный агент-чат с TUI и MCP-сервер удалены в #1868. См. Positioning в корневом `CLAUDE.md`.
 
 ## Три слоя
 
 ```
 ┌─────────────────────────────────────────────┐
-│           CLI  /  Web UI  /  Agent          │
-│  (параллельные входные точки к одной логике) │
+│        CLI (tg-agent)  ·  воркер-демон      │
+│   (демон владеет Telegram-подключениями;    │
+│    CLI работает на них через relay)         │
 └──────────────────┬──────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────┐
@@ -29,23 +30,33 @@
 ### ClientPool
 Управляет пулом Telethon-клиентов (multi-account). Ротация flood wait: пропускает аккаунты с активным `flood_wait_until`. StringSession теряет entity cache между рестартами — поэтому `collect_all_channels()` вызывает `client.get_dialogs()` перед итерацией.
 
+### Воркер-демон
+`tg-agent restart` (или `tg-agent worker` под tmux/systemd) запускает рантайм воркера: `tg_agent/runtime/bootstrap.py` собирает `RuntimeContainer`, `tg_agent/runtime/worker.py` его исполняет с управляемым PID-файлом. Демон владеет живым `ClientPool`, `CollectionQueue`, `UnifiedDispatcher`, `TelegramCommandDispatcher`, `SchedulerManager`, DM-слушателем и публикует `runtime_snapshots`, которые читают CLI-команды (`scheduler status` и др.).
+
+### Session-owner relay (#1868)
+`tg_agent/telegram/relay.py`: одним Telegram-подключением аккаунта владеет один процесс — воркер-демон или общий gateway. Он слушает loopback-relay (127.0.0.1, случайный порт, токен; endpoint-файл `<db>.relay.json`, 0600). Любой другой процесс строит обычный `ClientPool(relay=...)`: его клиенты без auth key сериализуют каждый MTProto-запрос, владелец выполняет его на своём подключении за своими floodgate-гардами, а сырой ответ разбирается на стороне клиента. Одна авторизация, одно подключение, один flood-бюджет, тот же нативный код. `cli/runtime.init_pool` выбирает путь: проект в режиме gateway → relay gateway; живой локальный демон → relay демона; иначе CLI подключается сам. Старый демон/gateway без relay — жёсткая ошибка с просьбой перезапустить (`tg-agent restart`, `tg-agent gateway restart --shared`). Запросы, которые завершили бы общую сессию (`auth.*`, смена телефона/2FA/TTL, сброс сессий), relay отклоняет; диалоги с BotFather (`notification setup/delete`) выполняются на владельце — только он получает ответы BotFather.
+
+### Queue wake (#1868)
+`tg_agent/runtime/wake.py`: постановка задачи в очередь (`telegram_commands`, `collection_tasks`) будит циклы воркера сразу — в том же процессе через событие, из CLI-процесса через relay демона (операция `wake`). Поллинг остался только как страховка.
+
 ### Collector
 Инкрементальный сбор: `min_id = channel.last_collected_id`, `reverse=True`. После цикла `last_collected_id = max(seen message_ids)`. Batch insert через `INSERT OR IGNORE` + `UNIQUE(channel_id, message_id)`.
 
 ### SearchEngine
 - **FTS5**: полнотекстовый поиск с wildcard matching
 - **Semantic**: NumPy KNN без sqlite-vec (portable fallback)
-- **AISearchEngine**: LLM-powered поиск
+- **AISearchEngine**: LLM-powered поиск (собирается в контейнере, но после #1868 ни одна поверхность его не вызывает — режим был в веб-панели)
 
 ### UnifiedDispatcher
 Поллит БД для generic tasks (CONTENT_GENERATE, CONTENT_PUBLISH, PIPELINE_RUN, PHOTO_DUE) и диспетчеризирует к handler-методам. Восстанавливает прерванные задачи при старте.
 
-### Agent System
-`AgentProviderService` выбирает backend:
+### Агент пайплайнов
+Движок агента остаётся только для контент-пайплайнов (`--generation-backend deep_agents`): `AgentManager.get_runtime_status()` (`tg_agent/agent/manager.py`) выбирает backend:
+- `deepagents`, если в БД есть рабочие конфиги провайдеров
 - `claude-agent-sdk` при наличии `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`
-- `deepagents` как fallback с provider adapters
+- `deepagents` как fallback (`AGENT_FALLBACK_MODEL`)
 
-100+ MCP-инструментов покрывают все CLI/API операции.
+`agent_backend_override` (режим разработчика; `tg-agent settings agent --backend auto|claude|deepagents`) принудительно выбирает один. Реестр агент-инструментов (`tg_agent/agent/tools/`) — инструменты этого движка; соответствие CLI — в [CLI / Agent Tool Parity](reference/parity.md). Встроенный чат (`agent …`, TUI, web `/agent`), `mcp-server` и бэкенды Codex/ADK удалены в #1868.
 
 ## Database Access Pattern
 
@@ -83,27 +94,11 @@ pass-through-методов (ratchet «только вниз») — добавл
 - `tg_agent/cli/pipeline/` — отдельные обработчики CRUD, генерации, модерации и графа; форматирование результатов и JSONL вынесено в `responses.py`.
 - Общий dispatcher владеет одним lifecycle БД и пула; фабрики сервисов передаются обработчикам через `PipelineServices`.
 
-## Runtime and Web App Wiring
+## Runtime Wiring
 
-- `tg_agent/runtime/bootstrap.py` — общая сборка сервисов и lifecycle worker; `RuntimeContainer` не содержит шаблонов или web timing state.
-- `axisrow/tg_webui: src/tg_webui/bootstrap.py` — совместимые входные точки и сборка web-представления поверх runtime; `AppContainer` добавляет Jinja-шаблоны и timing buffer.
-
-- `axisrow/tg_webui: src/tg_webui/assembly.py` — `register_routes()` монтирует все роутеры; `configure_app()` привязывает `AppContainer` к `app.state.*`
-- `axisrow/tg_webui: src/tg_webui/container.py` — `AppContainer` агрегирует все сервисы
-- `axisrow/tg_webui: src/tg_webui/deps.py` — хелперы `deps.get_db()`, `deps.get_pool()` и др.
-
-## Web Route Layering
-
-Для новых и постепенно рефакторимых web routes используем тонкие входные точки:
-
-- `forms`: парсят и валидируют данные FastAPI form/query/path без бизнес-логики.
-- `handlers`: оркестрируют сервисы и возвращают доменный результат.
-- `responses`: мапят результат в `RedirectResponse`, `JSONResponse` или template response.
-
-Общие redirect/JSON helpers живут в `axisrow/tg_webui: src/tg_webui/responses.py`. Flash-redirects должны использовать
-query-string convention `?msg=...` / `?error=...` и статус `303`; route modules не должны заново
-кодировать этот boilerplate, если хватает общего helper-а. Не создавайте пустые `forms` или
-`handlers` модули заранее — выделяйте их при реальном разрезании конкретного route domain.
+- `tg_agent/runtime/bootstrap.py` — сборка сервисов, восстановление при старте и остановка воркера; результат — `RuntimeContainer` (`tg_agent/runtime/container.py`).
+- `tg_agent/runtime/worker.py` — исполнение контейнера под `restart`/`worker`: PID-файл, heartbeat и snapshot-публикация, relay владельца сессий.
+- `tg_agent/cli/runtime.py` — сторона CLI: `init_db`, `init_pool` (relay gateway → relay демона → собственное подключение) и пробуждение очередей демона после постановки задач.
 
 ## Ключевые паттерны
 
@@ -115,7 +110,8 @@ query-string convention `?msg=...` / `?error=...` и статус `303`; route m
 | **Incremental collection** | `min_id` + `reverse=True` + обновление `last_collected_id` |
 | **Batch insert** | `INSERT OR IGNORE` + `UNIQUE(channel_id, message_id)` |
 | **Cancellation** | `asyncio.Event` проверяется каждые 10 сообщений |
-| **Session tokens** | HMAC-SHA256, payload `{user, exp}`, cookie 30 дней |
+| **Session-owner relay** | Одно подключение на аккаунт: демон/gateway выполняет MTProto-запросы остальных процессов |
+| **Queue wake** | Постановка в очередь будит воркер сразу; поллинг — страховка |
 | **CollectionQueue** | `asyncio.Queue` + single worker, статусы в БД |
 | **DB migrations** | `PRAGMA table_info` + `ALTER TABLE ADD COLUMN` |
 

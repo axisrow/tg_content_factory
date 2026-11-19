@@ -35,6 +35,16 @@ A 1 ms heartbeat records scheduling delay alongside the real `/health` handler
 invoked through an in-process HTTP ASGI client. `health_scheduled_max_ms` includes
 scheduling delay plus HTTP/DB handling, excluding the intended 1 ms sleep. This
 is a concurrency probe, not a benchmark of a fully deployed web application.
+
+!!! note "Web-panel probe no longer applies (#1868)"
+    The `/health` endpoint belonged to the web panel, which was removed in #1868;
+    FastAPI and the `tg-webui` package are no longer installed with tg-agent. The
+    `health_*` numbers below are historical (measured 2026-10-28 against the
+    panel's endpoint) and say nothing about the current worker-only runtime. The
+    script still imports `fastapi`, `httpx` and `tg_webui` for that probe, so
+    reproducing it as checked in needs those packages installed separately. The
+    build/search, loop-lag and RSS measurements are unaffected.
+
 Peak RSS is for the whole worker process, including imports and temporary arrays.
 Database generation occurs in the parent process outside those measurements.
 
@@ -80,6 +90,6 @@ Numbers below are before → after. Peak RSS includes the whole worker process.
 | 50,000 | 10337.1 → 7828.77 | 8805.84 → 93.8 | 53.26 → 65.21 | 56.73 → 2.89 | 1390.1 → 438.2 |
 
 At 50,000 vectors, loading 200 ranked candidates used 200 → 1 SELECTs and took 56.23 → 14.07 ms.
-The maximum scheduled HTTP /health latency during unfiltered search was 58.31 → 3.99 ms; during the build it was 10358.19 → 100.42 ms.
+The maximum scheduled HTTP /health latency during unfiltered search was 58.31 → 3.99 ms; during the build it was 10358.19 → 100.42 ms (historical: the web panel's `/health` endpoint was removed in #1868).
 
 The primary gain is responsiveness and memory, not faster numerical search. The host is shared, so maxima include scheduler noise; this is not a hard latency guarantee. The under-20-ms search heartbeat target was met at 50,000 vectors in this run. Builds still have occasional pauses, and the raw results retain the higher 10,000-vector search outlier.

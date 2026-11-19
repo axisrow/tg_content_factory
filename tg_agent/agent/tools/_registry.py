@@ -740,7 +740,8 @@ async def require_phone_permission(db: Database, phone: str, tool_name: str) -> 
             return await gate.check(tool_name, phone)
         return _text_response(
             f"❌ Инструмент '{tool_name}' не разрешён без интерактивного подтверждения. "
-            "Запустите агент в Web/TUI-сессии, чтобы запросить доступ через PermissionGate."
+            "Разрешите его заранее в настройке agent_tool_permissions "
+            "(`tg-agent settings set agent_tool_permissions '<json>'`)."
         )
 
     if phone and allowed_phones:

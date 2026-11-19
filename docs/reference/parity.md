@@ -1,8 +1,8 @@
-# CLI / Web / Agent Parity
+# CLI / Agent Tool Parity
 
-> **2026-09, легаси-документ.** Доктрина изменилась на **CLI-first**: CLI — единственная активно развиваемая поверхность; Web и agent-tools/MCP заморожены. Требование трёхсторонней parity больше не действует — таблицы ниже описывают состояние на момент заморозки.
+> **CLI — единственная поверхность.** Веб-панель удалена в #1868 вместе со встроенным агент-чатом и MCP-сервером. Колонка «Web Endpoint» ниже — **историческая**: эндпоинтов больше нет; колонка сохранена ради истории и формата таблиц (их разбирает `tests/test_cli_agent_parity.py`). Действующее соответствие — CLI ↔ agent tools (инструменты движка контент-пайплайнов).
 
-Каждая операция по возможности доступна через CLI, Web и agent tools. Для управления диалогами каноническое имя во всех интерфейсах теперь `dialogs`.
+У каждого agent tool есть CLI-эквивалент (это проверяет `tests/test_cli_agent_parity.py`); CLI-операции без agent tool помечены как исключения. Для управления диалогами каноническое имя — `dialogs`.
 
 ## Каналы
 
@@ -32,11 +32,8 @@
 
 ## Переименования каналов
 
-| Операция | CLI | Web Endpoint | Agent Tool |
-|----------|-----|-------------|------------|
-| Список переименований | *исключение: web-only UI модерации* | `GET /channels/renames` | *исключение: web-only UI модерации* |
-| Отфильтровать переименование | *исключение: web-only UI модерации* | `POST /channels/renames/{event_id}/filter` | *исключение: web-only UI модерации* |
-| Оставить переименование | *исключение: web-only UI модерации* | `POST /channels/renames/{event_id}/keep` | *исключение: web-only UI модерации* |
+Модерация переименований каналов (список, «отфильтровать», «оставить») была только
+в веб-панели и удалена вместе с ней в #1868; CLI-команды и agent tool для неё нет.
 
 ## Сбор сообщений
 
@@ -95,7 +92,6 @@
 | Вкл/выкл фильтр | `filter toggle` | `POST /channels/{pk}/filter-toggle` | `toggle_channel_filter` |
 | Показать отфильтрованные приватные каналы для решения владельца | `filter backfill-private` | *исключение: CLI-вывод миграции* | *исключение: миграция не является agent-tool* |
 | Очистить filtered-каналы | `filter purge` | `POST /channels/filter/purge-all` | `purge_filtered_channels` |
-| Выбранные очистить | *исключение: batch UI-выбор* | `POST /channels/filter/purge-selected` | *исключение: batch UI-выбор* |
 | Hard delete | `filter hard-delete` | `POST /channels/filter/hard-delete-selected` | `hard_delete_channels` |
 | Очистить сообщения канала | `filter purge-messages` | `POST /channels/{id}/purge-messages` | `purge_channel_messages` |
 
@@ -139,8 +135,6 @@
 | Фильтр контента: задать | `pipeline filter set` | *исключение: filter CRUD только-CLI* | *исключение: filter CRUD только-CLI* |
 | Фильтр контента: показать | `pipeline filter show` | *исключение: filter CRUD только-CLI* | *исключение: filter CRUD только-CLI* |
 | Фильтр контента: очистить | `pipeline filter clear` | *исключение: filter CRUD только-CLI* | *исключение: filter CRUD только-CLI* |
-| Мастер создания | *исключение: web-only (CLI≈pipeline add)* | `POST /pipelines/create-wizard` | *исключение: web-only мастер (CLI≈pipeline add)* |
-| Превью dry-run | *исключение: web-only (CLI≈dry-run-count)* | `POST /pipelines/{id}/dry-run` | *исключение: web-only превью (CLI≈dry-run-count)* |
 
 ## Планировщик
 
@@ -155,7 +149,6 @@
 | Сохранить настройки | `settings set` | `POST /settings/save-scheduler` | `save_scheduler_settings` |
 | Пауза очереди сбора | `scheduler queue-pause` | `POST /scheduler/pause` | *исключение: служебное управление очередью* |
 | Возобновить очередь | `scheduler queue-resume` | `POST /scheduler/resume` | *исключение: служебное управление очередью* |
-| Прогрев диалогов | — | `POST /scheduler/trigger-warm` | *исключение: служебный прогрев кеша* |
 
 ## Уведомления
 
@@ -209,11 +202,11 @@
 
 > **LLM-судья — write-операция (#994 CLI, #999 web+agent).** Запуск судьи
 > (`ChannelAnalysisService.classify_channel`) делает реальный provider-вызов и апсертит вердикт в
-> `channel_ratings`. Подключён к CLI (`analytics channel-rate`, #994), web (HTMX POST со swap-фрагментом
-> вердикта) и agent (`rate_channel`, WRITE-категория, гейт `confirm=true`). Все три интерфейса
-> разделяют одни и те же гарды: нет провайдера → отказ без траты; mistyped-модель → ошибка (не молчаливый
-> stub-вердикт); пустой канал → пропуск без provider-вызова. Read-путь (`channel-rating` /
-> `GET …/ratings` / `get_channel_ratings`) даёт паритетный просмотр результата.
+> `channel_ratings`. Подключён к CLI (`analytics channel-rate`, #994) и agent (`rate_channel`,
+> WRITE-категория, гейт `confirm=true`); web-вариант (HTMX POST) удалён вместе с панелью в #1868. Оба
+> интерфейса разделяют одни и те же гарды: нет провайдера → отказ без траты; mistyped-модель → ошибка (не
+> молчаливый stub-вердикт); пустой канал → пропуск без provider-вызова. Read-путь (`channel-rating` /
+> `get_channel_ratings`) даёт паритетный просмотр результата.
 
 ## Dialogs
 
@@ -336,14 +329,12 @@
 
 | Операция | CLI | Web Endpoint |
 |----------|-----|-------------|
-| Запустить | `serve` | — |
 | Фоновый worker | `worker` | — |
-| MCP-сервер инструментов (stdio) | `mcp-server` | — |
 | Остановить | `stop` | — |
-| Перезапустить | `restart` | — |
-| Health check | — | `GET /health` |
-| Вход | — | `GET/POST /login` |
-| Выход | — | `GET /logout` |
+| Перезапустить (остановить + worker) | `restart` | — |
+| Статус демона | `daemon status` | — |
 | Логи | `debug logs` | `GET /debug/logs` |
 | Тайминги | `debug timing` | `GET /debug/timing` |
 | Память | `debug memory` | `GET /debug/memory` |
+
+> `serve` (веб-панель с health check и входом/выходом) и `mcp-server` удалены в #1868.

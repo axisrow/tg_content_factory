@@ -4,22 +4,17 @@
 
 ## Настройка
 
-=== "CLI"
-    ```bash
-    python -m tg_agent.main notification setup      # создать бота через BotFather
-    python -m tg_agent.main notification status     # статус бота
-    python -m tg_agent.main notification test       # тестовое сообщение
-    python -m tg_agent.main notification dry-run    # превью совпадений без отправки
-    python -m tg_agent.main notification delete     # удалить бота
-    ```
-
-=== "Web"
-    `POST /settings/notifications/setup` · `GET /settings/notifications/status`
-    `POST /settings/notifications/test` · `POST /settings/notifications/delete`
+```bash
+python -m tg_agent.main notification setup      # создать бота через BotFather
+python -m tg_agent.main notification status     # статус бота
+python -m tg_agent.main notification test       # тестовое сообщение
+python -m tg_agent.main notification dry-run    # превью совпадений без отправки
+python -m tg_agent.main notification delete     # удалить бота
+```
 
 ## Как работает
 
-1. Создаётся личный бот через BotFather (используя подключённый Telegram аккаунт)
+1. Создаётся личный бот через BotFather (используя подключённый Telegram аккаунт). Диалог с BotFather (`notification setup` / `delete`) идёт на владельце сессии — воркер-демоне или общем gateway, если он работает, — потому что только он получает ответы BotFather (#1868)
 2. Планировщик проверяет активные поисковые запросы при каждом запуске
 3. При новых совпадениях — отправляется уведомление с текстом и ссылкой `t.me/channel/msg_id`
 
@@ -30,5 +25,3 @@
 ```bash
 python -m tg_agent.main notification dry-run
 ```
-
-Web: `POST /scheduler/dry-run-notifications`
