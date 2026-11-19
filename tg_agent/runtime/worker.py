@@ -443,10 +443,23 @@ async def _start_owner_relay(container, config: AppConfig):
     if not isinstance(container.pool, ClientPool):
         return None
     try:
-        return await serve_pool_relay(container.pool, relay_endpoint_path(config.database.path))
+        return await serve_pool_relay(
+            container.pool, relay_endpoint_path(config.database.path), ops={"wake": _wake_op}
+        )
     except OSError:
         logger.exception("session owner relay failed to start; CLI live commands will be refused")
         return None
+
+
+async def _wake_op(_grant, message: dict, _push) -> bool:
+    """Relay op: a CLI process enqueued work for one of this worker's queues."""
+    from tg_agent.runtime import wake
+
+    queue = str(message.get("queue") or "")
+    if queue not in wake.QUEUES:
+        raise ValueError(f"unknown queue {queue!r}")
+    wake.notify_local(queue)
+    return True
 
 
 def run_worker(config: AppConfig) -> None:

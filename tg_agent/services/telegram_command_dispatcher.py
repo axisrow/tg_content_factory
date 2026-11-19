@@ -20,6 +20,7 @@ from tg_agent.models import (  # noqa: F401  (RuntimeSnapshot re-exported for te
     TelegramCommandStatus,
 )
 from tg_agent.paths import data_root
+from tg_agent.runtime import wake
 from tg_agent.scheduler.service import SchedulerManager
 from tg_agent.services.dispatcher._constants import (
     COMMAND_STATUS_UPDATE_BUSY_RETRY_INITIAL_SEC,
@@ -138,6 +139,7 @@ class TelegramCommandDispatcher(
         self._notifier = notifier
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
+        self._wake: asyncio.Event | None = None
         self._last_reaction_at_monotonic: dict[str, float] = {}
 
     async def start(self) -> None:
@@ -148,10 +150,16 @@ class TelegramCommandDispatcher(
         recovered = await recovery if inspect.isawaitable(recovery) else 0
         if recovered:
             logger.warning("Recovered %d interrupted dialogs commands on startup", recovered)
+        if self._wake is None:
+            self._wake = wake.subscribe(wake.TELEGRAM_COMMANDS)
         self._task = asyncio.create_task(self._run_loop(), name="telegram_command_dispatcher")
 
     async def stop(self) -> None:
         self._stop_event.set()
+        if self._wake is not None:
+            self._wake.set()  # leave an idle wait at once
+            wake.unsubscribe(wake.TELEGRAM_COMMANDS, self._wake)
+            self._wake = None
         if self._task and not self._task.done():
             self._task.cancel()
             try:
@@ -185,6 +193,8 @@ class TelegramCommandDispatcher(
                 )
                 if not resumed:
                     return
+            if self._wake is not None:
+                self._wake.clear()  # a notify from here on wakes the idle wait below
             command = await self._db.repos.telegram_commands.claim_next_command()
         except DatabaseBusyError:
             # Transient lock while claiming — never let it kill the loop
@@ -193,7 +203,10 @@ class TelegramCommandDispatcher(
             await asyncio.sleep(1.0)
             return
         if command is None:
-            await asyncio.sleep(1.0)
+            if self._wake is not None:
+                await wake.wait(self._wake, 1.0)
+            else:
+                await asyncio.sleep(1.0)
             return
         started_at = time.monotonic()
         is_auth_command = command.command_type.startswith("auth.")

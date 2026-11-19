@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Iterable
 from logging.handlers import RotatingFileHandler
@@ -107,8 +108,35 @@ def restore_logging(removed_handlers: list[logging.Handler] | logging.Handler | 
         root.addHandler(removed_handlers)
 
 
+def _install_daemon_waker(config) -> None:
+    """Enqueues from this CLI process wake the live daemon's queues at once (#1868).
+
+    Without a daemon (or with one that serves no relay) the hook does nothing and
+    the work waits for its next start, exactly as before.
+    """
+    from tg_agent.runtime import wake
+
+    async def wake_daemon(queue: str) -> None:
+        if not worker_handoff.serve_is_running(config):
+            return
+        from tg_agent.telegram.relay import RelayConnection, read_endpoint, relay_endpoint_path
+
+        endpoint = read_endpoint(relay_endpoint_path(config.database.path))
+        if endpoint is None:
+            return
+        async with asyncio.timeout(2.0):
+            connection = await RelayConnection.open(endpoint)
+            try:
+                await connection.call("wake", queue=queue)
+            finally:
+                await connection.close()
+
+    wake.set_remote(wake_daemon)
+
+
 async def init_db(config_path: str):
     config = load_config(config_path)
+    _install_daemon_waker(config)
     db = Database(
         config.database.path,
         session_encryption_secret=resolve_session_encryption_secret(config),

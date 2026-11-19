@@ -20,6 +20,7 @@ from tg_agent.database.bundles import ChannelBundle
 from tg_agent.gateway.pool import GatewayOperationError
 from tg_agent.live_runtime_pause import LiveRuntimePauseGate
 from tg_agent.models import Channel, CollectionTaskStatus
+from tg_agent.runtime import wake
 from tg_agent.telegram.collector import (
     RESOLVE_USERNAME_BACKOFF_BUFFER_SEC,
     AllCollectionClientsFloodedError,
@@ -172,6 +173,7 @@ class CollectionQueue:
         self._known_task_ids: set[int] = set()
         self._pull_task: asyncio.Task | None = None
         self._pull_stop = asyncio.Event()
+        self._pull_wake: asyncio.Event | None = None
         self._shutdown_requested = False
         self._shutdown_event = asyncio.Event()
         self._live_runtime_pause_gate = live_runtime_pause_gate
@@ -1216,6 +1218,8 @@ class CollectionQueue:
         if self._pull_task is None:
             return
         self._pull_stop.set()
+        if self._pull_wake is not None:
+            self._pull_wake.set()  # leave the idle wait at once
         try:
             await asyncio.wait_for(self._pull_task, timeout=timeout)
         except asyncio.TimeoutError:
@@ -1227,18 +1231,22 @@ class CollectionQueue:
         self._pull_task = None
 
     async def _db_pull_loop(self, interval: float) -> None:
-        while not self._pull_stop.is_set():
-            try:
-                await self._ingest_pending_tasks()
-            except Exception:
-                logger.exception("[collection-queue] DB pull failed")
-            try:
-                # asyncio.timeout avoids the 3.11 wait_for unreleased-waiter
-                # leak (see the supervisor loop above).
-                async with asyncio.timeout(interval):
-                    await self._pull_stop.wait()
-            except TimeoutError:
-                continue
+        # Woken the moment a task row is inserted (#1868); ``interval`` is now
+        # only the safety-net poll.
+        self._pull_wake = wake.subscribe(wake.TASKS)
+        try:
+            while not self._pull_stop.is_set():
+                self._pull_wake.clear()
+                try:
+                    await self._ingest_pending_tasks()
+                except Exception:
+                    logger.exception("[collection-queue] DB pull failed")
+                if self._pull_stop.is_set():
+                    break
+                await wake.wait(self._pull_wake, interval)
+        finally:
+            wake.unsubscribe(wake.TASKS, self._pull_wake)
+            self._pull_wake = None
 
     def _drain_memory_queue(self) -> set[int]:
         drained: set[int] = set()
