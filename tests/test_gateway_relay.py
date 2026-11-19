@@ -337,3 +337,58 @@ async def test_an_expired_event_cursor_recovers_dm_history_on_the_relay(gateway,
     assert await db.get_setting("gateway_event_cursor") == "1"
     assert await _acknowledged(gateway.store, PROJECT_A) == 1
     assert consumer.status()["resync_required"] is False
+
+
+class _Login:
+    """A Telegram login that hands out secrets the gateway must never relay."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def send_code(self, phone):
+        return {"phone_code_hash": "hash", "session_str": "pending-secret", "code_type": "Telegram"}
+
+    async def verify_code(self, phone, code, code_hash, password):
+        assert (code, code_hash, password) == ("12345", "hash", None)
+        return "authorized-session-secret"
+
+    async def cleanup(self):
+        pass
+
+
+async def test_logins_run_in_the_gateway_and_never_return_sessions(gateway, monkeypatch):
+    gateway.access.auth = SimpleNamespace(api_id=1, api_hash="hash", proxy=None)
+    monkeypatch.setattr("tg_agent.gateway.auth.TelegramAuth", _Login)
+    project_a = TelegramGatewayClient(await gateway.connect(TOKEN_A))
+    project_b = TelegramGatewayClient(await gateway.connect(TOKEN_B))
+
+    sent = await project_a.auth("send_code", {"phone": "+200"})
+    verified = await project_a.auth("verify_code", {"phone": "+200", "code": "12345", "phone_code_hash": "hash"})
+
+    assert "secret" not in repr(sent) and "secret" not in repr(verified)
+    assert "+200" in {row["phone"] for row in await project_a.accounts()}
+    assert "+200" not in {row["phone"] for row in await project_b.accounts()}
+    account = await gateway.store.account_for_phone("+200")
+    assert await gateway.store.session(PROJECT_A, account) == "authorized-session-secret"
+
+
+async def test_a_two_factor_challenge_reaches_the_project_and_secrets_are_cleared(gateway, monkeypatch):
+    from tg_agent.services.telegram_command_dispatcher import TelegramCommandDispatcher
+    from tg_shared.auth import TwoFactorRequiredError
+
+    class TwoFactorLogin(_Login):
+        async def verify_code(self, phone, code, code_hash, password):
+            raise TwoFactorRequiredError()
+
+    gateway.access.auth = SimpleNamespace(api_id=1, api_hash="hash", proxy=None)
+    monkeypatch.setattr("tg_agent.gateway.auth.TelegramAuth", TwoFactorLogin)
+    client = TelegramGatewayClient(await gateway.connect(TOKEN_A))
+    with pytest.raises(TwoFactorRequiredError):
+        await client.auth("verify_code", {"phone": "+200", "code": "12345", "phone_code_hash": "hash"})
+
+    dispatcher = object.__new__(TelegramCommandDispatcher)
+    dispatcher._gateway = client
+    payload = {"phone": "+200", "code": "12345", "phone_code_hash": "hash", "password_2fa": "test-secret"}
+    with pytest.raises(TwoFactorRequiredError):
+        await dispatcher._dispatch("auth.verify_code", payload)
+    assert payload["password_2fa"] == payload["code"] == ""
