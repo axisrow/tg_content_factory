@@ -63,10 +63,7 @@ class DraftNotificationService:
         )
 
         try:
-            from tg_agent.gateway.context import gateway_intent
-
-            with gateway_intent(f"draft-notification:{run.id}"):
-                success = await self._notifier.notify(message)
+            success = await self._notifier.notify(message)
             if success:
                 logger.info("Sent draft notification for run %s", run.id)
             return success
@@ -109,11 +106,7 @@ class DraftNotificationService:
         message += "\n\nПроверить: /moderation"
 
         try:
-            from tg_agent.gateway.context import gateway_intent
-
-            run_keys = ",".join(str(run.id) for run in runs)
-            with gateway_intent(f"bulk-draft-notification:{pipeline.id}:{run_keys}"):
-                success = await self._notifier.notify(message)
+            success = await self._notifier.notify(message)
             return len(runs) if success else 0
         except Exception:
             logger.exception("Failed to send bulk draft notification")

@@ -147,8 +147,6 @@ async def _publish_accounts_status_snapshot(
                 "resolve_backoffs": resolve_backoffs,
                 "is_warming": is_warming,
                 "timestamp": now.isoformat(),
-                "gateway": (container.pool.gateway_status
-                            if isinstance(getattr(container.pool, "gateway_status", None), dict) else None),
             },
         )
     )
@@ -432,10 +430,10 @@ async def _run_worker_async(config: AppConfig) -> None:
 
 
 async def _start_owner_relay(container, config: AppConfig):
-    """Serve this worker's connections to the project's CLI processes (#1868).
+    """Serve this worker's pool and queue wake-ups to the project's CLI processes (#1868).
 
-    Only a worker that owns real connections publishes a relay; in gateway mode
-    the gateway is the owner and serves its own.
+    In gateway mode the pool itself runs on the gateway's relay; the CLI goes to
+    the gateway directly and uses this relay only to wake the worker's queues.
     """
     from tg_agent.telegram.client_pool import ClientPool
     from tg_agent.telegram.relay import relay_endpoint_path, serve_pool_relay

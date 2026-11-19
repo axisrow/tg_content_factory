@@ -14,7 +14,6 @@ from uuid import uuid4
 
 import aiosqlite
 
-from tg_agent.gateway.action_protocol import READ_ACTIONS
 from tg_agent.security import SessionCipher
 
 SCHEMA = """
@@ -42,11 +41,6 @@ CREATE TABLE IF NOT EXISTS grants (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS project_primary
  ON grants(project_id) WHERE is_primary=1;
-CREATE TABLE IF NOT EXISTS operations (
- project_id TEXT NOT NULL REFERENCES projects(id), request_id TEXT NOT NULL,
- fingerprint TEXT NOT NULL, payload TEXT NOT NULL, state TEXT NOT NULL,
- result TEXT, created_at REAL NOT NULL DEFAULT 0, PRIMARY KEY(project_id,request_id)
-);
 CREATE TABLE IF NOT EXISTS events (
  id INTEGER PRIMARY KEY AUTOINCREMENT, account_id TEXT NOT NULL REFERENCES accounts(id),
  created_at REAL NOT NULL, payload TEXT NOT NULL
@@ -65,19 +59,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS event_identity ON events(account_id,json_extra
 
 
 class GatewayConflictError(ValueError):
-    """An existing identity or operation cannot be silently replaced."""
+    """An existing identity cannot be silently replaced."""
 
 
 class EventCursorExpiredError(ValueError):
     """The client must recover history rather than silently miss old events."""
-
-
-# Operations whose delivery is side-effect free: safe to recover as pending and
-# safe to prune. Everything else keeps its receipt forever so a request ID stays
-# an immutable tombstone (fingerprint conflict, uncertain state).
-_READ_KINDS = frozenset(READ_ACTIONS | {
-    "history", "profile", "inspect_peer", "dialogs", "search", "dm_history", "message_page", "voice_source",
-})
 
 
 def private_key(root: Path, name: str = "gateway.key") -> str:
@@ -109,7 +95,7 @@ def private_key(root: Path, name: str = "gateway.key") -> str:
 
 
 class GatewayStore:
-    """One serialized writer for accounts, grants, operation receipts and events."""
+    """One serialized writer for accounts, grants and DM events."""
 
     def __init__(self, root: Path):
         self.root = root.resolve()
@@ -125,12 +111,9 @@ class GatewayStore:
         self._connection = await aiosqlite.connect(path)
         self._connection.row_factory = aiosqlite.Row
         await self._connection.executescript(SCHEMA)
-        async with self._connection.execute("PRAGMA table_info(operations)") as cur:
-            columns = {row[1] for row in await cur.fetchall()}
-        if "created_at" not in columns:
-            # Pre-#1715-receipt-prune databases keep working; old receipts age out
-            # from their upgrade moment (DEFAULT 0 makes them immediately eligible).
-            await self._connection.execute("ALTER TABLE operations ADD COLUMN created_at REAL NOT NULL DEFAULT 0")
+        # The operation queue and its receipts are gone (#1868): projects run
+        # Telegram requests over the relay.
+        await self._connection.execute("DROP TABLE IF EXISTS operations")
         await self._connection.commit()
 
     async def close(self) -> None:
@@ -333,78 +316,6 @@ class GatewayStore:
             await db.execute("UPDATE accounts SET flood_until=0 WHERE id=?", (account,))
             await db.execute("DELETE FROM account_family_floods WHERE phone=?", (account,))
         return families
-
-    async def submit(self, project: str, request_id: str, payload: dict) -> dict:
-        serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        fingerprint = hashlib.sha256(serialized.encode()).hexdigest()
-        async with self.transaction() as db:
-            async with db.execute(
-                "SELECT fingerprint FROM operations WHERE project_id=? AND request_id=?", (project, request_id),
-            ) as cur:
-                row = await cur.fetchone()
-            if row and row["fingerprint"] != fingerprint:
-                raise GatewayConflictError("Request ID was already used for another payload")
-            if row is None:
-                await db.execute("INSERT INTO operations VALUES (?,?,?,?,?,NULL,?)",
-                                 (project, request_id, fingerprint, serialized, "pending", time.time()))
-        return await self.operation(project, request_id)
-
-    async def operation(self, project: str, request_id: str) -> dict:
-        async with self.transaction() as db:
-            async with db.execute("SELECT * FROM operations WHERE project_id=? AND request_id=?",
-                                  (project, request_id)) as cur:
-                row = await cur.fetchone()
-        if row is None:
-            raise KeyError("Operation not found")
-        return {"request_id": request_id, "state": row["state"],
-                "result": json.loads(row["result"]) if row["result"] else None}
-
-    async def pending(self) -> list[dict]:
-        async with self.transaction() as db:
-            async with db.execute("SELECT project_id,request_id,payload FROM operations WHERE state='pending' "
-                                  "ORDER BY rowid") as cur:
-                return [{**dict(row), "payload": json.loads(row["payload"])} for row in await cur.fetchall()]
-
-    async def transition(self, project: str, request: str, expected: str, state: str, result=None) -> bool:
-        async with self.transaction() as db:
-            async with db.execute(
-                "UPDATE operations SET state=?,result=? WHERE project_id=? AND request_id=? AND state=?",
-                (state, json.dumps(result) if result is not None else None, project, request, expected),
-            ) as cur:
-                return cur.rowcount == 1
-
-    async def recover(self) -> None:
-        """A crash can leave writes delivered: never replay an interrupted operation."""
-        async with self.transaction() as db:
-            async with db.execute("SELECT project_id,request_id,payload FROM operations WHERE state='running'") as cur:
-                rows = await cur.fetchall()
-            for row in rows:
-                payload = json.loads(row["payload"])
-                kind = payload.get("kind")
-                read = kind in _READ_KINDS or (kind == "notification" and payload.get("action") == "status")
-                state = "pending" if read else "uncertain"
-                await db.execute("UPDATE operations SET state=? WHERE project_id=? AND request_id=?",
-                                 (state, row["project_id"], row["request_id"]))
-
-    async def prune_read_receipts(self, *, now: float, ttl: float = 86400) -> int:
-        """Drop aged-out read receipts; write receipts stay forever.
-
-        Read results (message pages, dialogs, avatars) are the bulk of receipt
-        storage and are always re-fetchable. Write receipts — including their
-        fingerprints and uncertain states — must never disappear, or a reused
-        request ID would silently replay an unconfirmed write.
-        """
-        kinds = sorted(_READ_KINDS)
-        placeholders = ",".join("?" for _ in kinds)
-        async with self.transaction() as db:
-            cur = await db.execute(
-                "DELETE FROM operations WHERE created_at>0 AND created_at<? AND state NOT IN ('pending','running') "
-                f"AND (json_extract(payload,'$.kind') IN ({placeholders}) "
-                "OR (json_extract(payload,'$.kind')='notification' "
-                "AND json_extract(payload,'$.action')='status'))",
-                (now - ttl, *kinds),
-            )
-            return cur.rowcount or 0
 
     async def record_event(self, account: str, identity: str, payload: dict, *, now: float) -> None:
         async with self.transaction() as db:

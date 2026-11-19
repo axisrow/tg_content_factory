@@ -123,9 +123,12 @@ class TelegramCommandDispatcher(
         collection_queue: "CollectionQueue | None" = None,
         live_runtime_pause_gate: LiveRuntimePauseGate | None = None,
         notifier: "Notifier | None" = None,
+        gateway=None,
     ):
         self._db = db
         self._pool = pool
+        # Gateway-bound project (#1868): the shared gateway's control client.
+        self._gateway = gateway
         self._config = config
         self._collector = collector
         self._scheduler = scheduler
@@ -232,10 +235,7 @@ class TelegramCommandDispatcher(
                 search_fields["query_len"],
             )
         try:
-            from tg_agent.gateway.context import gateway_intent
-
-            with gateway_intent(f"telegram-command:{command.id}"):
-                result = await self._dispatch(command.command_type, command.payload)
+            result = await self._dispatch(command.command_type, command.payload)
         except asyncio.CancelledError:
             await self._update_command_safely(
                 command.id,
@@ -450,21 +450,20 @@ class TelegramCommandDispatcher(
             )
 
     async def _dispatch(self, command_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-        from tg_agent.gateway.pool import GatewayPool
-
-        if isinstance(self._pool, GatewayPool):
+        if self._gateway is not None:
             if command_type.startswith("auth."):
                 auth_payload = dict(payload)
                 for field in ("code", "password_2fa", "session_string"):
                     if field in payload:
                         payload[field] = ""
-                result = await self._pool.authenticate(command_type.split(".", 1)[1], auth_payload)
+                result = await self._gateway.auth(command_type.split(".", 1)[1], auth_payload)
+                await self._gateway_refresh()
                 return {"result": result, "payload_update": {key: value for key, value in payload.items()
                                                             if key not in {"code", "password_2fa"}}}
             if command_type in {"accounts.toggle", "accounts.delete", "accounts.set_primary"}:
                 from tg_agent.gateway.catalog import ProjectAccountCatalog
 
-                catalog = ProjectAccountCatalog(self._db, self._pool.client)
+                catalog = ProjectAccountCatalog(self._db, self._gateway)
                 account_id = int(payload["account_id"])
                 if command_type == "accounts.delete":
                     await catalog.detach(account_id)
@@ -489,6 +488,12 @@ class TelegramCommandDispatcher(
         if not callable(handler):
             raise RuntimeError(f"Unsupported telegram command: {command_type}")
         return await handler(payload)
+
+    async def _gateway_refresh(self) -> None:
+        from tg_agent.gateway.catalog import ProjectAccountCatalog
+
+        await ProjectAccountCatalog(self._db, self._gateway).refresh()
+        await self._pool.initialize()
 
     async def _get_client(self, phone: str):
         result = await self._pool.get_native_client_by_phone(phone)

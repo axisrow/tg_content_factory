@@ -100,6 +100,8 @@ class Owner:
         return sorted(self.clients)
 
     async def client(self, grant, phone):
+        if phone not in self.clients:
+            raise RelayAccountUnavailableError(f"no live connection for {phone}")
         return self.clients[phone]
 
 

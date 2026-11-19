@@ -1,42 +1,18 @@
-"""The gateway's sole owner of live Telegram sessions."""
+"""The gateway's sole owner of live Telegram sessions (served over the relay, #1868)."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import shutil
 import time
 
 from telethon import events
-from telethon.tl.types import PeerChannel, PeerChat, PeerUser
 
 from tg_agent.config import TelegramRuntimeConfig
-from tg_agent.gateway.artifacts import ArtifactStore
 from tg_agent.gateway.owned_pool import GatewayClientPool
 from tg_agent.gateway.pool_storage import GatewayPoolStorage
-from tg_agent.gateway.protocol import (
-    BusinessAction,
-    Delete,
-    Dialogs,
-    DmHistory,
-    Edit,
-    History,
-    InspectPeer,
-    MessagePage,
-    Notification,
-    Operation,
-    Profile,
-    Publish,
-    ScheduledDelete,
-    Search,
-    Send,
-    VoiceSource,
-)
 from tg_agent.gateway.store import GatewayStore
-from tg_agent.parsers import bare_channel_id
 from tg_agent.telegram.backends import TelegramTransportSession
-from tg_agent.telegram.collector_message_parse import build_message_from_telethon
-from tg_agent.telegram.pool_dialogs import cached_input_peer
 from tg_shared.auth import TelegramAuth
 
 logger = logging.getLogger(__name__)
@@ -52,6 +28,8 @@ class LiveTelegramAccess:
         self._connect_lock = asyncio.Lock()
         self._pool = None
         self._startup: set[asyncio.Task] = set()
+        # Set by the relay hub: subscribed projects pull new DM events at once.
+        self.on_event = None
 
     async def start(self) -> None:
         for project, account in await self.store.subscriptions():
@@ -75,6 +53,8 @@ class LiveTelegramAccess:
                    "date": message.date.isoformat() if message.date else None}
         identity = f"{event.chat_id}:{message.id}:{int(bool(message.out))}"
         await self.store.record_event(account, identity, payload, now=time.time())
+        if self.on_event is not None:
+            await self.on_event()
 
     async def report_flood(self, phone: str, wait_seconds: int) -> None:
         # The adapter's phone key is the stable gateway account UUID.
@@ -92,7 +72,11 @@ class LiveTelegramAccess:
             await self._pool.remove_client(account)
 
     async def connection(self, project: str, account: str) -> TelegramTransportSession:
-        await self.store.session(project, account)  # Authorization is checked even for an existing pooled client.
+        """The account's live connection, connecting it on first use.
+
+        Access is the caller's check: the relay hub verifies the project's grant
+        on every request (``GatewayHub.client``) before asking for the connection.
+        """
         async with self._connect_lock:
             if self._pool is None:
                 storage = GatewayPoolStorage(self.store)
@@ -121,98 +105,6 @@ class LiveTelegramAccess:
 
                 raw.add_event_handler(incoming, events.NewMessage(func=lambda event: event.is_private))
             return self.sessions[account]
-
-    async def execute(self, project: str, operation: Operation) -> dict:
-        if isinstance(operation, VoiceSource):
-            from tg_agent.gateway.transcription import read_voice
-
-            return await read_voice(self, project, str(operation.account_id), operation.peer, operation.message_id,
-                                    metadata_only=operation.metadata_only)
-        if isinstance(operation, Notification):
-            from tg_agent.gateway.notifications import execute_notification
-
-            return await execute_notification(self, project, operation)
-        if isinstance(operation, (Profile, InspectPeer, Dialogs, Search, DmHistory, MessagePage)):
-            from tg_agent.gateway.reads import execute_read
-
-            return await execute_read(self, project, operation)
-        if isinstance(operation, BusinessAction):
-            from tg_agent.gateway.actions import execute_action
-
-            return await execute_action(self, project, operation)
-        session = await self.connection(project, str(operation.account_id))
-        peer = operation.peer
-        kind = getattr(operation, "peer_type", "auto")
-        if isinstance(peer, int) and kind != "auto":
-            if kind == "channel":
-                # Typed channel peers may arrive Telegram-marked (-100<bare>);
-                # building PeerChannel(abs(peer)) would ask for id 100<bare>,
-                # which exists nowhere (#1829). The helper strips exactly the
-                # marker and leaves bare ids untouched.
-                peer = PeerChannel(bare_channel_id(peer))
-            else:
-                peer = {"chat": PeerChat, "user": PeerUser}[kind](abs(peer))
-        if isinstance(operation, History):
-            # History needs the full entity for its channel id, so it keeps the
-            # full-fetch resolve explicitly (#1831); everything else below only
-            # needs an InputPeer and resolves cache-first — a write by
-            # @username no longer spends one unit of the 60/h username budget
-            # per call when the peer is already known to the session.
-            entity = await self._pool.resolve_entity_with_warm(
-                session, str(operation.account_id), peer, operation="gateway_resolve")
-            channel_id = abs(int(entity.id))
-            messages = [build_message_from_telethon(message, channel_id).model_dump(mode="json")
-                        async for message in session.stream_messages(
-                            entity, min_id=operation.after_id, reverse=True, limit=operation.limit)]
-            return {"messages": messages,
-                    "next_id": max((message["message_id"] for message in messages), default=operation.after_id)}
-        if isinstance(peer, str):
-            entity = await self._pool.resolve_entity_with_warm(
-                session, str(operation.account_id), peer, operation="gateway_resolve",
-                use_input_entity=True)
-        else:
-            # Cache first (#1842): a typed peer the session store knows needs
-            # no request, so it must not run under the gated resolve tag — a
-            # resolve-family flood would refuse the lookup and block the write.
-            entity = await cached_input_peer(session, peer)
-            if entity is None:
-                entity = await session.resolve_input_entity(peer)
-        if isinstance(operation, Send):
-            message = await session.send_message(entity, operation.text, reply_to=operation.reply_to,
-                                                  link_preview=operation.link_preview, silent=operation.silent)
-            return {"message_id": message.id}
-        if isinstance(operation, Edit):
-            message = await session.edit_message(entity, operation.message_id, operation.text)
-            return {"message_id": message.id if message else operation.message_id}
-        if isinstance(operation, Delete):
-            await session.delete_messages(entity, operation.message_ids)
-            return {"deleted_ids": operation.message_ids}
-        if isinstance(operation, ScheduledDelete):
-            await session.delete_scheduled_messages(entity, operation.message_ids)
-            return {"deleted_ids": operation.message_ids}
-        if isinstance(operation, Publish):
-            artifacts = ArtifactStore(self.store.root)
-            from uuid import uuid4
-
-            directory = artifacts.path(project, uuid4()).with_suffix(".send")
-            await asyncio.to_thread(directory.mkdir, parents=True, mode=0o700)
-            try:
-                paths = []
-                for index, artifact in enumerate(operation.artifact_ids):
-                    path = await asyncio.to_thread(artifacts.resolve, project, artifact)
-                    info = await asyncio.to_thread(artifacts.describe, project, artifact)
-                    target = directory / f"{index}-{info['filename']}"
-                    await asyncio.to_thread(shutil.copyfile, path, target)
-                    paths.append(str(target))
-                sent = await session.publish_files(entity, paths, caption=operation.caption,
-                                                   schedule=operation.schedule, reply_to=operation.reply_to,
-                                                   force_document=operation.force_document,
-                                                   silent=operation.silent)
-                messages = sent if isinstance(sent, list) else [sent]
-                return {"message_ids": [message.id for message in messages]}
-            finally:
-                await asyncio.to_thread(shutil.rmtree, directory)
-        raise ValueError("Unsupported operation")
 
     async def close(self) -> None:
         for task in self._startup:

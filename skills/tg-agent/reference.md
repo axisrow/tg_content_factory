@@ -28,7 +28,10 @@ output, same exit codes, synchronous result, no second login, nothing queued:
 Two kinds of work are the daemon's own background jobs and go to its queues instead:
 `channel collect` / `collect --channel-id` / `collect` (enqueue all; `channel collect
 --wait` polls the task) and `ping run-due`. Without a daemon every command connects the
-account itself; in gateway mode the shared gateway serves everything.
+account itself. In gateway mode (`global enable`) the shared gateway is the session owner:
+every live command runs on the gateway's connection through its relay the same way, and the
+project needs no session key of its own. After upgrading, restart the gateway once as well
+(`tg-agent gateway restart --shared`); an older gateway is refused with that hint.
 
 After upgrading tg-agent, restart the daemon once (`tg-agent restart`). A daemon from an
 older version serves no relay, and every live command then fails at once — exit 1, on
@@ -76,9 +79,8 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
 - `channel refresh-card <id|@username>` / `channel refresh-card --all` — refresh ALL open
   channel metadata from Telegram by the stable numeric ID: title, username, channel type,
   about, linked chat, comments flag (+ created_at backfill when empty). Legacy basic groups
-  resolve as PeerChat via the stored type; on the gateway path each channel is routed to its
-  preferred (collecting) account, not the project primary. Confirmed fields are written in
-  one atomic statement. A confirmed absence
+  resolve as PeerChat via the stored type. Confirmed fields are written in one atomic
+  statement. A confirmed absence
   is written (dropped @username → NULL); unavailable/partial answers NEVER erase stored
   values (SKIP/partial, row untouched). Operator settings (active/filtered/approval) are
   preserved. Per-channel result + Updated/Skipped/Failed counters.
@@ -87,9 +89,9 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
   needs no membership — and writes only after the resolved id matches the stored channel; a
   username reoccupied by a different channel is reported as skipped, leaving the row untouched.
   Bulk refresh waits and retries the same channel for local rate limits, circuit-breaker
-  cooldowns (including 300s), and Telegram FloodWaits up to 60s. The gateway tries other
-  granted accounts first; if none can continue after a longer Telegram wait, the command
-  exits 1 and prints the remaining channel IDs. Local cooldowns are never classified as
+  cooldowns (including 300s), and Telegram FloodWaits up to 60s; the pool tries other
+  accounts first. If none can continue after a longer Telegram wait, the command exits 1
+  and prints the remaining channel IDs. Local cooldowns are never classified as
   long Telegram waits. Progress is flushed immediately, including when redirected to a file.
   Cache warming resumes from the last dialog page after a short wait or a productive
   timeout, and a completed warm is reused until its existing cache TTL expires. Within
@@ -97,9 +99,8 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
   (`channels.getChannels`/`messages.getChats`/`users.getUsers`, access_hash=0) instead of
   a full dialog sweep, so a channel the account joined after the last warm resolves
   immediately; a miss that the server rejects stays a miss (#1772).
-  A temporary gateway disconnect also pauses the current channel until reconnection;
-  it does not mark the remaining channels as failed. If the gateway stays unreachable
-  for about a minute, the run stops and prints the remaining channel IDs.
+  In gateway mode a restarted gateway is picked up by the next request (the relay
+  reconnects); a channel whose request was in flight during the restart counts as failed.
 - `channel probe <id|@username> [--limit 300] [--json]` — quality card from a LIVE
   sample of the last N posts, WITHOUT adding the channel: flags use the analyzer's own
   thresholds (engagement vs subscribers, forwards share, auto-feed, uniqueness,

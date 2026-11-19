@@ -1,4 +1,9 @@
-"""Fixed-installation, loopback-only gateway runtime and serialized autostart."""
+"""Fixed-installation, loopback-only gateway runtime and serialized autostart.
+
+The gateway process owns the shared accounts' connections and serves the
+session-owner relay (#1868); the discovery record ``gateway.endpoint.json``
+names its port.
+"""
 
 from __future__ import annotations
 
@@ -9,39 +14,29 @@ import logging
 import os
 import secrets
 import signal
-import socket
 import subprocess
 import sys
 import threading
 import time
-from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-import httpx
-import uvicorn
-
 import tg_shared
-from tg_agent.gateway.server import create_app
+from tg_agent.gateway.server import GatewayHub
 from tg_agent.gateway.store import GatewayStore, private_key
 from tg_agent.gateway.telegram import LiveTelegramAccess
+from tg_agent.telegram.relay import (
+    RELAY_PROTOCOL,
+    RelayEndpoint,
+    RelayProtocolError,
+    RelayServer,
+    probe_endpoint,
+)
 from tg_agent.telegram.session_lock import SessionLock
 from tg_agent.utils.process_identity import process_executable, process_start_identity
 from tg_shared.auth import TelegramAuth
 
-
-class GatewayServer(uvicorn.Server):
-    @contextmanager
-    def capture_signals(self):
-        """Drain SQLite and remove discovery before a graceful process exit."""
-        originals = {}
-        try:
-            for sig in (signal.SIGTERM, signal.SIGINT):
-                originals[sig] = signal.signal(sig, self.handle_exit)
-            yield
-        finally:
-            for sig, handler in originals.items():
-                signal.signal(sig, handler)
+logger = logging.getLogger(__name__)
 
 
 class GatewayProtocolError(RuntimeError):
@@ -91,25 +86,46 @@ def _atomic_record(path: Path, contents: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _admin_token(root: Path) -> str:
+    return (root / "gateway-admin.token").read_text(encoding="utf-8").strip()
+
+
 def endpoint(root: Path) -> dict | None:
-    """A nonce binds a health response to this private discovery record."""
+    """The live gateway's discovery record, verified by a relay handshake.
+
+    Raises :class:`GatewayProtocolError` when a gateway answers but runs another
+    version (an older HTTP gateway, or another relay protocol): it must be
+    restarted explicitly, never replaced by a caller.
+    """
     try:
         record = json.loads((root / "gateway.endpoint.json").read_text(encoding="utf-8"))
         port = record["port"]
         if type(port) is not int or not 0 < port < 65536:
             return None
-        with httpx.Client(timeout=1, trust_env=False) as client:
-            response = client.get(f"http://127.0.0.1:{port}/v1/health")
-            response.raise_for_status()
-            health = response.json()
-        if health.get("instance") == record["instance"] and (
-                health.get("protocol") != 1 or health.get("capabilities_version") != 2):
-            raise GatewayProtocolError("Incompatible Telegram gateway protocol; upgrade the shared gateway explicitly")
-        if health.get("instance") == record["instance"] and health.get("protocol") == 1:
-            return record
-    except (OSError, ValueError, KeyError, httpx.HTTPError):
-        pass
-    return None
+    except (OSError, ValueError, KeyError):
+        return None
+    if record.get("protocol") is None:
+        if record.get("pid") and process_start_identity(record["pid"]) == record.get("start_identity"):
+            raise GatewayProtocolError(
+                "An older Telegram gateway is running (PID %s); restart it once: "
+                "`tg-agent gateway restart --shared`" % record["pid"]
+            )
+        return None
+    try:
+        hello = probe_endpoint(
+            RelayEndpoint(port=port, token=_admin_token(root), pid=int(record.get("pid") or 0),
+                          protocol=int(record["protocol"])),
+        )
+    except RelayProtocolError as exc:
+        raise GatewayProtocolError(
+            f"The running Telegram gateway speaks another protocol ({exc}); restart it once: "
+            "`tg-agent gateway restart --shared`"
+        ) from None
+    except OSError:
+        return None
+    if hello is None or hello.get("pid") != record.get("pid"):
+        return None
+    return record
 
 
 def _enrolled_profile(root: Path) -> dict:
@@ -124,19 +140,22 @@ def _enrolled_profile(root: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def ensure_gateway(root: Path, *, timeout: float = 30) -> str:
-    """All callers launch the enrolled binary; the project cwd is irrelevant."""
+def ensure_gateway(root: Path, *, timeout: float = 30) -> dict:
+    """The live gateway's discovery record, starting it first when it is down.
+
+    All callers launch the enrolled binary; the project cwd is irrelevant.
+    """
     root = root.resolve()
     current = endpoint(root)
     if current:
-        return f"http://127.0.0.1:{current['port']}"
+        return current
     _enrolled_profile(root)
     launcher = SessionLock("gateway launcher", str(root / "launcher"), lock_dir=root / "locks")
     launcher.acquire(grace_seconds=timeout)
     try:
         current = endpoint(root)
         if current:
-            return f"http://127.0.0.1:{current['port']}"
+            return current
         profile = _enrolled_profile(root)
         # Probe imports/config BEFORE starting; never stop an existing process here.
         with (root / "gateway.log").open("ab") as log:
@@ -153,7 +172,7 @@ def ensure_gateway(root: Path, *, timeout: float = 30) -> str:
         while time.monotonic() < deadline:
             current = endpoint(root)
             if current:
-                return f"http://127.0.0.1:{current['port']}"
+                return current
             if process.poll() is not None:
                 raise RuntimeError(f"Telegram gateway failed to start; see {root / 'gateway.log'}")
             time.sleep(0.1)
@@ -168,44 +187,58 @@ async def serve(root: Path, *, access_factory=None) -> None:
     owner = SessionLock("gateway", str(root / "gateway owner"), lock_dir=root / "locks")
     owner.acquire(grace_seconds=0)
     store = GatewayStore(root)
-    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    instance = secrets.token_urlsafe(32)
     path = root / "gateway.endpoint.json"
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop.set)
+        except (NotImplementedError, RuntimeError):
+            pass
+    server = None
+    hub = None
+    access = None
+    cleanup = None
     try:
         await store.open()
         access = (access_factory(store) if access_factory is not None
                   else LiveTelegramAccess(store, TelegramAuth(profile["api_id"], profile["api_hash"],
                                                               proxy=profile.get("proxy"))))
-        app = create_app(store, access)
+        hub = GatewayHub(store, access, admin_token=await asyncio.to_thread(_admin_token, root),
+                         request_shutdown=stop.set)
+        start = getattr(access, "start", None)
+        if start is not None:
+            await start()
 
-        @app.get("/v1/health")
-        async def health():
-            return {"protocol": 1, "capabilities_version": 2, "instance": instance}
+        async def expire_events():
+            while True:
+                try:
+                    await store.expire_events(now=time.time())
+                except Exception as exc:  # noqa: BLE001 - housekeeping must never stop the gateway
+                    logger.warning("Gateway event expiry delayed: %s", type(exc).__name__)
+                await asyncio.sleep(60)
 
-        listener.bind(("127.0.0.1", 0))
-        listener.listen(128)
-        listener.setblocking(False)
-        record = {"port": listener.getsockname()[1], "instance": instance, "pid": os.getpid(),
+        cleanup = asyncio.create_task(expire_events(), name="gateway-event-expiry")
+        server = RelayServer(hub, ops=hub.ops)
+        port = await server.start()
+        record = {"port": port, "instance": secrets.token_urlsafe(32), "pid": os.getpid(),
                   "store_root": str(root), "python": sys.executable, "role": "gateway",
-                  "start_identity": process_start_identity(os.getpid())}
-        server = GatewayServer(uvicorn.Config(app, access_log=False, log_level="warning"))
-        app.state.request_shutdown = lambda: setattr(server, "should_exit", True)
-
-        async def publish():
-            while not server.started:
-                await asyncio.sleep(0.01)
-            await asyncio.to_thread(_atomic_record, path, record)
-
-        publication = asyncio.create_task(publish())
-        try:
-            await server.serve(sockets=[listener])
-        finally:
-            publication.cancel()
-            await asyncio.gather(publication, return_exceptions=True)
+                  "protocol": RELAY_PROTOCOL, "start_identity": process_start_identity(os.getpid())}
+        await asyncio.to_thread(_atomic_record, path, record)
+        logger.info("Telegram gateway serving the relay on 127.0.0.1:%d", port)
+        await stop.wait()
     finally:
-        listener.close()
-        await store.close()
         await asyncio.to_thread(path.unlink, missing_ok=True)
+        if cleanup is not None:
+            cleanup.cancel()
+            await asyncio.gather(cleanup, return_exceptions=True)
+        if server is not None:
+            await server.stop()
+        if hub is not None:
+            await hub.close()
+        if access is not None:
+            await access.close()
+        await store.close()
         owner.release()
 
 
@@ -280,11 +313,7 @@ def stop_gateway(root: Path, *, shared: bool, timeout: float = 30) -> None:
             raise RuntimeError("Cannot verify the gateway process owner; refusing to signal its PID")
         os.kill(record["pid"], signal.SIGTERM)
     else:
-        token = (root / "gateway-admin.token").read_text().strip()
-        with httpx.Client(timeout=5, trust_env=False) as client:
-            response = client.post(f"http://127.0.0.1:{record['port']}/v1/admin/shutdown",
-                                   headers={"Authorization": f"Bearer {token}"})
-            response.raise_for_status()
+        asyncio.run(_relay_admin_call(root, record, "admin.shutdown"))
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process_start_identity(record["pid"]) != record["start_identity"]:
@@ -293,7 +322,20 @@ def stop_gateway(root: Path, *, shared: bool, timeout: float = 30) -> None:
     raise TimeoutError("Shared gateway did not stop; no unrelated process was signalled")
 
 
-def restart_gateway(root: Path, *, shared: bool) -> str:
+async def _relay_admin_call(root: Path, record: dict, op: str, **fields):
+    from tg_agent.telegram.relay import RelayConnection
+
+    connection = await RelayConnection.open(
+        RelayEndpoint(port=record["port"], token=_admin_token(root), pid=int(record["pid"]),
+                      protocol=int(record["protocol"]))
+    )
+    try:
+        return await connection.call(op, **fields)
+    finally:
+        await connection.close()
+
+
+def restart_gateway(root: Path, *, shared: bool) -> dict:
     if not shared:
         raise ValueError("Restarting the common gateway requires --shared")
     profile = json.loads((root / "gateway.json").read_text())

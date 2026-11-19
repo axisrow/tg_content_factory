@@ -13,7 +13,7 @@ paths used to let it go stale or get corrupted:
 
 These tests pin the live-refresh behaviors: pool startup re-verifies every
 connected account, ``get_premium_client`` heals a stale flag before refusing,
-both re-checks are TTL-suppressed, and the gateway ScopedPool does the same
+both re-checks are TTL-suppressed
 against gateway storage.
 """
 
@@ -25,9 +25,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from tests.helpers import FakeCliTelethonClient
-from tg_agent.gateway.actions import ScopedPool, _premium_recheck_at
 from tg_agent.gateway.pool_storage import GatewayPoolStorage
-from tg_agent.models import Account
 
 PHONE = "+70000000001"
 
@@ -97,54 +95,6 @@ async def test_get_premium_client_recheck_is_ttl_suppressed(real_pool_harness_fa
 
     assert await harness.pool.get_premium_client() is None
     assert fetches.await_count == after_first, "re-check must stay TTL-suppressed"
-
-
-@pytest.fixture
-def _clear_scoped_pool_recheck_ttl():
-    _premium_recheck_at.clear()
-    yield
-    _premium_recheck_at.clear()
-
-
-def _gateway_scoped_pool(account_id: str, *, live_premium: bool):
-    """ScopedPool over a fake gateway ClientPool with one connected account."""
-    session = SimpleNamespace(fetch_me=AsyncMock(return_value=SimpleNamespace(premium=live_premium)))
-    stale = Account(phone=account_id, session_string="s", is_premium=False)
-    healed = Account(phone=account_id, session_string="s", is_premium=True)
-    gateway_db = SimpleNamespace(update_account_premium=AsyncMock())
-    pool = SimpleNamespace(
-        clients={account_id: session},
-        # First read sees the stale flag, the re-read after healing sees True.
-        _get_account_for_phone=AsyncMock(side_effect=[stale, healed]),
-        _db=gateway_db,
-        get_client_by_phone=AsyncMock(return_value=(session, account_id)),
-    )
-    access = SimpleNamespace(_pool=pool, auth=MagicMock())
-    return ScopedPool(access, account_id), session, gateway_db
-
-
-@pytest.mark.anyio
-async def test_scoped_pool_get_premium_client_heals_stale_flag(_clear_scoped_pool_recheck_ttl):
-    scoped, session, gateway_db = _gateway_scoped_pool("uuid-1", live_premium=True)
-
-    result = await scoped.get_premium_client()
-
-    assert result == (session, "uuid-1")
-    gateway_db.update_account_premium.assert_awaited_once_with("uuid-1", True)
-
-
-@pytest.mark.anyio
-async def test_scoped_pool_get_premium_client_refuses_and_stays_ttl_suppressed(
-    _clear_scoped_pool_recheck_ttl,
-):
-    scoped, session, gateway_db = _gateway_scoped_pool("uuid-2", live_premium=False)
-
-    assert await scoped.get_premium_client() is None
-    gateway_db.update_account_premium.assert_awaited_once_with("uuid-2", False)
-
-    fetches = session.fetch_me
-    await scoped.get_premium_client()
-    assert fetches.await_count == 1, "re-check must stay TTL-suppressed"
 
 
 @pytest.mark.anyio

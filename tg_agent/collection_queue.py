@@ -17,7 +17,6 @@ from telethon_floodgate import TelegramRateLimitedError
 
 from tg_agent.database import Database, DatabaseBusyError
 from tg_agent.database.bundles import ChannelBundle
-from tg_agent.gateway.pool import GatewayOperationError
 from tg_agent.live_runtime_pause import LiveRuntimePauseGate
 from tg_agent.models import Channel, CollectionTaskStatus
 from tg_agent.runtime import wake
@@ -111,15 +110,11 @@ TERMINAL_CODE_MISMATCH = "UsernameChannelIdMismatch"
 def _terminal_collection_code(exc: BaseException) -> str | None:
     """Terminal username-failure code carried by ``exc``, else ``None``.
 
-    Gateway receipts surface the code in ``GatewayOperationError.code``; the
-    direct-Telethon path raises the raw telethon errors (``code`` attr absent).
-    Raw ValueError (a numeric-miss the username fallback can still heal) is
-    never terminal — but its unrecoverable form (no stored username to heal
-    from) arrives pre-wrapped as HistoryNumericUnresolved and is (#1805).
+    The Telethon path raises the raw telethon errors. Raw ValueError (a
+    numeric-miss the username fallback can still heal) is never terminal — but
+    its unrecoverable form (no stored username to heal from) arrives
+    pre-wrapped as HistoryNumericUnresolved and is (#1805).
     """
-    if isinstance(exc, GatewayOperationError):
-        code = exc.code
-        return code if code in TERMINAL_USERNAME_CODES else None
     if isinstance(exc, (UsernameNotOccupiedError, UsernameInvalidError)):
         return type(exc).__name__
     return None
@@ -597,8 +592,6 @@ class CollectionQueue:
             accepts_cancel_event = True
         if accepts_cancel_event:
             collect_kwargs["cancel_event"] = cancel_event
-        if "signature" in locals() and "intent_key" in signature.parameters:
-            collect_kwargs["intent_key"] = f"collection-task:{task_id}"
         return collect_kwargs
 
     async def _validate_task_pre_dispatch(

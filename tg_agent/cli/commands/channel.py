@@ -24,7 +24,6 @@ from tg_agent.cli.commands.common import (
 from tg_agent.collection_queue import TERMINAL_CODE_MISMATCH
 from tg_agent.database.bundles import ChannelBundle
 from tg_agent.filters.probe import ProbeMessage, probe_channel_snapshots
-from tg_agent.gateway.pool import GatewayOperationError, GatewayPool, GatewayReadDeferredError
 from tg_agent.models import Channel, CollectionTaskStatus, StatsAllTaskPayload
 from tg_agent.parsers import deduplicate_identifiers, parse_file, parse_identifiers
 from tg_agent.services.account_service import resolve_default_phone
@@ -50,7 +49,6 @@ from tg_agent.telegram.collector import (
     UsernameResolveRateLimitedError,
 )
 from tg_agent.telegram.collector_resolve import TRANSIENT_REVIEW_REASONS
-from tg_agent.telegram.collector_types import NoActiveCollectionClientsError
 from tg_agent.utils.json import safe_json_dumps
 
 
@@ -840,20 +838,7 @@ async def _resolve_card_miss_fallback(db, pool, ch, *, numeric_review_reason, re
     # account membership, unlike a bare PeerChannel lookup (#1768). Write only
     # after the resolved id matches the stored one — a username reoccupied by
     # another channel must never leak a foreign card onto this row.
-    info = None
-    try:
-        info = await pool.resolve_channel(ch.username, signal_gone=True, **resolve_kwargs)
-    except GatewayOperationError as exc:
-        if exc.code not in {"ValueError", "UsernameNotOccupiedError", "UsernameInvalidError"}:
-            raise  # TimeoutError/uncertain/etc. propagate — never a silent SKIP
-        # The stored name resolves for nobody on the gateway either
-        # (UsernameNotOccupiedError and friends): nothing fresh — SKIP,
-        # parity with the direct pool's gone sentinel. A dead name is also
-        # terminal (#1787): stamp it so the bulk enqueue and the next
-        # bulk pass defer the row instead of re-burning the budget.
-        if exc.code != "ValueError":
-            await _stamp_terminal(db, ch, exc.code)
-        info = None
+    info = await pool.resolve_channel(ch.username, signal_gone=True, **resolve_kwargs)
     resolved = (
         abs(int(info.get("channel_id") or 0))
         if info and not info.get("gone") and not info.get("review") else 0
@@ -885,13 +870,12 @@ async def _resolve_card_miss_fallback(db, pool, ch, *, numeric_review_reason, re
     return None, info
 
 
-async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tuple[str, list[str]]:
+async def _refresh_channel_card(db, pool, ch) -> tuple[str, list[str]]:
     """Refresh one channel row's open metadata from Telegram (#1764, #1765 review).
 
     Resolves by the STABLE numeric ID (a stale @username must never be the
     lookup key — its staleness is the reason the command exists) and passes the
-    stored channel type so legacy groups resolve as PeerChat; on the gateway
-    path the channel's preferred account is selected instead of the primary.
+    stored channel type so legacy groups resolve as PeerChat.
     Both sources are fetched BEFORE any write; confirmed fields then go to the
     DB in ONE atomic ``update_channel_card`` statement — a write failure can
     never leave a half-updated row. Returns ``(status, changed_fields)`` where
@@ -913,18 +897,10 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
     transport errors propagate — the caller counts a failure.
     """
     numeric = str(ch.channel_id)
-    if isinstance(pool, GatewayPool):
-        resolve_kwargs: dict = {"channel_type": ch.channel_type, "phone": phone, "wait_for_limits": True}
-    else:
-        resolve_kwargs = {"channel_type": ch.channel_type, "propagate_throttle": True}
-    info = None
-    try:
-        info = await pool.resolve_channel(
-            numeric, signal_gone=True, numeric_fallback=numeric, **resolve_kwargs
-        )
-    except GatewayOperationError as exc:
-        if exc.code != "ValueError":  # peer-miss only; timeout/uncertain propagate
-            raise
+    resolve_kwargs: dict = {"channel_type": ch.channel_type, "propagate_throttle": True}
+    info = await pool.resolve_channel(
+        numeric, signal_gone=True, numeric_fallback=numeric, **resolve_kwargs
+    )
     # A review sentinel means the owner is unavailable everywhere (uncertain
     # numeric resolve) — transient, not dead (#1791). Marked for review at the
     # return sites below; healed by the auto-clear on a later verified card.
@@ -954,7 +930,7 @@ async def _refresh_channel_card(db, pool, ch, *, phone: str | None = None) -> tu
     # entity fields never hit the DB without their about/linked companions
     # being decided too (single-statement write below, #1765 review point 3).
     partial = False
-    meta = info if isinstance(pool, GatewayPool) else await fetch_channel_meta(
+    meta = await fetch_channel_meta(
         pool, ch.channel_id, new_type or ch.channel_type, propagate_throttle=True,
     )
     meta_present = meta is not None
@@ -1008,7 +984,7 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
     pool = None
     try:
         _, pool = await runtime.init_pool(config, db)
-        if not pool.clients and not isinstance(pool, GatewayPool):
+        if not pool.clients:
             logging.error("No connected accounts.")
             return
         if all_channels:
@@ -1034,13 +1010,8 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
             print("Please provide --all or a channel identifier")
             return
         print(f"Channels to refresh: {len(channels)}", flush=True)
-        # Gateway accounts are shared: route each channel to the account it was
-        # collected by instead of the project primary (#1765 review point 2).
-        # The direct pool routes internally via its owner map / preferred_phone.
-        gateway_pool = isinstance(pool, GatewayPool)
         updated = partial_count = skipped = failed = 0
         owner_unavailable = 0
-        reconnect_waits = 0
 
         def _stop_with_unprocessed(at_index: int, reason: str) -> typer.Exit:
             print(f"STOP: {reason}", flush=True)
@@ -1051,14 +1022,10 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
             return typer.Exit(1)
 
         for index, ch in enumerate(channels):
-            phone = None
-            if gateway_pool:
-                phone = await db.repos.channels.get_preferred_phone(ch.channel_id)
             try:
                 while True:
                     try:
-                        status, changes = await _refresh_channel_card(db, pool, ch, phone=phone)
-                        reconnect_waits = 0
+                        status, changes = await _refresh_channel_card(db, pool, ch)
                         break
                     except (UsernameResolveRateLimitedError, UsernameResolveFloodWaitDeferredError) as exc:
                         # #1774: account-local username budget. Short waits retry
@@ -1078,30 +1045,10 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
                         delay = max(0.1, exc.retry_after_sec)
                         print(f"WAIT: {ch.channel_id} — local {exc.category}; retry in {delay:.1f}s", flush=True)
                         await asyncio.sleep(delay)
-                    except NoActiveCollectionClientsError:
-                        if not gateway_pool:
-                            raise
-                        if pool.gateway_status.get("http_available") and not any(
-                            row.get("active") for row in pool.accounts
-                        ):
-                            raise _stop_with_unprocessed(
-                                index, "no active accounts granted to this project"
-                            ) from None
-                        reconnect_waits += 1
-                        if reconnect_waits > 12:
-                            raise _stop_with_unprocessed(
-                                index,
-                                f"{ch.channel_id} — gateway unreachable after "
-                                f"{reconnect_waits} reconnect attempts (~1 min)",
-                            ) from None
-                        print(f"WAIT: {ch.channel_id} — gateway reconnecting; retry in 5s", flush=True)
-                        await asyncio.sleep(5)
-                        await pool.initialize()
                     except (HandledFloodWaitError, AllCollectionClientsFloodedError) as exc:
                         delay = exc.info.wait_seconds if isinstance(exc, HandledFloodWaitError) else exc.retry_after_sec
                         wait_seconds = getattr(exc, "wait_seconds", delay)
-                        local = isinstance(exc, GatewayReadDeferredError) and exc.local
-                        if not local and wait_seconds > TRANSIENT_FLOOD_WAIT_MAX_SEC:
+                        if wait_seconds > TRANSIENT_FLOOD_WAIT_MAX_SEC:
                             raise _stop_with_unprocessed(index, f"{ch.channel_id} — {exc}") from exc
                         print(f"WAIT: {ch.channel_id} — retry in {delay:.1f}s", flush=True)
                         await asyncio.sleep(max(0.1, delay) + 1)
@@ -1375,65 +1322,52 @@ async def probe_impl(
         if phone is None:
             print("No connected accounts.")
             return
-        from tg_agent.gateway.pool import GatewayPool
+        result = await pool.get_native_client_by_phone(phone)
+        if result is None:
+            print(f"Client for {phone} unavailable (flood-wait or not connected).")
+            return
+        client, _ = result
+        peer = int(identifier) if identifier.lstrip("-").isdigit() else identifier
+        entity = await pool.resolve_entity_with_warm(
+            client, phone, peer, operation="channel_probe_resolve"
+        )
+        session = adapt_transport_session(
+            client, disconnect_on_close=False, phone=phone, pool=pool
+        )
+        full = await run_with_flood_wait(
+            session.fetch_full_channel(entity),
+            operation="channel_probe_full",
+            phone=phone,
+            pool=pool,
+            timeout=30.0,
+        )
+        participants = full.full_chat.participants_count if full and full.full_chat else None
 
-        if isinstance(pool, GatewayPool):
-            peer = int(identifier) if identifier.lstrip("-").isdigit() else identifier
-            info = await pool.inspect_peer(peer, phone=phone)
-            data = await pool.read_messages(info["channel_id"], phone=phone, limit=limit, peer_type="channel")
-            snapshots = [ProbeMessage(text=row.get("text"), views=row.get("views"),
-                is_forward=row["message_id"] in data["forward_ids"],
-                urls=tuple(data["urls"].get(str(row["message_id"]), []))) for row in data["messages"]]
-            participants = info.get("subscriber_count")
-            username, title = info.get("username"), info.get("title") or identifier
-            is_broadcast = info["channel_type"] in {"channel", "monoforum"}
-        else:
-            result = await pool.get_native_client_by_phone(phone)
-            if result is None:
-                print(f"Client for {phone} unavailable (flood-wait or not connected).")
-                return
-            client, _ = result
-            peer = int(identifier) if identifier.lstrip("-").isdigit() else identifier
-            entity = await pool.resolve_entity_with_warm(
-                client, phone, peer, operation="channel_probe_resolve"
-            )
-            session = adapt_transport_session(
-                client, disconnect_on_close=False, phone=phone, pool=pool
-            )
-            full = await run_with_flood_wait(
-                session.fetch_full_channel(entity),
-                operation="channel_probe_full",
-                phone=phone,
-                pool=pool,
-                timeout=30.0,
-            )
-            participants = full.full_chat.participants_count if full and full.full_chat else None
+        collected: list = []
 
-            collected: list = []
+        async def _read() -> None:
+            async for msg in client.iter_messages(entity, limit=limit):
+                collected.append(msg)
 
-            async def _read() -> None:
-                async for msg in client.iter_messages(entity, limit=limit):
-                    collected.append(msg)
-
-            await run_with_flood_wait(
-                _read(), operation="channel_probe_read", phone=phone, pool=pool
+        await run_with_flood_wait(
+            _read(), operation="channel_probe_read", phone=phone, pool=pool
+        )
+        snapshots = [
+            ProbeMessage(
+                text=msg.text,
+                views=msg.views,
+                is_forward=bool(msg.fwd_from),
+                urls=tuple(
+                    url
+                    for url in (getattr(e, "url", None) for e in (msg.entities or ()))
+                    if url
+                ),
             )
-            snapshots = [
-                ProbeMessage(
-                    text=msg.text,
-                    views=msg.views,
-                    is_forward=bool(msg.fwd_from),
-                    urls=tuple(
-                        url
-                        for url in (getattr(e, "url", None) for e in (msg.entities or ()))
-                        if url
-                    ),
-                )
-                for msg in collected
-            ]
-            username = getattr(entity, "username", None)
-            title = getattr(entity, "title", None) or identifier
-            is_broadcast = bool(getattr(entity, "broadcast", False))
+            for msg in collected
+        ]
+        username = getattr(entity, "username", None)
+        title = getattr(entity, "title", None) or identifier
+        is_broadcast = bool(getattr(entity, "broadcast", False))
         raw_min_subs = await db.get_setting("min_subscribers_filter")
         try:
             min_subscribers = int(raw_min_subs) if raw_min_subs else None

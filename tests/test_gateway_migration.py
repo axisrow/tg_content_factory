@@ -5,7 +5,6 @@ import os
 import sqlite3
 from contextlib import closing
 
-import httpx
 import pytest
 
 from tg_agent.config import GLOBAL_DB_NAME, load_config
@@ -13,15 +12,22 @@ from tg_agent.database import Database
 from tg_agent.gateway import enrollment
 from tg_agent.gateway.catalog import GatewayAdministrator
 from tg_agent.gateway.client import TelegramGatewayClient
-from tg_agent.gateway.server import create_app
+from tg_agent.gateway.server import GatewayHub
 from tg_agent.gateway.store import GatewayStore, private_key
 from tg_agent.models import Account, Channel, NotificationBot
+from tg_agent.telegram.relay import RELAY_PROTOCOL, RelayConnection, RelayEndpoint, RelayServer
 from tg_agent.telegram.session_lock import SessionLock, _lock_dir
 
 pytestmark = pytest.mark.aiosqlite_serial
 
 
 class Access:
+    async def start(self):
+        pass
+
+    async def remove_account(self, account):
+        pass
+
     async def close(self):
         pass
 
@@ -48,24 +54,28 @@ async def migration(tmp_path, monkeypatch):
     store = GatewayStore(root)
     await store.open()
     admin_token = private_key(root, "gateway-admin.token")
-    app = create_app(store, Access())
-    transport = httpx.ASGITransport(app=app)
+    hub = GatewayHub(store, Access(), admin_token=admin_token)
+    server = RelayServer(hub, ops=hub.ops)
+    port = await server.start()
+
+    def endpoint(token):
+        return RelayEndpoint(port=port, token=token, pid=os.getpid(), protocol=RELAY_PROTOCOL)
 
     async def administrator(cls, root):
-        return GatewayAdministrator(httpx.AsyncClient(base_url="http://gateway", transport=transport,
-            headers={"Authorization": f"Bearer {admin_token}"}))
+        return GatewayAdministrator(await RelayConnection.open(endpoint(admin_token)))
 
     async def client(cls, config):
         identity = json.loads((project / "data" / "gateway-project.json").read_text())
-        return TelegramGatewayClient("http://gateway", identity["token"], transport=transport)
+        return TelegramGatewayClient(await RelayConnection.open(endpoint(identity["token"])))
 
     monkeypatch.setattr(enrollment, "configure", lambda *args, **kwargs: None)
     monkeypatch.setattr(GatewayAdministrator, "connect", classmethod(administrator))
     monkeypatch.setattr(TelegramGatewayClient, "from_config", classmethod(client))
     try:
-        async with app.router.lifespan_context(app):
-            yield project, root, source, marker, store
+        yield project, root, source, marker, store
     finally:
+        await server.stop()
+        await hub.close()
         await store.close()
 
 
@@ -77,15 +87,12 @@ async def test_migration_reencrypts_and_retains_complete_project_content(migrati
     assert json.loads(marker.read_text())["version"] == 2
     account = await store.account_for_phone("+100")
     assert await store.session(str(binding.project_id), account) == "original-session"
-    from tg_agent.gateway.notifications import BotStorage
-
-    bot = await BotStorage(store, str(binding.project_id)).get_bot(10)
-    assert bot.bot_token == "legacy-test-token"
     with closing(sqlite3.connect(destination)) as db, db:
         assert db.execute("SELECT title FROM channels WHERE channel_id=123").fetchone()[0] == "all historical content"
         assert db.execute("SELECT session_string FROM accounts").fetchone()[0] == ""
         assert db.execute("SELECT account_id FROM gateway_account_refs").fetchone()[0] == account
-        assert db.execute("SELECT bot_token FROM notification_bots").fetchone()[0] == ""
+        # Notification bots stay with the project since #1868 (sent natively).
+        assert db.execute("SELECT bot_token FROM notification_bots").fetchone()[0] != ""
     with closing(sqlite3.connect(source)) as db, db:
         assert db.execute("SELECT session_string FROM accounts").fetchone()[0].startswith("enc:v2:")
     assert await enrollment.migrate_project("config.yaml", destination) == binding

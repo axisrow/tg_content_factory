@@ -33,14 +33,7 @@ except ImportError:  # pragma: no cover — handlers import path used without te
 logger = logging.getLogger(__name__)
 
 async def _perform_telegram_action(service, services, node_id, action, message, **arguments):
-    from tg_agent.gateway.context import gateway_intent
-
-    run = services.get("run_id") or f"pipeline-{services.get('pipeline_id')}"
-    target = arguments.get("to_chat", arguments.get("chat_id"))
-    key = (f"pipeline:{run}:node:{node_id}:{action}:{message.channel_id}:{message.message_id}:"
-           f"{arguments.get('phone')}:{target}")
-    with gateway_intent(key):
-        return await getattr(service, action)(**arguments)
+    return await getattr(service, action)(**arguments)
 
 
 

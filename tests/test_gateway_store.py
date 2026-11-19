@@ -3,7 +3,6 @@
 import json
 import secrets
 import sqlite3
-import time
 from contextlib import closing
 from uuid import uuid4
 
@@ -61,22 +60,6 @@ async def test_session_conflict_does_not_replace_account(shared):
         await shared.import_account("+200", "original")
 
 
-async def test_receipts_survive_restart_and_are_project_scoped(shared, tmp_path):
-    a, b = str(uuid4()), str(uuid4())
-    await shared.register_project(a, tmp_path / "a", secrets.token_urlsafe(32))
-    await shared.register_project(b, tmp_path / "b", secrets.token_urlsafe(32))
-    request = str(uuid4())
-    await shared.submit(a, request, {"text": "hello"})
-    await shared.transition(a, request, "pending", "running")
-    await shared.recover()
-    assert (await shared.submit(a, request, {"text": "hello"}))["state"] == "uncertain"
-    with pytest.raises(GatewayConflictError):
-        await shared.submit(a, request, {"text": "changed"})
-    with pytest.raises(KeyError):
-        await shared.operation(b, request)
-    assert (await shared.submit(b, request, {"text": "changed"}))["state"] == "pending"
-
-
 async def test_reopened_store_uses_its_own_key(shared, tmp_path):
     project = str(uuid4())
     token = secrets.token_urlsafe(32)
@@ -93,49 +76,3 @@ async def test_reopened_store_uses_its_own_key(shared, tmp_path):
     finally:
         await reopened.close()
 
-
-async def test_read_receipts_prune_by_age_while_write_receipts_are_kept(shared, tmp_path):
-    project = str(uuid4())
-    await shared.register_project(project, tmp_path / "prune", secrets.token_urlsafe(32))
-    now = time.time()
-    rows = [
-        ("old-read", {"kind": "history"}, "succeeded", now - 48 * 3600),
-        ("old-page", {"kind": "message_page"}, "deferred", now - 48 * 3600),
-        ("old-status", {"kind": "notification", "action": "status"}, "succeeded", now - 48 * 3600),
-        ("old-write", {"kind": "send"}, "uncertain", now - 48 * 3600),
-        ("old-write-failed", {"kind": "publish"}, "failed", now - 48 * 3600),
-        ("fresh-read", {"kind": "history"}, "succeeded", now - 60),
-        ("live-read", {"kind": "message_page"}, "running", now - 48 * 3600),
-    ]
-    async with shared.transaction() as db:
-        for request_id, payload, state, created in rows:
-            await db.execute(
-                "INSERT INTO operations(project_id,request_id,fingerprint,payload,state,created_at) "
-                "VALUES (?,?,?,?,?,?)",
-                (project, request_id, "fp:" + request_id, json.dumps(payload), state, created),
-            )
-    assert await shared.prune_read_receipts(now=now) == 3
-    async with shared.transaction() as db:
-        async with db.execute("SELECT request_id FROM operations") as cur:
-            remaining = {row[0] for row in await cur.fetchall()}
-    # Write tombstones survive forever; in-flight and fresh reads survive too.
-    assert remaining == {"old-write", "old-write-failed", "fresh-read", "live-read"}
-    # A kept write receipt still guards its request ID; a pruned one is reusable.
-    with pytest.raises(GatewayConflictError):
-        await shared.submit(project, "old-write", {"kind": "send", "text": "different"})
-    assert (await shared.submit(project, "old-read", {"kind": "history"}))["state"] == "pending"
-
-
-async def test_reopened_store_backfills_created_at_column(shared):
-    root = shared.root
-    await shared.close()
-    with closing(sqlite3.connect(root / "gateway.db")) as db, db:
-        db.execute("ALTER TABLE operations DROP COLUMN created_at")
-    reopened = GatewayStore(root)
-    await reopened.open()
-    try:
-        async with reopened.transaction() as db:
-            async with db.execute("PRAGMA table_info(operations)") as cur:
-                assert "created_at" in {row[1] for row in await cur.fetchall()}
-    finally:
-        await reopened.close()

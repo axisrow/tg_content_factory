@@ -259,23 +259,27 @@ async def build_runtime_container(
 
     api_id, api_hash = await load_telegram_credentials(db, config)
     auth = TelegramAuth(api_id, api_hash, proxy=config.telegram_runtime.proxy)
-    if isinstance(config.gateway, dict) and config.gateway:
-        from tg_agent.gateway.pool import GatewayAuth
-
-        auth = GatewayAuth()
     pool: RuntimeClientPool
     search_pool: ClientPool | None
+    gateway_client = None
     if runtime_mode == "worker":
+        relay = None
         if isinstance(config.gateway, dict) and config.gateway:
-            from tg_agent.gateway.pool import GatewayAuth, GatewayPool
+            # The shared gateway owns the connections (#1868): this worker runs
+            # its Telegram requests over the gateway's relay, natively.
+            from tg_agent.gateway.catalog import ProjectAccountCatalog, restore_gateway_bots
+            from tg_agent.gateway.client import TelegramGatewayClient
 
-            auth = GatewayAuth()
-            pool = GatewayPool(config, db)
-        else:
-            pool = ClientPool(
-                auth, db, config.scheduler.max_flood_wait_sec,
-                runtime_config=config.telegram_runtime,
-            )
+            gateway_client = await TelegramGatewayClient.from_config(config)
+            await ProjectAccountCatalog(db, gateway_client).refresh()
+            if await restore_gateway_bots(db, gateway_client):
+                logger.info("startup: notification bots restored from the shared gateway")
+            relay = gateway_client.connection
+        pool = ClientPool(
+            auth, db, config.scheduler.max_flood_wait_sec,
+            runtime_config=config.telegram_runtime,
+            relay=relay,
+        )
     else:
         pool = SnapshotClientPool(db)
         await pool.refresh()
@@ -304,6 +308,7 @@ async def build_runtime_container(
         ping_monitor_service = PingMonitorService(
             db.repos.ping_monitors,
             live_actions,
+            auto_reply_guard=_gateway_auto_reply_guard(db, gateway_client) if gateway_client else None,
         )
         # Chat-seeding publisher (#1757): SEED_DUE sends through the same
         # TelegramActionService path (`dialogs send`) — worker-only.
@@ -389,6 +394,7 @@ async def build_runtime_container(
             collection_queue=collection_queue,
             live_runtime_pause_gate=live_runtime_pause_gate,
             notifier=notifier,
+            gateway=gateway_client,
         )
         # Worker-only (#1426): `serve` (embedded worker) and a standalone
         # `worker` must never both listen on the same accounts, so web mode
@@ -396,7 +402,7 @@ async def build_runtime_container(
         if isinstance(config.gateway, dict) and config.gateway:
             from tg_agent.gateway.dm_consumer import GatewayDmConsumer
 
-            dm_listener = GatewayDmConsumer(live_pool, db)
+            dm_listener = GatewayDmConsumer(live_pool, db, gateway_client)
         else:
             dm_catchup = DmCatchupService(live_pool, db)
             dm_listener = DmListener(
@@ -508,6 +514,24 @@ async def _recover_startup_state(
     logger.info("startup: recovery done (%.1fs)", time.monotonic() - t_start)
 
 
+def _pool_is_relayed(pool) -> bool:
+    """A pool on an owner's relay needs no local API credentials (#1868)."""
+    return vars(pool).get("_relay") is not None if hasattr(pool, "__dict__") else False
+
+
+def _gateway_auto_reply_guard(db, gateway_client):
+    """May this project send automatic messages in a dialog? The gateway decides."""
+    from tg_agent.gateway.catalog import gateway_account_id
+
+    async def guard(phone: str, dialog_id: int) -> bool:
+        account_id = await gateway_account_id(db, phone)
+        if account_id is None:
+            return False
+        return await gateway_client.can_auto_reply(account_id, dialog_id)
+
+    return guard
+
+
 async def _initialize_startup_telegram_pool(
     container: RuntimeContainer,
     *,
@@ -517,7 +541,7 @@ async def _initialize_startup_telegram_pool(
     if _is_dev:
         t1 = time.monotonic()
 
-    if runtime_mode == "worker" and container.auth.is_configured:
+    if runtime_mode == "worker" and (container.auth.is_configured or _pool_is_relayed(container.pool)):
         pool = cast(ClientPool, container.pool)
         telegram_pool_degraded = False
         try:
@@ -569,7 +593,9 @@ async def _start_collection_queue(
     t_start: float,
 ) -> None:
     if runtime_mode == "worker" and container.collection_queue is not None:
-        if container.auth.is_configured and _connected_pool_count(container.pool) == 0:
+        if (
+            container.auth.is_configured or _pool_is_relayed(container.pool)
+        ) and _connected_pool_count(container.pool) == 0:
             logger.warning(
                 "Skipping startup collection requeue because telegram pool has no connected clients"
             )

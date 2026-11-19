@@ -167,11 +167,6 @@ async def _fetch_live_chat_messages(
             cli_error("No connected accounts.")
         if phone not in pool.clients:
             cli_error(f"Account {phone} not connected.")
-        from tg_agent.gateway.pool import GatewayPool
-
-        if isinstance(pool, GatewayPool):
-            data = await pool.read_messages(chat, phone=phone, limit=limit)
-            return [Message.model_validate(row) for row in data["messages"]]
         result = await pool.get_native_client_by_phone(phone)
         if result is None:
             cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")

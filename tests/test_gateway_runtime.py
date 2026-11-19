@@ -8,11 +8,11 @@ import signal
 import time
 from logging.handlers import RotatingFileHandler
 
-import httpx
 import pytest
 
 from tg_agent.gateway.runtime import configure, endpoint, ensure_gateway, setup_gateway_logging
 from tg_agent.gateway.store import private_key
+from tg_agent.telegram.relay import RELAY_PROTOCOL, RelayEndpoint, probe_endpoint
 
 
 def test_unenrolled_gateway_root_fails_before_creating_anything(tmp_path):
@@ -88,17 +88,18 @@ def test_concurrent_autostart_reuses_gateway_from_another_directory(tmp_path, mo
     record = None
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            urls = list(executor.map(lambda _: ensure_gateway(root, timeout=30), range(2)))
-        assert urls[0] == urls[1]
+            records = list(executor.map(lambda _: ensure_gateway(root, timeout=30), range(2)))
+        assert records[0]["port"] == records[1]["port"]
         record = endpoint(root)
         assert record is not None
         assert record["role"] == "gateway"
-        with httpx.Client(trust_env=False) as client:
-            health = client.get(urls[0] + "/v1/health").json()
-            denied = client.get(urls[0] + "/v1/status")
-        assert health["instance"] == record["instance"]
-        assert denied.status_code == 401
-        assert ensure_gateway(root) == urls[0]
+        assert record["protocol"] == RELAY_PROTOCOL
+        admin = (root / "gateway-admin.token").read_text().strip()
+        relay = RelayEndpoint(port=record["port"], token=admin, pid=record["pid"], protocol=RELAY_PROTOCOL)
+        assert probe_endpoint(relay)["pid"] == record["pid"]
+        assert probe_endpoint(RelayEndpoint(port=record["port"], token="wrong", pid=record["pid"],
+                                            protocol=RELAY_PROTOCOL)) is None
+        assert ensure_gateway(root)["port"] == records[0]["port"]
     finally:
         record = record or endpoint(root)
         if record is not None:
@@ -107,3 +108,18 @@ def test_concurrent_autostart_reuses_gateway_from_another_directory(tmp_path, mo
             while time.monotonic() < deadline and (root / "gateway.endpoint.json").exists():
                 time.sleep(0.05)
             assert not (root / "gateway.endpoint.json").exists()
+
+
+def test_an_older_running_gateway_is_a_hard_error_asking_for_restart(tmp_path):
+    from tg_agent.gateway.runtime import GatewayProtocolError, _atomic_record
+    from tg_agent.utils.process_identity import process_start_identity
+
+    root = tmp_path / "private"
+    configure(root, api_id=12345, api_hash="offline-test-api-hash")
+    # A pre-relay discovery record: no protocol, a live process behind it.
+    _atomic_record(root / "gateway.endpoint.json", {
+        "port": 1, "instance": "old", "pid": os.getpid(), "store_root": str(root), "role": "gateway",
+        "start_identity": process_start_identity(os.getpid()),
+    })
+    with pytest.raises(GatewayProtocolError, match="gateway restart --shared"):
+        endpoint(root)

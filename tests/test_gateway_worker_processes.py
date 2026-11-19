@@ -1,4 +1,8 @@
-"""Exercise enrollment and two actual CLI workers against one offline gateway."""
+"""Exercise enrollment and two actual CLI workers against one offline gateway.
+
+Both workers and the project CLI run their Telegram requests on the gateway's one
+connection through the relay (#1868); ``gateway_process_stub`` answers them.
+"""
 
 import asyncio
 import json
@@ -107,6 +111,7 @@ def test_two_cli_workers_share_gateway_and_keep_project_databases(tmp_path, filt
                 (0 if index == 0 and filtered_a else 7,)]
             assert rows(project / "project.db", "SELECT session_string FROM accounts") == [("",)]
         assert len(json.loads((shared / "test-connections.json").read_text())) == 1
+        assert not (shared / "test-unknown.json").exists(), (shared / "test-unknown.json").read_text()
         stopped = subprocess.run([sys.executable, "-m", "tg_agent.main", "stop"], cwd=projects[0][0], env=env,
                                  capture_output=True, text=True, timeout=20)
         assert stopped.returncode == 0, stopped.stdout + stopped.stderr

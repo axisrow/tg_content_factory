@@ -144,23 +144,38 @@ async def init_db(config_path: str):
         mmap_size_mb=config.database.mmap_size_mb,
     )
     await db.initialize()
-    if isinstance(config.gateway, dict) and config.gateway:
-        import httpx
-
-        from tg_agent.gateway.catalog import ProjectAccountCatalog
-        from tg_agent.gateway.client import TelegramGatewayClient
-
-        client = None
-        try:
-            client = await TelegramGatewayClient.from_config(config)
-            await ProjectAccountCatalog(db, client).refresh()
-        except (OSError, RuntimeError, httpx.HTTPError) as exc:
-            logging.getLogger(__name__).warning("Gateway unavailable; using cached account metadata: %s",
-                                              type(exc).__name__)
-        finally:
-            if client is not None:
-                await client.close()
     return config, db
+
+
+async def refresh_gateway_catalog(config, db) -> None:
+    """Gateway-bound project: mirror the shared catalog (best effort, cached on failure)."""
+    from tg_agent.gateway.catalog import ProjectAccountCatalog
+    from tg_agent.gateway.client import TelegramGatewayClient
+
+    client = None
+    try:
+        client = await TelegramGatewayClient.from_config(config)
+        await ProjectAccountCatalog(db, client).refresh()
+    except (OSError, RuntimeError) as exc:
+        logging.getLogger(__name__).warning("Gateway unavailable; using cached account metadata: %s",
+                                            type(exc).__name__)
+    finally:
+        if client is not None:
+            await client.close()
+
+
+async def _gateway_relay(config, db):
+    """Gateway-bound project: the shared gateway owns the connections (#1868)."""
+    from tg_agent.gateway.catalog import ProjectAccountCatalog
+    from tg_agent.gateway.client import TelegramGatewayClient
+
+    client = await TelegramGatewayClient.from_config(config)
+    try:
+        await ProjectAccountCatalog(db, client).refresh()
+    except BaseException:
+        await client.close()
+        raise
+    return client.connection
 
 
 class DaemonRelayUnavailableError(click.ClickException):
@@ -208,17 +223,14 @@ async def init_pool(
 ):
     """Build and initialize this process's ``ClientPool``.
 
-    With a live daemon the pool runs on the daemon's connections through its
-    relay; otherwise it connects the accounts itself. Gateway-bound projects use
-    the shared gateway.
+    The pool runs on the connections of whoever owns them: the shared gateway
+    (gateway-bound project) or the live daemon, through their relay; otherwise
+    it connects the accounts itself.
     """
     if isinstance(config.gateway, dict) and config.gateway:
-        from tg_agent.gateway.pool import GatewayPool
-
-        pool = GatewayPool(config, db)
-        await pool.initialize()
-        return None, pool
-    relay = await _daemon_relay(config)
+        relay = await _gateway_relay(config, db)
+    else:
+        relay = await _daemon_relay(config)
     api_id = config.telegram.api_id
     api_hash = config.telegram.api_hash
     if api_id == 0 or not api_hash:

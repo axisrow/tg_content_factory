@@ -51,3 +51,14 @@ def test_enrolled_project_cannot_construct_local_telegram_pool(tmp_path, monkeyp
     write_private_json(tmp_path / ".tg-agent-global", binding.model_dump(mode="json"))
     with pytest.raises(RuntimeError, match="local Telegram ClientPool is forbidden"):
         ClientPool(object(), object())
+
+
+def test_enrolled_project_builds_its_pool_on_the_gateway_relay(tmp_path, monkeypatch):
+    from tg_agent.telegram.client_pool import ClientPool
+
+    monkeypatch.chdir(tmp_path)
+    binding = ProjectBinding(project_id=uuid4(), store_root=str(tmp_path / "gateway"),
+                             token_file=str(tmp_path / "data" / "gateway.json"))
+    write_private_json(tmp_path / ".tg-agent-global", binding.model_dump(mode="json"))
+    pool = ClientPool(object(), object(), relay=object())
+    assert vars(pool)["_relay"] is not None

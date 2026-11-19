@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import secrets
+import socket
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,6 +83,11 @@ class RelayRemoteError(RelayError):
     def __init__(self, payload: dict):
         super().__init__(str(payload.get("message") or payload.get("kind") or "relay error"))
         self.payload = payload
+
+    @property
+    def status(self) -> int | None:
+        status = self.payload.get("status")
+        return status if isinstance(status, int) else None
 
 
 # --------------------------------------------------------------------------- #
@@ -166,7 +172,11 @@ def error_payload(exc: BaseException) -> dict:
         return exc.payload
     if isinstance(exc, (ConnectionError, TimeoutError)):
         return {"kind": "connection", "message": str(exc) or type(exc).__name__}
-    return {"kind": "error", "name": type(exc).__name__, "message": str(exc)}
+    payload = {"kind": "error", "name": type(exc).__name__, "message": str(exc)}
+    status = getattr(exc, "status", None)
+    if isinstance(status, int):
+        payload["status"] = status
+    return payload
 
 
 def rebuild_error(payload: dict, request: Any = None) -> BaseException:
@@ -207,7 +217,14 @@ def _dump(message: dict) -> bytes:
 
 
 class RelayOwner(Protocol):
-    """What a relay server needs from the process that owns the connections."""
+    """What a relay server needs from the process that owns the connections.
+
+    ``authorize`` turns a token into a grant (``None`` refuses it); ``phones``
+    lists the accounts a grant reaches; ``client`` returns the live Telethon
+    client of one of them and raises :class:`RelayAccountUnavailableError` for a
+    phone the grant does not reach. ``client`` runs on every request, so it is
+    the one place that enforces access — a revoked grant stops the next request.
+    """
 
     async def authorize(self, token: str) -> Any | None: ...
 
@@ -216,8 +233,7 @@ class RelayOwner(Protocol):
     async def client(self, grant: Any, phone: str) -> Any: ...
 
 
-Push = Callable[[dict], Awaitable[None]]
-OpHandler = Callable[[Any, dict, Push], Awaitable[Any]]
+OpHandler = Callable[[Any, dict, "RelayPeer"], Awaitable[Any]]
 
 
 def _read_raw(reader: BinaryReader) -> bytes:
@@ -257,10 +273,19 @@ def entity_rows(session: Any) -> list[list]:
     return [[row[0], row[1], row[2], None if row[3] is None else str(row[3]), row[4]] for row in rows]
 
 
-class _Peer:
+class RelayPeer:
+    """One client connection as owner operations see it: push messages, check liveness."""
+
     def __init__(self, writer: asyncio.StreamWriter):
         self._writer = writer
         self._lock = asyncio.Lock()
+
+    @property
+    def closed(self) -> bool:
+        return self._writer.is_closing()
+
+    async def push(self, kind: str, **fields: Any) -> None:
+        await self.send({"push": kind, **fields})
 
     async def send(self, message: dict) -> None:
         async with self._lock:
@@ -302,7 +327,7 @@ class RelayServer:
         task = asyncio.current_task()
         if task is not None:
             self._connections.add(task)
-        peer = _Peer(writer)
+        peer = RelayPeer(writer)
         running: set[asyncio.Task] = set()
         try:
             grant = await self._handshake(reader, peer)
@@ -328,7 +353,7 @@ class RelayServer:
             if task is not None:
                 self._connections.discard(task)
 
-    async def _handshake(self, reader: asyncio.StreamReader, peer: _Peer) -> Any | None:
+    async def _handshake(self, reader: asyncio.StreamReader, peer: RelayPeer) -> Any | None:
         async with asyncio.timeout(_HANDSHAKE_TIMEOUT_SEC):
             line = await reader.readline()
         if not line:
@@ -357,7 +382,7 @@ class RelayServer:
         }})
         return grant
 
-    async def _serve(self, grant: Any, message: dict, peer: _Peer) -> None:
+    async def _serve(self, grant: Any, message: dict, peer: RelayPeer) -> None:
         reply_id = message.get("id")
         try:
             op = message.get("op")
@@ -365,8 +390,10 @@ class RelayServer:
                 result = await self._invoke(grant, message)
             elif op == "entities":
                 result = await self._entities(grant, message)
+            elif op == "phones":
+                result = await self._owner.phones(grant)
             elif op in self._ops:
-                result = await self._ops[op](grant, message, peer.send)
+                result = await self._ops[op](grant, message, peer)
             else:
                 raise RelayProtocolError(f"unknown relay operation {op!r}")
             await peer.send({"id": reply_id, "ok": result})
@@ -375,15 +402,10 @@ class RelayServer:
         except BaseException as exc:  # noqa: BLE001 - every failure must reach the client
             await peer.send({"id": reply_id, "error": error_payload(exc)})
 
-    async def _client(self, grant: Any, phone: str) -> Any:
-        if phone not in await self._owner.phones(grant):
-            raise RelayAccountUnavailableError(f"the session owner has no live connection for {phone}")
-        return await self._owner.client(grant, phone)
-
     async def _invoke(self, grant: Any, message: dict) -> str:
         request = decode_request(str(message.get("body") or ""))
         check_allowed(request)
-        client = await self._client(grant, str(message.get("phone") or ""))
+        client = await self._owner.client(grant, str(message.get("phone") or ""))
         request.read_result = _read_raw  # the client parses the answer itself
         dc_id = message.get("dc")
         home = getattr(getattr(client, "session", None), "dc_id", None)
@@ -400,7 +422,7 @@ class RelayServer:
         return base64.b64encode(bytes(raw)).decode("ascii")
 
     async def _entities(self, grant: Any, message: dict) -> list[list]:
-        client = await self._client(grant, str(message.get("phone") or ""))
+        client = await self._owner.client(grant, str(message.get("phone") or ""))
         return entity_rows(getattr(client, "session", None))
 
 
@@ -462,18 +484,97 @@ def relay_endpoint_path(database_path: str | Path) -> Path:
 # --------------------------------------------------------------------------- #
 
 
-class RelayConnection:
-    """One multiplexed connection to the owner, shared by every relay client of a process."""
+async def _handshake(endpoint: RelayEndpoint, host: str):
+    if endpoint.protocol != RELAY_PROTOCOL:
+        raise RelayProtocolError(
+            f"the session owner (PID {endpoint.pid}) speaks relay protocol {endpoint.protocol}, "
+            f"this CLI {RELAY_PROTOCOL}: restart it (`tg-agent restart`)"
+        )
+    reader, writer = await asyncio.open_connection(host, endpoint.port, limit=_LINE_LIMIT)
+    try:
+        writer.write(_dump({"id": 0, "op": "hello", "token": endpoint.token,
+                            "protocol": RELAY_PROTOCOL, "layer": LAYER}))
+        await writer.drain()
+        async with asyncio.timeout(_HANDSHAKE_TIMEOUT_SEC):
+            line = await reader.readline()
+        if not line:
+            raise RelayProtocolError("the session owner closed the relay during the handshake")
+        reply = json.loads(line)
+        if "error" in reply:
+            raise rebuild_error(reply["error"])
+        hello = reply.get("ok") or {}
+        if hello.get("protocol") != RELAY_PROTOCOL or hello.get("layer") != LAYER:
+            raise RelayProtocolError(
+                "the session owner answered with another relay protocol or TL layer: "
+                "restart it (`tg-agent restart`)"
+            )
+    except BaseException:
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+        raise
+    return reader, writer, hello
 
-    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, hello: dict):
+
+def probe_endpoint(endpoint: RelayEndpoint, *, timeout: float = 1.0) -> dict | None:
+    """Blocking handshake for synchronous callers: the owner's hello, or ``None``.
+
+    Raises :class:`RelayProtocolError` when an owner answers but speaks another
+    relay protocol or TL layer — that one needs a restart, not a second owner.
+    """
+    try:
+        with socket.create_connection(("127.0.0.1", endpoint.port), timeout=timeout) as conn:
+            conn.sendall(_dump({"id": 0, "op": "hello", "token": endpoint.token,
+                                "protocol": RELAY_PROTOCOL, "layer": LAYER}))
+            with conn.makefile("rb") as stream:
+                line = stream.readline()
+    except OSError:
+        return None
+    if not line:
+        return None
+    try:
+        reply = json.loads(line)
+    except ValueError:
+        return None
+    if "error" in reply:
+        error = rebuild_error(reply["error"])
+        if isinstance(error, RelayProtocolError):
+            raise error
+        return None
+    return reply.get("ok") or None
+
+
+class RelayConnection:
+    """One multiplexed connection to the owner, shared by every relay client of a process.
+
+    A connection opened with ``reconnect`` (an async callable returning a fresh
+    endpoint) reopens itself on the next call after the owner went away — for
+    long-lived clients such as a project worker in gateway mode. A request that
+    was in flight when the link dropped still fails: writes are never replayed.
+    """
+
+    def __init__(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        hello: dict,
+        *,
+        host: str = "127.0.0.1",
+        reconnect: Callable[[], Awaitable[RelayEndpoint]] | None = None,
+    ):
         self._reader = reader
         self._writer = writer
         self.hello = hello
+        self._host = host
+        self._reconnect = reconnect
+        self._reopen_lock = asyncio.Lock()
         self._pending: dict[int, asyncio.Future] = {}
         self._next_id = 0
         self._write_lock = asyncio.Lock()
         self._closed = False
+        self._explicitly_closed = False
         self._push_handlers: list[Callable[[dict], Any]] = []
+        self._replay: list[tuple[str, dict]] = []
         self._reader_task: asyncio.Task | None = None
 
     @property
@@ -482,46 +583,54 @@ class RelayConnection:
 
     @property
     def is_open(self) -> bool:
-        return not self._closed
+        return not self._closed or (self._reconnect is not None and not self._explicitly_closed)
 
     @classmethod
-    async def open(cls, endpoint: RelayEndpoint, *, host: str = "127.0.0.1") -> RelayConnection:
-        if endpoint.protocol != RELAY_PROTOCOL:
-            raise RelayProtocolError(
-                f"the session owner (PID {endpoint.pid}) speaks relay protocol {endpoint.protocol}, "
-                f"this CLI {RELAY_PROTOCOL}: restart it (`tg-agent restart`)"
-            )
-        reader, writer = await asyncio.open_connection(host, endpoint.port, limit=_LINE_LIMIT)
-        try:
-            writer.write(_dump({"id": 0, "op": "hello", "token": endpoint.token,
-                                "protocol": RELAY_PROTOCOL, "layer": LAYER}))
-            await writer.drain()
-            async with asyncio.timeout(_HANDSHAKE_TIMEOUT_SEC):
-                line = await reader.readline()
-            if not line:
-                raise RelayProtocolError("the session owner closed the relay during the handshake")
-            reply = json.loads(line)
-            if "error" in reply:
-                raise rebuild_error(reply["error"])
-            hello = reply.get("ok") or {}
-            if hello.get("protocol") != RELAY_PROTOCOL or hello.get("layer") != LAYER:
-                raise RelayProtocolError(
-                    "the session owner answered with another relay protocol or TL layer: "
-                    "restart it (`tg-agent restart`)"
-                )
-        except BaseException:
-            writer.close()
-            with contextlib.suppress(Exception):
-                await writer.wait_closed()
-            raise
-        connection = cls(reader, writer, hello)
+    async def open(
+        cls,
+        endpoint: RelayEndpoint,
+        *,
+        host: str = "127.0.0.1",
+        reconnect: Callable[[], Awaitable[RelayEndpoint]] | None = None,
+    ) -> RelayConnection:
+        reader, writer, hello = await _handshake(endpoint, host)
+        connection = cls(reader, writer, hello, host=host, reconnect=reconnect)
         connection._reader_task = asyncio.create_task(connection._read_loop(), name="relay-reader")
         return connection
 
     def on_push(self, handler: Callable[[dict], Any]) -> None:
         self._push_handlers.append(handler)
 
+    async def refresh_phones(self) -> list[str]:
+        """Re-read the accounts the owner serves (grants change while connected)."""
+        self.hello = {**self.hello, "phones": await self.call("phones")}
+        return self.phones
+
+    async def subscribe(self, op: str, **fields: Any) -> Any:
+        """Call ``op`` now and again after every reconnect (push subscriptions)."""
+        self._replay.append((op, fields))
+        return await self.call(op, **fields)
+
+    async def _ensure_open(self) -> None:
+        if not self._closed:
+            return
+        if self._reconnect is None or self._explicitly_closed:
+            raise ConnectionError("the relay connection to the session owner is closed")
+        async with self._reopen_lock:
+            if not self._closed:
+                return
+            endpoint = await self._reconnect()
+            self._reader, self._writer, self.hello = await _handshake(endpoint, self._host)
+            self._closed = False
+            self._reader_task = asyncio.create_task(self._read_loop(), name="relay-reader")
+            for op, fields in self._replay:
+                await self._send_and_wait(op, fields)
+
     async def call(self, op: str, **fields: Any) -> Any:
+        await self._ensure_open()
+        return await self._send_and_wait(op, fields)
+
+    async def _send_and_wait(self, op: str, fields: dict) -> Any:
         if self._closed:
             raise ConnectionError("the relay connection to the session owner is closed")
         self._next_id += 1
@@ -537,9 +646,10 @@ class RelayConnection:
             self._pending.pop(request_id, None)
 
     async def _read_loop(self) -> None:
+        reader = self._reader
         try:
             while True:
-                line = await self._reader.readline()
+                line = await reader.readline()
                 if not line:
                     return
                 message = json.loads(line)
@@ -562,12 +672,14 @@ class RelayConnection:
         except (ConnectionError, asyncio.IncompleteReadError, ValueError):
             pass
         finally:
-            self._closed = True
-            for future in self._pending.values():
-                if not future.done():
-                    future.set_exception(ConnectionError("the relay connection to the session owner was lost"))
+            if reader is self._reader:
+                self._closed = True
+                for future in self._pending.values():
+                    if not future.done():
+                        future.set_exception(ConnectionError("the relay connection to the session owner was lost"))
 
     async def close(self) -> None:
+        self._explicitly_closed = True
         self._closed = True
         self._writer.close()
         with contextlib.suppress(Exception):
@@ -654,7 +766,7 @@ class RelayTelegramClient(TelegramClient):
     async def _return_exported_sender(self, sender: Any) -> None:
         return None
 
-    async def _get_cdn_client(self, cdn_redirect: Any) -> Any:
+    async def _get_cdn_client(self, _cdn_redirect: Any) -> Any:
         raise RelayError("CDN file downloads are not available through the session owner relay")
 
     async def load_owner_entities(self) -> int:

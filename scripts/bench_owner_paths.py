@@ -13,6 +13,7 @@ Scenarios:
   command_queue    CLI-style enqueue into telegram_commands → worker marks it done
   gateway_op       one gateway read operation over loopback HTTP (old protocol)
   relay_invoke     one MTProto request through the owner relay (new protocol)
+  gateway_relay    one project MTProto request through the gateway's relay (token → grant)
 """
 
 from __future__ import annotations
@@ -199,33 +200,61 @@ async def bench_gateway_op(operations: int, concurrency: int) -> dict:
     }
 
 
-async def bench_relay_invoke(operations: int, concurrency: int) -> dict:
-    """New protocol: one MTProto request relayed to the owner's client and answered."""
-    try:
-        from telethon import functions, types
-
-        from tg_agent.telegram.relay import (
-            RELAY_PROTOCOL,
-            RelayConnection,
-            RelayEndpoint,
-            RelayServer,
-            RelayTelegramClient,
-        )
-    except ImportError:
-        return {"skipped": "relay not present in this checkout"}
+def _instant_owner_client():
+    """An owner-side client that answers like a relayed real one: the raw TL bytes."""
+    from telethon import types
+    from telethon.extensions import BinaryReader
 
     state = bytes(types.updates.State(pts=1, qts=0, date=None, seq=0, unread_count=0))
 
     class InstantOwnerClient:
-        """Answers like a relayed real client: the raw TL bytes of the result."""
-
         session = type("Session", (), {"dc_id": 2, "_entities": set()})()
 
         async def __call__(self, request):
-            from telethon.extensions import BinaryReader
-
             with BinaryReader(state) as reader:
                 return request.read_result(reader)
+
+    return InstantOwnerClient()
+
+
+async def _time_relayed_requests(connection, phone: str, operations: int, concurrency: int) -> dict:
+    from telethon import functions
+
+    from tg_agent.telegram.relay import RelayTelegramClient
+
+    client = RelayTelegramClient(connection, phone, flood_sleep_threshold=0)
+    await client.connect()
+
+    async def one() -> float:
+        started = time.perf_counter()
+        await client(functions.updates.GetStateRequest())
+        return time.perf_counter() - started
+
+    sequential = [await one() for _ in range(operations)]
+    started = time.perf_counter()
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def bounded():
+        async with semaphore:
+            return await one()
+
+    await asyncio.gather(*(bounded() for _ in range(operations)))
+    elapsed = time.perf_counter() - started
+    return {
+        "sequential": _quantiles(sequential),
+        "concurrent": {"concurrency": concurrency, "ops": operations,
+                       "ops_per_sec": round(operations / elapsed, 1)},
+    }
+
+
+async def bench_relay_invoke(operations: int, concurrency: int) -> dict:
+    """New protocol: one MTProto request relayed to the owner's client and answered."""
+    try:
+        from tg_agent.telegram.relay import RELAY_PROTOCOL, RelayConnection, RelayEndpoint, RelayServer
+    except ImportError:
+        return {"skipped": "relay not present in this checkout"}
+
+    owner_client = _instant_owner_client()
 
     class Owner:
         async def authorize(self, token):
@@ -235,40 +264,63 @@ async def bench_relay_invoke(operations: int, concurrency: int) -> dict:
             return ["+100"]
 
         async def client(self, grant, phone):
-            return InstantOwnerClient()
+            return owner_client
 
     server = RelayServer(Owner())
     port = await server.start()
     connection = await RelayConnection.open(
         RelayEndpoint(port=port, token="bench", pid=os.getpid(), protocol=RELAY_PROTOCOL)
     )
-    client = RelayTelegramClient(connection, "+100", flood_sleep_threshold=0)
-    await client.connect()
-
-    async def one() -> float:
-        started = time.perf_counter()
-        await client(functions.updates.GetStateRequest())
-        return time.perf_counter() - started
-
     try:
-        sequential = [await one() for _ in range(operations)]
-        started = time.perf_counter()
-        semaphore = asyncio.Semaphore(concurrency)
-
-        async def bounded():
-            async with semaphore:
-                return await one()
-
-        await asyncio.gather(*(bounded() for _ in range(operations)))
-        elapsed = time.perf_counter() - started
+        return await _time_relayed_requests(connection, "+100", operations, concurrency)
     finally:
         await connection.close()
         await server.stop()
-    return {
-        "sequential": _quantiles(sequential),
-        "concurrent": {"concurrency": concurrency, "ops": operations,
-                       "ops_per_sec": round(operations / elapsed, 1)},
-    }
+
+
+async def bench_gateway_relay(operations: int, concurrency: int) -> dict:
+    """New gateway: a project's request through the gateway relay — token, grant check, shared client."""
+    try:
+        from tg_agent.gateway.server import GatewayHub
+        from tg_agent.gateway.store import GatewayStore, private_key
+        from tg_agent.telegram.relay import RELAY_PROTOCOL, RelayConnection, RelayEndpoint, RelayServer
+    except ImportError as exc:
+        return {"skipped": f"gateway relay not present in this checkout ({exc.name})"}
+    import secrets
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    owner_client = _instant_owner_client()
+
+    class Access:
+        async def connection(self, project, account):
+            return SimpleNamespace(raw_client=owner_client)
+
+        async def close(self):
+            pass
+
+    root = Path(tempfile.mkdtemp(prefix="bench-gw-relay-")) / "gateway"
+    store = GatewayStore(root)
+    admin_token = private_key(root, "gateway-admin.token")
+    await store.open()
+    account = await store.import_account("+100", "bench-session")
+    token = secrets.token_urlsafe(32)
+    project = str(uuid4())
+    await store.register_project(project, root.parent / project, token)
+    await store.grant(project, account, primary=True)
+    hub = GatewayHub(store, Access(), admin_token=admin_token)
+    server = RelayServer(hub, ops=hub.ops)
+    port = await server.start()
+    connection = await RelayConnection.open(
+        RelayEndpoint(port=port, token=token, pid=os.getpid(), protocol=RELAY_PROTOCOL)
+    )
+    try:
+        return await _time_relayed_requests(connection, "+100", operations, concurrency)
+    finally:
+        await connection.close()
+        await server.stop()
+        await hub.close()
+        await store.close()
 
 
 def main() -> None:
@@ -286,6 +338,7 @@ def main() -> None:
         "command_queue": lambda: asyncio.run(bench_command_queue(max(10, args.ops // 3))),
         "gateway_op": lambda: asyncio.run(bench_gateway_op(args.ops, args.concurrency)),
         "relay_invoke": lambda: asyncio.run(bench_relay_invoke(args.ops, args.concurrency)),
+        "gateway_relay": lambda: asyncio.run(bench_gateway_relay(args.ops, args.concurrency)),
     }
     report = {
         "git": subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO,

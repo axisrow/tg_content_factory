@@ -1667,7 +1667,9 @@ class RelayBackend(TelegramBackend):
     async def acquire_client(self, account: Account, *, ephemeral: bool = False) -> BackendClientLease:
         from tg_agent.telegram.relay import RelayAccountUnavailableError, RelayTelegramClient
 
-        if account.phone not in self._connection.phones:
+        if account.phone not in self._connection.phones and account.phone not in (
+            await self._connection.refresh_phones()
+        ):
             raise RelayAccountUnavailableError(
                 f"the session owner has no live connection for {account.phone}"
             )
