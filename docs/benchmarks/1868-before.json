@@ -1,0 +1,53 @@
+{
+  "git": "652643f",
+  "python": "3.13.18",
+  "machine": "x86_64",
+  "results": {
+    "cli_startup": {
+      "help": {
+        "n": 10,
+        "p50_ms": 1062.115,
+        "p95_ms": 1151.678,
+        "max_ms": 1151.678
+      },
+      "account_list": {
+        "n": 10,
+        "p50_ms": 965.992,
+        "p95_ms": 1210.993,
+        "max_ms": 1210.993
+      }
+    },
+    "cli_imports": {
+      "modules": 1250,
+      "web_stack": [
+        "fastapi",
+        "httpx",
+        "starlette",
+        "uvicorn"
+      ],
+      "telethon": true
+    },
+    "command_queue": {
+      "n": 20,
+      "p50_ms": 1002.645,
+      "p95_ms": 1006.199,
+      "max_ms": 1006.199
+    },
+    "gateway_op": {
+      "sequential": {
+        "n": 60,
+        "p50_ms": 61.817,
+        "p95_ms": 76.152,
+        "max_ms": 102.564
+      },
+      "concurrent": {
+        "concurrency": 8,
+        "ops": 60,
+        "ops_per_sec": 69.9
+      }
+    },
+    "relay_invoke": {
+      "skipped": "relay not present in this checkout"
+    }
+  }
+}
