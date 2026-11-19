@@ -107,9 +107,6 @@ _REQUIRED_ARGS_BY_TOOL: dict[str, frozenset[str]] = {
     "read_messages": frozenset({"chat_id"}),
     "generate_image": frozenset({"prompt"}),
     "list_image_models": frozenset({"provider"}),
-    "delete_agent_thread": frozenset({"thread_id"}),
-    "rename_agent_thread": frozenset({"thread_id", "title"}),
-    "get_thread_messages": frozenset({"thread_id"}),
 }
 
 

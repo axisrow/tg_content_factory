@@ -89,25 +89,6 @@ def test_restart_rejects_removed_web_pass_flag():
 
 
 # --------------------------------------------------------------------------- #
-# mcp-server
-# --------------------------------------------------------------------------- #
-
-
-def test_mcp_server_defaults_pool_on():
-    with patch("tg_agent.cli.typer_commands.mcp_server_cmd.serve_mcp") as mock_mcp:
-        result = runner.invoke(app, ["mcp-server"])
-    assert result.exit_code == 0
-    mock_mcp.assert_called_once_with("config.yaml", no_pool=False)
-
-
-def test_mcp_server_no_pool_flag():
-    with patch("tg_agent.cli.typer_commands.mcp_server_cmd.serve_mcp") as mock_mcp:
-        result = runner.invoke(app, ["mcp-server", "--no-pool"])
-    assert result.exit_code == 0
-    mock_mcp.assert_called_once_with("config.yaml", no_pool=True)
-
-
-# --------------------------------------------------------------------------- #
 # collect (+ collect sample) — async bodies via run_async
 # --------------------------------------------------------------------------- #
 

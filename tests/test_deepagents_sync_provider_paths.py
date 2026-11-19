@@ -795,61 +795,6 @@ class TestDeepagentsSyncToggleSchedulerJob:
 # ===========================================================================
 
 
-class TestDeepagentsSyncDeleteAgentThread:
-    def test_success(self, mock_db):
-        mock_db.get_agent_thread = AsyncMock(return_value=None)
-        mock_db.delete_agent_thread = AsyncMock(return_value=None)
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["delete_agent_thread"](thread_id=4, confirm=True)
-        assert "id=4" in result
-        assert "удалён" in result
-
-    def test_error(self, mock_db):
-        mock_db.get_agent_thread = AsyncMock(return_value=None)
-        mock_db.delete_agent_thread = AsyncMock(side_effect=Exception("fail"))
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["delete_agent_thread"](thread_id=4, confirm=True)
-        assert "Ошибка" in result
-
-
-class TestDeepagentsSyncRenameAgentThread:
-    def test_success(self, mock_db):
-        mock_db.rename_agent_thread = AsyncMock(return_value=None)
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["rename_agent_thread"](thread_id=2, title="New Name")
-        assert "id=2" in result
-        assert "New Name" in result
-
-    def test_error(self, mock_db):
-        mock_db.rename_agent_thread = AsyncMock(side_effect=Exception("fail"))
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["rename_agent_thread"](thread_id=2, title="Name")
-        assert "Ошибка" in result
-
-
-class TestDeepagentsSyncGetThreadMessages:
-    def test_empty(self, mock_db):
-        mock_db.get_agent_messages = AsyncMock(return_value=[])
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["get_thread_messages"](thread_id=1)
-        assert "Нет сообщений" in result
-
-    def test_with_messages(self, mock_db):
-        msgs = [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "World"}]
-        mock_db.get_agent_messages = AsyncMock(return_value=msgs)
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["get_thread_messages"](thread_id=1)
-        assert "Hello" in result
-        assert "World" in result
-        assert "user" in result
-
-    def test_error(self, mock_db):
-        mock_db.get_agent_messages = AsyncMock(side_effect=Exception("fail"))
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["get_thread_messages"](thread_id=1)
-        assert "Ошибка" in result
-
-
 # ===========================================================================
 # deepagents_sync — generate_image
 # ===========================================================================

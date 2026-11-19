@@ -244,9 +244,9 @@ class TestNegIdScopeIsNarrow:
         """``pipeline node replace 5 --badtypo spec`` → strict error, exit 2."""
         assert _run_main(["pipeline", "node", "replace", "5", "--badtypo", "spec"]) == 2
 
-    def test_agent_context_rejects_unknown_option(self):
-        """``agent context 5 --badtypo`` (thread_id positive pk) → strict error."""
-        assert _run_main(["agent", "context", "5", "--badtypo"]) == 2
+    def test_search_query_get_rejects_unknown_option(self):
+        """``search-query get 5 --badtypo`` (id is a positive pk) → strict error."""
+        assert _run_main(["search-query", "get", "5", "--badtypo"]) == 2
 
     def test_neg_capable_command_absorbs_unknown_into_open_slot(self):
         """Accepted trade-off (#1162): on a neg-capable command an unknown dash

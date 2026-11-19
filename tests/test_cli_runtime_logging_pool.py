@@ -1,4 +1,4 @@
-"""Tests for src/cli/runtime.py — setup_logging, ensure_data_dirs, redirect/restore logging, init_pool."""
+"""Tests for tg_agent/cli/runtime.py — setup_logging, ensure_data_dirs, init_pool."""
 from __future__ import annotations
 
 import asyncio
@@ -8,8 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from tg_agent.cli.runtime import (
     ensure_data_dirs,
     install_log_redaction,
-    redirect_logging_to_file,
-    restore_logging,
     setup_logging,
 )
 from tg_agent.utils.safe_logging import RedactingFormatter, redact_log_text, text_hash
@@ -82,82 +80,6 @@ class TestEnsureDataDirs:
         ensure_data_dirs()  # should not raise
 
         assert (data_root / "image").is_dir()
-
-
-class TestRedirectLogging:
-    def test_redirect_logging_to_file(self, tmp_path):
-        """redirect_logging_to_file replaces console handlers with a file handler."""
-        root = logging.getLogger()
-        original_handlers = root.handlers[:]
-
-        # Add a console handler if none
-        console = logging.StreamHandler()
-        root.addHandler(console)
-
-        try:
-            log_file = str(tmp_path / "tui_test.log")
-            removed = redirect_logging_to_file(log_file)
-
-            # Should have removed the console handler
-            assert console in removed
-            # Should have added a file handler
-            file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
-            assert len(file_handlers) >= 1
-        finally:
-            # Clean up
-            for h in root.handlers[:]:
-                if isinstance(h, logging.FileHandler):
-                    h.close()
-                    root.removeHandler(h)
-            root.handlers = original_handlers
-
-    def test_restore_logging(self, tmp_path):
-        """restore_logging restores previously removed console handlers."""
-        root = logging.getLogger()
-        original_handlers = root.handlers[:]
-
-        console = logging.StreamHandler()
-        root.addHandler(console)
-
-        try:
-            log_file = str(tmp_path / "tui_restore.log")
-            removed = redirect_logging_to_file(log_file)
-            restore_logging(removed)
-
-            # Console handler should be back
-            assert console in root.handlers
-            # Plain TUI FileHandler should be gone; RotatingFileHandler (app.log) may remain
-            plain_file_handlers = [h for h in root.handlers if type(h) is logging.FileHandler]
-            assert len(plain_file_handlers) == 0
-        finally:
-            root.handlers = original_handlers
-
-    def test_restore_logging_single_handler(self, tmp_path):
-        """restore_logging accepts a single handler (not a list)."""
-        root = logging.getLogger()
-        original_handlers = root.handlers[:]
-
-        console = logging.StreamHandler()
-        root.addHandler(console)
-
-        try:
-            log_file = str(tmp_path / "tui_single.log")
-            redirect_logging_to_file(log_file)
-            restore_logging(console)
-
-            assert console in root.handlers
-        finally:
-            root.handlers = original_handlers
-
-    def test_restore_logging_none(self, tmp_path):
-        """restore_logging with None does nothing."""
-        root = logging.getLogger()
-        original_handlers = root.handlers[:]
-        try:
-            restore_logging(None)
-            # Should not raise or change anything
-        finally:
-            root.handlers = original_handlers
 
 
 class TestRedactingFilter:

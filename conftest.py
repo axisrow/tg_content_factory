@@ -88,8 +88,7 @@ _INTEGRATION_SOURCE_TOKENS = (
     "sqlite3.connect",
     "aiosqlite.connect",
     "open_connection(",
-    # real subprocess / session-file subsystems
-    "StdioServerParameters",
+    # real session-file subsystem
     "SessionMaterializer(",
     # real project-config load from a written YAML file
     "load_config(",

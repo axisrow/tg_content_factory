@@ -152,7 +152,17 @@ async def server_time_impl(config_path: str) -> None:
 async def agent_impl(
     config_path: str, *, backend: str | None = None, prompt_template: str | None = None
 ) -> None:
-    """Configure (or show) the agent backend override and default prompt template."""
+    """Configure (or show) the pipeline agent's backend override and default prompt template."""
+    from tg_agent.agent.models import VALID_AGENT_BACKENDS, normalize_agent_backend
+
+    if backend:
+        canonical = normalize_agent_backend(backend)
+        if canonical is None:
+            raise typer.BadParameter(
+                f"unknown agent backend {backend!r}; choose one of: {', '.join(sorted(VALID_AGENT_BACKENDS))}",
+                param_hint="--backend",
+            )
+        backend = canonical
     _, db = await runtime.init_db(config_path)
     try:
         # Write the keys the runtime/web actually read — the old
@@ -424,13 +434,13 @@ def settings_server_time(ctx: typer.Context) -> None:
 def settings_agent(
     ctx: typer.Context,
     backend: str | None = typer.Option(
-        None, "--backend", help="Agent backend override (auto, claude, deepagents, codex, adk)"
+        None, "--backend", help="Agent backend override (auto, claude, deepagents)"
     ),
     prompt_template: str | None = typer.Option(
         None, "--prompt-template", help="Default prompt template"
     ),
 ) -> None:
-    """Configure agent backend and defaults."""
+    """Configure the agent backend and prompt template used by content pipelines."""
     apply_startup(ctx)
     run_async(
         agent_impl(ctx.obj.config, backend=backend, prompt_template=prompt_template)

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -989,18 +989,6 @@ def patch_serve_create_app(**mock_kwargs):
     create_app = MagicMock(**mock_kwargs)
     with patch("tg_agent.cli.commands.serve._load_web_surface", return_value=create_app):
         yield create_app
-
-
-def fake_tg_tui_modules(app_cls) -> dict[str, ModuleType]:
-    """``sys.modules`` stand-ins for the optional tg_tui package (#1720 wave 2).
-
-    Core CLI tests patch these in so they never need the TUI package installed.
-    """
-    package = ModuleType("tg_tui")
-    app_module = ModuleType("tg_tui.app")
-    app_module.AgentTuiApp = app_cls
-    package.app = app_module
-    return {"tg_tui": package, "tg_tui.app": app_module}
 
 
 @contextmanager

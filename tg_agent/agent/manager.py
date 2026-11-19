@@ -9,7 +9,6 @@ from contextlib import nullcontext, suppress
 from dataclasses import dataclass
 from typing import Any
 
-from tg_agent.agent.adk_backend import AdkSdkBackend
 from tg_agent.agent.backends._stream import (
     _STDERR_STAGE_MAP,
     _as_prompt_stream,
@@ -34,7 +33,6 @@ from tg_agent.agent.backends._stream import (
 )
 from tg_agent.agent.backends.claude_sdk import ClaudeSdkBackend
 from tg_agent.agent.backends.deepagents import DeepagentsBackend
-from tg_agent.agent.codex_backend import CodexSdkBackend
 from tg_agent.agent.models import (
     VALID_AGENT_BACKENDS,
     model_for_backend,
@@ -55,7 +53,7 @@ from tg_agent.services.agent_provider_service import ProviderModelCompatibilityR
 logger = logging.getLogger(__name__)
 
 _HISTORY_BUDGET = 100_000 * 4  # ~100K tokens in chars
-AgentBackend = ClaudeSdkBackend | DeepagentsBackend | CodexSdkBackend | AdkSdkBackend
+AgentBackend = ClaudeSdkBackend | DeepagentsBackend
 
 __all__ = [
     "AgentManager",
@@ -97,8 +95,6 @@ class AgentRuntimeStatus:
     fallback_provider: str
     using_override: bool
     error: str | None = None
-    codex_available: bool = False
-    adk_available: bool = False
 
 _SETTINGS_CACHE_TTL = 60.0  # seconds
 
@@ -149,12 +145,6 @@ class AgentManager:
             db, self._config, client_pool=client_pool, scheduler_manager=scheduler_manager,
         )
         self._deepagents_backend = DeepagentsBackend(
-            db, self._config, client_pool=client_pool, scheduler_manager=scheduler_manager,
-        )
-        self._codex_backend = CodexSdkBackend(
-            db, self._config, client_pool=client_pool, scheduler_manager=scheduler_manager,
-        )
-        self._adk_backend = AdkSdkBackend(
             db, self._config, client_pool=client_pool, scheduler_manager=scheduler_manager,
         )
         self._active_tasks: dict[int, asyncio.Task] = {}
@@ -212,12 +202,7 @@ class AgentManager:
 
     @property
     def available(self) -> bool:
-        return (
-            self._claude_backend.available
-            or self._deepagents_backend.available
-            or self._codex_backend.available
-            or self._adk_backend.available
-        )
+        return self._claude_backend.available or self._deepagents_backend.available
 
     def _build_prompt_stats_only(self, history: list[dict], message: str) -> dict:
         """Compute prompt statistics without building the full formatted string."""
@@ -295,8 +280,6 @@ class AgentManager:
         backend_override = await self._backend_override()
         claude_available = self._claude_backend.available
         deepagents_available = self._deepagents_backend.available
-        codex_available = self._codex_backend.available
-        adk_available = self._adk_backend.available
         deepagents_error = self._deepagents_backend.init_error
 
         selected_backend: str | None
@@ -308,16 +291,7 @@ class AgentManager:
                 error = "claude-agent-sdk не сконфигурирован."
             elif selected_backend == "deepagents" and not deepagents_available:
                 error = deepagents_error or "deepagents fallback не сконфигурирован."
-            elif selected_backend == "codex" and not codex_available:
-                error = "Codex SDK не установлен или Codex CLI не авторизован."
-            elif selected_backend == "adk" and not adk_available:
-                error = "Google ADK не установлен или не задан GOOGLE_API_KEY / GEMINI_API_KEY."
         else:
-            # Codex is intentionally NOT in the auto-fallback chain: each turn
-            # runs a blocking `codex` CLI subprocess and spawns an mcp-server
-            # subprocess (slow, heavy), so it must be opt-in via the dev-mode
-            # `agent_backend_override`, never silently auto-selected — the same
-            # rationale that makes the codex image adapter explicit_only.
             if deepagents_available and self._deepagents_backend.has_usable_db_provider_configs:
                 selected_backend = "deepagents"
             elif claude_available:
@@ -333,8 +307,6 @@ class AgentManager:
         return AgentRuntimeStatus(
             claude_available=claude_available,
             deepagents_available=deepagents_available,
-            codex_available=codex_available,
-            adk_available=adk_available,
             dev_mode_enabled=dev_mode_enabled,
             backend_override=backend_override,
             selected_backend=selected_backend,
@@ -409,15 +381,10 @@ class AgentManager:
             backend = self._claude_backend
         elif backend_name == "deepagents":
             backend = self._deepagents_backend
-        elif backend_name == "codex":
-            backend = self._codex_backend
-        elif backend_name == "adk":
-            backend = self._adk_backend
         else:
             yield _sse({"error": "Ошибка агента: не удалось выбрать backend."})
             return
-        # Drop a model ID that doesn't belong to the selected backend (e.g. a
-        # Claude ID still in the request while codex/adk is active) → backend
+        # Drop a model ID that doesn't belong to the selected backend → backend
         # default. deepagents always resolves to None (its model is settings-led).
         model = model_for_backend(backend_name, model)
 

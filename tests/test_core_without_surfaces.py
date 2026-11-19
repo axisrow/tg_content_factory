@@ -9,8 +9,7 @@ an absent distribution, and pin:
 
 * every ``tg_agent`` module imports — no core module reaches for a UI package;
 * the CLI starts (``--help``);
-* ``serve`` and the interactive ``agent chat`` exit 1 with an install hint
-  instead of a traceback.
+* ``serve`` exits 1 with an install hint instead of a traceback.
 """
 
 from __future__ import annotations
@@ -127,12 +126,4 @@ def test_serve_without_tg_webui_exits_with_install_hint(tmp_path):
     assert result.returncode == 1
     output = result.stdout + result.stderr
     assert _SMOKE.SERVE_HINT in output
-    assert "Traceback" not in output
-
-
-def test_interactive_agent_chat_without_tg_tui_exits_with_install_hint(tmp_path):
-    result = _run(tmp_path, _CLI, "agent", "chat")
-    assert result.returncode == 1
-    output = result.stdout + result.stderr
-    assert "pip install tg-tui" in output
     assert "Traceback" not in output

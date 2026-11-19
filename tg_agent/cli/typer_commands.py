@@ -24,7 +24,6 @@ from __future__ import annotations
 import typer
 
 from tg_agent.cli.commands import account as account_cmd
-from tg_agent.cli.commands import agent as agent_cmd
 from tg_agent.cli.commands import analytics as analytics_cmd
 from tg_agent.cli.commands import channel as channel_cmd
 from tg_agent.cli.commands import collect as collect_cmd
@@ -34,7 +33,6 @@ from tg_agent.cli.commands import export as export_cmd
 from tg_agent.cli.commands import filter as filter_cmd
 from tg_agent.cli.commands import global_store as global_store_cmd
 from tg_agent.cli.commands import image as image_cmd
-from tg_agent.cli.commands import mcp_server as mcp_server_cmd
 from tg_agent.cli.commands import messages as messages_cmd
 from tg_agent.cli.commands import notification as notification_cmd
 from tg_agent.cli.commands import photo_loader as photo_loader_cmd
@@ -50,7 +48,6 @@ from tg_agent.cli.commands import test as test_cmd
 from tg_agent.cli.commands import translate as translate_cmd
 from tg_agent.cli.commands import worker as worker_cmd
 from tg_agent.cli.commands.account import account_app
-from tg_agent.cli.commands.agent import agent_app
 from tg_agent.cli.commands.analytics import analytics_app
 from tg_agent.cli.commands.channel import channel_app
 from tg_agent.cli.commands.collect import collect_app
@@ -97,7 +94,6 @@ from tg_agent.cli.typer_app import app, apply_startup, run_async
 
 _COMMAND_MODULE_ALIASES_FOR_TEST_PATCHING = (
     account_cmd,
-    agent_cmd,
     analytics_cmd,
     channel_cmd,
     collect_cmd,
@@ -197,25 +193,6 @@ def restart(ctx: typer.Context) -> None:
     """Restart the managed daemon: stop, then run the worker (no web panel)."""
     apply_startup(ctx)
     server_control_cmd.restart_web(ctx.obj.config)
-
-
-# --------------------------------------------------------------------------- #
-# mcp-server
-# --------------------------------------------------------------------------- #
-
-
-@app.command("mcp-server")
-def mcp_server(
-    ctx: typer.Context,
-    no_pool: bool = typer.Option(
-        False,
-        "--no-pool",
-        help="Skip Telegram client pool init; pool-dependent tools return an error message",
-    ),
-) -> None:
-    """Expose the agent tool registry as a stdio MCP server (for external agents like Codex)."""
-    apply_startup(ctx)
-    mcp_server_cmd.serve_mcp(ctx.obj.config, no_pool=no_pool)
 
 
 # --------------------------------------------------------------------------- #
@@ -421,13 +398,6 @@ app.add_typer(scheduler_app, name="scheduler")
 #           verify-code / add / flood-status / flood-clear / export-session /
 
 app.add_typer(account_app, name="account")
-
-
-# --------------------------------------------------------------------------- #
-# agent → threads / thread-create / thread-delete / chat / thread-rename /
-#         thread-stop / messages / context / test-escaping / test-tools
-
-app.add_typer(agent_app, name="agent")
 
 
 # --------------------------------------------------------------------------- #

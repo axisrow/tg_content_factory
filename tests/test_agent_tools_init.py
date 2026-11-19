@@ -366,7 +366,6 @@ class TestBuildAgentToolsDict:
                 messaging=mock_module,
                 images=mock_module,
                 settings=mock_module,
-                agent_threads=mock_module,
             ),
         ):
             from tg_agent.agent.tools import build_agent_tools_dict
@@ -426,7 +425,6 @@ class TestBuildAgentToolsDict:
                 messaging=mock_module,
                 images=mock_module,
                 settings=mock_module,
-                agent_threads=mock_module,
             ),
         ):
             tools_dict = build_agent_tools_dict(mock_db, client_pool=pool)

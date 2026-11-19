@@ -927,28 +927,6 @@ class TestDeepagentsSyncExceptions:
         result = tools["get_system_info"]()
         assert "ошибка" in result.lower()
 
-    def test_list_agent_threads_exception(self, sync_tools):
-        tools, mock_db = sync_tools
-        assert "list_agent_threads" in tools
-        mock_db.get_agent_threads = AsyncMock(side_effect=RuntimeError("fail"))
-        result = tools["list_agent_threads"]()
-        assert "ошибка" in result.lower()
-
-    def test_create_agent_thread_exception(self, sync_tools):
-        tools, mock_db = sync_tools
-        assert "create_agent_thread" in tools
-        mock_db.create_agent_thread = AsyncMock(side_effect=RuntimeError("fail"))
-        result = tools["create_agent_thread"]("title")
-        assert "ошибка" in result.lower()
-
-    def test_delete_agent_thread_exception(self, sync_tools):
-        tools, mock_db = sync_tools
-        assert "delete_agent_thread" in tools
-        mock_db.get_agent_thread = AsyncMock(return_value=None)
-        mock_db.delete_agent_thread = AsyncMock(side_effect=RuntimeError("fail"))
-        result = tools["delete_agent_thread"](1, confirm=True)
-        assert "ошибка" in result.lower()
-
     def test_get_settings_exception(self, sync_tools):
         tools, mock_db = sync_tools
         assert "get_settings" in tools

@@ -625,37 +625,6 @@ class TestDeepagentsSyncGetAccountInfo:
         assert "do not treat this as disconnected" in result
 
 
-class TestDeepagentsSyncAgentThreads:
-    def test_list_empty(self, mock_db):
-        from tg_agent.agent.tools.deepagents_sync import build_deepagents_tools
-
-        mock_db.get_agent_threads = AsyncMock(return_value=[])
-        tools = build_deepagents_tools(mock_db)
-        tool_map = {t.__name__: t for t in tools}
-        result = tool_map["list_agent_threads"]()
-        assert "не найдены" in result
-
-    def test_list_with_threads(self, mock_db):
-        from tg_agent.agent.tools.deepagents_sync import build_deepagents_tools
-
-        mock_db.get_agent_threads = AsyncMock(return_value=[{"id": 5, "title": "Chat 1"}])
-        tools = build_deepagents_tools(mock_db)
-        tool_map = {t.__name__: t for t in tools}
-        result = tool_map["list_agent_threads"]()
-        assert "Chat 1" in result
-        assert "id=5" in result
-
-    def test_create_thread(self, mock_db):
-        from tg_agent.agent.tools.deepagents_sync import build_deepagents_tools
-
-        mock_db.create_agent_thread = AsyncMock(return_value=7)
-        tools = build_deepagents_tools(mock_db)
-        tool_map = {t.__name__: t for t in tools}
-        result = tool_map["create_agent_thread"](title="New Thread")
-        assert "id=7" in result
-        assert "создан" in result
-
-
 class TestDeepagentsSyncGetSettings:
     def test_returns_settings(self, mock_db):
         from tg_agent.agent.tools.deepagents_sync import build_deepagents_tools

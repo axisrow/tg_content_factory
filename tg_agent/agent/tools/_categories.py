@@ -99,5 +99,4 @@ TOOL_MODULE_ORDER: tuple[str, ...] = (
     "images",
     "export",
     "settings",
-    "agent_threads",
 )

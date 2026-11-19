@@ -1765,19 +1765,3 @@ def discover_first_search_query_id(run_cli, assert_cli_ok):
         return match.group(1)
 
     return _discover
-
-
-_AGENT_THREAD_ROW_RE = re.compile(r"^\[(\d+)\]", re.MULTILINE)
-
-
-@pytest.fixture
-def discover_first_agent_thread_id(run_cli, assert_cli_ok):
-    def _discover() -> str:
-        result = run_cli("agent", "threads")
-        assert_cli_ok(result)
-        match = _AGENT_THREAD_ROW_RE.search(result.stdout)
-        if not match:
-            pytest.skip("no agent threads - `agent threads` returned no rows")
-        return match.group(1)
-
-    return _discover

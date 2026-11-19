@@ -700,52 +700,6 @@ class TestDeepagentsSyncAccounts:
         assert "2030-01-01" in result
 
 
-class TestDeepagentsSyncThreads:
-    def test_list_agent_threads_empty(self, mock_db):
-        mock_db.get_agent_threads = AsyncMock(return_value=[])
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["list_agent_threads"]()
-        assert "не найдены" in result.lower()
-
-    def test_list_agent_threads_with_data(self, mock_db):
-        mock_db.get_agent_threads = AsyncMock(return_value=[{"id": 1, "title": "My Thread"}])
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["list_agent_threads"]()
-        assert "My Thread" in result
-
-    def test_create_agent_thread(self, mock_db):
-        mock_db.create_agent_thread = AsyncMock(return_value=42)
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["create_agent_thread"]("Test")
-        assert "id=42" in result
-
-    def test_delete_agent_thread_success(self, mock_db):
-        mock_db.get_agent_thread = AsyncMock(return_value=None)
-        mock_db.delete_agent_thread = AsyncMock()
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["delete_agent_thread"](7, confirm=True)
-        assert "удалён" in result.lower()
-
-    def test_rename_agent_thread_success(self, mock_db):
-        mock_db.rename_agent_thread = AsyncMock()
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["rename_agent_thread"](3, "New Name")
-        assert "New Name" in result
-
-    def test_get_thread_messages_empty(self, mock_db):
-        mock_db.get_agent_messages = AsyncMock(return_value=[])
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["get_thread_messages"](5)
-        assert "нет сообщений" in result.lower()
-
-    def test_get_thread_messages_with_data(self, mock_db):
-        msg = {"role": "user", "content": "hello there"}
-        mock_db.get_agent_messages = AsyncMock(return_value=[msg])
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["get_thread_messages"](5)
-        assert "hello there" in result
-
-
 # ===========================================================================
 # deepagents_sync — settings / system info
 # ===========================================================================
