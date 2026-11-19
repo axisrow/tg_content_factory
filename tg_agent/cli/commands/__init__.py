@@ -4,5 +4,4 @@ __all__ = [
     "collect",
     "scheduler",
     "search",
-    "serve",
 ]

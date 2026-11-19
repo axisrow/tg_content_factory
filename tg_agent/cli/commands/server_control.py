@@ -65,11 +65,10 @@ def _restart_failed_banner() -> None:
 def restart_web(config_path: str) -> None:
     """Restart the managed daemon: stop gracefully, then run the worker.
 
-    The automation-first default daemon is the worker runtime WITHOUT the web
-    panel — no web server, no WEB_PASS. To host the (deprecated) web panel
-    use ``serve`` explicitly. A failed start phase is loud (#1714): the stop
-    phase already terminated the old daemon, so silence would hide a
-    zero-daemon machine.
+    The daemon is the worker runtime (the web panel was removed in #1868; a
+    still-running pre-#1868 ``serve`` is stopped and replaced by the worker).
+    A failed start phase is loud (#1714): the stop phase already terminated the
+    old daemon, so silence would hide a zero-daemon machine.
     """
     _stop_managed_server(config_path, _GRACEFUL_RESTART_NOTICE)
     try:

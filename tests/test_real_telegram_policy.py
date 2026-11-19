@@ -160,7 +160,6 @@ def _live_cli_probe_env(tmp_path: Path) -> CliRealCliEnv:
         live_root=tmp_path,
         config_path=tmp_path / "config.yaml",
         db_path=tmp_path / "data.db",
-        web_port=8080,
         phones=(),
         channel_pk=None,
         channel_id=None,

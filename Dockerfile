@@ -13,10 +13,8 @@ COPY packages/tg_shared ./packages/tg_shared
 RUN pip install --no-cache-dir . ./packages/tg_shared
 COPY . .
 # The only monorepo package the image needs (#1421): tg-shared for the runtime.
-# The legacy web panel lives in its own repo/PyPI (tg-webui) and is not part of
-# the image — `pip install tg-webui` cannot resolve yet anyway (tg-shared is
-# not on PyPI), so a panel image would need a hand-maintained dep list.
 RUN mkdir -p /app/data
-# Worker-only image (automation-first): the Telegram worker runtime with the
-# managed PID file and no web surface — hence no EXPOSE and no HTTP healthcheck.
+# Worker image (automation-first): the Telegram worker runtime with the managed
+# PID file; there is no web surface (removed in #1868) — hence no EXPOSE and no
+# HTTP healthcheck.
 CMD ["python", "-m", "tg_agent.main", "worker"]

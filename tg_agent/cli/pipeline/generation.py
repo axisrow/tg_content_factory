@@ -42,7 +42,7 @@ async def _pipeline_run(
     provider_service = await build_provider_service(db, config)
     if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
         print(
-            "LLM provider is not configured. Add one in /settings or set an API key "
+            "LLM provider is not configured. Add one with `tg-agent provider add` or set an API key "
             "env var (e.g. OPENAI_API_KEY). Non-LLM pipelines run without a provider."
         )
         return None
@@ -102,7 +102,7 @@ async def _pipeline_generate(
     provider_svc = await build_provider_service(db, config)
     if pipeline_needs_llm(pipeline) and not provider_svc.has_providers():
         print(
-            "LLM provider is not configured. Add one in /settings or set an API key "
+            "LLM provider is not configured. Add one with `tg-agent provider add` or set an API key "
             "env var (e.g. OPENAI_API_KEY). Non-LLM pipelines run without a provider."
         )
         return None
@@ -157,7 +157,10 @@ async def _pipeline_generate_stream(
     # providers; the registry no longer reads env itself (#1050).
     provider_service = await build_provider_service(db, config)
     if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
-        print("LLM provider is not configured. Add one in /settings or set an API key env var (e.g. OPENAI_API_KEY).")
+        print(
+            "LLM provider is not configured. Add one with `tg-agent provider add` "
+            "or set an API key env var (e.g. OPENAI_API_KEY)."
+        )
         return
     if not pipeline_needs_llm(pipeline):
         print("Pipeline has no LLM nodes; nothing to stream.")

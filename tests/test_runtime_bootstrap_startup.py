@@ -19,7 +19,6 @@ from tg_agent.runtime.bootstrap import _log_task_exception, start_container, sto
 def _make_container(db: Database) -> MagicMock:
     """Build a minimal AppContainer mock backed by a real Database."""
     container = MagicMock()
-    container.runtime_mode = "worker"
     container.db = db
     container.auth.is_configured = False
     container.pool = MagicMock()
@@ -115,47 +114,6 @@ async def test_start_container_calls_load_settings(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_start_container_web_mode_skips_inflight_recovery(tmp_path):
-    """Web restart must not reset the live worker's in-flight photo/generation
-    rows on the shared DB in a split deploy (audit #836/2)."""
-    db = Database(str(tmp_path / "test.db"))
-    await db.initialize()
-
-    container = _make_container(db)
-    container.runtime_mode = "web"
-    container.scheduler = AsyncMock()
-    container.scheduler.load_settings = AsyncMock()
-
-    try:
-        await start_container(container)
-        container.photo_task_service.recover_running.assert_not_called()
-        container.db.repos.generation_runs.reset_running_on_startup.assert_not_called()
-        container.db.repos.dm_reply_drafts.reset_sending_on_startup.assert_not_called()
-    finally:
-        await db.close()
-
-
-@pytest.mark.anyio
-async def test_start_container_worker_mode_runs_inflight_recovery(tmp_path):
-    db = Database(str(tmp_path / "test.db"))
-    await db.initialize()
-
-    container = _make_container(db)
-    container.runtime_mode = "worker"
-    container.auth.is_configured = False
-    container.scheduler = AsyncMock()
-    container.scheduler.load_settings = AsyncMock()
-
-    try:
-        await start_container(container)
-        container.photo_task_service.recover_running.assert_awaited_once()
-        container.db.repos.generation_runs.reset_running_on_startup.assert_awaited_once()
-        container.db.repos.dm_reply_drafts.reset_sending_on_startup.assert_awaited_once()
-    finally:
-        await db.close()
-
-
-@pytest.mark.anyio
 async def test_start_container_worker_recovers_orphaned_telegram_commands(tmp_path):
     """Worker startup requeues telegram_commands stranded in RUNNING (#1030).
 
@@ -180,7 +138,6 @@ async def test_start_container_worker_recovers_orphaned_telegram_commands(tmp_pa
     )
 
     container = _make_container(db)
-    container.runtime_mode = "worker"
     container.auth.is_configured = False
     container.scheduler = AsyncMock()
     container.scheduler.load_settings = AsyncMock()
@@ -192,44 +149,6 @@ async def test_start_container_worker_recovers_orphaned_telegram_commands(tmp_pa
         assert recovered is not None
         assert recovered.status == TelegramCommandStatus.PENDING
         assert recovered.started_at is None
-    finally:
-        await db.close()
-
-
-@pytest.mark.anyio
-async def test_start_container_web_mode_skips_telegram_command_recovery(tmp_path):
-    """Web restart must not touch the live worker's RUNNING telegram_commands.
-
-    Mirror of the photo/generation web-skip guard (#836/2) for telegram_commands:
-    in a split deploy the web side shares the DB and must leave in-flight rows for
-    the worker to own.
-    """
-    db = Database(str(tmp_path / "test.db"))
-    await db.initialize()
-
-    command_id = await db.repos.telegram_commands.create_command(
-        TelegramCommand(
-            command_type="dialogs.react",
-            payload={"phone": "+1", "message_id": 1, "emoji": "👍"},
-            requested_by="test",
-        )
-    )
-    await db.repos.telegram_commands.update_command(
-        command_id, status=TelegramCommandStatus.RUNNING
-    )
-
-    container = _make_container(db)
-    container.runtime_mode = "web"
-    container.scheduler = AsyncMock()
-    container.scheduler.load_settings = AsyncMock()
-
-    try:
-        await start_container(container)
-
-        # The worker still owns this row — web must not have requeued it.
-        still_running = await db.repos.telegram_commands.get_command(command_id)
-        assert still_running is not None
-        assert still_running.status == TelegramCommandStatus.RUNNING
     finally:
         await db.close()
 
@@ -252,44 +171,12 @@ async def test_start_container_does_not_fail_running_channel_tasks(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_start_container_web_mode_skips_telegram_runtime(tmp_path):
-    """Web runtime should not initialize Telegram pool or worker dispatchers."""
-    db = Database(str(tmp_path / "test.db"))
-    await db.initialize()
-
-    container = _make_container(db)
-    container.runtime_mode = "web"
-    container.auth.is_configured = True
-    container.pool.initialize = AsyncMock()
-    container.pool.warm_all_dialogs = AsyncMock()
-    container.scheduler = AsyncMock()
-    container.scheduler.load_settings = AsyncMock()
-    container.unified_dispatcher = AsyncMock()
-    container.unified_dispatcher.start = AsyncMock()
-    container.dm_listener = AsyncMock()
-    container.dm_listener.start = AsyncMock()
-
-    try:
-        await start_container(container)
-        container.pool.initialize.assert_not_called()
-        container.unified_dispatcher.start.assert_not_called()
-        # Web runtime must never start the DM listener (#1426): `serve` with
-        # its embedded worker plus a standalone worker would otherwise put
-        # two listeners on the same accounts.
-        container.dm_listener.start.assert_not_called()
-        container.scheduler.load_settings.assert_not_called()
-    finally:
-        await db.close()
-
-
-@pytest.mark.anyio
 async def test_start_container_worker_mode_initializes_runtime(tmp_path):
     """Worker runtime should initialize Telegram pool and dispatcher startup paths."""
     db = Database(str(tmp_path / "test.db"))
     await db.initialize()
 
     container = _make_container(db)
-    container.runtime_mode = "worker"
     container.auth.is_configured = True
     container.pool.initialize = AsyncMock()
     container.pool.warm_all_dialogs = AsyncMock()
@@ -316,7 +203,6 @@ async def test_start_container_empty_pool_skips_collection_requeue_and_schedules
     await db.initialize()
 
     container = _make_container(db)
-    container.runtime_mode = "worker"
     container.auth.is_configured = True
     container.pool.initialize = AsyncMock()
     container.pool.clients = {}
@@ -348,7 +234,6 @@ async def test_start_container_continues_when_pool_init_decrypt_fails(tmp_path, 
     await db.initialize()
 
     container = _make_container(db)
-    container.runtime_mode = "worker"
     container.auth.is_configured = True
     container.pool.initialize = AsyncMock(
         side_effect=AccountSessionDecryptError(phone="+7000", status="key_mismatch")
@@ -401,7 +286,6 @@ async def test_start_container_worker_startup_phase_order(tmp_path):
             order.append("pool.initialize")
 
     container = _make_container(db)
-    container.runtime_mode = "worker"
     container.auth.is_configured = True
     container.pool = OrderedPool()
     container.photo_task_service.recover_running = async_step("recover.photo")

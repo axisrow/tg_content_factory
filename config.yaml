@@ -2,11 +2,6 @@ telegram:
   api_id: ${TG_API_ID}
   api_hash: ${TG_API_HASH}
 
-web:
-  host: "${WEB_HOST}"
-  port: 8080
-  password: ${WEB_PASS}
-
 scheduler:
   collect_interval_minutes: 30
   delay_between_channels_sec: 2

@@ -41,7 +41,6 @@ from tg_agent.cli.commands import provider as provider_cmd
 from tg_agent.cli.commands import scheduler as scheduler_cmd
 from tg_agent.cli.commands import search as search_cmd
 from tg_agent.cli.commands import search_query as search_query_cmd
-from tg_agent.cli.commands import serve as serve_cmd
 from tg_agent.cli.commands import server_control as server_control_cmd
 from tg_agent.cli.commands import settings as settings_cmd
 from tg_agent.cli.commands import test as test_cmd
@@ -132,34 +131,13 @@ _COMMON_TYPER_NAMES_FOR_COMPAT = (
 
 
 # --------------------------------------------------------------------------- #
-# serve / worker
+# worker
 # --------------------------------------------------------------------------- #
 
 
 @app.command()
-def serve(
-    ctx: typer.Context,
-    web_pass: str | None = typer.Option(None, "--web-pass", help="Web panel password (overrides config)"),
-    no_worker: bool = typer.Option(
-        False,
-        "--no-worker",
-        help=(
-            "Do not spawn the embedded Telegram worker inside this process. "
-            "Use this when you run `python -m tg_agent.main worker` in a separate "
-            "process / container (Docker, k8s). Without this flag the serve "
-            "command runs both the web app and the worker in one process — "
-            "clicking 'Collect' in the UI immediately triggers collection."
-        ),
-    ),
-) -> None:
-    """Start web server."""
-    apply_startup(ctx)
-    serve_cmd.serve_web(ctx.obj.config, web_pass=web_pass, no_worker=no_worker)
-
-
-@app.command()
 def worker(ctx: typer.Context) -> None:
-    """Start the Telegram worker runtime (managed daemon: PID file, no web panel)."""
+    """Start the Telegram worker runtime (managed daemon: PID file, owner relay)."""
     apply_startup(ctx)
     worker_cmd.serve_worker(ctx.obj.config)
 
@@ -183,14 +161,14 @@ def stop(
         ),
     ),
 ) -> None:
-    """Stop the managed daemon (worker or legacy serve) started by this app."""
+    """Stop the managed daemon started by this app (also a pre-#1868 `serve`)."""
     apply_startup(ctx)
     server_control_cmd.stop_web(ctx.obj.config, force=force)
 
 
 @app.command()
 def restart(ctx: typer.Context) -> None:
-    """Restart the managed daemon: stop, then run the worker (no web panel)."""
+    """Restart the managed daemon: stop, then run the worker."""
     apply_startup(ctx)
     server_control_cmd.restart_web(ctx.obj.config)
 

@@ -6,7 +6,6 @@ import asyncio
 import inspect
 import logging
 import os
-import secrets
 import time
 from typing import cast
 
@@ -28,9 +27,7 @@ from tg_agent.database.bundles import (
 from tg_agent.database.repositories.accounts import AccountSessionDecryptError
 from tg_agent.live_runtime_pause import LiveRuntimePauseGate
 from tg_agent.models import DmMessage, IncomingDm
-from tg_agent.runtime.container import RuntimeClientPool, RuntimeCollector, RuntimeContainer, RuntimeScheduler
-from tg_agent.runtime.log_handler import LogBuffer
-from tg_agent.runtime.snapshots import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
+from tg_agent.runtime.container import RuntimeContainer
 from tg_agent.scheduler.service import SchedulerManager
 from tg_agent.search.ai_search import AISearchEngine
 from tg_agent.search.engine import SearchEngine
@@ -195,17 +192,12 @@ async def load_telegram_credentials(db: Database, config: AppConfig) -> tuple[in
     return api_id, api_hash
 
 
-async def build_worker_container(config: AppConfig, *, log_buffer: LogBuffer) -> RuntimeContainer:
-    """Assemble a live runtime without creating any web presentation state."""
-    return await build_runtime_container(config, log_buffer=log_buffer, runtime_mode="worker")
+async def build_worker_container(config: AppConfig) -> RuntimeContainer:
+    """Assemble the live worker runtime (the only runtime since #1868)."""
+    return await build_runtime_container(config)
 
 
-async def build_runtime_container(
-    config: AppConfig,
-    *,
-    log_buffer: LogBuffer,
-    runtime_mode: str = "worker",
-) -> RuntimeContainer:
+async def build_runtime_container(config: AppConfig) -> RuntimeContainer:
     if _is_dev:
         t_build = time.monotonic()
 
@@ -243,7 +235,7 @@ async def build_runtime_container(
     photo_loader_bundle = PhotoLoaderBundle(repos.photo_loader)
     # from_database() runs the numpy probe that sets numpy_available — the
     # positional constructor leaves it False, disabling semantic/hybrid search
-    # for the whole web/worker process (audit #837/2).
+    # for the whole worker process (audit #837/2).
     search_bundle = SearchBundle.from_database(db)
     scheduler_bundle = SchedulerBundle(
         repos.settings,
@@ -252,92 +244,61 @@ async def build_runtime_container(
         repos.search_log,
     )
 
-    session_secret = await db.get_setting("session_secret_key")
-    if not session_secret:
-        session_secret = secrets.token_hex(32)
-        await db.set_setting("session_secret_key", session_secret)
-
     api_id, api_hash = await load_telegram_credentials(db, config)
     auth = TelegramAuth(api_id, api_hash, proxy=config.telegram_runtime.proxy)
-    pool: RuntimeClientPool
-    search_pool: ClientPool | None
     gateway_client = None
-    if runtime_mode == "worker":
-        relay = None
-        if isinstance(config.gateway, dict) and config.gateway:
-            # The shared gateway owns the connections (#1868): this worker runs
-            # its Telegram requests over the gateway's relay, natively.
-            from tg_agent.gateway.catalog import connect_project
+    relay = None
+    if isinstance(config.gateway, dict) and config.gateway:
+        # The shared gateway owns the connections (#1868): this worker runs
+        # its Telegram requests over the gateway's relay, natively.
+        from tg_agent.gateway.catalog import connect_project
 
-            gateway_client = await connect_project(config, db)
-            relay = gateway_client.connection
-        pool = ClientPool(
-            auth, db, config.scheduler.max_flood_wait_sec,
-            runtime_config=config.telegram_runtime,
-            relay=relay,
-        )
-    else:
-        pool = SnapshotClientPool(db)
-        await pool.refresh()
-    pool_for_live_typed_services = cast(ClientPool, pool)
-    notification_target_service = NotificationTargetService(notification_bundle, pool_for_live_typed_services)
-    photo_publish_service = PhotoPublishService(pool_for_live_typed_services)
+        gateway_client = await connect_project(config, db)
+        relay = gateway_client.connection
+    pool = ClientPool(
+        auth, db, config.scheduler.max_flood_wait_sec,
+        runtime_config=config.telegram_runtime,
+        relay=relay,
+    )
+    notification_target_service = NotificationTargetService(notification_bundle, pool)
+    photo_publish_service = PhotoPublishService(pool)
     photo_task_service = PhotoTaskService(photo_loader_bundle, photo_publish_service)
     photo_auto_upload_service = PhotoAutoUploadService(photo_loader_bundle, photo_publish_service)
-    notifier = None
-    collection_queue = None
-    unified_dispatcher = None
-    telegram_command_dispatcher = None
-    dm_listener = None
     dm_catchup = None
-    agent_manager = None
-    ping_monitor_service: PingMonitorService | None = None
-    seeding_publisher: SeedingPublisherService | None = None
-    live_runtime_pause_gate = LiveRuntimePauseGate() if runtime_mode == "worker" else None
-    collector: RuntimeCollector
-    if runtime_mode == "worker":
-        live_pool = cast(ClientPool, pool)
-        # Dormant-DM pings (#1415): live history reads + sends through the same
-        # TelegramActionService path as `dialogs read/send` — worker-only,
-        # web snapshots never open Telegram connections.
-        live_actions = TelegramActionService(live_pool)
-        ping_monitor_service = PingMonitorService(
-            db.repos.ping_monitors,
-            live_actions,
-            auto_reply_guard=_gateway_auto_reply_guard(db, gateway_client) if gateway_client else None,
-        )
-        # Chat-seeding publisher (#1757): SEED_DUE sends through the same
-        # TelegramActionService path (`dialogs send`) — worker-only.
-        seeding_publisher = SeedingPublisherService(db, live_actions)
-        notifier = Notifier(
-            notification_target_service, config.notifications.admin_chat_id, notification_bundle
-        )
-        collector = Collector(
-            live_pool,
-            db,
-            config.scheduler,
-            notifier,
-            live_runtime_pause_gate=live_runtime_pause_gate,
-        )
-        live_collector = cast(Collector, collector)
-        collection_queue = CollectionQueue(
-            live_collector,
-            channel_bundle,
-            live_runtime_pause_gate=live_runtime_pause_gate,
-        )
-        search_pool = live_pool
-    else:
-        snapshot_collector = SnapshotCollector(db)
-        await snapshot_collector.refresh()
-        collector = snapshot_collector
-        search_pool = None
-    search_engine = SearchEngine(search_bundle, search_pool, config=config)
+    live_runtime_pause_gate = LiveRuntimePauseGate()
+    # Dormant-DM pings (#1415): live history reads + sends through the same
+    # TelegramActionService path as `dialogs read/send`.
+    live_actions = TelegramActionService(pool)
+    ping_monitor_service = PingMonitorService(
+        db.repos.ping_monitors,
+        live_actions,
+        auto_reply_guard=_gateway_auto_reply_guard(db, gateway_client) if gateway_client else None,
+    )
+    # Chat-seeding publisher (#1757): SEED_DUE sends through the same
+    # TelegramActionService path (`dialogs send`).
+    seeding_publisher = SeedingPublisherService(db, live_actions)
+    notifier = Notifier(
+        notification_target_service, config.notifications.admin_chat_id, notification_bundle
+    )
+    collector = Collector(
+        pool,
+        db,
+        config.scheduler,
+        notifier,
+        live_runtime_pause_gate=live_runtime_pause_gate,
+    )
+    collection_queue = CollectionQueue(
+        collector,
+        channel_bundle,
+        live_runtime_pause_gate=live_runtime_pause_gate,
+    )
+    search_engine = SearchEngine(search_bundle, pool, config=config)
     ai_search = AISearchEngine(config.llm, search_bundle)
     search_query_bundle = SearchQueryBundle(repos.search_queries, repos.messages, repos.channels)
 
     from tg_agent.services.collection_service import CollectionService
 
-    collection_service = CollectionService(channel_bundle, cast(Collector, collector), collection_queue)
+    collection_service = CollectionService(channel_bundle, collector, collection_queue)
     task_enqueuer = TaskEnqueuer(db, collection_service)
 
     from tg_agent.services.provider_service import RuntimeProviderRegistry
@@ -347,74 +308,66 @@ async def build_runtime_container(
     llm_provider_service = RuntimeProviderRegistry(db, config, env=dict(os.environ))
     await llm_provider_service.load_db_providers()
 
-    scheduler: RuntimeScheduler
-    if runtime_mode == "worker":
-        live_pool = cast(ClientPool, pool)
-        live_collector = cast(Collector, collector)
-        unified_dispatcher = UnifiedDispatcher(
-            live_collector,
-            channel_bundle,
-            repos.tasks,
-            sq_bundle=search_query_bundle,
-            photo_task_service=photo_task_service,
-            photo_auto_upload_service=photo_auto_upload_service,
-            ping_monitor_service=ping_monitor_service,
-            seeding_publisher=seeding_publisher,
-            search_engine=search_engine,
-            pipeline_bundle=pipeline_bundle,
-            db=db,
-            client_pool=live_pool,
-            notifier=notifier,
-            config=config,
-            llm_provider_service=llm_provider_service,
-            live_runtime_pause_gate=live_runtime_pause_gate,
-        )
-        scheduler = SchedulerManager(
-            config.scheduler,
-            scheduler_bundle=scheduler_bundle,
-            search_query_bundle=search_query_bundle,
-            task_enqueuer=task_enqueuer,
-            pipeline_bundle=pipeline_bundle,
-            warm_dialogs_callback=live_pool.warm_all_dialogs,
-            live_runtime_pause_gate=live_runtime_pause_gate,
-            resolve_backoff_callback=live_pool.get_resolve_username_backoff_remaining_sec,
-        )
-        telegram_command_dispatcher = TelegramCommandDispatcher(
-            db,
-            live_pool,
-            config,
-            live_collector,
-            scheduler=scheduler,
-            auth=auth,
-            search_engine=search_engine,
-            collection_queue=collection_queue,
-            live_runtime_pause_gate=live_runtime_pause_gate,
-            notifier=notifier,
-            gateway=gateway_client,
-        )
-        # Worker-only (#1426): `serve` (embedded worker) and a standalone
-        # `worker` must never both listen on the same accounts, so web mode
-        # gets no listener at all.
-        if isinstance(config.gateway, dict) and config.gateway:
-            from tg_agent.gateway.dm_consumer import GatewayDmConsumer
+    unified_dispatcher = UnifiedDispatcher(
+        collector,
+        channel_bundle,
+        repos.tasks,
+        sq_bundle=search_query_bundle,
+        photo_task_service=photo_task_service,
+        photo_auto_upload_service=photo_auto_upload_service,
+        ping_monitor_service=ping_monitor_service,
+        seeding_publisher=seeding_publisher,
+        search_engine=search_engine,
+        pipeline_bundle=pipeline_bundle,
+        db=db,
+        client_pool=pool,
+        notifier=notifier,
+        config=config,
+        llm_provider_service=llm_provider_service,
+        live_runtime_pause_gate=live_runtime_pause_gate,
+    )
+    scheduler = SchedulerManager(
+        config.scheduler,
+        scheduler_bundle=scheduler_bundle,
+        search_query_bundle=search_query_bundle,
+        task_enqueuer=task_enqueuer,
+        pipeline_bundle=pipeline_bundle,
+        warm_dialogs_callback=pool.warm_all_dialogs,
+        live_runtime_pause_gate=live_runtime_pause_gate,
+        resolve_backoff_callback=pool.get_resolve_username_backoff_remaining_sec,
+    )
+    telegram_command_dispatcher = TelegramCommandDispatcher(
+        db,
+        pool,
+        config,
+        collector,
+        scheduler=scheduler,
+        auth=auth,
+        search_engine=search_engine,
+        collection_queue=collection_queue,
+        live_runtime_pause_gate=live_runtime_pause_gate,
+        notifier=notifier,
+        gateway=gateway_client,
+    )
+    # One listener per account (#1426): the worker is the only process that
+    # listens, so accounts are never double-listened.
+    if isinstance(config.gateway, dict) and config.gateway:
+        from tg_agent.gateway.dm_consumer import GatewayDmConsumer
 
-            dm_listener = GatewayDmConsumer(live_pool, db, gateway_client)
-        else:
-            dm_catchup = DmCatchupService(live_pool, db)
-            dm_listener = DmListener(
-                live_pool, db, event_callback=lambda dm: _persist_incoming_dm(db, dm),
-                catchup=dm_catchup,
-            )
-        agent_manager = AgentManager(
-            db,
-            config,
-            client_pool=live_pool,
-            scheduler_manager=scheduler,
-            live_runtime_pause_gate=live_runtime_pause_gate,
-        )
+        dm_listener = GatewayDmConsumer(pool, db, gateway_client)
     else:
-        scheduler = SnapshotSchedulerManager(db, config.scheduler.collect_interval_minutes)
-        await scheduler.load_settings()
+        dm_catchup = DmCatchupService(pool, db)
+        dm_listener = DmListener(
+            pool, db, event_callback=lambda dm: _persist_incoming_dm(db, dm),
+            catchup=dm_catchup,
+        )
+    agent_manager = AgentManager(
+        db,
+        config,
+        client_pool=pool,
+        scheduler_manager=scheduler,
+        live_runtime_pause_gate=live_runtime_pause_gate,
+    )
 
     from tg_agent.services.translation_service import TranslationService
 
@@ -429,7 +382,6 @@ async def build_runtime_container(
     plugins = await start_plugins(db, config, pool, scheduler)
     return RuntimeContainer(
         plugins=plugins,
-        runtime_mode=runtime_mode,
         config=config,
         db=db,
         repos=repos,
@@ -461,8 +413,6 @@ async def build_runtime_container(
         search_engine=search_engine,
         ai_search=ai_search,
         scheduler=scheduler,
-        log_buffer=log_buffer,
-        session_secret=session_secret,
         bg_tasks=set(),
         live_runtime_pause_gate=live_runtime_pause_gate,
         agent_manager=agent_manager,
@@ -472,41 +422,32 @@ async def build_runtime_container(
     )
 
 
-async def _recover_startup_state(
-    container: RuntimeContainer,
-    *,
-    runtime_mode: str,
-    t_start: float,
-) -> None:
-    # Startup recovery resets RUNNING rows on the shared SQLite file. In a split
-    # deploy (serve --no-worker + separate worker) a web restart must NOT touch
-    # the live worker's in-flight photo/generation/command rows, or it corrupts
-    # them (false failures, re-sent posts). Gate ALL recovery on worker mode
-    # (audit #836/2).
-    if runtime_mode == "worker":
-        photo_recovered = await container.photo_task_service.recover_running()
-        if photo_recovered:
-            logger.warning("Requeued %d interrupted photo tasks on startup", photo_recovered)
-        gr_recovered = await container.db.repos.generation_runs.reset_running_on_startup()
-        if gr_recovered:
-            logger.warning("Reset %d stuck generation_runs to 'failed' on startup", gr_recovered)
-        draft_recovered = await container.db.repos.dm_reply_drafts.reset_sending_on_startup()
-        if draft_recovered:
+async def _recover_startup_state(container: RuntimeContainer, *, t_start: float) -> None:
+    # Startup recovery resets RUNNING rows on the project's SQLite file: the
+    # worker is their only runner, so whatever was in flight died with it.
+    photo_recovered = await container.photo_task_service.recover_running()
+    if photo_recovered:
+        logger.warning("Requeued %d interrupted photo tasks on startup", photo_recovered)
+    gr_recovered = await container.db.repos.generation_runs.reset_running_on_startup()
+    if gr_recovered:
+        logger.warning("Reset %d stuck generation_runs to 'failed' on startup", gr_recovered)
+    draft_recovered = await container.db.repos.dm_reply_drafts.reset_sending_on_startup()
+    if draft_recovered:
+        logger.warning(
+            "Released %d abandoned DM reply drafts from 'sending' on startup", draft_recovered
+        )
+    tc_recovered = await container.db.repos.telegram_commands.reset_running_on_startup()
+    if tc_recovered:
+        logger.warning(
+            "Reset %d stuck telegram_commands from RUNNING to PENDING on startup", tc_recovered
+        )
+    if container.seeding_publisher is not None:
+        seed_stuck = await container.seeding_publisher.reconcile_on_startup()
+        if seed_stuck:
             logger.warning(
-                "Released %d abandoned DM reply drafts from 'sending' on startup", draft_recovered
+                "Seeding reconcile: %d replicas stuck in 'sending' failed on startup",
+                seed_stuck,
             )
-        tc_recovered = await container.db.repos.telegram_commands.reset_running_on_startup()
-        if tc_recovered:
-            logger.warning(
-                "Reset %d stuck telegram_commands from RUNNING to PENDING on startup", tc_recovered
-            )
-        if container.seeding_publisher is not None:
-            seed_stuck = await container.seeding_publisher.reconcile_on_startup()
-            if seed_stuck:
-                logger.warning(
-                    "Seeding reconcile: %d replicas stuck in 'sending' failed on startup",
-                    seed_stuck,
-                )
     logger.info("startup: recovery done (%.1fs)", time.monotonic() - t_start)
 
 
@@ -528,17 +469,12 @@ def _gateway_auto_reply_guard(db, gateway_client):
     return guard
 
 
-async def _initialize_startup_telegram_pool(
-    container: RuntimeContainer,
-    *,
-    runtime_mode: str,
-    t_start: float,
-) -> None:
+async def _initialize_startup_telegram_pool(container: RuntimeContainer, *, t_start: float) -> None:
     if _is_dev:
         t1 = time.monotonic()
 
-    if runtime_mode == "worker" and (container.auth.is_configured or _pool_is_relayed(container.pool)):
-        pool = cast(ClientPool, container.pool)
+    if container.auth.is_configured or _pool_is_relayed(container.pool):
+        pool = container.pool
         telegram_pool_degraded = False
         try:
             await asyncio.wait_for(pool.initialize(), timeout=_POOL_INIT_TIMEOUT)
@@ -582,13 +518,8 @@ async def _initialize_startup_telegram_pool(
         logger.info("startup/start: telegram_pool %.2fs", time.monotonic() - t1)
 
 
-async def _start_collection_queue(
-    container: RuntimeContainer,
-    *,
-    runtime_mode: str,
-    t_start: float,
-) -> None:
-    if runtime_mode == "worker" and container.collection_queue is not None:
+async def _start_collection_queue(container: RuntimeContainer, *, t_start: float) -> None:
+    if container.collection_queue is not None:
         if (
             container.auth.is_configured or _pool_is_relayed(container.pool)
         ) and _connected_pool_count(container.pool) == 0:
@@ -602,35 +533,29 @@ async def _start_collection_queue(
             requeued = await container.collection_queue.requeue_startup_tasks()
             if requeued:
                 logger.info("Re-enqueued %d pending collection tasks on startup", requeued)
-        # Periodically re-check the DB for new PENDING tasks created by the
-        # web container in split / embedded-worker setups (CollectionService
-        # falls back to a DB-only insert when collection_queue is None).
+        # Pick up PENDING tasks other processes (the CLI) insert into the DB:
+        # woken at once on enqueue (#1868), the periodic pull is a safety net.
         container.collection_queue.start_db_pull()
     logger.info("startup: collection queue done (%.1fs)", time.monotonic() - t_start)
 
 
-async def _start_dispatchers_ai_and_agent(
-    container: RuntimeContainer,
-    *,
-    runtime_mode: str,
-    t_start: float,
-) -> float | None:
+async def _start_dispatchers_ai_and_agent(container: RuntimeContainer, *, t_start: float) -> float | None:
     if _is_dev:
         t1 = time.monotonic()
 
-    if runtime_mode == "worker" and container.unified_dispatcher is not None:
+    if container.unified_dispatcher is not None:
         result = container.unified_dispatcher.start()
         if inspect.isawaitable(result):
             await result
     telegram_command_dispatcher = getattr(container, "telegram_command_dispatcher", None)
-    if runtime_mode == "worker" and telegram_command_dispatcher is not None:
+    if telegram_command_dispatcher is not None:
         start = getattr(telegram_command_dispatcher, "start", None)
         if callable(start):
             result = start()
             if inspect.isawaitable(result):
                 await result
     dm_listener = getattr(container, "dm_listener", None)
-    if runtime_mode == "worker" and dm_listener is not None:
+    if dm_listener is not None:
         start = getattr(dm_listener, "start", None)
         if callable(start):
             result = start()
@@ -639,7 +564,7 @@ async def _start_dispatchers_ai_and_agent(
     logger.info("startup: dispatcher done (%.1fs)", time.monotonic() - t_start)
     container.ai_search.initialize()
     logger.info("startup: ai_search done (%.1fs)", time.monotonic() - t_start)
-    if runtime_mode == "worker" and container.agent_manager is not None:
+    if container.agent_manager is not None:
         await container.agent_manager.refresh_settings_cache(preflight=True)
         container.agent_manager.initialize()
     logger.info("startup: agent_manager done (%.1fs)", time.monotonic() - t_start)
@@ -649,43 +574,24 @@ async def _start_dispatchers_ai_and_agent(
     return t1 if _is_dev else None
 
 
-async def _start_scheduler(
-    container: RuntimeContainer,
-    *,
-    runtime_mode: str,
-    t_start: float,
-) -> None:
-    if runtime_mode == "worker":
-        scheduler = cast(SchedulerManager, container.scheduler)
-        await scheduler.load_settings()
-        autostart = await container.db.get_setting("scheduler_autostart")
-        if autostart == "1":
-            logger.info("Auto-starting scheduler (scheduler_autostart=1)")
-            await scheduler.start()
+async def _start_scheduler(container: RuntimeContainer, *, t_start: float) -> None:
+    scheduler = container.scheduler
+    await scheduler.load_settings()
+    autostart = await container.db.get_setting("scheduler_autostart")
+    if autostart == "1":
+        logger.info("Auto-starting scheduler (scheduler_autostart=1)")
+        await scheduler.start()
     logger.info("startup: scheduler done (%.1fs)", time.monotonic() - t_start)
 
 
 async def start_container(container: RuntimeContainer) -> None:
     t_start = time.monotonic()
-    runtime_mode = getattr(container, "runtime_mode", "worker")
 
-    await _recover_startup_state(container, runtime_mode=runtime_mode, t_start=t_start)
-    await _initialize_startup_telegram_pool(
-        container,
-        runtime_mode=runtime_mode,
-        t_start=t_start,
-    )
-    await _start_collection_queue(container, runtime_mode=runtime_mode, t_start=t_start)
-    scheduler_dev_started_at = await _start_dispatchers_ai_and_agent(
-        container,
-        runtime_mode=runtime_mode,
-        t_start=t_start,
-    )
-    await _start_scheduler(
-        container,
-        runtime_mode=runtime_mode,
-        t_start=t_start,
-    )
+    await _recover_startup_state(container, t_start=t_start)
+    await _initialize_startup_telegram_pool(container, t_start=t_start)
+    await _start_collection_queue(container, t_start=t_start)
+    scheduler_dev_started_at = await _start_dispatchers_ai_and_agent(container, t_start=t_start)
+    await _start_scheduler(container, t_start=t_start)
     # Approval queue (#1314): a non-empty queue means discovery is waiting on a
     # human — log it so the source doesn't silently vanish from view.
     pending = await container.db.repos.channels.list_pending_approval()

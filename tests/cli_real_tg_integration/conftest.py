@@ -52,7 +52,6 @@ class CliRealCliEnv:
     live_root: Path
     config_path: Path
     db_path: Path
-    web_port: int
     phones: tuple[str, ...]
     channel_pk: str | None
     channel_id: int | None
@@ -496,7 +495,6 @@ def cli_real_cli_env() -> CliRealCliEnv:
         live_root=live_root,
         config_path=config_path,
         db_path=db_path,
-        web_port=int(config.web.port),
         phones=(),
         channel_pk=None,
         channel_id=None,
@@ -535,7 +533,6 @@ def cli_real_cli_env() -> CliRealCliEnv:
         live_root=live_root,
         config_path=config_path,
         db_path=db_path,
-        web_port=int(config.web.port),
         phones=phones,
         channel_pk=channel_pk,
         channel_id=channel_id,
@@ -1230,22 +1227,6 @@ def run_cli_popen(cli_real_cli_env: CliEnv):
                 proc.communicate(timeout=5)
             except subprocess.TimeoutExpired:
                 pass
-
-
-def wait_for_http_200(url: str, *, timeout: float = 15.0, interval: float = 0.5) -> bool:
-    import urllib.error
-    import urllib.request
-
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with urllib.request.urlopen(url, timeout=2.0) as resp:
-                if resp.status == 200:
-                    return True
-        except (urllib.error.URLError, ConnectionError, TimeoutError):
-            pass
-        time.sleep(interval)
-    return False
 
 
 def sqlite_utc_now() -> str:

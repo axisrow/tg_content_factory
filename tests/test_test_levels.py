@@ -91,24 +91,9 @@ def test_in_memory_db_counts_as_integration_via_fixture() -> None:
     assert _infer(item) == "integration"
 
 
-def test_client_fixture_is_integration() -> None:
-    item = _item(fixturenames=("client",))
-    assert _infer(item) == "integration"
-
-
-def test_routes_directory_is_integration_without_fixture() -> None:
-    item = _item(path="/repo/tests/routes/test_web_container.py", fixturenames=())
-    assert _infer(item) == "integration"
-
-
 def test_repositories_directory_is_integration() -> None:
     item = _item(path="/repo/tests/repositories/test_x.py", fixturenames=("db",))
     assert _infer(item) == "integration"
-
-
-def test_e2e_directory_is_e2e() -> None:
-    item = _item(path="/repo/tests/e2e/test_flow.py", fixturenames=())
-    assert _infer(item) == "e2e"
 
 
 def test_real_tg_marker_is_e2e() -> None:
@@ -148,13 +133,13 @@ def test_ast_scan_flags_only_db_building_tests(tmp_path) -> None:
         "def test_uses_helper(tmp_path):\n"
         "    db = _open_db(tmp_path)\n"
         "\n"
-        "def test_inline_app():\n"
-        "    transport = ASGITransport(app=app)\n"
+        "def test_inline_sqlite():\n"
+        "    conn = sqlite3.connect('x.db')\n"
     )
     f = tmp_path / "test_sample.py"
     f.write_text(src)
     flagged = root_conftest._integration_tests_in_file(str(f))
-    assert flagged == {"test_uses_helper", "test_inline_app"}
+    assert flagged == {"test_uses_helper", "test_inline_sqlite"}
     assert "test_pure" not in flagged
 
 

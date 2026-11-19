@@ -30,29 +30,21 @@ runner = CliRunner()
 
 
 # --------------------------------------------------------------------------- #
-# serve / worker (synchronous bodies — no async-bridge)
+# worker (synchronous body — no async-bridge)
 # --------------------------------------------------------------------------- #
 
 
-def test_serve_delegates_with_defaults():
-    with patch("tg_agent.cli.typer_commands.serve_cmd.serve_web") as mock_serve:
-        result = runner.invoke(app, ["serve"])
+def test_serve_is_gone():
+    """The legacy web panel and its `serve` command were removed (#1868)."""
+    result = runner.invoke(app, ["serve"])
+    assert result.exit_code != 0
+
+
+def test_worker_honours_global_config_option():
+    with patch("tg_agent.cli.typer_commands.worker_cmd.serve_worker") as mock_worker:
+        result = runner.invoke(app, ["--config", "prod.yaml", "worker"])
     assert result.exit_code == 0
-    mock_serve.assert_called_once_with("config.yaml", web_pass=None, no_worker=False)
-
-
-def test_serve_threads_web_pass_and_no_worker():
-    with patch("tg_agent.cli.typer_commands.serve_cmd.serve_web") as mock_serve:
-        result = runner.invoke(app, ["serve", "--web-pass", "s3cret", "--no-worker"])
-    assert result.exit_code == 0
-    mock_serve.assert_called_once_with("config.yaml", web_pass="s3cret", no_worker=True)
-
-
-def test_serve_honours_global_config_option():
-    with patch("tg_agent.cli.typer_commands.serve_cmd.serve_web") as mock_serve:
-        result = runner.invoke(app, ["--config", "prod.yaml", "serve"])
-    assert result.exit_code == 0
-    mock_serve.assert_called_once_with("prod.yaml", web_pass=None, no_worker=False)
+    mock_worker.assert_called_once_with("prod.yaml")
 
 
 def test_worker_delegates():

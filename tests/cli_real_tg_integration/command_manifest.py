@@ -109,7 +109,6 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
     },
     "process_control": {
         ("restart",),
-        ("serve",),
         ("stop",),
         ("worker",),
     },

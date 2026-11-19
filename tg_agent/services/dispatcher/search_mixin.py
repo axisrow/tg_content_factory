@@ -22,9 +22,8 @@ class SearchCommandsMixin(_Base):
     async def _handle_search_telegram(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Run a live Telegram-backed search on the worker's real pool.
 
-        The web container has no live ClientPool (runtime_mode="web"), so it
-        proxies premium/my_chats/in-channel search here and reads the serialized
-        SearchResult back from ``result_payload`` (#643).
+        A queued ``search.telegram`` command runs here and leaves the
+        serialized SearchResult in ``result_payload`` (#643).
         """
         if self._search_engine is None:
             raise RuntimeError("Search engine unavailable in worker")

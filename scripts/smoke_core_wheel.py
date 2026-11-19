@@ -1,15 +1,16 @@
-"""Smoke-test the core wheel installed WITHOUT the legacy UI packages (#1720).
+"""Smoke-test the core wheels installed into the current interpreter (#1720, #1868).
 
-CI builds every wheel into ``dist/``; this script installs only the core
+CI builds every wheel into ``dist/``; this script installs the core
 (``tg_agent``) and ``tg_shared`` wheels into the CURRENT interpreter and checks:
 
-* none of the UI packages or their UI-only third-party deps got pulled in;
-* the CLI starts (``--help``);
-* ``serve`` exits 1 with the tg-webui install hint (no traceback).
+* the installed dependency closure is consistent (``pip check``);
+* none of the removed UI packages or their UI-only third-party deps got pulled
+  in (the web panel and the agent-chat TUI are gone since #1868);
+* the CLI starts (``--help``) outside the checkout.
 
 It installs into the running environment so the CI build job pays for the
-core dependency closure once; the job installs the UI wheels afterwards. Run it
-locally only from a throwaway venv. Works on Linux, macOS and Windows::
+core dependency closure once. Run it locally only from a throwaway venv. Works
+on Linux, macOS and Windows::
 
     python scripts/smoke_core_wheel.py dist
 """
@@ -21,13 +22,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The one list of UI-only modules: tests/test_core_without_surfaces.py hides
-# exactly these. python-multipart is absent on purpose: it still reaches the
-# core transitively (claude-agent-sdk -> mcp), which is fine — the core itself
-# neither declares nor imports it.
+# python-multipart is absent on purpose: it still reaches the core transitively
+# (claude-agent-sdk -> mcp), which is fine — the core neither declares nor
+# imports it.
 UI_ONLY_MODULES = ("tg_webui", "tg_tui", "jinja2", "textual", "qrcode", "itsdangerous")
-
-SERVE_HINT = "pip install tg-webui"
 
 
 def _core_wheels(dist: Path) -> list[str]:
@@ -53,19 +51,7 @@ def main() -> int:
         )
         subprocess.check_call([python, "-c", probe], cwd=tmp)  # noqa: S603
         subprocess.check_call([python, "-m", "tg_agent.main", "--help"], cwd=tmp, stdout=subprocess.DEVNULL)  # noqa: S603
-
-        serve = subprocess.run(  # noqa: S603
-            [python, "-m", "tg_agent.main", "serve", "--web-pass", "unused"],
-            cwd=tmp,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    output = serve.stdout + serve.stderr
-    if serve.returncode != 1 or SERVE_HINT not in output or "Traceback" in output:
-        print(output)
-        raise SystemExit(f"serve without tg-webui: expected exit 1 with the install hint, got {serve.returncode}")
-    print("core wheel OK without tg-webui/tg-tui")
+    print("core wheel OK: installs, starts, pulls in no UI packages")
     return 0
 
 

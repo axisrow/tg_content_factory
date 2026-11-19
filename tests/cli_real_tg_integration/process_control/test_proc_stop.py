@@ -1,8 +1,8 @@
-"""`stop` — terminate a running serve process via the PID file.
+"""`stop` — terminate the running worker daemon via the PID file.
 
-1. Spawn `serve --no-worker` and wait for /health.
+1. Spawn `worker` and wait until it registers its PID.
 2. Spawn `python -m tg_agent.main stop`.
-3. Assert that the Popen handle eventually reports a poll() != None.
+3. Assert that the worker exits and `stop` returns 0.
 """
 import subprocess
 
@@ -11,7 +11,6 @@ import pytest
 from tests.cli_real_tg_integration.conftest import (
     read_pid_file,
     skip_if_server_pid_exists,
-    wait_for_http_200,
     wait_for_pid_file,
 )
 
@@ -19,10 +18,9 @@ pytestmark = pytest.mark.real_tg_manual
 
 
 @pytest.mark.timeout(180)
-def test_proc_stop_terminates_serve(run_cli_popen, cli_real_cli_env):
+def test_proc_stop_terminates_the_worker(run_cli_popen, cli_real_cli_env):
     skip_if_server_pid_exists(cli_real_cli_env)
-    port = cli_real_cli_env.web_port
-    proc = run_cli_popen("serve", "--no-worker")
+    proc = run_cli_popen("worker")
 
     if not wait_for_pid_file(cli_real_cli_env.pid_path, proc.pid, timeout=10.0):
         proc.terminate()
@@ -32,17 +30,13 @@ def test_proc_stop_terminates_serve(run_cli_popen, cli_real_cli_env):
             proc.kill()
             _, stderr_text = proc.communicate(timeout=5)
         pytest.fail(
-            f"`serve` did not register PID {proc.pid} in {cli_real_cli_env.pid_path}; "
+            f"`worker` did not register PID {proc.pid} in {cli_real_cli_env.pid_path}; "
             f"stderr tail: {(stderr_text or '')[-500:]!r}"
         )
-
-    if not wait_for_http_200(f"http://127.0.0.1:{port}/health", timeout=20.0):
-        proc.terminate()
-        pytest.fail("`serve` registered its PID but /health never became ready")
     if proc.poll() is not None:
-        pytest.fail("`serve` exited before `stop`; /health may belong to another process")
+        pytest.fail("`worker` exited before `stop`")
     if read_pid_file(cli_real_cli_env.pid_path) != proc.pid:
-        pytest.fail("`serve` health check was not backed by the PID registered by this test")
+        pytest.fail("the PID file is not owned by the worker this test started")
 
     stop_proc = run_cli_popen("stop", capture_stdout=True)
     try:
@@ -57,7 +51,7 @@ def test_proc_stop_terminates_serve(run_cli_popen, cli_real_cli_env):
                 proc.communicate(timeout=5)
             except subprocess.TimeoutExpired:
                 pass
-        pytest.fail("`stop` did not actually terminate the serve process")
+        pytest.fail("`stop` did not actually terminate the worker")
 
     try:
         stop_stdout, stop_stderr = stop_proc.communicate(timeout=10)
@@ -65,7 +59,7 @@ def test_proc_stop_terminates_serve(run_cli_popen, cli_real_cli_env):
         stop_proc.kill()
         stop_stdout, stop_stderr = stop_proc.communicate(timeout=5)
         pytest.fail(
-            "`stop` did not return after the serve process exited; "
+            "`stop` did not return after the worker exited; "
             f"stdout={stop_stdout!r} stderr={stop_stderr!r}"
         )
 

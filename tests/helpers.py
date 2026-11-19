@@ -10,18 +10,17 @@ import subprocess
 import sys
 import tomllib
 from collections.abc import Callable
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from telethon_floodgate import ResolveRateLimiter
 
-from tg_agent.config import AppConfig, TelegramRuntimeConfig
+from tg_agent.config import TelegramRuntimeConfig
 from tg_agent.database import Database
 from tg_agent.models import Account, Channel, IncomingDm
 from tg_agent.telegram.client_pool import ClientPool
@@ -828,25 +827,6 @@ class RealPoolHarness:
         return account
 
 
-def make_test_config(
-    tmp_path: Path,
-    *,
-    db_name: str = "test.db",
-    password: str = "testpass",
-) -> AppConfig:
-    config = AppConfig()
-    config.database.path = str(tmp_path / db_name)
-    config.telegram.api_id = 12345
-    config.telegram.api_hash = "test_hash"
-    config.web.password = password
-    config.security.session_encryption_key = "test-session-encryption-key"
-    config.scheduler.delay_between_channels_sec = 0
-    config.scheduler.delay_between_requests_sec = 0
-    return config
-
-
-
-
 def make_channel_entity(
     identifier: str | int = "test_channel",
     *,
@@ -979,63 +959,8 @@ def fast_llm_error_recovery(max_retries: int = 0):
     )
 
 
-@contextmanager
-def patch_serve_create_app(**mock_kwargs):
-    """Patch the web app factory ``serve`` loads lazily from tg_webui (#1720 wave 3).
-
-    ``serve_web`` imports the optional web package through ``_load_web_surface``;
-    stub it so the core CLI tests never need tg_webui installed.
-    """
-    create_app = MagicMock(**mock_kwargs)
-    with patch("tg_agent.cli.commands.serve._load_web_surface", return_value=create_app):
-        yield create_app
-
-
-@contextmanager
-def hide_packages(*names: str):
-    """Make ``names`` import as if they were not installed (#1720).
-
-    See ``tests/package_hider.py`` for why a ``None`` stub in ``sys.modules``
-    is not enough.
-    """
-    from tests.package_hider import PackageHider
-
-    hidden = [key for key in sys.modules if key.partition(".")[0] in names]
-    finder = PackageHider(names)
-    with patch.dict(sys.modules):
-        for key in hidden:
-            del sys.modules[key]
-        sys.meta_path.insert(0, finder)
-        try:
-            yield
-        finally:
-            sys.meta_path.remove(finder)
-
-
 def _is_path_param(part: str) -> bool:
     return part.startswith("{") and part.endswith("}")
-
-
-def _paths_match(actual_path: str, documented_path: str) -> bool:
-    actual_parts = actual_path.strip("/").split("/") if actual_path.strip("/") else []
-    documented_parts = documented_path.strip("/").split("/") if documented_path.strip("/") else []
-    if len(actual_parts) != len(documented_parts):
-        return False
-    # A segment matches only when it is literally equal, or BOTH sides are path
-    # params. Treating a single param segment as a wildcard (e.g. documented
-    # {id} vs actual static "notifications") would let an unrelated static
-    # sibling satisfy a removed dynamic route, false-greening the guard.
-    return all(
-        actual == documented or (_is_path_param(actual) and _is_path_param(documented))
-        for actual, documented in zip(actual_parts, documented_parts, strict=True)
-    )
-
-
-def _route_exists(actual_routes: set[tuple[str, str]], method: str, documented_path: str) -> bool:
-    return any(
-        actual_method == method and _paths_match(actual_path, documented_path)
-        for actual_method, actual_path in actual_routes
-    )
 
 
 def _dialog_stream(dialogs):

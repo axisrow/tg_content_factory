@@ -52,22 +52,14 @@ _INTEGRATION_FIXTURES = frozenset(
         "db",
         "cli_db",
         "cli_env",
-        "client",
-        "web_client",
-        "route_client",
-        "web_mode_client",
-        "base_app",
-        "web_mode_app",
         "real_pool_harness_factory",
         "real_telegram_sandbox",
         "cli_real_cli_env",
-        "pipeline_client",
     }
 )
 # Directory segments whose tests are integration by location regardless of the
-# fixtures they happen to request (e.g. web-container tests that touch no db).
-_INTEGRATION_PATH_SEGMENTS = ("/tests/routes/", "/tests/repositories/")
-_E2E_PATH_SEGMENTS = ("/tests/e2e/",)
+# fixtures they happen to request.
+_INTEGRATION_PATH_SEGMENTS = ("/tests/repositories/",)
 # Source tokens that unambiguously stand up a real in-process subsystem inside
 # the test body (not via an allow-listed fixture). Kept narrow on purpose: every
 # token names a concrete real-IO constructor/entrypoint that never appears in a
@@ -75,10 +67,6 @@ _E2E_PATH_SEGMENTS = ("/tests/e2e/",)
 # A bare ``Database(`` is deliberately excluded — it matches in-memory
 # (``:memory:``) unit tests; only the file-backed constructions are listed.
 _INTEGRATION_SOURCE_TOKENS = (
-    # FastAPI app / web container driven over ASGI
-    "ASGITransport",
-    "build_web_app",
-    "build_web_container",
     # file-backed SQLite built inline (no cli_db / aiosqlite import to trip the
     # aiosqlite_serial signal)
     "Database(str(tmp_path",
@@ -298,7 +286,7 @@ def _infer_test_level(item, *, markers: set[str], file_db: bool) -> str:
     """
     path = item.path.as_posix()
 
-    if any(seg in path for seg in _E2E_PATH_SEGMENTS) or markers & _E2E_MARKERS:
+    if markers & _E2E_MARKERS:
         return "e2e"
     if markers & _SMOKE_MARKERS:
         return "smoke"

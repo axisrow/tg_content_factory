@@ -1316,7 +1316,7 @@ async def probe_impl(
     try:
         _, pool = await runtime.init_pool(config, db)
         if not pool.clients:
-            print("No connected accounts. Run 'serve' and add accounts via web UI.")
+            print(runtime.NO_ACCOUNTS_HINT)
             return
         phone = await resolve_default_phone(db, connected=set(pool.clients))
         if phone is None:

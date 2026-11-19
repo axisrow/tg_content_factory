@@ -99,7 +99,7 @@ async def collect_impl(
     _, pool = await runtime.init_pool(config, db)
     try:
         if not pool.clients:
-            logging.error("No connected accounts. Run 'serve' and add accounts via web UI.")
+            logging.error(runtime.NO_ACCOUNTS_HINT)
             return
 
         collector = Collector(pool, db, config.scheduler)
@@ -149,7 +149,7 @@ async def collect_impl(
                 f"Enqueued {result.queued_count} channels "
                 f"(skipped {result.skipped_existing_count}, "
                 f"total {result.total_candidates}). "
-                f"Run 'serve' to execute tasks."
+                f"Start the worker (`tg-agent restart`) to execute them."
             )
             print_resolve_backoff_warning(pool)
     finally:
@@ -167,7 +167,7 @@ async def collect_sample_impl(config_path: str, *, channel_id: int, limit: int =
     _, pool = await runtime.init_pool(config, db)
     try:
         if not pool.clients:
-            logging.error("No connected accounts. Run 'serve' and add accounts via web UI.")
+            logging.error(runtime.NO_ACCOUNTS_HINT)
             return
 
         collector = Collector(pool, db, config.scheduler)

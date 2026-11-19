@@ -72,6 +72,12 @@ def setup_logging(log_path: Path | None = None) -> None:
     root.addHandler(rfh)
 
 
+NO_ACCOUNTS_HINT = (
+    "No connected accounts. Add one with `tg-agent account add` "
+    "(or attach shared ones: `tg-agent global enable --account PHONE`)."
+)
+
+
 def ensure_data_dirs() -> None:
     """Create all data subdirectories once at startup."""
     for sub in ("image", "images", "downloads", "photo_uploads", "telegram_sessions"):
