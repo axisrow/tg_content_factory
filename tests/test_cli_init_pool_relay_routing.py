@@ -115,6 +115,31 @@ async def test_a_daemon_without_relay_is_a_hard_error_asking_for_restart(config,
     auth_cls.assert_not_called()
 
 
+async def test_a_legacy_serve_daemon_fails_at_once_without_the_grace_wait(config, daemon, pool_spy, monkeypatch):
+    pool_cls, _auth_cls, _pool = pool_spy
+    daemon.age = 5.0  # inside the startup grace: a worker daemon would get time to publish its relay
+    monkeypatch.setattr(worker_handoff, "daemon_is_legacy_panel", lambda _config: True)
+    started = asyncio.get_running_loop().time()
+
+    with pytest.raises(runtime.DaemonRelayUnavailableError) as excinfo:
+        await runtime.init_pool(config, _db())
+
+    assert asyncio.get_running_loop().time() - started < 1.0
+    message = excinfo.value.format_message()
+    assert "legacy `serve` panel" in message and "tg-agent restart" in message
+    pool_cls.assert_not_called()
+
+
+def test_the_legacy_panel_is_recognised_by_its_command(config, monkeypatch):
+    monkeypatch.setattr(worker_handoff, "read_pid", lambda _path: 4242)
+    monkeypatch.setattr(worker_handoff.process_control, "_process_command",
+                        lambda _pid: "/venv/bin/python -m tg_agent.main serve --web-pass x")
+    assert worker_handoff.daemon_is_legacy_panel(config)
+    monkeypatch.setattr(worker_handoff.process_control, "_process_command",
+                        lambda _pid: "/venv/bin/python -m tg_agent.main --config serve.yaml worker")
+    assert not worker_handoff.daemon_is_legacy_panel(config)
+
+
 async def test_a_starting_daemon_gets_a_grace_to_publish_its_relay(config, daemon, pool_spy):
     pool_cls, _auth_cls, _pool = pool_spy
     owner_pool = SimpleNamespace(clients={PHONE: SimpleNamespace(raw_client=object())})

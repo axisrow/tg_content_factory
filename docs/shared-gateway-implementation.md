@@ -86,6 +86,11 @@ blocks migration; wrong keys and conflicting shared sessions cannot silently rep
 A project opens one relay connection with its token. The handshake returns the
 phones of the accounts granted to it and the relay protocol version; a gateway of
 another version is a hard error asking for `tg-agent gateway restart --shared`.
+Raw MTProto only round-trips between equal Telegram TL layers, so every project
+sharing the gateway must run the same tg-agent/Telethon version as the gateway.
+The gateway runs from the install it was enrolled with; a layer mismatch is
+refused with a message naming that interpreter — upgrade the older install, then
+restart the gateway.
 
 - **Telegram requests** (`invoke`) run on the gateway's connection of a granted
   account, concurrently, behind the gateway pool's flood guards, watchdog, warm
@@ -110,7 +115,11 @@ another version is a hard error asking for `tg-agent gateway restart --shared`.
   recovery using the project's catch-up policy, read natively over the relay.
   Automatic pings require the exclusive reply owner.
 - **Notification bots** belong to projects again. Bots an older enrollment moved into
-  the gateway are handed back at worker startup (`bots.export`) and send natively.
+  the gateway are handed back whenever a project connects — worker or CLI
+  (`bots.export`) — and send natively. Creating or deleting a bot is a BotFather
+  conversation that waits for replies, which only the session owner receives as
+  updates; it runs on the gateway's client (`botfather.*` relay operations) and only
+  its outcome reaches the project.
 
 Projects publish, collect and run every other Telegram command through their own
 services, as in standalone mode: there are no artifacts, receipts or operation kinds to

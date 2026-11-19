@@ -180,7 +180,7 @@ async def test_new_dm_events_are_pushed_to_subscribed_projects(gateway):
     payload = {"kind": "dm", "dialog_id": 5, "message_id": 9, "text": "hi", "out": False, "date": None}
 
     await gateway.store.record_event(gateway.account, "5:9:0", payload, now=time.time())
-    await gateway.access.on_event()  # what LiveTelegramAccess does after journaling an event
+    await gateway.access.on_event(gateway.account)  # what LiveTelegramAccess does after journaling
 
     async with asyncio.timeout(5):
         await pushed.wait()
@@ -188,6 +188,22 @@ async def test_new_dm_events_are_pushed_to_subscribed_projects(gateway):
     assert [(event["account_id"], event["payload"]["text"]) for event in events] == [(gateway.account, "hi")]
     assert await project_b.events(0) == []
     await project_a.acknowledge(events[0]["id"])
+
+
+async def test_dm_pushes_skip_projects_without_a_grant_on_the_account(gateway):
+    project_b = TelegramGatewayClient(await gateway.connect(TOKEN_B))
+    pushed = asyncio.Event()
+    await project_b.subscribe_events(pushed.set)
+    payload = {"kind": "dm", "dialog_id": 5, "message_id": 9, "text": "hi", "out": False, "date": None}
+    await gateway.store.record_event(gateway.account, "5:9:0", payload, now=time.time())
+
+    await gateway.access.on_event(gateway.account)  # an account granted only to project A
+    await asyncio.sleep(0.1)
+    assert not pushed.is_set()
+
+    await gateway.access.on_event(gateway.other)  # project B's own account
+    async with asyncio.timeout(5):
+        await pushed.wait()
 
 
 async def test_an_expired_event_cursor_asks_for_history_recovery(gateway):
@@ -286,7 +302,7 @@ async def test_the_project_dm_consumer_stores_pushed_events_at_once(gateway, db,
         payload = {"kind": "dm", "dialog_id": 5, "message_id": 9, "text": "hi", "out": False,
                    "date": "2026-11-01T10:00:00+00:00"}
         await gateway.store.record_event(gateway.account, "5:9:0", payload, now=time.time())
-        await gateway.access.on_event()
+        await gateway.access.on_event(gateway.account)
 
         async with asyncio.timeout(5):
             while not await _rows(db, "SELECT 1 FROM incoming_dms"):
@@ -392,3 +408,45 @@ async def test_a_two_factor_challenge_reaches_the_project_and_secrets_are_cleare
     with pytest.raises(TwoFactorRequiredError):
         await dispatcher._dispatch("auth.verify_code", payload)
     assert payload["password_2fa"] == payload["code"] == ""
+
+
+async def test_connecting_a_project_takes_back_bots_an_older_enrollment_moved(gateway, db, monkeypatch):
+    """CLI-only projects too: every gateway CLI run connects through connect_project."""
+    from tg_agent.gateway import catalog
+    from tg_agent.gateway.notifications import BotStorage
+    from tg_agent.models import NotificationBot
+
+    await BotStorage(gateway.store, PROJECT_A).save_bot(
+        NotificationBot(tg_user_id=10, bot_username="legacy_bot", bot_token="123456789:moved-token"))
+    await db.repos.notification_bots.save_bot(NotificationBot(tg_user_id=10, bot_username="legacy_bot",
+                                                              bot_token=""))
+    connection = await gateway.connect(TOKEN_A)
+
+    async def from_config(cls, config):
+        return TelegramGatewayClient(connection)
+
+    monkeypatch.setattr(TelegramGatewayClient, "from_config", classmethod(from_config))
+
+    client = await catalog.connect_project(object(), db)
+
+    assert client.connection is connection
+    assert (await db.repos.notification_bots.get_bot(10)).bot_token == "123456789:moved-token"
+    assert [row.phone for row in await db.get_account_summaries(active_only=False)] == [PHONE]
+
+
+async def test_botfather_runs_on_the_gateway_connection_of_a_granted_account(gateway, monkeypatch):
+    from tg_shared import botfather
+
+    seen = []
+
+    async def create_bot(client, name, username):
+        seen.append(client)
+        return "123456789:token"
+
+    monkeypatch.setattr(botfather, "create_bot", create_bot)
+    connection = await gateway.connect(TOKEN_A)
+
+    assert await (await _telegram(connection, PHONE)).owner_create_bot("Name", "name_bot") == "123456789:token"
+    assert seen == [gateway.access.clients[gateway.account]]
+    with pytest.raises(RelayAccountUnavailableError):
+        await (await _telegram(connection, OTHER)).owner_create_bot("Name", "name_bot")

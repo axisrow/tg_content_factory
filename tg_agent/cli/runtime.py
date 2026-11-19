@@ -112,24 +112,42 @@ def _install_daemon_waker(config) -> None:
     """Enqueues from this CLI process wake the live daemon's queues at once (#1868).
 
     Without a daemon (or with one that serves no relay) the hook does nothing and
-    the work waits for its next start, exactly as before.
+    the work waits for its next start, exactly as before. The daemon lookup — a
+    process probe plus the endpoint file — runs once per event loop, so a bulk
+    hand-off (``collect`` over hundreds of channels) pays one loopback round trip
+    per row, not a process probe.
     """
     from tg_agent.runtime import wake
 
-    async def wake_daemon(queue: str) -> None:
-        if not worker_handoff.serve_is_running(config):
-            return
-        from tg_agent.telegram.relay import RelayConnection, read_endpoint, relay_endpoint_path
+    lookup: dict = {}
 
-        endpoint = read_endpoint(relay_endpoint_path(config.database.path))
+    def daemon_endpoint():
+        loop = asyncio.get_running_loop()
+        if lookup.get("loop") is not loop:
+            endpoint = None
+            if worker_handoff.serve_is_running(config):
+                from tg_agent.telegram.relay import read_endpoint, relay_endpoint_path
+
+                endpoint = read_endpoint(relay_endpoint_path(config.database.path))
+            lookup.update(loop=loop, endpoint=endpoint)
+        return lookup["endpoint"]
+
+    async def wake_daemon(queue: str) -> None:
+        endpoint = daemon_endpoint()
         if endpoint is None:
             return
-        async with asyncio.timeout(2.0):
-            connection = await RelayConnection.open(endpoint)
-            try:
-                await connection.call("wake", queue=queue)
-            finally:
-                await connection.close()
+        from tg_agent.telegram.relay import RelayConnection
+
+        try:
+            async with asyncio.timeout(2.0):
+                connection = await RelayConnection.open(endpoint)
+                try:
+                    await connection.call("wake", queue=queue)
+                finally:
+                    await connection.close()
+        except BaseException:
+            lookup["endpoint"] = None  # the daemon went away: stop knocking for this run
+            raise
 
     wake.set_remote(wake_daemon)
 
@@ -166,16 +184,9 @@ async def refresh_gateway_catalog(config, db) -> None:
 
 async def _gateway_relay(config, db):
     """Gateway-bound project: the shared gateway owns the connections (#1868)."""
-    from tg_agent.gateway.catalog import ProjectAccountCatalog
-    from tg_agent.gateway.client import TelegramGatewayClient
+    from tg_agent.gateway.catalog import connect_project
 
-    client = await TelegramGatewayClient.from_config(config)
-    try:
-        await ProjectAccountCatalog(db, client).refresh()
-    except BaseException:
-        await client.close()
-        raise
-    return client.connection
+    return (await connect_project(config, db)).connection
 
 
 class DaemonRelayUnavailableError(click.ClickException):
@@ -201,6 +212,11 @@ async def _daemon_relay(config):
 
     pid = worker_handoff.running_daemon_pid(config)
     holder = f"PID {pid}" if pid is not None else "see `tg-agent daemon status`"
+    if worker_handoff.daemon_is_legacy_panel(config):
+        raise DaemonRelayUnavailableError(
+            f"The running tg-agent daemon ({holder}) is the legacy `serve` panel, which does not serve the "
+            "CLI relay. Run the worker daemon instead (once): `tg-agent restart`."
+        )
     endpoint = await worker_handoff.wait_for_daemon_relay(config)
     if endpoint is None:
         raise DaemonRelayUnavailableError(

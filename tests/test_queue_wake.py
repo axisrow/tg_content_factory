@@ -108,7 +108,8 @@ async def test_cli_enqueue_wakes_the_daemon_through_its_relay(tmp_path, monkeypa
     config.database.path = str(tmp_path / "project.db")
     owner_pool = SimpleNamespace(clients={})
     handle = await serve_pool_relay(owner_pool, relay_endpoint_path(config.database.path), ops={"wake": _wake_op})
-    monkeypatch.setattr(worker_handoff, "serve_is_running", lambda _config: True)
+    probes = []
+    monkeypatch.setattr(worker_handoff, "serve_is_running", lambda _config: probes.append(1) or True)
     daemon_side = wake.subscribe(wake.TASKS)
     try:
         runtime._install_daemon_waker(config)
@@ -118,6 +119,28 @@ async def test_cli_enqueue_wakes_the_daemon_through_its_relay(tmp_path, monkeypa
         await hook(wake.TASKS)
         assert daemon_side.is_set()
         assert handle.endpoint.pid == os.getpid()
+        # A bulk hand-off probes the daemon process once, not once per row.
+        for _ in range(5):
+            await hook(wake.TASKS)
+        assert len(probes) == 1
     finally:
         wake.unsubscribe(wake.TASKS, daemon_side)
         await handle.stop()
+
+
+async def test_cli_waker_stops_knocking_once_the_daemon_is_gone(tmp_path, monkeypatch):
+    config = AppConfig()
+    config.database.path = str(tmp_path / "project.db")
+    handle = await serve_pool_relay(SimpleNamespace(clients={}), relay_endpoint_path(config.database.path),
+                                    ops={"wake": _wake_op})
+    monkeypatch.setattr(worker_handoff, "serve_is_running", lambda _config: True)
+    runtime._install_daemon_waker(config)
+    hook = wake._remote
+    await hook(wake.TASKS)
+    await handle.stop()
+    try:
+        with pytest.raises(OSError):
+            await hook(wake.TASKS)
+        await hook(wake.TASKS)  # remembered: no second connection attempt, no error
+    finally:
+        wake.set_remote(None)

@@ -28,6 +28,7 @@ from tg_agent.gateway.telegram import LiveTelegramAccess
 from tg_agent.telegram.relay import (
     RELAY_PROTOCOL,
     RelayEndpoint,
+    RelayLayerMismatchError,
     RelayProtocolError,
     RelayServer,
     probe_endpoint,
@@ -116,6 +117,13 @@ def endpoint(root: Path) -> dict | None:
             RelayEndpoint(port=port, token=_admin_token(root), pid=int(record.get("pid") or 0),
                           protocol=int(record["protocol"])),
         )
+    except RelayLayerMismatchError as exc:
+        raise GatewayProtocolError(
+            f"The shared Telegram gateway and this project run different Telethon versions ({exc}). "
+            "Every project sharing the gateway must run the same tg-agent/Telethon; the gateway runs from "
+            "the install it was enrolled with, so upgrade that install (or this project), then "
+            "`tg-agent gateway restart --shared`"
+        ) from None
     except RelayProtocolError as exc:
         raise GatewayProtocolError(
             f"The running Telegram gateway speaks another protocol ({exc}); restart it once: "

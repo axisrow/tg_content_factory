@@ -59,8 +59,8 @@ async def test_projects_share_one_live_connection_and_every_project_sees_each_dm
     access = LiveTelegramAccess(store, auth)
     notified = []
 
-    async def on_event():
-        notified.append(True)
+    async def on_event(account):
+        notified.append(account)
 
     access.on_event = on_event
     try:
@@ -81,7 +81,7 @@ async def test_projects_share_one_live_connection_and_every_project_sees_each_dm
         delivered = [await store.events(project, 0) for project in PROJECTS]
         assert delivered[0] == delivered[1]
         assert delivered[0][0]["payload"]["text"] == "incoming DM"
-        assert notified == [True]
+        assert notified == [account]
         assert (await access.connection(PROJECTS[0], account)).raw_client is sessions[0].raw_client
         assert len(auth.connections) == 1
 

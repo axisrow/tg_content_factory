@@ -31,7 +31,11 @@ Two kinds of work are the daemon's own background jobs and go to its queues inst
 account itself. In gateway mode (`global enable`) the shared gateway is the session owner:
 every live command runs on the gateway's connection through its relay the same way, and the
 project needs no session key of its own. After upgrading, restart the gateway once as well
-(`tg-agent gateway restart --shared`); an older gateway is refused with that hint.
+(`tg-agent gateway restart --shared`); an older gateway is refused with that hint. All projects
+sharing a gateway must run the same tg-agent/Telethon version as the gateway's enrolled install
+(a TL-layer mismatch is refused with a message naming that interpreter). `notification setup` /
+`delete` run their BotFather conversation on the session owner (daemon or gateway), which is
+the only process that receives BotFather's replies.
 
 After upgrading tg-agent, restart the daemon once (`tg-agent restart`). A daemon from an
 older version serves no relay, and every live command then fails at once — exit 1, on

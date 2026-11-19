@@ -7,6 +7,7 @@ from tg_agent.database import Database
 from tg_agent.database.bundles import NotificationBundle
 from tg_agent.models import NotificationBot
 from tg_agent.services.notification_target_service import NotificationTargetService
+from tg_agent.telegram import botfather_flows
 from tg_shared import botfather
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ class NotificationService:
             bot_username = f"{self._bot_username_prefix}{slug}_bot"
             bot_name = f"{self._bot_name_prefix} ({slug})"
 
-            token = await botfather.create_bot(client, bot_name, bot_username)
+            token = await botfather_flows.create_bot(client, bot_name, bot_username)
 
             # Send /start to the new bot so it gets initialised. The 30s timeout
             # is REQUIRED, not optional: with connection_retries=None a send on a
@@ -132,7 +133,7 @@ class NotificationService:
                 raise RuntimeError("No notification bot found for this user")
 
             try:
-                await botfather.delete_bot(client, bot.bot_username)
+                await botfather_flows.delete_bot(client, bot.bot_username)
             except botfather.BotNotFoundError:
                 # The bot is no longer in /mybots — it was already deleted in
                 # Telegram (e.g. a previous teardown that then failed at the

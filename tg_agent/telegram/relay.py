@@ -27,6 +27,7 @@ import logging
 import os
 import secrets
 import socket
+import sys
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,12 +50,38 @@ _LINE_LIMIT = 64 * 1024 * 1024
 _HANDSHAKE_TIMEOUT_SEC = 10.0
 
 # Requests a relayed client must never run on the owner's authorization: they
-# would log the owner out or tear down the account's other sessions.
+# would log the owner out, tear down the account's sessions, or take the account
+# itself (phone number, 2FA password, self-destruct period) away from the owner.
 _FORBIDDEN_REQUESTS = (
     functions.account.ResetAuthorizationRequest,
+    functions.account.SetAuthorizationTTLRequest,
     functions.account.DeleteAccountRequest,
+    functions.account.SetAccountTTLRequest,
+    functions.account.SendChangePhoneCodeRequest,
+    functions.account.ChangePhoneRequest,
+    functions.account.UpdatePasswordSettingsRequest,
+    functions.account.ResetPasswordRequest,
 )
 _FORBIDDEN_MODULE_SUFFIX = ".functions.auth"
+# Wrappers a client may put around a request; the wrapped query is what gets
+# checked. Every other wrapper (InvokeWithLayer, InitConnection, device and
+# business attestations, anything a future layer adds) would re-initialize or
+# re-route the owner's connection and is refused outright.
+_PASS_THROUGH_WRAPPERS = tuple(
+    wrapper
+    for wrapper in (
+        getattr(functions, name, None)
+        for name in (
+            "InvokeWithoutUpdatesRequest",
+            "InvokeAfterMsgRequest",
+            "InvokeAfterMsgsRequest",
+            "InvokeWithTakeoutRequest",
+            "InvokeWithMessagesRangeRequest",
+        )
+    )
+    if wrapper is not None
+)
+_MAX_WRAPPER_DEPTH = 8
 
 
 class RelayError(RuntimeError):
@@ -63,6 +90,15 @@ class RelayError(RuntimeError):
 
 class RelayProtocolError(RelayError):
     """The two sides speak different relay protocols, or the handshake broke."""
+
+
+class RelayLayerMismatchError(RelayProtocolError):
+    """Owner and client run different Telegram TL layers, i.e. different Telethon.
+
+    Raw MTProto only round-trips between equal layers. Restarting a daemon fixes
+    it (it restarts from the project's current install); a shared gateway runs
+    from the install it was enrolled with, so that install must be upgraded.
+    """
 
 
 class RelayUnauthorizedError(RelayError):
@@ -164,6 +200,8 @@ def error_payload(exc: BaseException) -> dict:
         return {"kind": "unavailable", "message": str(exc)}
     if isinstance(exc, RelayForbiddenError):
         return {"kind": "forbidden", "message": str(exc)}
+    if isinstance(exc, RelayLayerMismatchError):
+        return {"kind": "layer", "message": str(exc)}
     if isinstance(exc, RelayProtocolError):
         return {"kind": "protocol", "message": str(exc)}
     if isinstance(exc, RelayUnauthorizedError):
@@ -198,6 +236,8 @@ def rebuild_error(payload: dict, request: Any = None) -> BaseException:
         return RelayAccountUnavailableError(message)
     if kind == "forbidden":
         return RelayForbiddenError(message)
+    if kind == "layer":
+        return RelayLayerMismatchError(message)
     if kind == "protocol":
         return RelayProtocolError(message)
     if kind == "unauthorized":
@@ -249,9 +289,21 @@ def decode_request(body: str) -> TLRequest:
 
 
 def check_allowed(request: TLRequest) -> None:
-    if isinstance(request, _FORBIDDEN_REQUESTS) or type(request).__module__.endswith(_FORBIDDEN_MODULE_SUFFIX):
+    """Refuse what must not run on the owner's authorization, wrapped or not."""
+    current = request
+    depth = 0
+    while isinstance(getattr(current, "query", None), TLRequest):
+        if not isinstance(current, _PASS_THROUGH_WRAPPERS):
+            raise RelayForbiddenError(
+                f"{type(current).__name__} would re-initialize the session owner's connection; refused"
+            )
+        depth += 1
+        if depth > _MAX_WRAPPER_DEPTH:
+            raise RelayForbiddenError("request wrappers nest too deeply; refused")
+        current = current.query
+    if isinstance(current, _FORBIDDEN_REQUESTS) or type(current).__module__.endswith(_FORBIDDEN_MODULE_SUFFIX):
         raise RelayForbiddenError(
-            f"{type(request).__name__} is refused through the session owner relay"
+            f"{type(current).__name__} is refused through the session owner relay"
         )
 
 
@@ -300,7 +352,11 @@ class RelayServer:
 
     def __init__(self, owner: RelayOwner, *, ops: dict[str, OpHandler] | None = None):
         self._owner = owner
-        self._ops = dict(ops or {})
+        self._ops: dict[str, OpHandler] = {
+            "botfather.create_bot": self._botfather_create_bot,
+            "botfather.delete_bot": self._botfather_delete_bot,
+            **(ops or {}),
+        }
         self._server: asyncio.base_events.Server | None = None
         self._connections: set[asyncio.Task] = set()
 
@@ -363,11 +419,17 @@ class RelayServer:
         if message.get("op") != "hello":
             await peer.send({"id": reply_id, "error": error_payload(RelayProtocolError("expected hello"))})
             return None
-        if message.get("protocol") != RELAY_PROTOCOL or message.get("layer") != LAYER:
+        if message.get("protocol") != RELAY_PROTOCOL:
             await peer.send({"id": reply_id, "error": error_payload(RelayProtocolError(
-                f"the session owner speaks relay protocol {RELAY_PROTOCOL} / TL layer {LAYER}, this client "
-                f"{message.get('protocol')} / {message.get('layer')}: restart the owner (`tg-agent restart`) "
-                "so both run the same tg-agent version"
+                f"the session owner speaks relay protocol {RELAY_PROTOCOL}, this client "
+                f"{message.get('protocol')}: restart the owner so both run the same tg-agent version"
+            ))})
+            return None
+        if message.get("layer") != LAYER:
+            await peer.send({"id": reply_id, "error": error_payload(RelayLayerMismatchError(
+                f"the session owner runs Telegram TL layer {LAYER} (Python {sys.executable}), this client "
+                f"layer {message.get('layer')}: owner and clients must run the same Telethon — upgrade the "
+                "older install, then restart the owner"
             ))})
             return None
         grant = await self._owner.authorize(str(message.get("token") or ""))
@@ -420,6 +482,26 @@ class RelayServer:
         if not isinstance(raw, (bytes, bytearray)):
             raise RelayError(f"the owner returned a parsed {type(raw).__name__}, not raw bytes")
         return base64.b64encode(bytes(raw)).decode("ascii")
+
+    # BotFather setup is a conversation: it waits for replies, which Telegram
+    # pushes as updates to the session owner only. The owner runs the flow on its
+    # own client and only the outcome crosses the relay.
+
+    async def _botfather_create_bot(self, grant: Any, message: dict, _peer: RelayPeer) -> str:
+        from tg_shared import botfather
+
+        client = await self._owner.client(grant, str(message.get("phone") or ""))
+        return await botfather.create_bot(client, str(message.get("name") or ""), str(message.get("username") or ""))
+
+    async def _botfather_delete_bot(self, grant: Any, message: dict, _peer: RelayPeer) -> bool:
+        from tg_shared import botfather
+
+        client = await self._owner.client(grant, str(message.get("phone") or ""))
+        try:
+            await botfather.delete_bot(client, str(message.get("bot_username") or ""))
+        except botfather.BotNotFoundError:
+            return False
+        return True
 
     async def _entities(self, grant: Any, message: dict) -> list[list]:
         client = await self._owner.client(grant, str(message.get("phone") or ""))
@@ -751,6 +833,7 @@ class RelayTelegramClient(TelegramClient):
         self._relay_connection = connection
         self._relay_phone = phone
         self._sender = RelaySender(connection, phone)
+        self._relay_dc_senders: dict[int, RelaySender] = {}
 
     async def connect(self) -> None:
         if self._loop is None:
@@ -761,7 +844,14 @@ class RelayTelegramClient(TelegramClient):
         await self._sender.disconnect()
 
     async def _borrow_exported_sender(self, dc_id: int) -> RelaySender:
-        return RelaySender(self._relay_connection, self._relay_phone, dc_id=dc_id)
+        # One sender per DC, like Telethon's own cache: the client-side flood gate
+        # wraps every sender it is handed, so a fresh one per download would grow
+        # its patched set for the client's whole life.
+        sender = self._relay_dc_senders.get(dc_id)
+        if sender is None:
+            sender = self._relay_dc_senders[dc_id] = RelaySender(self._relay_connection, self._relay_phone,
+                                                                 dc_id=dc_id)
+        return sender
 
     async def _return_exported_sender(self, sender: Any) -> None:
         return None
@@ -769,8 +859,30 @@ class RelayTelegramClient(TelegramClient):
     async def _get_cdn_client(self, _cdn_redirect: Any) -> Any:
         raise RelayError("CDN file downloads are not available through the session owner relay")
 
+    def conversation(self, *args: Any, **kwargs: Any) -> Any:
+        # A conversation waits for updates, and updates reach only the session
+        # owner: fail at once instead of timing out a minute later.
+        raise RelayError("conversations need the account's updates, which only the session owner receives; "
+                         "run the flow on the owner (tg_agent.telegram.botfather_flows)")
+
+    async def _owner_call(self, op: str, **fields: Any) -> Any:
+        # Owner-side failures come back as the errors a local call would raise
+        # (Telegram RPC errors, local rate limits, an unavailable account).
+        try:
+            return await self._relay_connection.call(op, phone=self._relay_phone, **fields)
+        except RelayRemoteError as exc:
+            raise rebuild_error(exc.payload) from None
+
+    async def owner_create_bot(self, name: str, username: str) -> str:
+        """Create a bot through BotFather on the owner's client; returns its token."""
+        return await self._owner_call("botfather.create_bot", name=name, username=username)
+
+    async def owner_delete_bot(self, bot_username: str) -> bool:
+        """Delete a bot through BotFather on the owner's client; False if BotFather does not list it."""
+        return await self._owner_call("botfather.delete_bot", bot_username=bot_username)
+
     async def load_owner_entities(self) -> int:
         """Seed the entity cache from the owner's, so cached lookups stay offline."""
-        rows = await self._relay_connection.call("entities", phone=self._relay_phone)
+        rows = await self._owner_call("entities")
         self.session.add_entity_rows(rows)
         return len(rows)

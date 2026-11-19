@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from tg_agent.gateway.client import GatewayRequestError, TelegramGatewayClient
 from tg_agent.telegram.relay import RelayConnection, RelayEndpoint, RelayRemoteError
+
+logger = logging.getLogger(__name__)
 
 
 class GatewayAdministrator:
@@ -110,6 +113,23 @@ async def restore_gateway_bots(db, client: TelegramGatewayClient) -> int:
         await db.repos.notification_bots.save_bot(bot)
         restored += 1
     return restored
+
+
+async def connect_project(config, db) -> TelegramGatewayClient:
+    """Connect a gateway project: mirror its catalog and take back its notification bots.
+
+    The worker and every CLI process start here, so a project that only ever
+    runs the CLI also gets the bot tokens an older enrollment moved away.
+    """
+    client = await TelegramGatewayClient.from_config(config)
+    try:
+        await ProjectAccountCatalog(db, client).refresh()
+        if await restore_gateway_bots(db, client):
+            logger.info("Notification bots restored from the shared gateway")
+    except BaseException:
+        await client.close()
+        raise
+    return client
 
 
 def shared_project(config):

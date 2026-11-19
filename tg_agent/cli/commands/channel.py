@@ -1476,7 +1476,7 @@ async def _handoff_collect_to_worker(
         print(f"Channel '{identifier}' not found")
         return
     if result == "filtered":
-        print(f"Канал '{ch.title}' отфильтрован; снимите фильтр или используйте --direct.")
+        print(f"Канал '{ch.title}' отфильтрован; снимите фильтр (`tg-agent filter toggle`).")
         return
 
     task = await _latest_task_for_channel(db, ch.channel_id)

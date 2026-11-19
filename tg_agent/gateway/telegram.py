@@ -28,7 +28,8 @@ class LiveTelegramAccess:
         self._connect_lock = asyncio.Lock()
         self._pool = None
         self._startup: set[asyncio.Task] = set()
-        # Set by the relay hub: subscribed projects pull new DM events at once.
+        # Set by the relay hub (``on_event(account)``): projects granted the account
+        # pull its new DM events at once.
         self.on_event = None
 
     async def start(self) -> None:
@@ -54,7 +55,7 @@ class LiveTelegramAccess:
         identity = f"{event.chat_id}:{message.id}:{int(bool(message.out))}"
         await self.store.record_event(account, identity, payload, now=time.time())
         if self.on_event is not None:
-            await self.on_event()
+            await self.on_event(account)
 
     async def report_flood(self, phone: str, wait_seconds: int) -> None:
         # The adapter's phone key is the stable gateway account UUID.

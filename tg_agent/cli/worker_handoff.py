@@ -62,6 +62,20 @@ def serve_is_running(config: AppConfig) -> bool:
         return False
 
 
+def daemon_is_legacy_panel(config: AppConfig) -> bool:
+    """True when the live daemon is the legacy ``serve`` panel.
+
+    Its embedded worker never serves the CLI relay, so waiting for one is
+    pointless: the caller fails at once and asks for the worker daemon. Never
+    raises.
+    """
+    try:
+        pid = read_pid(pid_file_path(config))
+        return pid is not None and "serve" in process_control._process_command(pid).split()
+    except Exception:
+        return False
+
+
 def _daemon_age_sec(config: AppConfig) -> float | None:
     try:
         owner = read_process_owner(pid_file_path(config))

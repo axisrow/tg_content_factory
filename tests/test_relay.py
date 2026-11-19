@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import stat
 import struct
+import sys
 
 import pytest
 from telethon import errors, functions, types
@@ -170,10 +172,32 @@ async def test_owner_local_refusals_reach_the_client_as_rate_limits():
     assert raised.value.category == "resolve"
 
 
+def _init_connection(query):
+    return functions.InitConnectionRequest(api_id=1, device_model="d", system_version="s", app_version="a",
+                                           system_lang_code="en", lang_pack="", lang_code="en", query=query)
+
+
 @pytest.mark.parametrize(
     "request_",
-    [functions.auth.LogOutRequest(), functions.account.ResetAuthorizationRequest(hash=1)],
-    ids=["log-out", "reset-authorization"],
+    [
+        functions.auth.LogOutRequest(),
+        functions.account.ResetAuthorizationRequest(hash=1),
+        functions.account.DeleteAccountRequest(reason="x"),
+        functions.account.ChangePhoneRequest(phone_number="+1", phone_code_hash="h", phone_code="1"),
+        functions.account.SetAccountTTLRequest(ttl=types.AccountDaysTTL(days=30)),
+        functions.account.UpdatePasswordSettingsRequest(
+            password=types.InputCheckPasswordEmpty(),
+            new_settings=types.account.PasswordInputSettings(),
+        ),
+        functions.InvokeWithoutUpdatesRequest(functions.auth.LogOutRequest()),
+        functions.InvokeWithTakeoutRequest(1, functions.account.DeleteAccountRequest(reason="x")),
+        functions.InvokeWithoutUpdatesRequest(functions.InvokeAfterMsgRequest(1, functions.auth.LogOutRequest())),
+        functions.InvokeWithLayerRequest(1, functions.updates.GetStateRequest()),
+        _init_connection(functions.updates.GetStateRequest()),
+    ],
+    ids=["log-out", "reset-authorization", "delete-account", "change-phone", "account-ttl", "password",
+         "wrapped-log-out", "takeout-wrapped-delete", "nested-wrapped-log-out", "invoke-with-layer",
+         "init-connection"],
 )
 async def test_requests_that_would_end_the_owner_session_are_refused(request_):
     owner = FakeOwnerClient()
@@ -184,30 +208,113 @@ async def test_requests_that_would_end_the_owner_session_are_refused(request_):
     assert owner.calls == []
 
 
+async def test_a_wrapped_harmless_request_still_runs():
+    owner = FakeOwnerClient()
+    async with running({PHONE: owner}) as (_, connection):
+        client = await _client(connection)
+        state = await client(functions.InvokeWithoutUpdatesRequest(functions.updates.GetStateRequest()))
+    assert isinstance(state, types.updates.State)
+    assert len(owner.calls) == 1
+
+
+async def test_botfather_flows_run_on_the_owner_client(monkeypatch):
+    from tg_agent.telegram import botfather_flows
+    from tg_shared import botfather
+
+    owner = FakeOwnerClient()
+    seen = []
+
+    async def create_bot(client, name, username):
+        seen.append((client, name, username))
+        return "123456789:token"
+
+    async def delete_bot(client, bot_username):
+        seen.append((client, bot_username))
+        raise botfather.BotNotFoundError(bot_username)
+
+    monkeypatch.setattr(botfather, "create_bot", create_bot)
+    monkeypatch.setattr(botfather, "delete_bot", delete_bot)
+    async with running({PHONE: owner}) as (_, connection):
+        client = await _client(connection)
+        token = await botfather_flows.create_bot(client, "Name", "name_bot")
+        with pytest.raises(botfather.BotNotFoundError):
+            await botfather_flows.delete_bot(client, "@name_bot")
+
+    assert token == "123456789:token"
+    # Both conversations ran on the owner's client, which receives the updates.
+    assert seen == [(owner, "Name", "name_bot"), (owner, "@name_bot")]
+
+
+async def test_botfather_flows_run_locally_on_an_owned_client(monkeypatch):
+    from tg_agent.telegram import botfather_flows
+    from tg_shared import botfather
+
+    local = object()
+
+    async def create_bot(client, name, username):
+        return f"local:{client is local}"
+
+    monkeypatch.setattr(botfather, "create_bot", create_bot)
+    assert await botfather_flows.create_bot(local, "Name", "name_bot") == "local:True"
+
+
+async def test_a_conversation_on_a_relayed_client_fails_at_once():
+    async with running({PHONE: FakeOwnerClient()}) as (_, connection):
+        client = await _client(connection)
+        with pytest.raises(relay.RelayError, match="only the session owner receives"):
+            client.conversation("BotFather")
+
+
+async def test_media_downloads_reuse_one_relay_sender_per_dc():
+    async with running({PHONE: FakeOwnerClient()}) as (_, connection):
+        client = await _client(connection)
+        first = await client._borrow_exported_sender(4)
+        await client._return_exported_sender(first)
+        assert await client._borrow_exported_sender(4) is first
+        assert await client._borrow_exported_sender(5) is not first
+
+
 async def test_wrong_token_is_refused_at_handshake():
     with pytest.raises(RelayUnauthorizedError):
         async with running({PHONE: FakeOwnerClient()}, client_token="wrong"):
             pass
 
 
+async def _raw_hello(port: int, *, protocol: int, layer: int) -> BaseException:
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    hello = {"id": 0, "op": "hello", "token": "secret-token", "protocol": protocol, "layer": layer}
+    writer.write(json.dumps(hello).encode() + b"\n")
+    await writer.drain()
+    reply = await reader.readline()
+    writer.close()
+    await writer.wait_closed()
+    return relay.rebuild_error(json.loads(reply)["error"])
+
+
 async def test_protocol_mismatch_is_refused_with_a_restart_hint():
     server = RelayServer(Owner({PHONE: FakeOwnerClient()}))
     port = await server.start()
     try:
-        reader, writer = await asyncio.open_connection("127.0.0.1", port)
-        writer.write(b'{"id":0,"op":"hello","token":"secret-token","protocol":0,"layer":1}\n')
-        await writer.drain()
-        reply = await reader.readline()
-        writer.close()
-        await writer.wait_closed()
+        error = await _raw_hello(port, protocol=0, layer=relay.LAYER)
+        stale = RelayEndpoint(port=port, token="secret-token", pid=1, protocol=RELAY_PROTOCOL + 1)
+        with pytest.raises(RelayProtocolError):
+            await RelayConnection.open(stale)
     finally:
         await server.stop()
-    error = relay.rebuild_error(__import__("json").loads(reply)["error"])
-    assert isinstance(error, RelayProtocolError)
-    assert "tg-agent restart" in str(error)
-    stale = RelayEndpoint(port=port, token="secret-token", pid=1, protocol=RELAY_PROTOCOL + 1)
-    with pytest.raises(RelayProtocolError):
-        await RelayConnection.open(stale)
+    assert type(error) is RelayProtocolError
+    assert "restart the owner" in str(error)
+
+
+async def test_a_telethon_layer_mismatch_names_the_owner_install():
+    server = RelayServer(Owner({PHONE: FakeOwnerClient()}))
+    port = await server.start()
+    try:
+        error = await _raw_hello(port, protocol=RELAY_PROTOCOL, layer=1)
+    finally:
+        await server.stop()
+    assert isinstance(error, relay.RelayLayerMismatchError)
+    assert "same Telethon" in str(error)
+    assert sys.executable in str(error)
 
 
 async def test_unknown_account_is_unavailable():

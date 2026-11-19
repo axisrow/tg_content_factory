@@ -71,7 +71,7 @@ class GatewayHub:
         self._admin_token = admin_token.strip()
         self.logins = GatewayLogins(store, access)
         self.request_shutdown = request_shutdown
-        self._event_listeners: set[RelayPeer] = set()
+        self._event_listeners: dict[RelayPeer, str] = {}  # subscribed connection -> its project
         if hasattr(access, "on_event"):
             access.on_event = self.notify_events
         project_ops = {
@@ -153,16 +153,25 @@ class GatewayHub:
         if remove is not None:
             await remove(account)
 
-    async def notify_events(self) -> None:
-        """New DM events were journaled: subscribed projects pull them now."""
-        for peer in tuple(self._event_listeners):
+    async def notify_events(self, account: str) -> None:
+        """A DM event of ``account`` was journaled: projects granted that account pull it now.
+
+        Other subscribers hear nothing — no empty round trip, and no hint that a
+        DM arrived on an account they cannot see.
+        """
+        granted: dict[str, bool] = {}
+        for peer, project in tuple(self._event_listeners.items()):
             if peer.closed:
-                self._event_listeners.discard(peer)
+                self._event_listeners.pop(peer, None)
+                continue
+            if project not in granted:
+                granted[project] = any(str(row["id"]) == account for row in await self.store.accounts(project))
+            if not granted[project]:
                 continue
             try:
                 await peer.push("events")
             except (ConnectionError, RuntimeError):
-                self._event_listeners.discard(peer)
+                self._event_listeners.pop(peer, None)
 
     async def _project_account(self, project: str, account_id: str) -> str:
         if account_id not in {str(row["id"]) for row in await self.store.accounts(project)}:
@@ -234,8 +243,8 @@ class GatewayHub:
         await self.store.acknowledge(project, int(message.get("event_id") or 0))
         return True
 
-    async def _subscribe_events(self, _project: str, _message, peer: RelayPeer) -> bool:
-        self._event_listeners.add(peer)
+    async def _subscribe_events(self, project: str, _message, peer: RelayPeer) -> bool:
+        self._event_listeners[peer] = project
         return True
 
     async def _reply_owner(self, project: str, message: dict, _peer) -> bool:

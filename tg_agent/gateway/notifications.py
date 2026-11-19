@@ -1,8 +1,10 @@
 """Notification bots that pre-#1868 enrollments moved into the shared gateway.
 
-Projects send notifications natively again (Bot API with their own token,
-BotFather over the relay). The gateway only keeps the bots it was handed, so a
-project can take them back (``bots.export``).
+Projects send notifications natively again (Bot API with their own token; the
+BotFather conversation runs on the gateway's client through the relay's
+``botfather.*`` operations, since only the owner receives the account's
+updates). The gateway only keeps the bots it was handed, so a project can take
+them back (``bots.export``).
 """
 
 from tg_agent.models import NotificationBot

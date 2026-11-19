@@ -1624,8 +1624,8 @@ def dialogs_archive_history(
 
     Reads every personal dialog of the account page by page and stores both
     incoming and outgoing messages in the dm_messages table (no TTL).
-    Resumable: re-running skips already-archived history. Run it with the
-    worker STOPPED — it opens a second connection on the same session.
+    Resumable: re-running skips already-archived history. Next to a running
+    daemon it reads on the daemon's connection (#1868).
     """
     _run_dialogs(ctx, "archive-history", phone=phone, chat_id=chat_id)
 
@@ -1649,8 +1649,8 @@ def dialogs_export_history(
     Walks each chat newest→oldest in 100-message pages through the shared
     read_history action and writes {"chats": {...}} keyed by dialog id.
     The output file doubles as resume state — re-run to skip exported chats.
-    Run it with the worker STOPPED (or pass --direct) — it opens a live
-    Telegram connection.
+    Next to a running daemon it reads on the daemon's connection (#1868);
+    otherwise it connects the account itself.
     """
     _run_dialogs(
         ctx, "export-history", chat_ids=chat_ids, output=output, phone=phone,

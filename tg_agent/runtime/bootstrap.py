@@ -267,13 +267,9 @@ async def build_runtime_container(
         if isinstance(config.gateway, dict) and config.gateway:
             # The shared gateway owns the connections (#1868): this worker runs
             # its Telegram requests over the gateway's relay, natively.
-            from tg_agent.gateway.catalog import ProjectAccountCatalog, restore_gateway_bots
-            from tg_agent.gateway.client import TelegramGatewayClient
+            from tg_agent.gateway.catalog import connect_project
 
-            gateway_client = await TelegramGatewayClient.from_config(config)
-            await ProjectAccountCatalog(db, gateway_client).refresh()
-            if await restore_gateway_bots(db, gateway_client):
-                logger.info("startup: notification bots restored from the shared gateway")
+            gateway_client = await connect_project(config, db)
             relay = gateway_client.connection
         pool = ClientPool(
             auth, db, config.scheduler.max_flood_wait_sec,
