@@ -200,12 +200,75 @@ async def bench_gateway_op(operations: int, concurrency: int) -> dict:
 
 
 async def bench_relay_invoke(operations: int, concurrency: int) -> dict:
-    """New protocol: one MTProto request relayed to the owner and answered."""
+    """New protocol: one MTProto request relayed to the owner's client and answered."""
     try:
-        from tg_agent.telegram import relay
+        from telethon import functions, types
+
+        from tg_agent.telegram.relay import (
+            RELAY_PROTOCOL,
+            RelayConnection,
+            RelayEndpoint,
+            RelayServer,
+            RelayTelegramClient,
+        )
     except ImportError:
         return {"skipped": "relay not present in this checkout"}
-    return await relay.benchmark(operations=operations, concurrency=concurrency, quantiles=_quantiles)
+
+    state = bytes(types.updates.State(pts=1, qts=0, date=None, seq=0, unread_count=0))
+
+    class InstantOwnerClient:
+        """Answers like a relayed real client: the raw TL bytes of the result."""
+
+        session = type("Session", (), {"dc_id": 2, "_entities": set()})()
+
+        async def __call__(self, request):
+            from telethon.extensions import BinaryReader
+
+            with BinaryReader(state) as reader:
+                return request.read_result(reader)
+
+    class Owner:
+        async def authorize(self, token):
+            return token == "bench" or None
+
+        async def phones(self, grant):
+            return ["+100"]
+
+        async def client(self, grant, phone):
+            return InstantOwnerClient()
+
+    server = RelayServer(Owner())
+    port = await server.start()
+    connection = await RelayConnection.open(
+        RelayEndpoint(port=port, token="bench", pid=os.getpid(), protocol=RELAY_PROTOCOL)
+    )
+    client = RelayTelegramClient(connection, "+100", flood_sleep_threshold=0)
+    await client.connect()
+
+    async def one() -> float:
+        started = time.perf_counter()
+        await client(functions.updates.GetStateRequest())
+        return time.perf_counter() - started
+
+    try:
+        sequential = [await one() for _ in range(operations)]
+        started = time.perf_counter()
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def bounded():
+            async with semaphore:
+                return await one()
+
+        await asyncio.gather(*(bounded() for _ in range(operations)))
+        elapsed = time.perf_counter() - started
+    finally:
+        await connection.close()
+        await server.stop()
+    return {
+        "sequential": _quantiles(sequential),
+        "concurrent": {"concurrency": concurrency, "ops": operations,
+                       "ops_per_sec": round(operations / elapsed, 1)},
+    }
 
 
 def main() -> None:

@@ -1,0 +1,664 @@
+"""Session-owner relay: one Telegram connection per account, any number of clients (#1868).
+
+The process that owns an account's Telegram connection — the worker daemon, or the
+shared gateway — listens on 127.0.0.1 behind a random token. Every other process
+builds an ordinary :class:`~tg_agent.telegram.client_pool.ClientPool` whose Telethon
+clients have no auth key and no network connection: each MTProto request is
+serialized (``bytes(request)``), executed by the owner on its own connected client
+(through the owner's flood guards, which wrap ``sender.send``), and the owner sends
+back the *raw* TL bytes of the answer, which the client parses with the request's
+own ``read_result``. One authorization, one connection, one flood budget, and the
+client keeps running the exact native code paths.
+
+Wire format: one JSON object per line. Requests carry an ``id``; replies echo it
+with ``ok`` or ``error``. The first message must be ``hello`` (token + protocol
+version). Owners may register extra operations and push messages (``push`` key,
+no id) for control-plane use.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import contextlib
+import hmac
+import json
+import logging
+import os
+import secrets
+from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Protocol
+
+from telethon import TelegramClient, errors
+from telethon.errors import RPCError
+from telethon.extensions import BinaryReader
+from telethon.tl import functions
+from telethon.tl.alltlobjects import LAYER
+from telethon.tl.tlobject import TLRequest
+from telethon_floodgate import TelegramRateLimitedError
+
+from tg_shared.sessions import FreshEntityStringSession
+
+logger = logging.getLogger(__name__)
+
+RELAY_PROTOCOL = 1
+_LINE_LIMIT = 64 * 1024 * 1024
+_HANDSHAKE_TIMEOUT_SEC = 10.0
+
+# Requests a relayed client must never run on the owner's authorization: they
+# would log the owner out or tear down the account's other sessions.
+_FORBIDDEN_REQUESTS = (
+    functions.account.ResetAuthorizationRequest,
+    functions.account.DeleteAccountRequest,
+)
+_FORBIDDEN_MODULE_SUFFIX = ".functions.auth"
+
+
+class RelayError(RuntimeError):
+    """A relay failure that is not a Telegram error."""
+
+
+class RelayProtocolError(RelayError):
+    """The two sides speak different relay protocols, or the handshake broke."""
+
+
+class RelayUnauthorizedError(RelayError):
+    """The relay token was refused."""
+
+
+class RelayForbiddenError(RelayError):
+    """The owner refuses this request type on its authorization."""
+
+
+class RelayAccountUnavailableError(ConnectionError):
+    """The owner has no live connection for the requested account."""
+
+
+class RelayRemoteError(RelayError):
+    """An error reply from the owner; ``payload`` carries the serialized cause."""
+
+    def __init__(self, payload: dict):
+        super().__init__(str(payload.get("message") or payload.get("kind") or "relay error"))
+        self.payload = payload
+
+
+# --------------------------------------------------------------------------- #
+# Endpoint discovery
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class RelayEndpoint:
+    port: int
+    token: str
+    pid: int
+    protocol: int
+
+
+def write_endpoint(path: Path, endpoint: RelayEndpoint) -> None:
+    """Publish the endpoint atomically, readable by the owning user only (0600)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(endpoint.__dict__, handle)
+        os.replace(temporary, path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
+
+
+def read_endpoint(path: Path) -> RelayEndpoint | None:
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        return RelayEndpoint(
+            port=int(record["port"]),
+            token=str(record["token"]),
+            pid=int(record["pid"]),
+            protocol=int(record["protocol"]),
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def remove_endpoint(path: Path, endpoint: RelayEndpoint) -> None:
+    """Remove the endpoint file only if it still describes this owner."""
+    current = read_endpoint(path)
+    if current is not None and current.port == endpoint.port and current.token == endpoint.token:
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+
+
+# --------------------------------------------------------------------------- #
+# Error transport
+# --------------------------------------------------------------------------- #
+
+
+def _plain(values: Iterable[Any]) -> list | None:
+    out = list(values)
+    return out if all(isinstance(v, (str, int, float, bool, type(None))) for v in out) else None
+
+
+def error_payload(exc: BaseException) -> dict:
+    """Serialize an exception so the client can raise an equivalent one."""
+    if isinstance(exc, RPCError):
+        reduced = exc.__reduce__()
+        args = _plain(reduced[1][1:]) if len(reduced) > 1 and reduced[1] else []
+        if args is not None:
+            return {"kind": "rpc", "name": type(exc).__name__, "args": args, "message": str(exc)}
+        return {"kind": "rpc", "name": "RPCError", "args": [str(exc), getattr(exc, "code", None)],
+                "message": str(exc)}
+    if isinstance(exc, TelegramRateLimitedError):
+        return {"kind": "rate_limited", "phone": exc.phone, "category": exc.category,
+                "retry_after_sec": float(exc.retry_after_sec), "message": str(exc)}
+    if isinstance(exc, RelayAccountUnavailableError):
+        return {"kind": "unavailable", "message": str(exc)}
+    if isinstance(exc, RelayForbiddenError):
+        return {"kind": "forbidden", "message": str(exc)}
+    if isinstance(exc, RelayProtocolError):
+        return {"kind": "protocol", "message": str(exc)}
+    if isinstance(exc, RelayUnauthorizedError):
+        return {"kind": "unauthorized", "message": str(exc)}
+    if isinstance(exc, RelayRemoteError):
+        return exc.payload
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return {"kind": "connection", "message": str(exc) or type(exc).__name__}
+    return {"kind": "error", "name": type(exc).__name__, "message": str(exc)}
+
+
+def rebuild_error(payload: dict, request: Any = None) -> BaseException:
+    """The client-side twin of :func:`error_payload`."""
+    kind = payload.get("kind")
+    message = str(payload.get("message") or "")
+    if kind == "rpc":
+        cls = getattr(errors, str(payload.get("name") or ""), None)
+        if isinstance(cls, type) and issubclass(cls, RPCError):
+            with contextlib.suppress(TypeError):
+                return cls(request, *(payload.get("args") or []))
+        return RPCError(request, message or "RPC error")
+    if kind == "rate_limited":
+        return TelegramRateLimitedError(
+            str(payload.get("phone") or ""), str(payload.get("category") or "relay"),
+            float(payload.get("retry_after_sec") or 0.0), message=message or None,
+        )
+    if kind == "unavailable":
+        return RelayAccountUnavailableError(message)
+    if kind == "forbidden":
+        return RelayForbiddenError(message)
+    if kind == "protocol":
+        return RelayProtocolError(message)
+    if kind == "unauthorized":
+        return RelayUnauthorizedError(message)
+    if kind == "connection":
+        return ConnectionError(message)
+    return RelayRemoteError(payload)
+
+
+def _dump(message: dict) -> bytes:
+    return json.dumps(message, separators=(",", ":")).encode("utf-8") + b"\n"
+
+
+# --------------------------------------------------------------------------- #
+# Owner side
+# --------------------------------------------------------------------------- #
+
+
+class RelayOwner(Protocol):
+    """What a relay server needs from the process that owns the connections."""
+
+    async def authorize(self, token: str) -> Any | None: ...
+
+    async def phones(self, grant: Any) -> list[str]: ...
+
+    async def client(self, grant: Any, phone: str) -> Any: ...
+
+
+Push = Callable[[dict], Awaitable[None]]
+OpHandler = Callable[[Any, dict, Push], Awaitable[Any]]
+
+
+def _read_raw(reader: BinaryReader) -> bytes:
+    return reader.read()
+
+
+def decode_request(body: str) -> TLRequest:
+    with BinaryReader(base64.b64decode(body)) as reader:
+        request = reader.tgread_object()
+    if not isinstance(request, TLRequest):
+        raise RelayProtocolError(f"not a Telegram request: {type(request).__name__}")
+    return request
+
+
+def check_allowed(request: TLRequest) -> None:
+    if isinstance(request, _FORBIDDEN_REQUESTS) or type(request).__module__.endswith(_FORBIDDEN_MODULE_SUFFIX):
+        raise RelayForbiddenError(
+            f"{type(request).__name__} is refused through the session owner relay"
+        )
+
+
+def entity_rows(session: Any) -> list[list]:
+    """Rows of a Telethon session's entity cache: ``[id, hash, username, phone, name]``."""
+    entities = getattr(session, "_entities", None)
+    if callable(getattr(session, "_cursor", None)):
+        # SQLiteSession keeps its cache in the database; the inherited
+        # in-memory set stays empty.
+        cursor = session._cursor()
+        try:
+            rows = cursor.execute("select id, hash, username, phone, name from entities").fetchall()
+        finally:
+            cursor.close()
+    elif isinstance(entities, (set, list, tuple)):
+        rows = list(entities)
+    else:
+        rows = []
+    return [[row[0], row[1], row[2], None if row[3] is None else str(row[3]), row[4]] for row in rows]
+
+
+class _Peer:
+    def __init__(self, writer: asyncio.StreamWriter):
+        self._writer = writer
+        self._lock = asyncio.Lock()
+
+    async def send(self, message: dict) -> None:
+        async with self._lock:
+            if self._writer.is_closing():
+                return
+            self._writer.write(_dump(message))
+            await self._writer.drain()
+
+
+class RelayServer:
+    """Serve relayed MTProto requests (and owner-specific operations) on loopback."""
+
+    def __init__(self, owner: RelayOwner, *, ops: dict[str, OpHandler] | None = None):
+        self._owner = owner
+        self._ops = dict(ops or {})
+        self._server: asyncio.base_events.Server | None = None
+        self._connections: set[asyncio.Task] = set()
+
+    @property
+    def port(self) -> int:
+        if self._server is None:
+            raise RuntimeError("relay server is not running")
+        return self._server.sockets[0].getsockname()[1]
+
+    async def start(self) -> int:
+        self._server = await asyncio.start_server(self._accept, host="127.0.0.1", port=0, limit=_LINE_LIMIT)
+        return self.port
+
+    async def stop(self) -> None:
+        if self._server is not None:
+            self._server.close()
+            for task in tuple(self._connections):
+                task.cancel()
+            await asyncio.gather(*self._connections, return_exceptions=True)
+            await self._server.wait_closed()
+            self._server = None
+
+    async def _accept(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        task = asyncio.current_task()
+        if task is not None:
+            self._connections.add(task)
+        peer = _Peer(writer)
+        running: set[asyncio.Task] = set()
+        try:
+            grant = await self._handshake(reader, peer)
+            if grant is None:
+                return
+            while True:
+                line = await reader.readline()
+                if not line:
+                    return
+                message = json.loads(line)
+                job = asyncio.create_task(self._serve(grant, message, peer))
+                running.add(job)
+                job.add_done_callback(running.discard)
+        except (asyncio.CancelledError, ConnectionError, asyncio.IncompleteReadError, ValueError):
+            pass
+        finally:
+            for job in tuple(running):
+                job.cancel()
+            await asyncio.gather(*running, return_exceptions=True)
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+            if task is not None:
+                self._connections.discard(task)
+
+    async def _handshake(self, reader: asyncio.StreamReader, peer: _Peer) -> Any | None:
+        async with asyncio.timeout(_HANDSHAKE_TIMEOUT_SEC):
+            line = await reader.readline()
+        if not line:
+            return None
+        message = json.loads(line)
+        reply_id = message.get("id", 0)
+        if message.get("op") != "hello":
+            await peer.send({"id": reply_id, "error": error_payload(RelayProtocolError("expected hello"))})
+            return None
+        if message.get("protocol") != RELAY_PROTOCOL or message.get("layer") != LAYER:
+            await peer.send({"id": reply_id, "error": error_payload(RelayProtocolError(
+                f"the session owner speaks relay protocol {RELAY_PROTOCOL} / TL layer {LAYER}, this client "
+                f"{message.get('protocol')} / {message.get('layer')}: restart the owner (`tg-agent restart`) "
+                "so both run the same tg-agent version"
+            ))})
+            return None
+        grant = await self._owner.authorize(str(message.get("token") or ""))
+        if grant is None:
+            await peer.send({"id": reply_id, "error": error_payload(RelayUnauthorizedError("relay token refused"))})
+            return None
+        await peer.send({"id": reply_id, "ok": {
+            "protocol": RELAY_PROTOCOL,
+            "layer": LAYER,
+            "pid": os.getpid(),
+            "phones": await self._owner.phones(grant),
+        }})
+        return grant
+
+    async def _serve(self, grant: Any, message: dict, peer: _Peer) -> None:
+        reply_id = message.get("id")
+        try:
+            op = message.get("op")
+            if op == "invoke":
+                result = await self._invoke(grant, message)
+            elif op == "entities":
+                result = await self._entities(grant, message)
+            elif op in self._ops:
+                result = await self._ops[op](grant, message, peer.send)
+            else:
+                raise RelayProtocolError(f"unknown relay operation {op!r}")
+            await peer.send({"id": reply_id, "ok": result})
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - every failure must reach the client
+            await peer.send({"id": reply_id, "error": error_payload(exc)})
+
+    async def _client(self, grant: Any, phone: str) -> Any:
+        if phone not in await self._owner.phones(grant):
+            raise RelayAccountUnavailableError(f"the session owner has no live connection for {phone}")
+        return await self._owner.client(grant, phone)
+
+    async def _invoke(self, grant: Any, message: dict) -> str:
+        request = decode_request(str(message.get("body") or ""))
+        check_allowed(request)
+        client = await self._client(grant, str(message.get("phone") or ""))
+        request.read_result = _read_raw  # the client parses the answer itself
+        dc_id = message.get("dc")
+        home = getattr(getattr(client, "session", None), "dc_id", None)
+        if dc_id and dc_id != home:
+            sender = await client._borrow_exported_sender(int(dc_id))
+            try:
+                raw = await client._call(sender, request)
+            finally:
+                await client._return_exported_sender(sender)
+        else:
+            raw = await client(request)
+        if not isinstance(raw, (bytes, bytearray)):
+            raise RelayError(f"the owner returned a parsed {type(raw).__name__}, not raw bytes")
+        return base64.b64encode(bytes(raw)).decode("ascii")
+
+    async def _entities(self, grant: Any, message: dict) -> list[list]:
+        client = await self._client(grant, str(message.get("phone") or ""))
+        return entity_rows(getattr(client, "session", None))
+
+
+class PoolRelayOwner:
+    """Relay owner backed by a live :class:`ClientPool` (the worker daemon)."""
+
+    def __init__(self, pool: Any, token: str):
+        self._pool = pool
+        self._token = token
+
+    async def authorize(self, token: str) -> bool | None:
+        return True if hmac.compare_digest(token.encode(), self._token.encode()) else None
+
+    async def phones(self, grant: Any) -> list[str]:
+        return sorted(getattr(self._pool, "clients", {}))
+
+    async def client(self, grant: Any, phone: str) -> Any:
+        session = getattr(self._pool, "clients", {}).get(phone)
+        if session is None:
+            raise RelayAccountUnavailableError(f"the session owner has no live connection for {phone}")
+        return getattr(session, "raw_client", session)
+
+
+@dataclass
+class RelayHandle:
+    """A running relay plus its published endpoint; ``stop()`` retracts both."""
+
+    server: RelayServer
+    endpoint: RelayEndpoint
+    endpoint_path: Path | None
+
+    async def stop(self) -> None:
+        if self.endpoint_path is not None:
+            remove_endpoint(self.endpoint_path, self.endpoint)
+        await self.server.stop()
+
+
+async def serve_pool_relay(
+    pool: Any, endpoint_path: Path | None, *, ops: dict[str, OpHandler] | None = None
+) -> RelayHandle:
+    """Start the worker's relay over ``pool`` and publish its endpoint file."""
+    token = secrets.token_urlsafe(32)
+    server = RelayServer(PoolRelayOwner(pool, token), ops=ops)
+    port = await server.start()
+    endpoint = RelayEndpoint(port=port, token=token, pid=os.getpid(), protocol=RELAY_PROTOCOL)
+    if endpoint_path is not None:
+        write_endpoint(endpoint_path, endpoint)
+    logger.info("session owner relay listening on 127.0.0.1:%d", port)
+    return RelayHandle(server=server, endpoint=endpoint, endpoint_path=endpoint_path)
+
+
+def relay_endpoint_path(database_path: str | Path) -> Path:
+    """Where a project's worker publishes its relay: next to the database."""
+    return Path(database_path).with_suffix(".relay.json")
+
+
+# --------------------------------------------------------------------------- #
+# Client side
+# --------------------------------------------------------------------------- #
+
+
+class RelayConnection:
+    """One multiplexed connection to the owner, shared by every relay client of a process."""
+
+    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, hello: dict):
+        self._reader = reader
+        self._writer = writer
+        self.hello = hello
+        self._pending: dict[int, asyncio.Future] = {}
+        self._next_id = 0
+        self._write_lock = asyncio.Lock()
+        self._closed = False
+        self._push_handlers: list[Callable[[dict], Any]] = []
+        self._reader_task: asyncio.Task | None = None
+
+    @property
+    def phones(self) -> list[str]:
+        return list(self.hello.get("phones") or [])
+
+    @property
+    def is_open(self) -> bool:
+        return not self._closed
+
+    @classmethod
+    async def open(cls, endpoint: RelayEndpoint, *, host: str = "127.0.0.1") -> RelayConnection:
+        if endpoint.protocol != RELAY_PROTOCOL:
+            raise RelayProtocolError(
+                f"the session owner (PID {endpoint.pid}) speaks relay protocol {endpoint.protocol}, "
+                f"this CLI {RELAY_PROTOCOL}: restart it (`tg-agent restart`)"
+            )
+        reader, writer = await asyncio.open_connection(host, endpoint.port, limit=_LINE_LIMIT)
+        try:
+            writer.write(_dump({"id": 0, "op": "hello", "token": endpoint.token,
+                                "protocol": RELAY_PROTOCOL, "layer": LAYER}))
+            await writer.drain()
+            async with asyncio.timeout(_HANDSHAKE_TIMEOUT_SEC):
+                line = await reader.readline()
+            if not line:
+                raise RelayProtocolError("the session owner closed the relay during the handshake")
+            reply = json.loads(line)
+            if "error" in reply:
+                raise rebuild_error(reply["error"])
+            hello = reply.get("ok") or {}
+            if hello.get("protocol") != RELAY_PROTOCOL or hello.get("layer") != LAYER:
+                raise RelayProtocolError(
+                    "the session owner answered with another relay protocol or TL layer: "
+                    "restart it (`tg-agent restart`)"
+                )
+        except BaseException:
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+            raise
+        connection = cls(reader, writer, hello)
+        connection._reader_task = asyncio.create_task(connection._read_loop(), name="relay-reader")
+        return connection
+
+    def on_push(self, handler: Callable[[dict], Any]) -> None:
+        self._push_handlers.append(handler)
+
+    async def call(self, op: str, **fields: Any) -> Any:
+        if self._closed:
+            raise ConnectionError("the relay connection to the session owner is closed")
+        self._next_id += 1
+        request_id = self._next_id
+        future = asyncio.get_running_loop().create_future()
+        self._pending[request_id] = future
+        try:
+            async with self._write_lock:
+                self._writer.write(_dump({"id": request_id, "op": op, **fields}))
+                await self._writer.drain()
+            return await future
+        finally:
+            self._pending.pop(request_id, None)
+
+    async def _read_loop(self) -> None:
+        try:
+            while True:
+                line = await self._reader.readline()
+                if not line:
+                    return
+                message = json.loads(line)
+                if "push" in message:
+                    for handler in tuple(self._push_handlers):
+                        try:
+                            outcome = handler(message)
+                            if asyncio.iscoroutine(outcome):
+                                await outcome
+                        except Exception:
+                            logger.exception("relay push handler failed")
+                    continue
+                future = self._pending.get(message.get("id"))
+                if future is None or future.done():
+                    continue
+                if "error" in message:
+                    future.set_exception(RelayRemoteError(message["error"]))
+                else:
+                    future.set_result(message.get("ok"))
+        except (ConnectionError, asyncio.IncompleteReadError, ValueError):
+            pass
+        finally:
+            self._closed = True
+            for future in self._pending.values():
+                if not future.done():
+                    future.set_exception(ConnectionError("the relay connection to the session owner was lost"))
+
+    async def close(self) -> None:
+        self._closed = True
+        self._writer.close()
+        with contextlib.suppress(Exception):
+            await self._writer.wait_closed()
+        if self._reader_task is not None:
+            self._reader_task.cancel()
+            await asyncio.gather(self._reader_task, return_exceptions=True)
+
+
+class RelaySender:
+    """Stands in for Telethon's ``MTProtoSender``: every send goes to the owner."""
+
+    def __init__(self, connection: RelayConnection, phone: str, *, dc_id: int | None = None):
+        self._connection = connection
+        self._phone = phone
+        self.dc_id = dc_id
+        self._connected = dc_id is not None
+
+    def is_connected(self) -> bool:
+        return self._connected and self._connection.is_open
+
+    async def connect(self, *_args: Any, **_kwargs: Any) -> bool:
+        self._connected = True
+        return True
+
+    async def disconnect(self) -> None:
+        self._connected = False
+
+    def send(self, request: Any, ordered: bool = False) -> Any:
+        loop = asyncio.get_running_loop()
+        if isinstance(request, list):
+            futures = [loop.create_future() for _ in request]
+            loop.create_task(self._send_batch(request, futures, ordered))
+            return futures
+        return loop.create_task(self._invoke(request))
+
+    async def _send_batch(self, requests: list, futures: list[asyncio.Future], ordered: bool) -> None:
+        async def settle(request: Any, future: asyncio.Future) -> None:
+            try:
+                result = await self._invoke(request)
+            except BaseException as exc:  # noqa: BLE001 - delivered through the future
+                if not future.done():
+                    future.set_exception(exc)
+            else:
+                if not future.done():
+                    future.set_result(result)
+
+        if ordered:
+            for request, future in zip(requests, futures, strict=True):
+                await settle(request, future)
+        else:
+            await asyncio.gather(*(settle(r, f) for r, f in zip(requests, futures, strict=True)))
+
+    async def _invoke(self, request: Any) -> Any:
+        body = base64.b64encode(bytes(request)).decode("ascii")
+        try:
+            raw = await self._connection.call("invoke", phone=self._phone, dc=self.dc_id, body=body)
+        except RelayRemoteError as exc:
+            raise rebuild_error(exc.payload, request) from None
+        with BinaryReader(base64.b64decode(raw)) as reader:
+            return request.read_result(reader)
+
+
+class RelayTelegramClient(TelegramClient):
+    """A Telethon client without an auth key: the owner's connection does the I/O."""
+
+    def __init__(self, connection: RelayConnection, phone: str, api_id: int = 0, api_hash: str = "", **kwargs: Any):
+        super().__init__(FreshEntityStringSession(), api_id or 1, api_hash or "relay", **kwargs)
+        self._relay_connection = connection
+        self._relay_phone = phone
+        self._sender = RelaySender(connection, phone)
+
+    async def connect(self) -> None:
+        if self._loop is None:
+            self._loop = asyncio.get_running_loop()
+        await self._sender.connect()
+
+    async def _disconnect_coro(self) -> None:
+        await self._sender.disconnect()
+
+    async def _borrow_exported_sender(self, dc_id: int) -> RelaySender:
+        return RelaySender(self._relay_connection, self._relay_phone, dc_id=dc_id)
+
+    async def _return_exported_sender(self, sender: Any) -> None:
+        return None
+
+    async def _get_cdn_client(self, cdn_redirect: Any) -> Any:
+        raise RelayError("CDN file downloads are not available through the session owner relay")
+
+    async def load_owner_entities(self) -> int:
+        """Seed the entity cache from the owner's, so cached lookups stay offline."""
+        rows = await self._relay_connection.call("entities", phone=self._relay_phone)
+        self.session.add_entity_rows(rows)
+        return len(rows)
