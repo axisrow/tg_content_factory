@@ -6,15 +6,15 @@
     "cli_startup": {
       "help": {
         "n": 10,
-        "p50_ms": 1062.115,
-        "p95_ms": 1151.678,
-        "max_ms": 1151.678
+        "p50_ms": 1024.45,
+        "p95_ms": 1552.599,
+        "max_ms": 1552.599
       },
       "account_list": {
         "n": 10,
-        "p50_ms": 965.992,
-        "p95_ms": 1210.993,
-        "max_ms": 1210.993
+        "p50_ms": 1080.181,
+        "p95_ms": 1261.774,
+        "max_ms": 1261.774
       }
     },
     "cli_imports": {
@@ -29,25 +29,28 @@
     },
     "command_queue": {
       "n": 20,
-      "p50_ms": 1002.645,
-      "p95_ms": 1006.199,
-      "max_ms": 1006.199
+      "p50_ms": 1001.655,
+      "p95_ms": 1006.253,
+      "max_ms": 1006.253
     },
     "gateway_op": {
       "sequential": {
         "n": 60,
-        "p50_ms": 61.817,
-        "p95_ms": 76.152,
-        "max_ms": 102.564
+        "p50_ms": 60.044,
+        "p95_ms": 63.941,
+        "max_ms": 73.936
       },
       "concurrent": {
         "concurrency": 8,
         "ops": 60,
-        "ops_per_sec": 69.9
+        "ops_per_sec": 71.9
       }
     },
     "relay_invoke": {
       "skipped": "relay not present in this checkout"
+    },
+    "gateway_relay": {
+      "skipped": "gateway relay not present in this checkout (tg_agent.gateway.server)"
     }
   }
 }
