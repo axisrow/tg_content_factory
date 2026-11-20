@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import typer
 
+from tests.helpers import patch_serve_create_app
+from tg_agent.config import AppConfig
 from tg_agent.database import Database
 from tg_agent.models import Account, Channel, CollectionTaskStatus, NotificationBot
 
@@ -991,6 +993,96 @@ class TestSchedulerCommandRW:
                 _sched_run_with_db(db_path, cli_init_patch, ns)
 
         assert _sched_read_task_status(db_path, task_id) == "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# serve command
+# ---------------------------------------------------------------------------
+
+
+class TestServeCommand:
+    """Tests for serve CLI command."""
+
+    def test_serve_exits_without_password(self, capsys):
+        """Test serve exits when no password is configured."""
+        from tg_agent.cli.commands.serve import run
+
+        with patch("tg_agent.cli.commands.serve.load_config") as mock_load:
+            config = AppConfig()
+            config.web.password = ""
+            mock_load.return_value = config
+
+            with pytest.raises(SystemExit, match="1"):
+                run(_ns(config="config.yaml", web_pass=None))
+
+    def test_serve_uses_web_pass_arg(self):
+        """Test serve uses web_pass from command line."""
+        from tg_agent.cli.commands.serve import run
+
+        with (
+            patch("tg_agent.cli.commands.serve.load_config") as mock_load,
+            patch_serve_create_app() as mock_create,
+            patch("tg_agent.cli.commands.serve.pid_file_path") as mock_pid_path,
+            patch("tg_agent.cli.commands.serve.register_current_process"),
+            patch("tg_agent.cli.commands.serve.unregister_current_process"),
+            patch("uvicorn.run") as mock_uvicorn,
+        ):
+
+            config = AppConfig()
+            config.web.password = ""  # Empty by default
+            mock_load.return_value = config
+            mock_create.return_value = MagicMock()
+            mock_pid_path.return_value = "/tmp/test.pid"
+
+            run(_ns(config="config.yaml", web_pass="cli_password"))
+
+            # Password should be updated from CLI arg
+            assert config.web.password == "cli_password"
+            mock_uvicorn.assert_called_once()
+
+    def test_serve_registers_and_unregisters_pid(self):
+        """Test serve registers and unregisters PID file."""
+        from tg_agent.cli.commands.serve import run
+
+        with (
+            patch("tg_agent.cli.commands.serve.load_config") as mock_load,
+            patch_serve_create_app() as mock_create,
+            patch("tg_agent.cli.commands.serve.pid_file_path") as mock_pid_path,
+            patch("tg_agent.cli.commands.serve.register_current_process") as mock_register,
+            patch("tg_agent.cli.commands.serve.unregister_current_process") as mock_unregister,
+            patch("uvicorn.run"),
+        ):
+
+            config = AppConfig()
+            config.web.password = "testpass"
+            mock_load.return_value = config
+            mock_create.return_value = MagicMock()
+            mock_pid_path.return_value = "/tmp/test.pid"
+
+            run(_ns(config="config.yaml", web_pass=None))
+
+            mock_register.assert_called_once_with("/tmp/test.pid")
+            mock_unregister.assert_called_once_with("/tmp/test.pid")
+
+    def test_serve_exits_on_pid_registration_error(self, caplog):
+        """Test serve exits when PID registration fails."""
+        from tg_agent.cli.commands.serve import run
+
+        with (
+            patch("tg_agent.cli.commands.serve.load_config") as mock_load,
+            patch_serve_create_app(),
+            patch("tg_agent.cli.commands.serve.pid_file_path") as mock_pid_path,
+            patch("tg_agent.cli.commands.serve.register_current_process") as mock_register,
+        ):
+
+            config = AppConfig()
+            config.web.password = "testpass"
+            mock_load.return_value = config
+            mock_pid_path.return_value = "/tmp/test.pid"
+            mock_register.side_effect = RuntimeError("PID file exists")
+
+            with pytest.raises(SystemExit, match="1"):
+                run(_ns(config="config.yaml", web_pass=None))
 
 
 # ---------------------------------------------------------------------------

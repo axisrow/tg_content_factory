@@ -95,6 +95,10 @@ class AgentRuntimeStatus:
     fallback_provider: str
     using_override: bool
     error: str | None = None
+    # The optional tg-webui agent page still reads these two. The Codex and ADK
+    # backends are gone (#1868), so they are always False.
+    codex_available: bool = False
+    adk_available: bool = False
 
 _SETTINGS_CACHE_TTL = 60.0  # seconds
 

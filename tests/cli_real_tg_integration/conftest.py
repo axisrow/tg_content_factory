@@ -52,6 +52,7 @@ class CliRealCliEnv:
     live_root: Path
     config_path: Path
     db_path: Path
+    web_port: int
     phones: tuple[str, ...]
     channel_pk: str | None
     channel_id: int | None
@@ -495,6 +496,7 @@ def cli_real_cli_env() -> CliRealCliEnv:
         live_root=live_root,
         config_path=config_path,
         db_path=db_path,
+        web_port=int(config.web.port),
         phones=(),
         channel_pk=None,
         channel_id=None,
@@ -533,6 +535,7 @@ def cli_real_cli_env() -> CliRealCliEnv:
         live_root=live_root,
         config_path=config_path,
         db_path=db_path,
+        web_port=int(config.web.port),
         phones=phones,
         channel_pk=channel_pk,
         channel_id=channel_id,
@@ -1229,6 +1232,22 @@ def run_cli_popen(cli_real_cli_env: CliEnv):
                 pass
 
 
+def wait_for_http_200(url: str, *, timeout: float = 15.0, interval: float = 0.5) -> bool:
+    import urllib.error
+    import urllib.request
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2.0) as resp:
+                if resp.status == 200:
+                    return True
+        except (urllib.error.URLError, ConnectionError, TimeoutError):
+            pass
+        time.sleep(interval)
+    return False
+
+
 def sqlite_utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1743,6 +1762,22 @@ def discover_first_search_query_id(run_cli, assert_cli_ok):
         match = _LEADING_INT_ROW_RE.search(result.stdout)
         if not match:
             pytest.skip("no search queries - `search-query list` returned no rows")
+        return match.group(1)
+
+    return _discover
+
+
+_AGENT_THREAD_ROW_RE = re.compile(r"^\[(\d+)\]", re.MULTILINE)
+
+
+@pytest.fixture
+def discover_first_agent_thread_id(run_cli, assert_cli_ok):
+    def _discover() -> str:
+        result = run_cli("agent", "threads")
+        assert_cli_ok(result)
+        match = _AGENT_THREAD_ROW_RE.search(result.stdout)
+        if not match:
+            pytest.skip("no agent threads - `agent threads` returned no rows")
         return match.group(1)
 
     return _discover

@@ -134,6 +134,8 @@ _CLI_CATEGORY_REQUIRED_MARKERS = {
     "dangerous": _NEVER_MARKER_USAGES,
 }
 _CLI_CLEANUP_COMMAND_PRODUCERS = {
+    ("agent", "thread-delete"): {("agent", "chat")},
+    ("agent", "threads"): {("agent", "chat")},
     ("dialogs", "archive"): {("dialogs", "unarchive")},
     ("dialogs", "delete-message"): {
         ("dialogs", "send"),
@@ -160,6 +162,7 @@ def _live_cli_probe_env(tmp_path: Path) -> CliRealCliEnv:
         live_root=tmp_path,
         config_path=tmp_path / "config.yaml",
         db_path=tmp_path / "data.db",
+        web_port=8080,
         phones=(),
         channel_pk=None,
         channel_id=None,
@@ -1117,6 +1120,9 @@ def _is_cleanup_producer_command(
     if cleanup_command_case == ("scheduler", "clear-pending"):
         return command in {("collect",), ("scheduler", "trigger")}
 
+    if cleanup_command_case in {("agent", "thread-delete"), ("agent", "threads")}:
+        return command_case == ("agent", "chat") and any(arg in {"-p", "--prompt"} for arg in command[2:])
+
     return command_case in _CLI_CLEANUP_COMMAND_PRODUCERS.get(cleanup_command_case, set())
 
 
@@ -1199,6 +1205,18 @@ def test_good(run_cli, cli_env):
         run_cli("scheduler", "trigger")
     finally:
         cli_run_direct(cli_env, "scheduler", "clear-pending")
+
+def test_bad_agent_help_is_not_producer(run_cli, cli_env):
+    try:
+        run_cli("agent", "chat", "--help")
+    finally:
+        cli_run_direct(cli_env, "agent", "thread-delete", "--thread-id", "1")
+
+def test_good_agent_prompt(run_cli, cli_env):
+    try:
+        run_cli("agent", "chat", "-p", "ok")
+    finally:
+        cli_run_direct(cli_env, "agent", "thread-delete", "--thread-id", "1")
 """,
         encoding="utf-8",
     )
@@ -1225,6 +1243,18 @@ def test_good(run_cli, cli_env):
         records["test_good"],
         leafs,
         records["test_good"][1][2],
+    )
+    assert not _has_cleanup_producer(
+        ("agent", "thread-delete"),
+        records["test_bad_agent_help_is_not_producer"],
+        leafs,
+        records["test_bad_agent_help_is_not_producer"][1][2],
+    )
+    assert _has_cleanup_producer(
+        ("agent", "thread-delete"),
+        records["test_good_agent_prompt"],
+        leafs,
+        records["test_good_agent_prompt"][1][2],
     )
 
 

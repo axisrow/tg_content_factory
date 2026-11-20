@@ -1,7 +1,7 @@
 """ENV-gate for process-control CLI tests — by analogy with heavy/conftest.py.
 
-These tests launch real long-running processes (the worker daemon, the
-scheduler) or stop/restart them. They can interfere with a local dev server/worker,
+These tests launch real long-running processes (web server, worker, scheduler
+daemon) or stop/restart them. They can interfere with a local dev server/worker,
 so they are opt-in only and never auto-enable — run them deliberately, by hand.
 
 **Three env vars are required** to run these tests:

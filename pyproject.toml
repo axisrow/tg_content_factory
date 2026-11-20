@@ -17,6 +17,7 @@ keywords = ["telegram", "agent", "automation", "assistant", "telethon", "content
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
+    "Environment :: Web Environment",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -40,6 +41,8 @@ dependencies = [
     # does NOT apply here: we build a throwaway client per call, so every read
     # hits Telegram. Caching happens one level up, in runtime_snapshots.
     "tg-messenger>=0.1.0",
+    "fastapi>=0.136.3,<0.163",
+    "uvicorn[standard]>=0.48.0",
     "aiosqlite>=0.22.1",
     "apscheduler>=3.11.3",
     "pydantic>=2.13.4",
@@ -128,6 +131,17 @@ dev = [
     # PRs that pip-audit findings point at.
     "pip-audit>=2.7.3",
     "bandit>=1.8.0",
+    # Console-error e2e smoke (issue #1014): the opt-in browser walk in the
+    # tg-webui package (https://github.com/axisrow/tg_webui) drives the Playwright
+    # Python API directly
+    # instead of shelling out to an undeclared `playwright-cli` binary. The
+    # browser binaries are installed separately with
+    # `playwright install --with-deps chromium`; pytest-playwright pulls in the
+    # `playwright` package and the e2e fixtures. The smoke test is gated behind
+    # RUN_E2E_CONSOLE_SMOKE=1, runs locally against a `python -m tg_agent.main serve`
+    # panel, and never runs in the default suite or in CI.
+    "playwright>=1.59.0",
+    "pytest-playwright>=0.8.0",
 ]
 docs = ["mkdocs-material>=9.7.6", "mkdocstrings[python]>=0.25.0"]
 # Codex SDK image provider. Optional: all imports are lazy, so without this
@@ -182,7 +196,7 @@ ignore = [
 known-first-party = ["tg_agent", "tg_shared", "tests"]
 
 [tool.ruff.lint.flake8-bugbear]
-extend-immutable-calls = ["typer.Option", "typer.Argument"]
+extend-immutable-calls = ["typer.Option", "typer.Argument", "fastapi.Depends", "fastapi.File", "fastapi.Form"]
 
 [tool.mypy]
 
@@ -217,7 +231,7 @@ addopts = "--dist=loadfile"
 filterwarnings = ["error"]
 markers = [
     "unit: test level — pure logic, no DB/HTTP/real-IO (fast); auto-applied by conftest heuristic",
-    "integration: test level — exercises in-process subsystems (SQLite, dispatchers, subprocesses); auto-applied by conftest heuristic",
+    "integration: test level — exercises in-process subsystems (SQLite, FastAPI client, dispatchers); auto-applied by conftest heuristic",
     "smoke: fast offline preflight over real project functions (critical paths); curated subset, applied alongside a level marker",
     "native_backend_allowed: test intentionally exercises explicit native Telethon allowlist flows",
     "real_tg_safe: opt-in real Telegram API test with no Telegram-visible mutations",
@@ -230,7 +244,7 @@ markers = [
     "aiosqlite_serial: tests in one file must stay together while independent files may use xdist workers",
     "codex_image_live: opt-in live Codex SDK image generation test; gate: RUN_CODEX_IMAGE_LIVE=1",
     "codex_cli_live: opt-in live Codex CLI smoke (image generation); gate: RUN_CODEX_CLI_LIVE=1",
-    "e2e: test level — long full real-surface flows (the real_tg_* live CLI suites)",
+    "e2e: end-to-end browser test using Playwright",
     "slow: test is intrinsically slow (real timers/sleeps that can't be scaled away); excluded from the fast feedback loop with `-m 'not slow'`",
     "mutmut_skip: excluded from mutation runs (repo-contract AST/surface scans, out-of-process spawns, network-flaky); filtered by [tool.mutmut] pytest_add_cli_args `-m 'not mutmut_skip'`",
 ]

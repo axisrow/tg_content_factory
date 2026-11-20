@@ -5,6 +5,8 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
         ("account", "flood-status"),
         ("account", "info"),
         ("account", "list"),
+        ("agent", "messages"),
+        ("agent", "threads"),
         ("analytics", "calendar"),
         ("analytics", "channel"),
         ("analytics", "channel-rating"),
@@ -74,6 +76,8 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
         ("translate", "stats"),
     },
     "safe_write": {
+        ("agent", "chat"),
+        ("agent", "threads"),
         ("channel", "add"),
         ("channel", "add-bulk"),
         ("dialogs", "download-media"),
@@ -109,6 +113,7 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
     },
     "process_control": {
         ("restart",),
+        ("serve",),
         ("stop",),
         ("worker",),
     },
@@ -131,6 +136,8 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
 }
 
 CLI_REAL_TG_CLEANUP_COMMAND_CASES: set[tuple[str, ...]] = {
+    ("agent", "thread-delete"),
+    ("agent", "threads"),
     ("dialogs", "archive"),
     ("dialogs", "delete"),
     ("dialogs", "delete-message"),
@@ -215,6 +222,13 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("account", "set-primary"): "local account state mutation",
     ("account", "toggle"): "local account state mutation",
     ("account", "verify-code"): "Telegram auth flow",
+    ("agent", "context"): "local agent-thread mutation requiring chosen target",
+    ("agent", "test-escaping"): "diagnostic aggregate, not a leaf operator smoke",
+    ("agent", "test-tools"): "diagnostic aggregate, not a leaf operator smoke",
+    ("agent", "thread-create"): "local agent-thread mutation",
+    ("agent", "thread-delete"): "cleanup-only live CLI command; deletes agent thread rows",
+    ("agent", "thread-rename"): "local agent-thread mutation",
+    ("agent", "thread-stop"): "local agent-stream cancel + last-exchange rollback (DB-only)",
     ("analytics", "channel-rate"): (
         "LLM-judge run: provider spend + channel_ratings DB write; no live Telegram. "
         "Covered by unit/integration tests with a fake provider_callable (#994)"

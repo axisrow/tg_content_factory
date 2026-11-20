@@ -1,6 +1,6 @@
 # Архитектура
 
-> **CLI — единственная поверхность** (агенты кодирования: `tg-agent` CLI + скилл). Веб-панель, встроенный агент-чат с TUI и MCP-сервер удалены в #1868. См. Positioning в корневом `CLAUDE.md`.
+> **CLI — основная поверхность** (агенты кодирования: `tg-agent` CLI + скилл). Веб-панель (пакет `tg-webui`) и встроенный агент-чат с TUI (пакет `tg-tui`) — устаревшие опциональные поверхности; MCP-сервер удалён в #1868. См. Positioning в корневом `CLAUDE.md`.
 
 ## Три слоя
 
@@ -56,7 +56,7 @@
 - `claude-agent-sdk` при наличии `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`
 - `deepagents` как fallback (`AGENT_FALLBACK_MODEL`)
 
-`agent_backend_override` (режим разработчика; `tg-agent settings agent --backend auto|claude|deepagents`) принудительно выбирает один. Реестр агент-инструментов (`tg_agent/agent/tools/`) — инструменты этого движка; соответствие CLI — в [CLI / Agent Tool Parity](reference/parity.md). Встроенный чат (`agent …`, TUI, web `/agent`), `mcp-server` и бэкенды Codex/ADK удалены в #1868.
+`agent_backend_override` (режим разработчика; `tg-agent settings agent --backend auto|claude|deepagents`) принудительно выбирает один. Реестр агент-инструментов (`tg_agent/agent/tools/`) — инструменты этого движка; соответствие CLI — в [CLI / Agent Tool Parity](reference/parity.md). `mcp-server` и бэкенды Codex/ADK удалены в #1868; встроенный чат (`agent …`, TUI, web `/agent`) — устаревшая опциональная поверхность.
 
 ## Database Access Pattern
 

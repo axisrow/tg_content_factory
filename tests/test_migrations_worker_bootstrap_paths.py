@@ -533,7 +533,7 @@ async def test_publish_snapshots_basic():
     mock_runtime_snapshots.upsert_snapshot = AsyncMock()
     container.db = MagicMock()
     container.db.repos.runtime_snapshots = mock_runtime_snapshots
-    # dm_listener=None: контейнер без слушателя; bare MagicMock иначе
+    # dm_listener=None: web-контейнер без слушателя; bare MagicMock иначе
     # просачивается в _publish_dm_listener_status_snapshot (#1427).
     container.dm_listener = None
 
@@ -570,11 +570,100 @@ async def test_publish_snapshots_basic():
 
     await _publish_snapshots(container)
 
-    # _publish_snapshots makes exactly 4 upsert_snapshot calls (heartbeat,
-    # scheduler_status, scheduler_jobs, collection_queue_status) — only the
-    # snapshots CLI readers use (#1868).
-    assert mock_runtime_snapshots.upsert_snapshot.call_count == 4
-    container.notification_target_service.describe_target.assert_not_called()
+    # _publish_snapshots makes exactly 8 upsert_snapshot calls (heartbeat,
+    # accounts_status, pool_counters, collector_status, scheduler_status,
+    # scheduler_jobs, collection_queue_status, notification_target_status).
+    assert mock_runtime_snapshots.upsert_snapshot.call_count == 8
+
+
+@pytest.mark.anyio
+async def test_publish_snapshots_with_available_notification():
+    """Covers the notification bot snapshot path when target is available."""
+    from tg_agent.runtime.worker import _publish_snapshots
+    from tg_agent.services.notification_target_service import NotificationTargetStatus
+
+    container = MagicMock()
+    mock_runtime_snapshots = MagicMock()
+    mock_runtime_snapshots.upsert_snapshot = AsyncMock()
+    container.db = MagicMock()
+    container.db.repos.runtime_snapshots = mock_runtime_snapshots
+    # dm_listener=None: web-контейнер без слушателя; bare MagicMock иначе
+    # просачивается в _publish_dm_listener_status_snapshot (#1427).
+    container.dm_listener = None
+
+    pool = MagicMock()
+    pool.clients = {}
+    pool._dialogs_cache = {}
+    pool._active_leases = {}
+    pool._premium_flood_wait_until = {}
+    pool._session_overrides = {}
+    container.pool = pool
+    container.collector = MagicMock()
+    container.collector.is_running = False
+    container.scheduler = MagicMock()
+    container.scheduler.is_running = False
+    container.scheduler.interval_minutes = 60
+    container.scheduler.get_potential_jobs = AsyncMock(return_value=[])
+
+    target_status = NotificationTargetStatus(
+        mode="auto", state="available", message="ok", configured_phone="+123"
+    )
+    container.notification_target_service = MagicMock()
+    container.notification_target_service.describe_target = AsyncMock(return_value=target_status)
+    container.config = MagicMock()
+    container.config.notifications.bot_name_prefix = "Bot"
+    container.config.notifications.bot_username_prefix = ""
+
+    with patch("tg_agent.runtime.worker.NotificationService") as mock_notif_svc:
+        mock_notif_svc.return_value.get_status = AsyncMock(return_value=None)
+        await _publish_snapshots(container)
+
+    assert mock_runtime_snapshots.upsert_snapshot.call_count == 8
+
+
+@pytest.mark.anyio
+async def test_publish_snapshots_notification_exception():
+    """Covers the exception path when NotificationService.get_status() fails."""
+    from tg_agent.runtime.worker import _publish_snapshots
+    from tg_agent.services.notification_target_service import NotificationTargetStatus
+
+    container = MagicMock()
+    mock_runtime_snapshots = MagicMock()
+    mock_runtime_snapshots.upsert_snapshot = AsyncMock()
+    container.db = MagicMock()
+    container.db.repos.runtime_snapshots = mock_runtime_snapshots
+    # dm_listener=None: web-контейнер без слушателя; bare MagicMock иначе
+    # просачивается в _publish_dm_listener_status_snapshot (#1427).
+    container.dm_listener = None
+
+    pool = MagicMock()
+    pool.clients = {}
+    pool._dialogs_cache = {}
+    pool._active_leases = {}
+    pool._premium_flood_wait_until = {}
+    pool._session_overrides = {}
+    container.pool = pool
+    container.collector = MagicMock()
+    container.collector.is_running = False
+    container.scheduler = MagicMock()
+    container.scheduler.is_running = False
+    container.scheduler.interval_minutes = 60
+    container.scheduler.get_potential_jobs = AsyncMock(return_value=[])
+
+    target_status = NotificationTargetStatus(
+        mode="auto", state="available", message="ok", configured_phone="+123"
+    )
+    container.notification_target_service = MagicMock()
+    container.notification_target_service.describe_target = AsyncMock(return_value=target_status)
+    container.config = MagicMock()
+    container.config.notifications.bot_name_prefix = "Bot"
+    container.config.notifications.bot_username_prefix = ""
+
+    with patch("tg_agent.runtime.worker.NotificationService") as mock_notif_svc:
+        mock_notif_svc.return_value.get_status = AsyncMock(side_effect=Exception("bot error"))
+        await _publish_snapshots(container)
+
+    assert mock_runtime_snapshots.upsert_snapshot.call_count == 8
 
 
 # ============================================================================

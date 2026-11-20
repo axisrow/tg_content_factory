@@ -524,6 +524,65 @@ async def test_resolve_channel_entity_numeric_no_rediscovery_is_quarantined(coll
     mock_db.repos.channels.set_channel_review.assert_awaited_once_with(5, "resolve_account_unavailable")
 
 
+def _vacant_username_setup(collector, mock_pool, mock_db, *, username_error, fallback_error, owner):
+    collector._resolve_channel_input_entity = AsyncMock(side_effect=username_error)
+    mock_pool.resolve_entity_with_warm = AsyncMock(side_effect=fallback_error)
+    mock_pool.get_phone_for_channel = MagicMock(return_value=owner)
+    mock_db.repos.channels.set_channel_review = AsyncMock()
+    return Channel(id=5, channel_id=123, title="Ch", username="somech")
+
+
+@pytest.mark.anyio
+async def test_resolve_channel_entity_vacant_username_and_unknown_id_is_terminal(collector, mock_pool, mock_db):
+    """Telegram says nobody owns the name and no account is recorded as the
+    channel's owner: nothing recovers the row, so the verdict is terminal."""
+    from telethon.errors import UsernameNotOccupiedError
+
+    from tg_agent.telegram.collector_types import ChannelCollectionTerminalError
+
+    channel = _vacant_username_setup(
+        collector, mock_pool, mock_db,
+        username_error=UsernameNotOccupiedError(request=None),
+        fallback_error=ValueError("bad peer"),
+        owner=None,
+    )
+
+    with pytest.raises(ChannelCollectionTerminalError) as caught:
+        await collector._resolve_channel_entity(channel, MagicMock(), "+7999", 123, False, set())
+
+    assert caught.value.code == "UsernameNotOccupiedError"
+    mock_db.repos.channels.set_channel_review.assert_not_awaited()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("username_error", "fallback_error", "owner"),
+    [
+        # another account owns the channel: a miss here proves nothing about it
+        ("vacant", ValueError("bad peer"), "+7002"),
+        # the numeric lookup failed for a transient reason, not a peer miss
+        ("vacant", RuntimeError("network down"), None),
+        # a bare cache miss is not Telegram's "nobody owns this name"
+        ("cache-miss", ValueError("bad peer"), None),
+    ],
+    ids=["owned-elsewhere", "transient-fallback", "cache-miss"],
+)
+async def test_resolve_channel_entity_inconclusive_username_miss_stays_transient(
+    collector, mock_pool, mock_db, username_error, fallback_error, owner
+):
+    from telethon.errors import UsernameNotOccupiedError
+
+    error = UsernameNotOccupiedError(request=None) if username_error == "vacant" else ValueError("not cached")
+    channel = _vacant_username_setup(
+        collector, mock_pool, mock_db, username_error=error, fallback_error=fallback_error, owner=owner
+    )
+
+    outcome = await collector._resolve_channel_entity(channel, MagicMock(), "+7999", 123, False, set())
+
+    assert outcome.action == "stop"
+    mock_db.repos.channels.set_channel_review.assert_awaited_once_with(5, "resolve_transient_error")
+
+
 # ------------------------------------------------------------------
 # Mutation slice #5 killer tests: behaviors that survived mutmut
 # ------------------------------------------------------------------

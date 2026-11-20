@@ -14,14 +14,18 @@ nobody looks at screens; every consumer is a program.
   commands (incl. real-TG manifest coverage) before any other surface. If a change affects the
   agent-facing surface, update `skills/tg-agent/SKILL.md` / `skills/tg-agent/reference.md` in
   the same PR.
-- **Removed (#1868, breaking):** the web dashboard (`serve`), the embedded agent chat with its
-  TUI and threads (`agent …`), the MCP server (`mcp-server`) and the Codex/ADK agent backends
-  built on it. Do not reintroduce human-facing surfaces; import-linter bans `tg_webui`/`tg_tui`.
+- **Deprecated, optional (automation-first contract, 2026-09-30):** web dashboard, TUI, embedded
+  agent chat (`agent …`). They keep running but receive **no investment**: no features and no
+  proactive bug fixes — fixes only on an explicit owner request. They are **not removed** (owner
+  decision, 2026-11-20): the web panel and the TUI live in their own packages that are installed
+  additionally (`tg-webui`, `tg-tui`), and the core keeps their entry points (`serve`,
+  `agent chat`). Do not delete these surfaces or their hooks.
+- **Removed (#1868; owner decision, 2026-11-20):** the stdio MCP bridge (`mcp-server`) and the
+  Codex/ADK agent backends — its only consumers. The in-process MCP tool registry
+  (`make_mcp_server`, used by the Claude backend) and Codex as an image provider stay.
 - **Not legacy:** the worker runtime (collection queue, scheduler, dispatchers, snapshots, the
   session-owner relay) — it is the engine behind scheduled collection and queued sends, and
-  the owner every other process runs its Telegram requests through. The agent engine
-  (AgentManager with the deepagents/claude-agent-sdk backends, the tool registry) stays for
-  content pipelines.
+  the owner every other process runs its Telegram requests through.
 - Keep `.claude-plugin/plugin.json` `version` in sync with `pyproject.toml` on release.
 
 ## Commands
@@ -37,6 +41,17 @@ pip install -e ".[dev]"
 # tg-shared is published (#1424 wave).
 pip install -e packages/tg_shared
 
+# Optional legacy surfaces live in their own repos / PyPI packages (ex-#1720):
+# the interactive agent-chat TUI (`agent chat` without a prompt) needs
+# tg-tui (github.com/axisrow/tg_tui, PyPI 0.0.1), the web panel (`serve`) needs
+# tg-webui (github.com/axisrow/tg_webui, PyPI 0.0.1; needs tg-shared, not yet
+# on PyPI). The core never imports them (import-linter contracts) and declares
+# none of their deps (jinja2, python-multipart, itsdangerous, qrcode, textual);
+# tests/test_core_without_surfaces.py and the CI core-wheel smoke
+# (scripts/smoke_core_wheel.py) pin that. Their tests live in their own repos.
+pip install tg-tui   # or: pip install -e ../tg_tui
+pip install tg-webui  # or: pip install -e ../tg_webui
+
 # Dependency-touching PRs must regenerate the lockfile: the committed uv.lock
 # is the full-closure graph the CI dependency-review gate diffs against
 # (#1706); a stale lock reds static-checks. Installs stay on pip.
@@ -51,14 +66,21 @@ python -m pip show tg-agent
 # tests/test_local_install_consistency.py fails with the diagnosis; repair:
 pip install -e ".[dev]"
 
-# Managed daemon — stop any previous daemon and run the worker runtime in this
-# process. The PID file makes `stop`/`restart` work; the relay endpoint next to
-# the DB (<db>.relay.json, 0600) lets CLI processes run on its connections.
-# After upgrading tg-agent restart it once: an older daemon serves no relay.
+# Managed daemon (automation-first default) — stop any previous daemon and run
+# the worker runtime in this process. No web panel, no WEB_PASS. The PID file
+# makes `stop`/`restart` work; the relay endpoint next to the DB
+# (<db>.relay.json, 0600) lets CLI processes run on its connections. After
+# upgrading tg-agent restart it once: an older daemon serves no relay.
 python -m tg_agent.main restart
 
 # Same worker runtime without the stop-first step (e.g. under tmux/systemd).
 python -m tg_agent.main worker
+
+# Legacy web panel (deprecated, optional tg-webui package) — uvicorn + embedded
+# worker by default. For split deployments (Docker/k8s) pass --no-worker and run
+# `worker`. The embedded worker serves no CLI relay: live CLI commands next to a
+# running `serve` are refused at once — use the worker daemon for them.
+python -m tg_agent.main serve [--web-pass PASS] [--no-worker]
 
 # Lint (the monorepo packages are linted too, as in CI)
 ruff check tg_agent/ tests/ packages/ conftest.py
@@ -92,6 +114,7 @@ mutmut run
 Full CLI reference:
 
 ```bash
+python -m tg_agent.main [--config CONFIG] serve [--web-pass PASS]
 python -m tg_agent.main [--config CONFIG] worker
 python -m tg_agent.main [--config CONFIG] collect [--channel-id ID] | collect sample
 python -m tg_agent.main [--config CONFIG] search "query" [--limit N] [--mode MODE]
@@ -114,11 +137,12 @@ python -m tg_agent.main photo-loader dialogs|refresh|send|schedule-send|batch-cr
 python -m tg_agent.main dialogs list|refresh|resolve|leave|join|topics|cache-clear|cache-status|send|forward|edit-message|delete-message|create-channel|create-group|pin-message|react|unpin-message|download-media|transcribe|participants|edit-admin|edit-permissions|kick|broadcast-stats|archive|unarchive|mark-read|queue|queue status|queue cancel|queue clear-pending
 python -m tg_agent.main dm drafts list|create|approve|reject|send
 python -m tg_agent.main seeding samples|stats|validate|thread-create|add|list|show|approve|schedule|cancel|status   # chat seeding (эпик #1751): composer (#1756, samples = real speech #1793) + publisher (#1757)
+python -m tg_agent.main agent threads|thread-create|thread-delete|chat|thread-rename|thread-stop|messages|context|test-escaping|test-tools
 python -m tg_agent.main analytics top|content-types|hourly|summary|daily|pipeline-stats|trending-topics|trending-channels|velocity|peak-hours|calendar|trending-emojis|channel|channel-rating|channel-rate|usefulness
 python -m tg_agent.main provider list|add|delete|probe|refresh|test-all
 python -m tg_agent.main export json|csv|rss
 python -m tg_agent.main translate stats|detect|run|message
-python -m tg_agent.main settings get|set|info|server-time|agent|filter-criteria|reactions|semantic   # agent = content-pipeline agent backend/prompt (auto|claude|deepagents)
+python -m tg_agent.main settings get|set|info|server-time|agent|filter-criteria|reactions|semantic   # agent = agent backend/prompt (auto|claude|deepagents)
 python -m tg_agent.main style init|list|show --channel <id>   # local-only per-channel style specs (~/.tg-agent/designs, never committed)
 python -m tg_agent.main telegraph login --short-name "..."   # one-time: createAccount, token → settings (enc:v2, masked)
 python -m tg_agent.main telegraph create --title "..." --file article.md [--author-name N] [--author-url U] [--format text|json]   # telegra.ph page from markdown (#1703)
@@ -130,21 +154,25 @@ CLI command for Telegram dialogs management is `dialogs`.
 
 ## Architecture
 
-Three layers: **CLI (the only surface)** → **Telegram + Search + Scheduler + Agent/Pipeline** → **SQLite**
+Three layers: **CLI (native surface; web/TUI/agent-chat are legacy, optional)** → **Telegram + Search + Scheduler + Agent/Pipeline** → **SQLite**
 
-- **Runtime: the worker daemon** (`tg_agent/runtime/bootstrap.py` → `RuntimeContainer`, run by `tg_agent/runtime/worker.py` under `restart`/`worker` with the managed PID file). It owns the live `ClientPool`, `CollectionQueue`, `UnifiedDispatcher`, `TelegramCommandDispatcher`, `SchedulerManager`, the DM listener, and publishes the `runtime_snapshots` CLI readers use (worker_heartbeat, scheduler_status, scheduler_jobs, collection_queue_status, dm_listener_status — write only what someone reads). The web panel, its `runtime_mode="web"` and snapshot shims were removed in #1868.
+- **Runtime split (web ↔ worker)**: the worker runtime is assembled in `tg_agent/runtime/bootstrap.py` into `RuntimeContainer`; the legacy web panel is the optional package `tg-webui` ([github.com/axisrow/tg_webui](https://github.com/axisrow/tg_webui), PyPI 0.0.1; import name `tg_webui`), which adds presentation state through the `AppContainer` subclass in `tg_webui/container.py` and builds it in `tg_webui/bootstrap.py`. The core must not import `tg_webui` (import-linter `runtime_no_web_imports`; only `cli/commands/serve.py` loads it lazily and exits 1 with an install hint when it is missing): runtime data paths live in `tg_agent/paths.py`, request timing in `tg_agent/utils/timing.py`, the snapshot shims in `tg_agent/runtime/snapshots.py`. The **default daemon is worker-only** (automation-first): `restart`/`worker` run the standalone worker (`tg_agent/runtime/worker.py`) with the managed PID file, the session-owner relay and no web surface. `serve` is the legacy panel entry: it hosts uvicorn and spawns an `EmbeddedWorker` (`tg_webui/embedded_worker.py`) next to the web container; `--no-worker` runs only the web side (Docker/k8s split deployments). The embedded worker serves no relay, so live CLI commands next to a running `serve` are refused at once.
+  - Web container (`runtime_mode="web"`) uses snapshot shims (`SnapshotClientPool`, `SnapshotCollector`, `SnapshotSchedulerManager` in `tg_agent/runtime/snapshots.py`). It does NOT open Telegram connections; UI actions enqueue work into `collection_tasks` / `telegram_commands` / task tables and read `runtime_snapshots` to render status.
+  - Worker container (`runtime_mode="worker"`, either embedded or standalone via `tg_agent/runtime/worker.py`) owns the live `ClientPool`, `CollectionQueue`, `UnifiedDispatcher`, `TelegramCommandDispatcher`, `SchedulerManager` and the DM listener, and publishes `runtime_snapshots` (heartbeat, accounts_status, scheduler_status, …) that the CLI and the web side read.
+  - In web-mode `collection_queue = None` and `CollectionService` falls back to writing a PENDING row — the worker picks those up at startup via `CollectionQueue.requeue_startup_tasks()` and on its DB pull.
 - **Session-owner relay (#1868)** (`tg_agent/telegram/relay.py`): one process owns an account's Telegram connection — the worker daemon, or the shared gateway — and serves a loopback relay (127.0.0.1, random port, token; endpoint file `<db>.relay.json`, 0600). Every other process builds an ordinary `ClientPool(relay=connection)`: its `RelayTelegramClient`s have no auth key, serialize each MTProto request (`bytes(request)`), the owner runs it on its connection behind its floodgate guards, and the raw answer is parsed client-side by the request's own reader. One authorization, one connection, one flood budget, the native code path everywhere. `cli/runtime.init_pool` routes: gateway project → gateway relay; live local daemon → daemon relay; otherwise the CLI connects itself. An older daemon/gateway (no relay, other protocol or TL layer) is a hard error asking for a restart. Requests that would end the shared session (`auth.*`, phone/2FA/TTL changes, session resets — wrapped or not) are refused by `check_allowed`; BotFather conversations (they need updates, which only the owner receives) run on the owner via the `botfather.*` relay ops.
 - **Queue wake (#1868)** (`tg_agent/runtime/wake.py`): `@wake.notifies(queue)` on the enqueue repository methods sets per-subscriber events in the worker; a CLI enqueue wakes the daemon over its relay (`wake` op). The dispatcher/collection loops wait on the event with `asyncio.timeout`; their poll is only a safety net.
-- CLI (`tg_agent/main.py` → `tg_agent/cli/commands/`) is the entry point and the product contract for coding agents (see Positioning)
+- CLI (`tg_agent/main.py` → `tg_agent/cli/commands/`) is the primary entry point and the product contract for coding agents (see Positioning); Web (the optional `tg-webui` package) is a legacy parallel entry to the same logic — keep it working, do not extend
 - Telegram layer: `ClientPool` manages multi-account connections, `Collector` fetches messages, `Notifier` sends alerts
 - Search layer: `SearchEngine` (local DB), `AISearchEngine` (LLM-powered)
 - Scheduler: APScheduler wrapper (`tg_agent/scheduler/manager.py`) triggers periodic collection
 - DB: single SQLite file via aiosqlite; schema in `tg_agent/database/schema.py`, migrations in `tg_agent/database/migrations.py`, connection in `tg_agent/database/connection.py`
 - Filters: `ChannelAnalyzer` (`tg_agent/filters/analyzer.py`) scores channels by uniqueness, subscriber ratio, cross-channel spam, language; thresholds in `tg_agent/filters/criteria.py`
-- Collection service (`tg_agent/services/collection_service.py`): orchestration layer between CLI/worker and Collector/Queue — handles enqueue logic, stats collection
+- Collection service (`tg_agent/services/collection_service.py`): orchestration layer between web/CLI and Collector/Queue — handles enqueue logic, stats collection
 - Parsers (`tg_agent/parsers.py`): identifier extraction for channel import — t.me links, @usernames, negative IDs; file parsing (txt/csv/xlsx)
 - Notification bot: personal bot created via BotFather through a connected account (`tg_agent/telegram/notifier.py`)
-- **Agent engine (content pipelines)**: two backends selected in `AgentManager.get_runtime_status()` (`tg_agent/agent/manager.py`) — auto-selection prefers `deepagents` when usable DB provider configs exist, then `claude-agent-sdk` (needs `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`), then `deepagents` again; `agent_backend_override` (dev mode; `settings agent --backend auto|claude|deepagents`) forces one. Pipelines (`content_generation_service.py`, `cli/pipeline/generation.py`) build their own manager and call `chat_stream(thread_id=0, …)`. The embedded chat (`agent …` CLI group, TUI, web `/agent`), `mcp-server` and the Codex/ADK backends were removed in #1868; the `agent_threads`/`agent_messages` tables stay (pipelines read thread 0)
+- **Agent system**: two backends selected in `AgentManager.get_runtime_status()` (`tg_agent/agent/manager.py`) — auto-selection prefers `deepagents` when usable DB provider configs exist, then `claude-agent-sdk` (needs `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`), then `deepagents` again; `agent_backend_override` (dev mode; `settings agent --backend auto|claude|deepagents`, the old `claude-agent-sdk` spelling is stored as `claude`) forces one. Content pipelines (`content_generation_service.py`, `cli/pipeline/generation.py`) build their own manager and call `chat_stream(thread_id=0, …)`. The Codex/ADK backends and the stdio `mcp-server` bridge they ran on were removed in #1868; `AgentRuntimeStatus.codex_available`/`adk_available` stay as always-False fields because the optional tg-webui agent page reads them
+- **Agent chat is legacy** (2026-09, see Positioning): the in-process agent chat (`agent …` CLI group, TUI, web `/agent`) — frozen: keep functional, no new features. The interactive TUI is the optional package `tg-tui` ([github.com/axisrow/tg_tui](https://github.com/axisrow/tg_tui), PyPI 0.0.1; `tg_tui.app.AgentTuiApp`); `agent chat` without a prompt imports it lazily and exits 1 with an install hint when it is missing; the core must not import `tg_tui` (import-linter `core_no_tui_imports`)
 - **Provider system**: `ProviderService` auto-registers LLM providers from env vars (`OPENAI_API_KEY`, `COHERE_API_KEY`, `OLLAMA_BASE`, etc.); the text/LLM adapters in `tg_agent/services/provider_adapters.py` are lightweight HTTP wrappers (no heavy SDK deps). The image adapters in the same file use official SDKs where they are cheap and clearer (see Image generation below) — the principle is "no *heavy* SDK", not "no SDK at all"
 - **Content pipelines**: `PipelineService` + `ContentGenerationService` orchestrate generate → image → draft → notify → publish flow; tracked via `generation_runs` DB table
 - **Image generation**: `ImageGenerationService` routes to provider-specific adapters (Together/HuggingFace/OpenAI/Replicate/Codex) via `provider:model_id` convention; auto-registers from env vars; adapters defined in `tg_agent/services/provider_adapters.py`. Since #958 the OpenAI/Together/Replicate adapters drive official SDKs (`openai` for both OpenAI and Together's OpenAI-compatible endpoint; `replicate` `async_run` replacing the manual poll loop); HuggingFace stays on raw aiohttp on purpose (its SDK returns a `PIL.Image`, pulling Pillow, vs saving the raw bytes); Codex uses the `openai_codex` SDK. `openai` is a direct dep (already transitive via langchain-openai); `replicate` is lightweight (httpx+pydantic)
@@ -173,6 +201,11 @@ Each repository has a `_to_<model>(row)` static helper that maps `aiosqlite.Row`
 
 Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None = None` and call `self._database.transaction()` / `self._database.execute_write()`. Direct `await self._db.commit()` in repositories is a regression — use the helpers.
 
+### Web app wiring
+
+- `tg_webui/assembly.py` (in the tg-webui repo, `src/`) — `register_routes()` imports and mounts all routers; `configure_app()` binds the `AppContainer` to `app.state.*`
+- `tg_webui/container.py` — `AppContainer` inherits shared services from `tg_agent/runtime/container.py` and adds templates/timing state; injected into FastAPI `app.state` at startup; accessed in routes via `tg_webui/deps.py` helpers (`deps.get_db()`, `deps.get_templates()`, etc.)
+
 ## Key Patterns
 
 - **Entity cache**: `collect_all_channels()` calls `client.get_dialogs()` inline before iterating channels — StringSession loses entity cache between restarts, so this is required for PeerChannel lookups
@@ -181,21 +214,28 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 - **Incremental collection**: `min_id = channel.last_collected_id`, `reverse=True`; after the loop, `last_collected_id` is updated to `max(seen message_ids)`
 - **Batch insert**: `INSERT OR IGNORE` + `UNIQUE(channel_id, message_id)` — duplicates silently skipped
 - **Cancellation**: `Collector._cancel_event` is an `asyncio.Event`, checked every 10 messages in the iter loop and at each channel boundary
+- **Session tokens**: custom HMAC-SHA256 signed tokens in `tg_webui/session.py` — payload is `{user, exp}`, secret persisted in DB settings table, cookie max-age 30 days (`Secure` on HTTPS)
 - **CollectionQueue** (`tg_agent/collection_queue.py`): `asyncio.Queue` + single worker task, task status (`pending/running/completed/failed/cancelled`) tracked in DB
 - **DB migrations**: `_migrate()` in `tg_agent/database/migrations.py` uses `PRAGMA table_info` to detect missing columns and issues `ALTER TABLE ADD COLUMN` as needed
 - **Keyword matching**: plain text (case-insensitive substring) and regex (`re.IGNORECASE`)
 - **Channel filters**: `ChannelAnalyzer` checks `low_uniqueness`, `low_subscriber_ratio`, `cross_channel_spam`, `non_cyrillic`, `chat_noise`, `auto_feed`; filtered channels skipped during collection unless `force=True`
 - **Channel creation date**: `channels.created_at` stores Telegram `entity.date` (channel creation timestamp); captured via `resolve_channel()` and `get_dialogs_for_phone()`; distinct from `added_at` (when added to the system)
 - **Collection service**: `enqueue_channel_by_pk(pk, force)` respects `is_filtered` flag; `enqueue_all_channels()` uses `full=False` for incremental collection
-- **Hour x Weekday Heatmap**: `db.repos.messages.get_hour_weekday_heatmap(channel_id, days)` → `[{hour, weekday, count}]`; weekday 0=Sunday per SQLite `%w`; service wrapper: `ChannelAnalyticsService.get_heatmap()`; CLI: `analytics channel`
+- **Hour x Weekday Heatmap**: `db.repos.messages.get_hour_weekday_heatmap(channel_id, days)` → `[{hour, weekday, count}]`; weekday 0=Sunday per SQLite `%w`; service wrapper: `ChannelAnalyticsService.get_heatmap()`; CLI: `analytics channel`; Web: `/analytics/channels/api/heatmap`
 - **Cross-Channel Citations**: `db.repos.messages.get_cross_channel_citations(channel_id, days)` → sources by `forward_from_channel_id` with JOIN to channels for title/username enrichment; stored as positive MTProto channel ID
 - **Image adapter convention**: `ImageAdapter = Callable[[str, str], Awaitable[str | None]]` — signature is `(prompt, model_id) → URL/path`; model string format `provider:model_id` (e.g. `together:black-forest-labs/FLUX.1-schnell`); without prefix falls back to first registered adapter
 - **Content pipeline flow**: CONTENT_GENERATE task → `ContentGenerationService.generate()` → LLM text → optional image → `generation_runs` record → if AUTO publish mode, enqueues CONTENT_PUBLISH → `PublishService.publish_run()` sends to target channel
 - **Write-target resolution (#1829–#1831, #1841–#1843)**: a write only needs an InputPeer. Known peers are answered from the session store first — `cached_input_peer()` in `tg_agent/telegram/pool_dialogs.py` — and that hit must not pay the gates of network resolves (the per-account username budget, the resolve-family flood check); only a miss takes the gated path. Numeric ids are normalized with `bare_channel_id`. Pool clients use `FreshEntityStringSession` (`tg_shared.sessions`): one current row per peer and per username, so a moved username resolves to its current owner.
+- **Collection identity and terminal verdicts (#1769, #1779, #1783, #1805)**: the collector resolver (`tg_agent/telegram/collector_resolve.py`) never streams a peer it cannot tie to the tracked row — a username-resolved peer must be a channel with the stored id (`_username_owner_mismatch`), otherwise nothing is read. Rows nothing can recover are reported as `ChannelCollectionTerminalError(code)`: `UsernameChannelIdMismatch` (a reoccupied username; also quarantined for review), the vacant-username codes, `HistoryNumericUnresolved` (a numeric id every connected account misses). `CollectionQueue` stamps `terminal_code`/`terminal_at` and the bulk enqueue defers the row for `collection_terminal_defer_days` (30). Only a peer miss is evidence: a flooded or unavailable account, or an owner recorded on another account, keeps the failure transient (review flag, no stamp)
 - **Flood families (#1832, #1844)**: a read-side FloodWait is recorded per (account, family) and leaves the account writable; write-family floods stay account-wide (`tg_agent/telegram/flood_scope.py`). Both stores implement the slice — `AccountsRepository` and the gateway's `GatewayPoolStorage`. In gateway mode the gateway's guards gate every relayed request; `account flood-status|flood-clear` read and clear the gateway's state (#1845)
 - **Flood-guard state across processes (#1868)** (`tg_agent/telegram/flood_snapshot.py`): the pool's `TelegramRateLimitGate` (category + per-peer windows, incl. the sustained tier), `FloodCircuitBreaker` and `OutgoingRateCeiling` are snapshotted with wall-clock stamps into the `flood_guard_snapshot` setting — on teardown and every 30 s by the worker/gateway — and replayed once per pool lifetime in `initialize()` (the replay merges without de-duplication: never twice). Only the session owner writes/restores (a relayed pool is gated by the owner), and a pool that never restored never overwrites the snapshot. The resolve limiter keeps its own `resolve_rate_limiter_snapshot`.
 - **Destructive tool confirmation**: agent tools that delete data require `confirm=true` argument; `require_confirmation()` in `_registry.py` returns a warning response if not confirmed
-- **Decision provenance (#1307)**: automation decides only where automation decided before; operator decisions are never silently overridden. Every decision field carries an `*_origin` column (`channels.active_origin`, `channels.filtered_origin`, `accounts.active_origin`, `generation_runs.moderation_origin`), and every human write appends old/new values to the `decisions` journal. Writes go through the guarded repository methods (`set_channel_active`, `set_channel_filtered`, `set_filtered_bulk`, `reset_all_channel_filters`, `set_account_active`, `set_moderation_status`) whose SQL carries `(? = 'human' OR <origin> != 'human')`: an `origin='auto'` write on a human-owned row is suppressed (and the suppression journaled as evidence), while `origin='human'` always applies. Set `origin='human'` only for a real operator action (CLI flag/toggle, approval queue); everything else stays `origin='auto'`. Never add raw SQL writes to these columns outside the guarded repo methods — `tests/test_provenance_conventions.py` fails any new unpinned site — and never purge messages of `filtered_origin='human'` channels (collector `_maybe_auto_delete` skips them).
+- **Decision provenance (#1307)**: automation decides only where automation decided before; operator decisions are never silently overridden. Every decision field carries an `*_origin` column (`channels.active_origin`, `channels.filtered_origin`, `accounts.active_origin`, `generation_runs.moderation_origin`), and every human write appends old/new values to the `decisions` journal. Writes go through the guarded repository methods (`set_channel_active`, `set_channel_filtered`, `set_filtered_bulk`, `reset_all_channel_filters`, `set_account_active`, `set_moderation_status`) whose SQL carries `(? = 'human' OR <origin> != 'human')`: an `origin='auto'` write on a human-owned row is suppressed (and the suppression journaled as evidence), while `origin='human'` always applies. Set `origin='human'` only for a real operator action (CLI flag/toggle, web action, approval queue); everything else stays `origin='auto'`. Never add raw SQL writes to these columns outside the guarded repo methods — `tests/test_provenance_conventions.py` fails any new unpinned site — and never purge messages of `filtered_origin='human'` channels (collector `_maybe_auto_delete` skips them).
+- **HTMX progressive enhancement**: collect routes check `HX-Request` header to return HTML fragments vs redirects
+- **Frontend policy — HTMX vs fetch()**:
+  - **HTMX** — for operations where the server returns an HTML fragment to swap into the DOM (server-driven swaps): collect buttons, badge updates, form submissions with DOM replacement
+  - **fetch()** — only for: (1) JSON endpoints without DOM replacement, (2) streaming/SSE responses (agent chat, image gen), (3) complex client-side logic before/after the request
+  - PR review rule: reject fetch() where HTMX fits, and vice versa
 - **Identifier parsing**: `parse_identifiers()` splits text by comma/semicolon/newline; `extract_identifiers()` regex-extracts t.me links, @usernames, negative IDs; `parse_file()` handles txt/csv/xlsx
 - **aiosqlite connection cleanup**: in tests using raw `aiosqlite.connect()`, always wrap in `try/finally` with `await conn.close()` — an unclosed worker-thread blocks pytest process exit
 - **SQL in triple-quoted strings**: Python does NOT concatenate adjacent string literals inside `"""..."""`; for values with quotes use parameterized `execute()` with `?`-placeholders, not inline values in `executescript()`
@@ -212,6 +252,7 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 - Async everywhere (asyncio)
 - Pydantic v2 models (`model_validate`, not `parse_obj`)
 - Config via `config.yaml` with `${ENV_VAR}` substitution
+- Web auth (legacy web panel): HTTP Basic Auth (password only via `WEB_PASS`, username hardcoded as "admin")
 - ruff for linting: line-length=120, target py311, rules E/F/I/N/W
 - Tests: pytest-asyncio with `asyncio_mode="auto"`
 - Session strings stored as `enc:v2:*` when `SESSION_ENCRYPTION_KEY` is set; startup fails fast if encrypted rows exist without key
@@ -223,7 +264,7 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 - **Dependency review gate (#1704)**: a `dependency-review` job (PR only) blocks PRs introducing a dependency — **direct or transitive** — with known CVE/malware advisories (`fail-on-severity: moderate`, blocking, unlike the advisory pip-audit). Raise the threshold to `high` if it gets noisy; never make it advisory.
 - **Lockfile (#1706)**: the committed `uv.lock` (uv workspace, root + `packages/*`) is the full-closure dependency graph the review gate diffs against. Installs stay on pip; any PR touching dependencies must regenerate it (`uv lock`) — a stale lock reds `static-checks` (`uv lock --check`).
 - **Test gate (#1090)**: the `tests` job runs the **full** suite on both PR and main — smoke first, then parallel (`-n auto -m "not aiosqlite_serial"`), then the serial lane (`-m aiosqlite_serial -n auto --dist=loadfile`), with coverage. (pytest-testmon selective runs were evaluated and dropped: testmon only deselects single-process and crashes under xdist+coverage, so a testmon PR gate would run single-process without coverage — often *slower* than the full `-n auto` sweep on this large suite, not faster. The parallel-job split is the real win.)
-- Import architecture contracts: `lint-imports --config .importlinter` — CLI/agent-tools entrypoints must not import `telethon` directly (raw Telethon stays behind the telegram layer); the core never imports the removed `tg_webui`/`tg_tui` packages
+- Import architecture contracts: `lint-imports --config .importlinter` — CLI/web/agent-tools entrypoints must not import `telethon` directly (raw Telethon stays behind the telegram layer); the core imports the optional `tg_webui`/`tg_tui` packages only lazily, from `serve` and `agent chat`
 - CI enforces `filterwarnings = ["error"]` in `pyproject.toml` (dedicated check step in `static-checks`)
 - Code-health tooling in `static-checks`: `scripts/code_health.py --fail-on F` (blocking cyclomatic-complexity gate, radon+vulture). Advisory scans (`continue-on-error`): jscpd duplication, `pip-audit` (dependency CVEs, #1053/#1097 §4), bandit. **Doc-coverage (interrogate, #1072) is NOT in CI** — it stays a local script (`scripts/doc_coverage.py`); "no docstring" ≠ "dead code (uncalled, vulture)" — independent signals, different PRs.
 - Other workflows: `real-provider.yml` (opt-in live provider smoke), `docs.yml` (mkdocs → GitHub Pages), `release.yml`
@@ -246,13 +287,13 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 - `real_materializer` — uses real `SessionMaterializer` instead of stub
 - `real_provider_smoke` — opt-in live LLM/image provider API smoke
 - `codex_image_live` / `codex_cli_live` — opt-in live Codex SDK/CLI tests; gates: `RUN_CODEX_IMAGE_LIVE=1` / `RUN_CODEX_CLI_LIVE=1`
-- `e2e` — test level for long full real-surface flows (the `real_tg_*` live CLI suites)
+- `e2e` — end-to-end browser test using Playwright
 
 ### Test levels (unit / integration / smoke / e2e)
 A second classification axis layered on top of the markers above, **auto-applied** at collection time by `_infer_test_level` in root `conftest.py` — no manual annotation needed. Run a level with `pytest -m <level>`. An explicit hand-written level marker on a test/module always wins over the heuristic.
 - `unit` — pure logic, **no DB at all**, no HTTP/file-IO/subprocess; fast. Default when nothing else matches.
-- `integration` — exercises a real in-process subsystem: **any `Database` including `:memory:`** (fixtures `db`/`cli_db`, or file-backed DB built inline), repositories (`tests/repositories/`), or a real subprocess/session-file path.
+- `integration` — exercises a real in-process subsystem: **any `Database` including `:memory:`** (fixtures `db`/`cli_db`, or file-backed DB built inline), the FastAPI app over ASGI (`build_web_app`/`build_web_container`/`ASGITransport`, fixtures `client`/`base_app`/…), repositories (`tests/repositories/`), or a real subprocess/session-file path. (Web route tests live in the tg-webui repo since the extraction.)
 - `smoke` — curated fast **offline** preflight over real critical paths (`tests/test_smoke_preflight.py` + `@pytest.mark.smoke` spots); orthogonal to level (a smoke test is usually also `integration`). Live API smoke (`real_provider_smoke`/`codex_*`) also carries `smoke` but stays opt-in (skipped without its gate). CI runs `pytest -m smoke` first as a sub-second sanity gate.
-- `e2e` — long/full real-surface flows: all `real_tg_*` live CLI suites.
-- **Classification is per-test, not per-file**: a file may hold both `unit` (mock-only) and `integration` (DB-touching) tests — each gets its level from its own fixtures/body. Detection order (first match wins): e2e marker → live-smoke marker → `tests/repositories` path → integration fixture → file-DB (`aiosqlite_serial`) signal → per-test AST source scan (`_INTEGRATION_SOURCE_TOKENS`) → else `unit`. Adding a new way to stand up a subsystem inline may need a token added to `_INTEGRATION_SOURCE_TOKENS`.
+- `e2e` — long/full real-surface flows: the tg-webui repo's `tests/e2e/` (Playwright) plus all `real_tg_*` live CLI suites.
+- **Classification is per-test, not per-file**: a file may hold both `unit` (mock-only) and `integration` (DB-touching) tests — each gets its level from its own fixtures/body. Detection order (first match wins): e2e path/marker → live-smoke marker → `tests/routes`|`tests/repositories` path → integration fixture → file-DB (`aiosqlite_serial`) signal → per-test AST source scan (`_INTEGRATION_SOURCE_TOKENS`) → else `unit`. Adding a new way to stand up a subsystem inline may need a token added to `_INTEGRATION_SOURCE_TOKENS`.
 - Invariant (enforced by `tests/test_test_levels.py`): every collected test carries exactly one level; `unit ∩ integration = ∅`; nothing is left unlevelled.

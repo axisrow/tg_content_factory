@@ -24,6 +24,7 @@ from __future__ import annotations
 import typer
 
 from tg_agent.cli.commands import account as account_cmd
+from tg_agent.cli.commands import agent as agent_cmd
 from tg_agent.cli.commands import analytics as analytics_cmd
 from tg_agent.cli.commands import channel as channel_cmd
 from tg_agent.cli.commands import collect as collect_cmd
@@ -41,12 +42,14 @@ from tg_agent.cli.commands import provider as provider_cmd
 from tg_agent.cli.commands import scheduler as scheduler_cmd
 from tg_agent.cli.commands import search as search_cmd
 from tg_agent.cli.commands import search_query as search_query_cmd
+from tg_agent.cli.commands import serve as serve_cmd
 from tg_agent.cli.commands import server_control as server_control_cmd
 from tg_agent.cli.commands import settings as settings_cmd
 from tg_agent.cli.commands import test as test_cmd
 from tg_agent.cli.commands import translate as translate_cmd
 from tg_agent.cli.commands import worker as worker_cmd
 from tg_agent.cli.commands.account import account_app
+from tg_agent.cli.commands.agent import agent_app
 from tg_agent.cli.commands.analytics import analytics_app
 from tg_agent.cli.commands.channel import channel_app
 from tg_agent.cli.commands.collect import collect_app
@@ -93,6 +96,7 @@ from tg_agent.cli.typer_app import app, apply_startup, run_async
 
 _COMMAND_MODULE_ALIASES_FOR_TEST_PATCHING = (
     account_cmd,
+    agent_cmd,
     analytics_cmd,
     channel_cmd,
     collect_cmd,
@@ -131,13 +135,34 @@ _COMMON_TYPER_NAMES_FOR_COMPAT = (
 
 
 # --------------------------------------------------------------------------- #
-# worker
+# serve / worker
 # --------------------------------------------------------------------------- #
 
 
 @app.command()
+def serve(
+    ctx: typer.Context,
+    web_pass: str | None = typer.Option(None, "--web-pass", help="Web panel password (overrides config)"),
+    no_worker: bool = typer.Option(
+        False,
+        "--no-worker",
+        help=(
+            "Do not spawn the embedded Telegram worker inside this process. "
+            "Use this when you run `python -m tg_agent.main worker` in a separate "
+            "process / container (Docker, k8s). Without this flag the serve "
+            "command runs both the web app and the worker in one process — "
+            "clicking 'Collect' in the UI immediately triggers collection."
+        ),
+    ),
+) -> None:
+    """Start web server."""
+    apply_startup(ctx)
+    serve_cmd.serve_web(ctx.obj.config, web_pass=web_pass, no_worker=no_worker)
+
+
+@app.command()
 def worker(ctx: typer.Context) -> None:
-    """Start the Telegram worker runtime (managed daemon: PID file, owner relay)."""
+    """Start the Telegram worker runtime (managed daemon: PID file, no web panel)."""
     apply_startup(ctx)
     worker_cmd.serve_worker(ctx.obj.config)
 
@@ -161,14 +186,14 @@ def stop(
         ),
     ),
 ) -> None:
-    """Stop the managed daemon started by this app (also a pre-#1868 `serve`)."""
+    """Stop the managed daemon (worker or legacy serve) started by this app."""
     apply_startup(ctx)
     server_control_cmd.stop_web(ctx.obj.config, force=force)
 
 
 @app.command()
 def restart(ctx: typer.Context) -> None:
-    """Restart the managed daemon: stop, then run the worker."""
+    """Restart the managed daemon: stop, then run the worker (no web panel)."""
     apply_startup(ctx)
     server_control_cmd.restart_web(ctx.obj.config)
 
@@ -376,6 +401,13 @@ app.add_typer(scheduler_app, name="scheduler")
 #           verify-code / add / flood-status / flood-clear / export-session /
 
 app.add_typer(account_app, name="account")
+
+
+# --------------------------------------------------------------------------- #
+# agent → threads / thread-create / thread-delete / chat / thread-rename /
+#         thread-stop / messages / context / test-escaping / test-tools
+
+app.add_typer(agent_app, name="agent")
 
 
 # --------------------------------------------------------------------------- #

@@ -186,6 +186,11 @@
     "save_filter_settings": "write",
     "get_system_info": "read",
     "get_server_time": "read",
+    "list_agent_threads": "read",
+    "create_agent_thread": "write",
+    "delete_agent_thread": "delete",
+    "rename_agent_thread": "write",
+    "get_thread_messages": "read",
     "WebSearch": "read",
     "WebFetch": "read"
   },
@@ -413,6 +418,13 @@
       "save_filter_settings",
       "get_system_info",
       "get_server_time"
+    ],
+    "Треды агента": [
+      "list_agent_threads",
+      "create_agent_thread",
+      "delete_agent_thread",
+      "rename_agent_thread",
+      "get_thread_messages"
     ],
     "Веб-поиск": [
       "WebSearch",

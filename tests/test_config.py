@@ -8,7 +8,7 @@ from tg_agent.config import AppConfig, load_config, parse_proxy_url, resolve_ses
 
 def test_default_config():
     config = AppConfig()
-    assert not hasattr(config, "web")  # the web panel and its config are gone (#1868)
+    assert config.web.port == 8080
     assert config.scheduler.collect_interval_minutes == 60
     assert config.database.path == "data/tg_search.db"
     assert config.llm.enabled is False
@@ -16,7 +16,7 @@ def test_default_config():
 
 def test_load_config_missing_file(tmp_path):
     config = load_config(tmp_path / "nonexistent.yaml")
-    assert config.database.path == "data/tg_search.db"
+    assert config.web.port == 8080
 
 
 def test_load_config_with_env_substitution(tmp_path, monkeypatch):
@@ -53,11 +53,11 @@ def test_load_config_reads_telegram_credentials_directly_from_env_without_placeh
     monkeypatch.setenv("TG_API_ID", "77777")
     monkeypatch.setenv("TG_API_HASH", "hash-from-env")
     config_file = tmp_path / "test_config.yaml"
-    config_file.write_text("scheduler:\n  collect_interval_minutes: 15\n")
+    config_file.write_text("web:\n  port: 9090\n")
 
     config = load_config(config_file)
 
-    assert config.scheduler.collect_interval_minutes == 15
+    assert config.web.port == 9090
     assert config.telegram.api_id == 77777
     assert config.telegram.api_hash == "hash-from-env"
 
@@ -181,21 +181,33 @@ def test_load_config_warns_on_invalid_agent_fallback_model(monkeypatch, tmp_path
     assert "Invalid AGENT_FALLBACK_MODEL" in caplog.text
 
 
-def test_shipped_config_yaml_has_no_web_panel_block():
-    """The shipped config.yaml carries no settings of the removed web panel (#1868)."""
-    shipped = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
-    assert "web" not in shipped
+def test_shipped_config_yaml_web_host_overridable_via_env(monkeypatch):
+    """The repo's own config.yaml must let WEB_HOST override the loopback
+    default, or Docker (which bind-mounts this exact file) can never expose
+    the panel outside its network namespace (#1305 follow-up)."""
+    monkeypatch.setenv("WEB_HOST", "0.0.0.0")
+    config = load_config("config.yaml")
+    assert config.web.host == "0.0.0.0"
+
+
+def test_shipped_config_yaml_web_host_defaults_to_loopback(monkeypatch):
+    """Without WEB_HOST set, native execution keeps the safe loopback default."""
+    monkeypatch.delenv("WEB_HOST", raising=False)
+    config = load_config("config.yaml")
+    assert config.web.host == "127.0.0.1"
 
 
 def test_docker_compose_stack_is_worker_only():
-    """The Docker stack is worker-only: the web panel is gone (#1868), so the
-    compose file must not publish a web port nor set the web-only WEB_HOST
-    knob (the old panel-serving stack needed both, #1305 follow-up)."""
+    """The Docker stack is worker-only (automation-first): the web panel is the
+    separate tg-webui package and is not part of the image, so the compose file
+    must not publish a web port nor set the web-only WEB_HOST knob (the old
+    panel-serving stack needed both, #1305 follow-up)."""
     compose_path = Path(__file__).resolve().parent.parent / "docker-compose.yml"
     compose = yaml.safe_load(compose_path.read_text())
     service = next(iter(compose["services"].values()))
     assert not service.get("ports", []), (
-        "worker-only compose must not publish ports; there is no web panel"
+        "worker-only compose must not publish ports; the web panel ships "
+        "separately as tg-webui"
     )
     assert "WEB_HOST=0.0.0.0" not in service.get("environment", []), (
         "WEB_HOST is a web-panel knob; the worker-only stack must not set it"
@@ -205,10 +217,11 @@ def test_docker_compose_stack_is_worker_only():
 def test_resolve_session_encryption_secret_prefers_explicit_key():
     config = AppConfig()
     config.security.session_encryption_key = "explicit-session-key"
+    config.web.password = "web-pass"
     assert resolve_session_encryption_secret(config) == "explicit-session-key"
 
 
-def test_resolve_session_encryption_secret_without_a_key_is_none(monkeypatch):
-    monkeypatch.setenv("WEB_PASS", "web-pass")  # never a fallback for the session key
+def test_resolve_session_encryption_secret_does_not_fallback_to_web_pass():
     config = AppConfig()
+    config.web.password = "web-pass"
     assert resolve_session_encryption_secret(config) is None

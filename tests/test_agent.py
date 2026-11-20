@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from langchain_core.tools import StructuredTool
 
+from tg_agent.agent.context import format_context
 from tg_agent.agent.manager import AgentManager
 from tg_agent.agent.prompt_template import (
     AGENT_PROMPT_TEMPLATE_SETTING,
@@ -19,6 +20,7 @@ from tg_agent.agent.prompt_template import (
 from tg_agent.agent.provider_registry import ZAI_DEFAULT_BASE_URL, ProviderRuntimeConfig
 from tg_agent.agent.tools import make_mcp_server
 from tg_agent.config import AppConfig
+from tg_agent.models import Message
 from tg_agent.services.agent_provider_service import ProviderConfigService
 
 
@@ -849,12 +851,20 @@ async def test_chat_stream_renders_saved_prompt_template_variables(db):
         "Дата: {date}\nКанал: {channel_title}\nТема: {topic}\nСообщения:\n{source_messages}",
     )
     thread_id = await db.create_agent_thread("test thread")
-    # A context message in the header format the template variables are read from.
-    context = (
-        '[КОНТЕКСТ: ForumChan, тема "Вопросы", 1 сообщений]\n'
-        '{"id": 1, "date": "2024-01-15", "author": "sender name=User", '
-        '"sender_id": null, "sender_first_name": null, "sender_last_name": null, '
-        '"sender_username": null, "text": "hello"}'
+    context = format_context(
+        [
+            Message(
+                channel_id=100,
+                message_id=1,
+                text="hello",
+                topic_id=10,
+                sender_name="User",
+                date=_NOW,
+            )
+        ],
+        "ForumChan",
+        topic_id=10,
+        topics_map={10: "Вопросы"},
     )
     await db.save_agent_message(thread_id, "user", context)
     await db.save_agent_message(thread_id, "user", "test")
@@ -967,7 +977,7 @@ def test_deepagents_tools_can_be_converted_to_structured_tools(db):
     search_tool = StructuredTool.from_function(next(t for t in tools if t.__name__ == "search_messages"))
     channels_tool = StructuredTool.from_function(next(t for t in tools if t.__name__ == "list_channels"))
     add_channel_tool = StructuredTool.from_function(next(t for t in tools if t.__name__ == "add_channel"))
-    kick_tool = StructuredTool.from_function(next(t for t in tools if t.__name__ == "kick_participant"))
+    rename_thread_tool = StructuredTool.from_function(next(t for t in tools if t.__name__ == "rename_agent_thread"))
 
     assert "search" in search_tool.description.lower()
     assert "channels" in channels_tool.description.lower()
@@ -976,7 +986,7 @@ def test_deepagents_tools_can_be_converted_to_structured_tools(db):
     assert channels_tool.args_schema.model_json_schema().get("required", []) == []
     assert add_channel_tool.args_schema.model_json_schema().get("required") == ["identifier"]
     assert "confirm" not in add_channel_tool.args_schema.model_json_schema().get("required", [])
-    assert set(kick_tool.args_schema.model_json_schema().get("required", [])) == {"chat_id", "user_id"}
+    assert set(rename_thread_tool.args_schema.model_json_schema().get("required", [])) == {"thread_id", "title"}
 
 
 @pytest.mark.anyio
@@ -1308,6 +1318,126 @@ async def test_chat_stream_edge_history_mix(db):
     last_raw = chunks[-1].removeprefix("data: ").strip()
     last_payload = json.loads(last_raw)
     assert last_payload.get("done") is True
+
+
+# ── format_context tests ─────────────────────────────────────────────────────
+
+_NOW = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _msg(message_id: int, text: str, topic_id: int | None = None, sender: str = "User") -> Message:
+    return Message(
+        channel_id=100,
+        message_id=message_id,
+        text=text,
+        topic_id=topic_id,
+        sender_name=sender,
+        date=_NOW,
+    )
+
+
+def test_format_context_no_topics():
+    """Plain channel without topics → flat JSONL, no grouping headers."""
+    msgs = [_msg(1, "hello"), _msg(2, "world")]
+    result = format_context(msgs, "TestChan", topic_id=None, topics_map={})
+    assert "[КОНТЕКСТ: TestChan, 2 сообщений]" in result
+    assert "## Без темы" not in result
+    assert "## Тема" not in result
+    lines = [ln for ln in result.split("\n") if ln.startswith("{")]
+    assert len(lines) == 2
+    parsed = json.loads(lines[0])
+    assert parsed["author"] == "sender name=User"
+    assert parsed["sender_id"] is None
+    assert parsed["sender_first_name"] is None
+    assert parsed["sender_username"] is None
+    assert parsed["date"] == "2024-01-15"
+
+
+def test_format_context_sender_identity_fields():
+    msg = Message(
+        channel_id=100,
+        message_id=1,
+        text="hello",
+        sender_id=42,
+        sender_name="John Doe",
+        sender_first_name="John",
+        sender_last_name="Doe",
+        sender_username="jdoe",
+        date=_NOW,
+    )
+    result = format_context([msg], "TestChan", topic_id=None, topics_map={})
+    parsed = json.loads(next(ln for ln in result.split("\n") if ln.startswith("{")))
+    assert parsed["author"] == "sender id=42, first_name=John, last_name=Doe, username=@jdoe"
+    assert parsed["sender_id"] == 42
+    assert parsed["sender_first_name"] == "John"
+    assert parsed["sender_last_name"] == "Doe"
+    assert parsed["sender_username"] == "@jdoe"
+
+
+def test_format_context_grouped_by_topics():
+    """Messages with different topic_ids → grouped with topic names."""
+    msgs = [
+        _msg(1, "q1", topic_id=10),
+        _msg(2, "q2", topic_id=10),
+        _msg(3, "hw1", topic_id=20),
+        _msg(4, "general", topic_id=None),
+    ]
+    topics_map = {10: "Вопросы по Python", 20: "Домашние задания"}
+    result = format_context(msgs, "ForumChan", topic_id=None, topics_map=topics_map)
+    assert "## Без темы" in result
+    assert "## Тема: Вопросы по Python" in result
+    assert "## Тема: Домашние задания" in result
+    # JSONL lines
+    jsonl_lines = [ln for ln in result.split("\n") if ln.startswith("{")]
+    assert len(jsonl_lines) == 4
+
+
+def test_format_context_single_topic_flat():
+    """When topic_id is selected → flat JSONL, topic name in header."""
+    msgs = [_msg(1, "msg1", topic_id=10), _msg(2, "msg2", topic_id=10)]
+    topics_map = {10: "Вопросы"}
+    result = format_context(msgs, "Chan", topic_id=10, topics_map=topics_map)
+    assert 'тема "Вопросы"' in result
+    assert "## Тема" not in result  # no grouping headers
+    jsonl_lines = [ln for ln in result.split("\n") if ln.startswith("{")]
+    assert len(jsonl_lines) == 2
+
+
+def test_format_context_general_topic_zero():
+    """topic_id=0 (General) is handled correctly in both modes."""
+    msgs = [
+        _msg(1, "general msg", topic_id=0),
+        _msg(2, "python q", topic_id=10),
+        _msg(3, "no topic", topic_id=None),
+    ]
+    topics_map = {0: "General", 10: "Python"}
+
+    # Grouped mode (topic_id=None): 0 should appear as "Тема: General", not "Без темы"
+    result = format_context(msgs, "Forum", topic_id=None, topics_map=topics_map)
+    assert "## Тема: General" in result
+    assert "## Тема: Python" in result
+    assert "## Без темы" in result
+    jsonl_lines = [ln for ln in result.split("\n") if ln.startswith("{")]
+    assert len(jsonl_lines) == 3
+
+    # Single-topic mode (topic_id=0): flat JSONL with topic name in header
+    result2 = format_context(msgs, "Forum", topic_id=0, topics_map=topics_map)
+    assert 'тема "General"' in result2
+    assert "## Тема" not in result2  # no grouping headers
+
+
+def test_format_context_topic_id_not_in_map():
+    """topic_id without a name in map → fallback to тема #id."""
+    msgs = [_msg(1, "msg1", topic_id=99)]
+    result = format_context(msgs, "Chan", topic_id=99, topics_map={})
+    assert "тема #99" in result
+
+
+def test_format_context_unknown_topic_in_grouping():
+    """Unknown topic_id during grouping → shows тема #id."""
+    msgs = [_msg(1, "msg1", topic_id=55)]
+    result = format_context(msgs, "Chan", topic_id=None, topics_map={})
+    assert "## Тема #55" in result
 
 
 def test_validate_prompt_template_rejects_unknown_variable():

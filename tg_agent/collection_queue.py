@@ -28,7 +28,7 @@ from tg_agent.telegram.collector import (
     UsernameResolveFloodWaitDeferredError,
     UsernameResolveRateLimitedError,
 )
-from tg_agent.telegram.collector_types import unknown_tl_type_note
+from tg_agent.telegram.collector_types import ChannelCollectionTerminalError, unknown_tl_type_note
 
 logger = logging.getLogger(__name__)
 
@@ -84,14 +84,15 @@ def _is_permanent_collection_error(exc: BaseException) -> bool:
 # name (now someone else's channel), or a resolve that returns nothing usable.
 # Each retry burns real resolve budget, so instead of the daily fail-cycle the
 # channel is stamped and the bulk enqueue skips it for a defer window.
-# On the gateway path the telethon pair arrives as receipt error-codes
-# (UsernameNotOccupiedError/UsernameInvalidError), on the direct path as the
-# raw exceptions — both spellings are terminal.
+# The collector's resolver reports them as ChannelCollectionTerminalError
+# (collector_resolve.py); the raw telethon pair is terminal too.
+# UsernameResolveMiss is no longer produced (it was a code of the gateway
+# operation protocol removed in #1868) but stays valid for rows stamped earlier.
 # HistoryNumericUnresolved (#1805) is the username-less twin: a bare numeric
-# peer-miss with no stored username to recover from burned every gateway
-# account every scheduler round (396 stable peers); it was previously
-# deliberately non-terminal (#1782, when the fallback could still heal it) —
-# the storm proved the no-username subset never heals.
+# peer-miss with no stored username to recover from burned every account
+# every scheduler round (396 stable peers); it was previously deliberately
+# non-terminal (#1782, when the fallback could still heal it) — the storm
+# proved the no-username subset never heals.
 TERMINAL_USERNAME_CODES = frozenset(
     {
         "UsernameInvalidError",
@@ -110,11 +111,13 @@ TERMINAL_CODE_MISMATCH = "UsernameChannelIdMismatch"
 def _terminal_collection_code(exc: BaseException) -> str | None:
     """Terminal username-failure code carried by ``exc``, else ``None``.
 
-    The Telethon path raises the raw telethon errors. Raw ValueError (a
-    numeric-miss the username fallback can still heal) is never terminal — but
-    its unrecoverable form (no stored username to heal from) arrives
-    pre-wrapped as HistoryNumericUnresolved and is (#1805).
+    The collector's resolver decides and wraps: a reoccupied username, a vacant
+    one with an unknown id, a numeric id no account knows (#1805). A raw
+    ValueError (a peer miss that may still heal) is never terminal; the raw
+    telethon pair is.
     """
+    if isinstance(exc, ChannelCollectionTerminalError):
+        return exc.code if exc.code in TERMINAL_USERNAME_CODES else None
     if isinstance(exc, (UsernameNotOccupiedError, UsernameInvalidError)):
         return type(exc).__name__
     return None

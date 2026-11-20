@@ -6,6 +6,8 @@ import ast
 import re
 from pathlib import Path
 
+from tests.helpers import _route_exists
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -64,3 +66,18 @@ def test_documented_agent_operations_have_cli_entrypoint():
     ]
     assert missing_cli == []
 
+
+def test_path_param_does_not_match_unrelated_static_sibling():
+    """A documented dynamic route must NOT be satisfied by an unrelated static
+    sibling of the same shape. If POST /settings/{account_id}/delete regresses,
+    the guard must fail rather than false-green against POST
+    /settings/notifications/delete (param-vs-static segment is not a match)."""
+    documented_dynamic = "/settings/{id}/delete"
+    static_sibling_only = {("POST", "/settings/notifications/delete")}
+
+    # The real dynamic endpoint is gone -> the guard must report it missing.
+    assert not _route_exists(static_sibling_only, "POST", documented_dynamic)
+
+    # A genuine param-to-param route still matches (different param name is fine).
+    real_dynamic = {("POST", "/settings/{account_id}/delete")}
+    assert _route_exists(real_dynamic, "POST", documented_dynamic)

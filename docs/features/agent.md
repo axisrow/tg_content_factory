@@ -11,7 +11,7 @@ tg-agent спроектирован как зависимость для аге�
 
 ## Удалено в #1868
 
-Встроенный агент-чат (`agent chat`, интерактивный TUI, треды, контекст, остановка; web `/agent`), MCP-сервер (`mcp-server`) и построенные на нём агентные бэкенды Codex SDK и Google ADK (dev-точка `adk/` и extra `adk`) удалены без замены. Инструменты управления тредами (`list/create/delete/rename_agent_thread`, `get_thread_messages`) удалены вместе с ними. Codex как **провайдер изображений** (`image generate --model codex:…`, extra `codex`) остаётся.
+MCP-сервер (`mcp-server`) и построенные на нём агентные бэкенды Codex SDK и Google ADK (dev-точка `adk/` и extra `adk`) удалены без замены. Встроенный агент-чат (`agent chat`, интерактивный TUI — пакет `tg-tui`, треды, контекст, остановка; web `/agent` — пакет `tg-webui`) и инструменты управления тредами (`list/create/delete/rename_agent_thread`, `get_thread_messages`) остаются устаревшей опциональной поверхностью. Codex как **провайдер изображений** (`image generate --model codex:…`, extra `codex`) остаётся.
 
 ## Агент контент-пайплайнов
 
@@ -39,9 +39,9 @@ python -m tg_agent.main settings agent --prompt-template TEXT
 
 | Категория | Кол-во | Примеры |
 |-----------|--------|---------|
-| READ | 78 | `search_messages`, `list_channels`, `get_participants` |
-| WRITE | 92 | `collect_channel`, `send_message`, `generate_draft` |
-| DELETE | 16 | `delete_message`, `kick_participant`, `delete_channel` |
+| READ | 80 | `search_messages`, `list_channels`, `get_participants` |
+| WRITE | 94 | `collect_channel`, `send_message`, `generate_draft` |
+| DELETE | 17 | `delete_message`, `kick_participant`, `delete_channel` |
 
 ## Права доступа
 
@@ -51,7 +51,7 @@ python -m tg_agent.main settings agent --prompt-template TEXT
 - **WRITE** — запись и изменения
 - **DELETE** — удаление (требует явного включения)
 
-Права хранятся в DB-настройке `agent_tool_permissions` (JSON; без неё все инструменты разрешены) — читаются и пишутся через `tg-agent settings get` / `tg-agent settings set`. Интерактивного запроса доступа (`PermissionGate` в Web/TUI-сессии) больше нет: если ACL сохранён, инструмент без явной записи (`REQUESTABLE`) скрыт от модели и не выполняется, пока доступ не выдан явно.
+Права хранятся в DB-настройке `agent_tool_permissions` (JSON; без неё все инструменты разрешены) — читаются и пишутся через `tg-agent settings get` / `tg-agent settings set`. Интерактивный запрос доступа (`PermissionGate`) есть только в сессии устаревшего агент-чата (TUI/Web); в пайплайнах его нет: если ACL сохранён, инструмент без явной записи (`REQUESTABLE`) скрыт от модели и не выполняется, пока доступ не выдан явно.
 
 ## Полный список инструментов
 

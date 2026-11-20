@@ -8,7 +8,7 @@ The SchedulerManager runs periodic jobs (collection and pipeline generation) usi
 
 Enabling the scheduler
 
-- Run the worker daemon: `tg-agent restart` (stops any previous daemon, then runs the worker in this process — keep it in the background, under tmux or systemd; `tg-agent worker` is the same runtime without the stop-first step). The web panel's `serve` process was removed in #1868.
+- Run the worker daemon: `tg-agent restart` (stops any previous daemon, then runs the worker in this process — keep it in the background, under tmux or systemd; `tg-agent worker` is the same runtime without the stop-first step). The optional web panel (`serve`, tg-webui) embeds the same worker.
 - Enable the scheduler with `tg-agent scheduler start`: it writes `scheduler_autostart=1` and reconciles the running worker; the worker also starts the scheduler on boot while that setting is on. `tg-agent scheduler stop` turns it off.
 
 Environment & secrets

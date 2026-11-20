@@ -1,6 +1,6 @@
 # CLI / Agent Tool Parity
 
-> **CLI — единственная поверхность.** Веб-панель удалена в #1868 вместе со встроенным агент-чатом и MCP-сервером. Колонка «Web Endpoint» ниже — **историческая**: эндпоинтов больше нет; колонка сохранена ради истории и формата таблиц (их разбирает `tests/test_cli_agent_parity.py`). Действующее соответствие — CLI ↔ agent tools (инструменты движка контент-пайплайнов).
+> **CLI — основная поверхность.** Веб-панель живёт в опциональном пакете `tg-webui` и не развивается; MCP-сервер удалён в #1868. Колонка «Web Endpoint» ниже описывает эндпоинты этой панели и сохранена ради формата таблиц (их разбирает `tests/test_cli_agent_parity.py`). Действующее соответствие — CLI ↔ agent tools (инструменты движка контент-пайплайнов).
 
 У каждого agent tool есть CLI-эквивалент (это проверяет `tests/test_cli_agent_parity.py`); CLI-операции без agent tool помечены как исключения. Для управления диалогами каноническое имя — `dialogs`.
 
@@ -32,8 +32,8 @@
 
 ## Переименования каналов
 
-Модерация переименований каналов (список, «отфильтровать», «оставить») была только
-в веб-панели и удалена вместе с ней в #1868; CLI-команды и agent tool для неё нет.
+Модерация переименований каналов (список, «отфильтровать», «оставить») есть только
+в опциональной веб-панели (`tg-webui`); CLI-команды и agent tool для неё нет.
 
 ## Сбор сообщений
 
@@ -203,7 +203,7 @@
 > **LLM-судья — write-операция (#994 CLI, #999 web+agent).** Запуск судьи
 > (`ChannelAnalysisService.classify_channel`) делает реальный provider-вызов и апсертит вердикт в
 > `channel_ratings`. Подключён к CLI (`analytics channel-rate`, #994) и agent (`rate_channel`,
-> WRITE-категория, гейт `confirm=true`); web-вариант (HTMX POST) удалён вместе с панелью в #1868. Оба
+> WRITE-категория, гейт `confirm=true`); web-вариант (HTMX POST) — в опциональной веб-панели `tg-webui`. Оба
 > интерфейса разделяют одни и те же гарды: нет провайдера → отказ без траты; mistyped-модель → ошибка (не
 > молчаливый stub-вердикт); пустой канал → пропуск без provider-вызова. Read-путь (`channel-rating` /
 > `get_channel_ratings`) даёт паритетный просмотр результата.
@@ -300,17 +300,27 @@
 | Обновить модели | `provider refresh` | `POST /settings/agent-providers/{name}/refresh`, `POST /settings/agent-providers/refresh-all` | *исключение: управление ключами провайдеров* |
 | Тест всех | `provider test-all` | `POST /settings/agent-providers/test-all` | *исключение: управление ключами провайдеров* |
 
-## Очередь Telegram-команд
+## AI-агент
 
 | Операция | CLI | Web Endpoint | Agent Tool |
 |----------|-----|-------------|------------|
+| Список тредов | `agent threads` | `GET /agent/` | `list_agent_threads` |
+| Создать тред | `agent thread-create` | `POST /agent/threads` | `create_agent_thread` |
+| Удалить тред | `agent thread-delete` | `DELETE /agent/threads/{id}` | `delete_agent_thread` |
+| Переименовать | `agent thread-rename` | `POST /agent/threads/{id}/rename` | `rename_agent_thread` |
+| Сообщения треда | `agent messages` | `GET /agent/threads/{id}/messages` | `get_thread_messages` |
+| Чат (многоходовой) | `agent chat` | `POST /agent/threads/{id}/chat` | *исключение: self-control агента (рекурсия)* |
 | Статус Telegram-очереди | `dialogs queue status` | `POST /agent/threads/{id}/chat` | `get_telegram_queue_status` |
 | Отменить задание очереди | `dialogs queue cancel` | `POST /dialogs/queue/{id}/cancel` | `cancel_telegram_command` |
 | Очистить ожидающие в очереди | `dialogs queue clear-pending` | `POST /dialogs/queue/clear-pending` | `clear_pending_telegram_commands` |
+| Контекст | `agent context` | `POST /agent/threads/{id}/context` | *исключение: self-control агента* |
+| Остановить | `agent thread-stop` | `POST /agent/threads/{id}/stop` | *исключение: self-control агента* |
 
-> Встроенный чат агента (`agent chat`, треды, контекст, остановка) и его инструменты
-> управления тредами удалены в #1868 вместе с TUI и web-чатом: движок агента остаётся
-> только для пайплайнов (`settings agent` настраивает его бэкенд и шаблон промпта).
+> **Многоходовой чат (паритет CLI ↔ Web).** Обе стороны идут через единый
+> `AgentManager.chat_stream`, который на каждом ходе загружает полную историю треда
+> (`get_agent_messages`). В web многоходовость реализована как повторные `POST` в один и тот же
+> `thread_id`: контекст между ходами и события `tool_start`/`tool_end` в SSE на паритете с
+> интерактивным циклом CLI `agent chat`.
 
 ## Настройки
 
@@ -337,4 +347,4 @@
 | Тайминги | `debug timing` | `GET /debug/timing` |
 | Память | `debug memory` | `GET /debug/memory` |
 
-> `serve` (веб-панель с health check и входом/выходом) и `mcp-server` удалены в #1868.
+> `mcp-server` удалён в #1868; `serve` — точка входа опциональной веб-панели (пакет `tg-webui`).

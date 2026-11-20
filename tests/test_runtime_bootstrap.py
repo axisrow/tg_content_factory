@@ -10,13 +10,14 @@ from tg_agent.config import AppConfig, DatabaseConfig
 from tg_agent.database import Database
 from tg_agent.runtime.bootstrap import build_worker_container, start_container, stop_container
 from tg_agent.runtime.container import RuntimeContainer
+from tg_agent.runtime.log_handler import LogBuffer
 from tg_agent.runtime.worker import _publish_worker_heartbeat_snapshot
 
 
 @pytest.mark.anyio
 async def test_worker_lifecycle_persists_heartbeat_without_templates(tmp_path):
     config = AppConfig(database=DatabaseConfig(path=str(tmp_path / "worker.db")))
-    container = await build_worker_container(config)
+    container = await build_worker_container(config, log_buffer=LogBuffer())
     assert isinstance(container, RuntimeContainer)
     assert not hasattr(container, "templates")
     try:

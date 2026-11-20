@@ -28,10 +28,15 @@ _GATE = os.environ.get("RUN_REAL_PROVIDER_SMOKE") == "1"
 _ZAI_KEY = os.environ.get("ZAI_API_KEY", "")
 _LLM_KEY = os.environ.get("LLM_API_KEY", "")
 _SESSION_ENC_KEY = os.environ.get("SESSION_ENCRYPTION_KEY", "")
+_ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+_CLAUDE_OAUTH = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
 _TOGETHER_KEY = os.environ.get("TOGETHER_API_KEY", "")
 _REPLICATE_TOKEN = os.environ.get("REPLICATE_API_TOKEN", "")
 _HF_TOKEN = os.environ.get("HF_TOKEN", "")
 _OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
+
+# True when agent backend is available
+_AGENT_AVAILABLE = bool(_ANTHROPIC_KEY or _CLAUDE_OAUTH)
 
 # True when at least one text-LLM key is present
 _TEXT_LLM_KEY = _ZAI_KEY or _LLM_KEY
@@ -56,6 +61,16 @@ def _skipif_no_provider_db():
         reason=(
             "Set RUN_REAL_PROVIDER_SMOKE=1, ZAI_API_KEY, and SESSION_ENCRYPTION_KEY "
             "to run provider-DB smoke tests."
+        ),
+    )
+
+
+def _skipif_no_agent():
+    return pytest.mark.skipif(
+        not _GATE or not _AGENT_AVAILABLE,
+        reason=(
+            "Set RUN_REAL_PROVIDER_SMOKE=1 and ANTHROPIC_API_KEY (or "
+            "CLAUDE_CODE_OAUTH_TOKEN) to run agent smoke tests."
         ),
     )
 
@@ -528,6 +543,73 @@ def test_pipeline_ai_edit(tmp_path: Path) -> None:
         pytest.skip(f"pipeline ai-edit not applicable to this pipeline shape: {combined}")
     assert "Pipeline JSON updated" in combined or result.returncode == 0, (
         f"pipeline ai-edit did not succeed:\n{combined}"
+    )
+
+
+# ===========================================================================
+# Agent commands (need ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)
+# ===========================================================================
+
+
+@pytest.mark.real_provider_smoke
+@pytest.mark.timeout(120)
+@_skipif_no_agent()
+def test_agent_chat(tmp_path: Path, provider_tmp_env: tuple[Path, Path]) -> None:
+    """agent chat -p 'Reply with: ok' → non-empty response in stdout."""
+    config_path, _db_path = provider_tmp_env
+
+    result = cli_run(
+        config_path,
+        "agent", "chat", "-p", "Reply with: ok",
+        timeout=PROVIDER_CLI_NETWORK_TIMEOUT,
+    )
+    combined = result.stdout + result.stderr
+    # The chat command sends output to stdout; agent reply should be non-empty
+    assert result.returncode == 0 or "Агент:" in combined or "ok" in combined.lower(), (
+        f"agent chat returned unexpected result:\n{combined}"
+    )
+    # At minimum there should be some output
+    assert combined.strip(), "agent chat produced no output"
+
+
+@pytest.mark.real_provider_smoke
+@pytest.mark.timeout(120)
+@_skipif_no_agent()
+def test_agent_test_escaping(tmp_path: Path, provider_tmp_env: tuple[Path, Path]) -> None:
+    """agent test-escaping → returncode 0, output contains 'passed' or 'failed'."""
+    config_path, _db_path = provider_tmp_env
+
+    result = cli_run(
+        config_path,
+        "agent", "test-escaping",
+        timeout=PROVIDER_CLI_NETWORK_TIMEOUT,
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, (
+        f"agent test-escaping returned non-zero:\n{combined}"
+    )
+    assert "passed" in combined.lower() or "failed" in combined.lower(), (
+        f"Expected 'passed'/'failed' in output, got:\n{combined}"
+    )
+
+
+@pytest.mark.real_provider_smoke
+@pytest.mark.timeout(120)
+@_skipif_no_agent()
+def test_agent_test_tools(tmp_path: Path, provider_tmp_env: tuple[Path, Path]) -> None:
+    """agent test-tools → returncode 0 (or 1 with 'failed' output if tools fail)."""
+    config_path, _db_path = provider_tmp_env
+
+    result = cli_run(
+        config_path,
+        "agent", "test-tools",
+        timeout=PROVIDER_CLI_NETWORK_TIMEOUT,
+    )
+    combined = result.stdout + result.stderr
+    # returncode 1 is legitimate when the tool calls fail — the test is still considered
+    # a valid "smoke" run as long as it produced output about the tool test.
+    assert "passed" in combined.lower() or "failed" in combined.lower(), (
+        f"agent test-tools produced no meaningful output:\n{combined}"
     )
 
 

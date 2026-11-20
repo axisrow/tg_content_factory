@@ -3,8 +3,7 @@
 Wave 3 migrates the medium, depth-1 command groups off the argparse dispatcher
 onto the Typer ``app``:
 
-    search-query · filter · settings · scheduler · account · photo-loader (the
-    agent chat group was removed with the embedded chat, #1868)
+    search-query · filter · settings · scheduler · account · agent · photo-loader
 
 These tests drive the production ``app`` through ``typer.testing.CliRunner`` and
 assert each sub-command:
@@ -813,6 +812,119 @@ def test_account_import_invalid_mutex_skips_startup():
         mock_startup.assert_not_called()
         mock_run.assert_not_called()
         mock_impl.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# agent → threads / thread-create / thread-delete / chat / thread-rename /
+#         thread-stop / messages / context / test-escaping / test-tools
+# --------------------------------------------------------------------------- #
+
+
+def test_agent_threads_and_test_subcommands_delegate():
+    for sub, impl_name in [
+        ("threads", "threads_impl"),
+        ("test-escaping", "test_escaping_impl"),
+        ("test-tools", "test_tools_impl"),
+    ]:
+        mock_impl = MagicMock()
+        with (
+            patch(f"tg_agent.cli.typer_commands.agent_cmd.{impl_name}", mock_impl),
+            patch("tg_agent.cli.typer_commands.run_async"),
+        ):
+            result = runner.invoke(app, ["agent", sub])
+        assert result.exit_code == 0, (sub, result.output)
+        mock_impl.assert_called_once_with("config.yaml")
+
+
+def test_agent_thread_create_title_optional():
+    mock_impl = MagicMock()
+    with (
+        patch("tg_agent.cli.typer_commands.agent_cmd.thread_create_impl", mock_impl),
+        patch("tg_agent.cli.typer_commands.run_async"),
+    ):
+        runner.invoke(app, ["agent", "thread-create"])
+        runner.invoke(app, ["agent", "thread-create", "--title", "My Thread"])
+    assert mock_impl.call_args_list[0].kwargs == {"title": None}
+    assert mock_impl.call_args_list[1].kwargs == {"title": "My Thread"}
+
+
+def test_agent_thread_delete_stop_pass_id():
+    for sub, impl_name in [
+        ("thread-delete", "thread_delete_impl"),
+        ("thread-stop", "thread_stop_impl"),
+    ]:
+        mock_impl = MagicMock()
+        with (
+            patch(f"tg_agent.cli.typer_commands.agent_cmd.{impl_name}", mock_impl),
+            patch("tg_agent.cli.typer_commands.run_async"),
+        ):
+            result = runner.invoke(app, ["agent", sub, "12"])
+        assert result.exit_code == 0, (sub, result.output)
+        mock_impl.assert_called_once_with("config.yaml", thread_id=12)
+
+
+def test_agent_chat_prompt_short_alias():
+    """``-p`` is the short alias for ``--prompt`` (argparse parity)."""
+    mock_impl = MagicMock()
+    with (
+        patch("tg_agent.cli.typer_commands.agent_cmd.chat_impl", mock_impl),
+        patch("tg_agent.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app, ["agent", "chat", "-p", "hi", "--thread-id", "4", "--model", "opus"]
+        )
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", prompt="hi", thread_id=4, model="opus")
+
+
+def test_agent_chat_interactive_no_prompt():
+    mock_impl = MagicMock()
+    with (
+        patch("tg_agent.cli.typer_commands.agent_cmd.chat_impl", mock_impl),
+        patch("tg_agent.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["agent", "chat"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", prompt=None, thread_id=None, model=None)
+
+
+def test_agent_thread_rename_two_positionals():
+    mock_impl = MagicMock()
+    with (
+        patch("tg_agent.cli.typer_commands.agent_cmd.thread_rename_impl", mock_impl),
+        patch("tg_agent.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["agent", "thread-rename", "5", "New Title"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", thread_id=5, title="New Title")
+
+
+def test_agent_messages_limit_optional():
+    mock_impl = MagicMock()
+    with (
+        patch("tg_agent.cli.typer_commands.agent_cmd.messages_impl", mock_impl),
+        patch("tg_agent.cli.typer_commands.run_async"),
+    ):
+        runner.invoke(app, ["agent", "messages", "8"])
+        runner.invoke(app, ["agent", "messages", "8", "--limit", "20"])
+    assert mock_impl.call_args_list[0].kwargs == {"thread_id": 8, "limit": None}
+    assert mock_impl.call_args_list[1].kwargs == {"thread_id": 8, "limit": 20}
+
+
+def test_agent_context_required_channel_id():
+    mock_impl = MagicMock()
+    with (
+        patch("tg_agent.cli.typer_commands.agent_cmd.context_impl", mock_impl),
+        patch("tg_agent.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app,
+            ["agent", "context", "3", "--channel-id", "-1001", "--limit", "50", "--topic-id", "7"],
+        )
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with(
+        "config.yaml", thread_id=3, channel_id=-1001, limit=50, topic_id=7
+    )
 
 
 # --------------------------------------------------------------------------- #

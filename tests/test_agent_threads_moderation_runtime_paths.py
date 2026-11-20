@@ -1,4 +1,4 @@
-"""Tests for moderation, dialogs, photo loader, dispatcher, repositories, scheduler, and search paths."""
+"""Tests for agent threads, moderation, dialogs, photo loader, dispatcher, repositories, scheduler, and search paths."""
 
 from __future__ import annotations
 
@@ -38,6 +38,170 @@ def _get_tool_handlers(mock_db, client_pool=None, config=None, **kwargs):
 
 def _text(result: dict) -> str:
     return result["content"][0]["text"]
+
+
+# ===========================================================================
+# 1. agent_threads.py
+# ===========================================================================
+
+
+class TestListAgentThreads:
+    @pytest.mark.anyio
+    async def test_empty(self, mock_db):
+        mock_db.get_agent_threads = AsyncMock(return_value=[])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["list_agent_threads"]({})
+        assert "Треды не найдены" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_with_threads(self, mock_db):
+        mock_db.get_agent_threads = AsyncMock(
+            return_value=[{"id": 1, "title": "Test Chat", "created_at": "2025-01-01"}]
+        )
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["list_agent_threads"]({})
+        assert "Test Chat" in _text(result)
+        assert "Треды (1)" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_exception_returns_error(self, mock_db):
+        mock_db.get_agent_threads = AsyncMock(side_effect=Exception("db error"))
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["list_agent_threads"]({})
+        assert "Ошибка получения тредов" in _text(result)
+
+
+class TestCreateAgentThread:
+    @pytest.mark.anyio
+    async def test_creates_with_title(self, mock_db):
+        mock_db.create_agent_thread = AsyncMock(return_value=42)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["create_agent_thread"]({"title": "My Thread"})
+        assert "id=42" in _text(result)
+        assert "My Thread" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_creates_with_default_title(self, mock_db):
+        mock_db.create_agent_thread = AsyncMock(return_value=1)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["create_agent_thread"]({})
+        assert "id=1" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_exception(self, mock_db):
+        mock_db.create_agent_thread = AsyncMock(side_effect=Exception("fail"))
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["create_agent_thread"]({"title": "x"})
+        assert "Ошибка создания треда" in _text(result)
+
+
+class TestDeleteAgentThread:
+    @pytest.mark.anyio
+    async def test_requires_thread_id(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["delete_agent_thread"]({})
+        assert "thread_id обязателен" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_requires_confirm(self, mock_db):
+        mock_db.get_agent_thread = AsyncMock(return_value={"title": "My Thread"})
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["delete_agent_thread"]({"thread_id": 1})
+        assert "confirm=true" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_thread_not_found_uses_fallback_name(self, mock_db):
+        """When thread is None, name should be 'id=X' fallback."""
+        mock_db.get_agent_thread = AsyncMock(return_value=None)
+        mock_db.delete_agent_thread = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["delete_agent_thread"]({"thread_id": 99, "confirm": True})
+        assert "id=99" in _text(result)
+        mock_db.delete_agent_thread.assert_awaited_once_with(99)
+
+    @pytest.mark.anyio
+    async def test_delete_success(self, mock_db):
+        mock_db.get_agent_thread = AsyncMock(return_value={"title": "Chat 1"})
+        mock_db.delete_agent_thread = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["delete_agent_thread"]({"thread_id": 5, "confirm": True})
+        assert "Chat 1" in _text(result)
+        assert "удалён" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_delete_exception(self, mock_db):
+        mock_db.get_agent_thread = AsyncMock(return_value={"title": "Chat"})
+        mock_db.delete_agent_thread = AsyncMock(side_effect=Exception("boom"))
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["delete_agent_thread"]({"thread_id": 1, "confirm": True})
+        assert "Ошибка удаления треда" in _text(result)
+
+
+class TestRenameAgentThread:
+    @pytest.mark.anyio
+    async def test_requires_both_params(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["rename_agent_thread"]({"thread_id": 1})
+        assert "обязательны" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_rename_success(self, mock_db):
+        mock_db.rename_agent_thread = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["rename_agent_thread"]({"thread_id": 3, "title": "New Name"})
+        assert "New Name" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_rename_exception(self, mock_db):
+        mock_db.rename_agent_thread = AsyncMock(side_effect=Exception("fail"))
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["rename_agent_thread"]({"thread_id": 1, "title": "X"})
+        assert "Ошибка переименования треда" in _text(result)
+
+
+class TestGetThreadMessages:
+    @pytest.mark.anyio
+    async def test_requires_thread_id(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_thread_messages"]({})
+        assert "thread_id обязателен" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_empty(self, mock_db):
+        mock_db.get_agent_messages = AsyncMock(return_value=[])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_thread_messages"]({"thread_id": 1})
+        assert "Нет сообщений" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_with_messages(self, mock_db):
+        msgs = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
+        mock_db.get_agent_messages = AsyncMock(return_value=msgs)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_thread_messages"]({"thread_id": 1})
+        text = _text(result)
+        assert "[user]: hello" in text
+        assert "[assistant]: hi" in text
+
+    @pytest.mark.anyio
+    async def test_limit_applied(self, mock_db):
+        """Only last N messages should be returned when limit is small."""
+        msgs = [{"role": "user", "content": f"msg{i}"} for i in range(10)]
+        mock_db.get_agent_messages = AsyncMock(return_value=msgs)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_thread_messages"]({"thread_id": 1, "limit": 2})
+        text = _text(result)
+        # Should show last 2
+        assert "msg8" in text
+        assert "msg9" in text
+        assert "msg0" not in text
+
+    @pytest.mark.anyio
+    async def test_exception(self, mock_db):
+        mock_db.get_agent_messages = AsyncMock(side_effect=Exception("fail"))
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_thread_messages"]({"thread_id": 1})
+        assert "Ошибка получения сообщений" in _text(result)
 
 
 # ===========================================================================

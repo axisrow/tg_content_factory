@@ -1,9 +1,10 @@
-"""The worker runtime's services (the only runtime since #1868)."""
+"""Services shared by standalone and embedded runtimes, without UI state."""
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import TypeAlias
 
 from tg_agent.agent.manager import AgentManager
 from tg_agent.collection_queue import CollectionQueue
@@ -23,6 +24,8 @@ from tg_agent.database.bundles import (
 )
 from tg_agent.live_runtime_pause import LiveRuntimePauseGate
 from tg_agent.plugin_api import PluginRuntime
+from tg_agent.runtime.log_handler import LogBuffer
+from tg_agent.runtime.snapshots import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
 from tg_agent.scheduler.service import SchedulerManager
 from tg_agent.search.ai_search import AISearchEngine
 from tg_agent.search.engine import SearchEngine
@@ -44,9 +47,14 @@ from tg_agent.telegram.dm_listener import DmListener
 from tg_agent.telegram.notifier import Notifier
 from tg_shared.auth import TelegramAuth
 
+RuntimeClientPool: TypeAlias = ClientPool | SnapshotClientPool
+RuntimeCollector: TypeAlias = Collector | SnapshotCollector
+RuntimeScheduler: TypeAlias = SchedulerManager | SnapshotSchedulerManager
+
 
 @dataclass(slots=True)
 class RuntimeContainer:
+    runtime_mode: str
     config: AppConfig
     db: Database
     repos: DatabaseRepositories
@@ -60,32 +68,35 @@ class RuntimeContainer:
     scheduler_bundle: SchedulerBundle
     search_query_bundle: SearchQueryBundle
     auth: TelegramAuth
-    pool: ClientPool
+    pool: RuntimeClientPool
     notification_target_service: NotificationTargetService
     notifier: Notifier | None
     photo_publish_service: PhotoPublishService
     photo_task_service: PhotoTaskService
     photo_auto_upload_service: PhotoAutoUploadService
-    collector: Collector
+    collector: RuntimeCollector
     collection_queue: CollectionQueue | None
     task_enqueuer: TaskEnqueuer | None
     unified_dispatcher: UnifiedDispatcher | None
     telegram_command_dispatcher: TelegramCommandDispatcher | None
     search_engine: SearchEngine
     ai_search: AISearchEngine
-    scheduler: SchedulerManager
+    scheduler: RuntimeScheduler
+    log_buffer: LogBuffer | None
+    session_secret: str
     bg_tasks: set[asyncio.Task]
     live_runtime_pause_gate: LiveRuntimePauseGate | None = None
     agent_manager: AgentManager | None = None
     translation_service: TranslationService | None = None
     llm_provider_service: RuntimeProviderRegistry | None = None
-    # Real-time incoming-DM listener (#1426); a gateway project gets the
-    # gateway's DM consumer instead (#1868).
+    # Real-time incoming-DM listener (#1426): built only in worker mode, so a
+    # split deployment can never double-listen on the same accounts.
     dm_listener: DmListener | None = None
     dm_catchup: DmCatchupService | None = None
-    # Dormant-DM ping monitors (#1415): live history reads and sends.
+    # Dormant-DM ping monitors (#1415): needs the live pool for history reads
+    # and sends — worker-only, like the listener.
     ping_monitor_service: PingMonitorService | None = None
-    # Chat-seeding publisher (#1757): live sends through the pool.
+    # Chat-seeding publisher (#1757): live sends through the pool — worker-only.
     seeding_publisher: SeedingPublisherService | None = None
     plugins: PluginRuntime | None = None
     shutting_down: bool = False

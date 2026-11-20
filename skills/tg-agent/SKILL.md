@@ -107,8 +107,8 @@ Sending a wrong message or kicking a wrong member is not reversible by you.
 
 One-off: `tg-agent channel collect <id>` runs a collection synchronously and
 exits. Continuous/scheduled collection needs the long-lived daemon: `tg-agent restart`
-stops any previous daemon and starts the worker runtime, managed via a PID file
-(`tg-agent stop` halts it). Check scheduler state with
+stops any previous daemon and starts the worker runtime — no web panel, no WEB_PASS
+required, managed via a PID file (`tg-agent stop` halts it). Check scheduler state with
 `tg-agent scheduler status`. Check the daemon itself with `tg-agent daemon status`
 (read-only: up/down + provenance — do this before any stop/restart; a stop from a
 directory that does not own the daemon is refused, and a failed restart says so loudly).
@@ -125,10 +125,15 @@ with exit 1 (`Error: The running tg-agent daemon (PID N) does not serve the CLI 
 Details: [reference.md](reference.md) → "Live commands next to the running daemon" and
 "scheduling & background".
 
-## Removed surfaces
+## Legacy surfaces — do not use for integration
 
-The web panel (`serve`), the embedded agent chat with its TUI and threads (`agent …`) and
-the MCP server (`mcp-server`, with the Codex/ADK agent backends) were removed in #1868.
-The CLI above is the only interface. The agent engine itself stays for content pipelines:
-`settings agent --backend auto|claude|deepagents` picks its backend.
+The web panel, TUI and embedded agent chat (`tg-agent agent chat`) still work,
+but their development is paused indefinitely (bug fixes only). For coding agents the CLI
+above is the only supported interface. The MCP server (`mcp-server`) and the Codex/ADK
+agent backends were removed in #1868.
+Interactive `tg-agent agent chat` (no prompt) needs the optional `tg-tui` package
+(`pip install tg-tui`); without it the command exits 1 with an install hint.
+One-shot `agent chat -p "..."` works without it. Likewise `tg-agent serve` needs the
+optional `tg-webui` package (`pip install tg-webui`) and exits 1 with an
+install hint without it; the worker daemon (`restart`/`worker`) never needs it.
 

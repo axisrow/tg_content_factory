@@ -31,6 +31,7 @@ HANDS_OFF = {
 
 # Run in this process; next to a live daemon the pool runs on its relay.
 RELAYED = {
+    ("commands/agent.py", "chat_impl"),
     ("commands/plugin.py", "plugin_host"),
     ("commands/account.py", "verify_code_impl"),
     ("commands/account.py", "info_impl"),

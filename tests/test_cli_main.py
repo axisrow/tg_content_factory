@@ -60,7 +60,7 @@ class TestMainEntryPoint:
 
     def test_unknown_option_exits_nonzero(self):
         """An unknown option on a real command is a usage error → non-zero exit."""
-        assert _run_main(["worker", "--no-such-flag"]) not in (0, None)
+        assert _run_main(["serve", "--no-such-flag"]) not in (0, None)
 
     def test_version_exits_zero(self, capsys):
         """``--version`` prints the version and exits 0 before any command runs."""
@@ -84,22 +84,22 @@ class TestMainEntryPoint:
         assert "Traceback" not in combined
 
     def test_migrated_command_delegates_to_body(self):
-        """A real command runs its shared body — ``worker`` → ``serve_worker``.
+        """A real command runs its shared body — ``serve`` → ``serve_web``.
 
         Confirms the entry point actually dispatches into a command (not just
         help handling) and threads the default config.
         """
-        with patch("tg_agent.cli.typer_commands.worker_cmd.serve_worker") as mock_worker:
-            code = _run_main(["worker"])
+        with patch("tg_agent.cli.typer_commands.serve_cmd.serve_web") as mock_serve:
+            code = _run_main(["serve"])
         assert code == 0
-        mock_worker.assert_called_once_with("config.yaml")
+        mock_serve.assert_called_once_with("config.yaml", web_pass=None, no_worker=False)
 
     def test_global_config_option_threads_to_body(self):
         """The global ``--config`` reaches the command body (argparse parity)."""
-        with patch("tg_agent.cli.typer_commands.worker_cmd.serve_worker") as mock_worker:
-            code = _run_main(["--config", "prod.yaml", "worker"])
+        with patch("tg_agent.cli.typer_commands.serve_cmd.serve_web") as mock_serve:
+            code = _run_main(["--config", "prod.yaml", "serve"])
         assert code == 0
-        mock_worker.assert_called_once_with("prod.yaml")
+        mock_serve.assert_called_once_with("prod.yaml", web_pass=None, no_worker=False)
 
 
 def test_main_is_module_entrypoint():
@@ -244,9 +244,9 @@ class TestNegIdScopeIsNarrow:
         """``pipeline node replace 5 --badtypo spec`` → strict error, exit 2."""
         assert _run_main(["pipeline", "node", "replace", "5", "--badtypo", "spec"]) == 2
 
-    def test_search_query_get_rejects_unknown_option(self):
-        """``search-query get 5 --badtypo`` (id is a positive pk) → strict error."""
-        assert _run_main(["search-query", "get", "5", "--badtypo"]) == 2
+    def test_agent_context_rejects_unknown_option(self):
+        """``agent context 5 --badtypo`` (thread_id positive pk) → strict error."""
+        assert _run_main(["agent", "context", "5", "--badtypo"]) == 2
 
     def test_neg_capable_command_absorbs_unknown_into_open_slot(self):
         """Accepted trade-off (#1162): on a neg-capable command an unknown dash

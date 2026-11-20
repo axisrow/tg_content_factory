@@ -28,10 +28,11 @@ gateway is the session owner instead.
 
 After upgrading tg-agent, restart the daemon once (`restart`) — and the shared
 gateway (`gateway restart --shared`): an older one serves no relay and live
-commands next to it fail at once with that hint. A still-running pre-0.3 `serve`
-panel is recognized by `stop` / `restart` and replaced by the worker. The web
-panel (`serve`), the `agent` group (embedded chat, TUI, threads) and
-`mcp-server` were removed in #1868.
+commands next to it fail at once with that hint. The optional web panel (`serve`,
+tg-webui) runs an embedded worker that serves no relay: live commands next to
+it are refused at once, and `stop` / `restart` replace it with the worker. The
+panel and the `agent` group (embedded chat, TUI, threads) are deprecated optional
+surfaces; `mcp-server` was removed in #1868.
 
 ## gateway
 

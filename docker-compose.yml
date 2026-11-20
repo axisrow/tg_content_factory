@@ -1,6 +1,7 @@
 # Worker-only stack (automation-first): the Telegram worker runtime —
-# collection, scheduler, queues — with no web surface (removed in #1868), so no
-# published port and no HTTP healthcheck.
+# collection, scheduler, queues — with no web surface, so no published port
+# and no HTTP healthcheck. The legacy web panel is the separate tg-webui
+# package and is not part of this image.
 services:
   tg-search:
     build: .

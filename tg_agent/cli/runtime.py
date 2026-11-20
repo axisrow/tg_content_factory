@@ -84,6 +84,36 @@ def ensure_data_dirs() -> None:
         (data_root() / sub).mkdir(parents=True, exist_ok=True)
 
 
+def redirect_logging_to_file(path: str | Path | None = None) -> list[logging.Handler]:
+    """Replace console handlers with file handler for TUI mode. Returns removed handlers."""
+    path = path or data_root() / "agent_tui.log"
+    root = logging.getLogger()
+    removed: list[logging.Handler] = []
+    for h in root.handlers[:]:
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+            removed.append(h)
+            root.removeHandler(h)
+    fh = logging.FileHandler(str(path), encoding="utf-8")
+    install_log_redaction(fh)
+    root.addHandler(fh)
+    return removed
+
+
+def restore_logging(removed_handlers: list[logging.Handler] | logging.Handler | None) -> None:
+    """Restore console handlers after TUI exits."""
+    root = logging.getLogger()
+    for h in root.handlers[:]:
+        # Remove only plain FileHandlers (TUI log), not RotatingFileHandler (app.log)
+        if type(h) is logging.FileHandler:
+            h.close()
+            root.removeHandler(h)
+    if isinstance(removed_handlers, list):
+        for h in removed_handlers:
+            root.addHandler(h)
+    elif removed_handlers:
+        root.addHandler(removed_handlers)
+
+
 def _install_daemon_waker(config) -> None:
     """Enqueues from this CLI process wake the live daemon's queues at once (#1868).
 

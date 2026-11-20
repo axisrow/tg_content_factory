@@ -19,9 +19,9 @@ Three invariants shape the design:
   ``last_update_at`` / ``seconds_since_update`` so "updates stopped arriving" is
   observable; the history-read catch-up itself is stage #1428.
 
-Worker-only by construction: only the worker runtime builds the listener, and
-the worker is the sole owner of the account connections (#1868), so accounts
-are never double-listened.
+Worker-only by construction: the container builds the listener only when
+``runtime_mode == "worker"``, so ``serve`` (embedded worker) plus a standalone
+``worker`` cannot double-listen on the same accounts.
 
 Receiving is deliberately NOT gated by ``LiveRuntimePauseGate`` — pausing
 receive would accumulate an unbounded lag; only sending is pause-gated.

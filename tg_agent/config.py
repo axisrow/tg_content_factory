@@ -33,6 +33,18 @@ class TelegramConfig(BaseModel):
     api_hash: str = ""
 
 
+class WebConfig(BaseModel):
+    """Настройки веб-панели: адрес/порт прослушивания и пароль входа.
+
+    Вход — по паролю; имя пользователя задаётся переменной `WEB_USER`
+    (по умолчанию `admin`), а не захардкожено — см. `tg_webui/panel_auth.py`.
+    """
+
+    host: str = "127.0.0.1"
+    port: int = 8080
+    password: str = ""
+
+
 class SchedulerConfig(BaseModel):
     """Параметры планировщика сбора: периодичность, задержки и таймауты.
 
@@ -247,6 +259,7 @@ class AppConfig(BaseModel):
     plugins_disabled: list[str] = Field(default_factory=list)
     telegram: TelegramConfig = TelegramConfig()
     telegram_runtime: TelegramRuntimeConfig = TelegramRuntimeConfig()
+    web: WebConfig = WebConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
     notifications: NotificationsConfig = NotificationsConfig()
     database: DatabaseConfig = DatabaseConfig()  # type: ignore[call-arg]  # Field(gt=0) defaults are mis-seen as required

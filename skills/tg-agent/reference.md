@@ -64,10 +64,10 @@ daemon status          # read-only: daemon up/down, PID, PID file, project/store
   legacy marker store) and terminate whichever daemon is alive — the documented
   `global enable` → `restart` flow no longer orphans the previous daemon (#1698).
 - A `stop`/`restart` from a directory that does not own the running daemon is REFUSED
-  with provenance output (exit 1); the daemon survives. `worker` refuses to
-  double-spawn next to a daemon registered on a previous store path. A daemon still
-  running the removed `serve` panel is recognized: `stop`/`restart` replace it, and live
-  commands next to it fail at once asking for `tg-agent restart`.
+  with provenance output (exit 1); the daemon survives. `worker`/`serve` refuse to
+  double-spawn next to a daemon registered on a previous store path. The legacy `serve`
+  panel's embedded worker serves no CLI relay: live commands next to it fail at once —
+  run the worker daemon (`tg-agent restart`) for them.
 - A `restart` whose start phase fails prints a loud `RESTART FAILED … NO daemon is
   running now` banner — never assume a restart succeeded; verify with `daemon status`.
 - `stop --force` is the human-operator escape hatch (#1714): it overrides the
@@ -562,7 +562,7 @@ telegraph create --title T --file f.md [--author-name A] [--author-url U] [--for
 # from --file or stdin — prints the page URL (--format json = full API
 # response). telegra.ph has no tables — lay them out as lists/paragraphs
 # yourself. Pair with `dialogs send` for title+link posts.
-settings get | set | info | server-time | agent | filter-criteria | reactions | semantic   # agent: --backend auto|claude|deepagents, --prompt-template (the content-pipeline agent)
+settings get | set | info | server-time | agent | filter-criteria | reactions | semantic   # agent: --backend auto|claude|deepagents, --prompt-template
 # settings: secret-looking keys (*_api_key, *_token, *_secret, session_secret_key) are
 # masked in get/set output; settings semantic --api-key and `set semantic_embeddings_api_key`
 # store the key encrypted (enc:v2) and are refused without SESSION_ENCRYPTION_KEY (#1597).
@@ -577,8 +577,10 @@ debug logs | memory | timing
 test all | read | write | telegram | benchmark
 stop | restart [--force]
 daemon status                            # read-only: is the project daemon up, whose is it (#1714)
-worker                                  # the daemon: worker runtime + CLI relay (managed PID file)
+serve [--web-pass PASS] [--no-worker]   # legacy web panel (deprecated); needs the optional tg-webui package, exits 1 with an install hint without it
+worker                                  # default daemon: worker runtime + CLI relay (managed PID file), no web panel
 restart                                 # stop + start the worker daemon (managed PID file)
+agent threads | chat | messages | ...   # legacy embedded agent
 ```
 
 `account send-code` / `verify-code` are part of interactive phone authorization — the user

@@ -1,6 +1,6 @@
 Provider adapters and environment variables
 
-This project includes lightweight HTTP adapters for common LLM providers and a mechanism to register adapters automatically from environment variables. For operator‑managed provider configurations (per-provider models, encrypted secrets), use the `tg-agent provider` CLI group (the web UI was removed in #1868).
+This project includes lightweight HTTP adapters for common LLM providers and a mechanism to register adapters automatically from environment variables. For operator‑managed provider configurations (per-provider models, encrypted secrets), use the `tg-agent provider` CLI group (or the settings page of the optional web panel).
 
 Supported env vars (examples)
 

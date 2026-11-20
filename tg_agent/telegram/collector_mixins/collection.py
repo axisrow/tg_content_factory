@@ -53,6 +53,7 @@ from tg_agent.telegram.collector_resolve import (
 from tg_agent.telegram.collector_types import (
     _ACQUIRE_RETRY,
     AllCollectionClientsFloodedError,
+    ChannelCollectionTerminalError,
     CollectionPassState,
     NoActiveCollectionClientsError,
     _format_channel_log_name,
@@ -393,6 +394,10 @@ class CollectionMixin:
                         )
                         stats["deferred"] += 1
                         continue
+                    except ChannelCollectionTerminalError as verdict:
+                        # A verdict about the channel, not a failed pass: the
+                        # resolver read nothing and left the row to the operator.
+                        logger.warning("Channel %s skipped: %s", channel.channel_id, verdict)
                     except Exception as e:
                         tl_note = unknown_tl_type_note(e)
                         if tl_note:
@@ -1212,17 +1217,29 @@ class CollectionMixin:
         return True
 
     async def _discover_phone_for_channel(
-        self: "Collector", channel_id: int, exclude: str, channel_type: str | None = None
+        self: "Collector",
+        channel_id: int,
+        exclude: str,
+        channel_type: str | None = None,
+        *,
+        verdict: dict[str, bool] | None = None,
     ) -> str | None:
         """Try all connected phones (except `exclude`) to find one with access to channel_id.
 
         Used when a private group was added after startup warming and its phone is not
         yet in the pool's channel→phone map. Returns the first phone that can resolve
         the entity, or None if no account has access.
+
+        ``verdict["conclusive"]`` (when a dict is passed) says why nothing was found:
+        ``True`` only when every other connected account answered with a peer miss,
+        ``False`` as soon as one was unavailable, flooded or failed otherwise — a
+        transient failure proves nothing about the channel.
         """
+        conclusive = True
         for candidate in self._pool.connected_phones() - {exclude}:
             result = await self._pool.get_client_by_phone(candidate)
             if result is None:
+                conclusive = False
                 continue
             session, p = result
             session = adapt_transport_session(session, disconnect_on_close=False, phone=p, pool=self._pool)
@@ -1235,6 +1252,7 @@ class CollectionMixin:
             except HandledFloodWaitError as exc:
                 # Transport already reported the flood (phone+pool were bound on the
                 # session), so just log and move on.
+                conclusive = False
                 logger.warning(
                     "_discover_phone_for_channel: flood wait on %s: %s", mask_phone(p), exc.info.detail
                 )
@@ -1242,16 +1260,24 @@ class CollectionMixin:
             except FloodWaitError as exc:
                 # Keep this compatibility branch for sessions supplied by tests or
                 # external callers that bypass the bound transport adapter.
+                conclusive = False
                 wait_seconds = coerce_flood_wait_seconds(getattr(exc, "seconds", 0))
                 await self._pool.report_flood(p, wait_seconds)
                 logger.warning(
                     "_discover_phone_for_channel: flood wait on %s: %ds", mask_phone(p), wait_seconds
                 )
                 continue
+            except (ValueError, TypeError):
+                # This account does not know the peer — the only answer that
+                # counts as evidence about the channel itself.
+                continue
             except Exception:
+                conclusive = False
                 continue
             finally:
                 await self._pool.release_client(p)
+        if verdict is not None:
+            verdict["conclusive"] = conclusive
         return None
 
     async def _precheck_sample(

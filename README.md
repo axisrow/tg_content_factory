@@ -9,10 +9,10 @@ Telegram automation for **coding agents** — Claude Code, OpenCode, Codex. Ship
 ## How it works
 
 - **Skill + Claude Code plugin** — this repo ships a [skill](skills/tg-agent/SKILL.md) (installed from the plugin marketplace, or copied manually) that teaches your agent the command catalog, the runtime model and safety rules. The skill drives the CLI — no MCP tool surface eating your context window.
-- **`tg-agent` CLI** — the product surface and the only interface: ~250 commands covering the full Telegram spectrum (`channel`, `dialogs`, `messages`, `search`, `pipeline`, `photo-loader`, `analytics`, `scheduler`, `account`, …). Every command is a self-contained one-shot: it does the work and exits. No daemon required — without one, the command connects the account itself.
+- **`tg-agent` CLI** — the product surface: ~250 commands covering the full Telegram spectrum (`channel`, `dialogs`, `messages`, `search`, `pipeline`, `photo-loader`, `analytics`, `scheduler`, `account`, …). Every command is a self-contained one-shot: it does the work and exits. No daemon required — without one, the command connects the account itself.
 - **Worker daemon** (`tg-agent restart`) — optional long-lived process for scheduled collection and queued sends. While it runs it owns every account's Telegram connection (one connection per account per machine): live commands (`messages read --live`, all `dialogs` actions, `account info`, `search --mode telegram`, `pipeline run`, …) run on the daemon's connection through a local relay (127.0.0.1, token file readable by the owner only) — same output, no second login, nothing queued. Collection hand-offs go to the daemon's queue and wake it at once. In gateway mode (`tg-agent global enable`) the shared gateway is that owner.
 
-> **Upgrading to 0.3.0:** restart a running daemon once (`tg-agent restart`), and the shared gateway if you use one (`tg-agent gateway restart --shared`) — an older daemon or gateway serves no relay, and live commands next to it fail at once with that hint. The web panel (`serve`), the embedded agent chat with its TUI and threads (`agent …`) and the MCP server (`mcp-server`, with the Codex/ADK agent backends) were removed in #1868.
+> **Upgrading to 0.3.0:** restart a running daemon once (`tg-agent restart`), and the shared gateway if you use one (`tg-agent gateway restart --shared`) — an older daemon or gateway serves no relay, and live commands next to it fail at once with that hint. The web panel (`serve`, the optional `tg-webui` package) and the embedded agent chat (`agent …`; its interactive TUI is the optional `tg-tui` package) stay available as deprecated, optional surfaces. The stdio MCP bridge (`mcp-server`) and the Codex/ADK agent backends were removed in #1868.
 
 ## Quick Start (coding agents)
 
@@ -75,7 +75,7 @@ You will receive a Telegram login code — enter it yourself. Verify with `tg-ag
 
 ## Features
 
-- **Built for coding agents** — the CLI is the contract and the only interface: new capabilities land as CLI commands (tested there) and in the skill
+- **Built for coding agents** — the CLI is the contract: new capabilities land as CLI commands (tested there) and in the skill
 - **All chat types** — channels, supergroups, gigagroups, forums, public and private
 - **Multi-account** with automatic flood-wait rotation; one Telegram connection per account per machine, shared by every CLI process through the daemon's (or gateway's) relay
 - **Search** — local DB (FTS5, semantic, hybrid) and live Telegram search (global, your chats, one channel)
@@ -96,8 +96,8 @@ docker-compose up -d
 ```
 
 The image runs the Telegram worker runtime (automation-first) — collection,
-scheduler, queues — with the managed PID file. There is no web surface (the web
-panel was removed in #1868), hence no published port and no HTTP healthcheck.
+scheduler, queues — with the managed PID file. The image has no web surface (the
+optional web panel is not part of it), hence no published port and no HTTP healthcheck.
 
 ## Semantic Search Roadmap Note
 

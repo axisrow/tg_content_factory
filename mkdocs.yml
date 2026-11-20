@@ -84,8 +84,10 @@ nav:
     - Dialogs: features/dialogs.md
   - Reference:
     - CLI Reference: reference/cli.md
-    - CLI / Agent Tool Parity: reference/parity.md
+    - Web API Reference: reference/web-api.md
+    - CLI / Web Parity: reference/parity.md
     - Agent Tools: reference/agent-tools.md
+    - RSS / Atom Feeds: reference/rss-feeds.md
     - Telegram RPC Guard: reference/telegram-rpc-guard.md
     - Doc-coverage: reference/doc-coverage.md
   - API Reference:

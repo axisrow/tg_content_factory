@@ -198,6 +198,8 @@ def test_deepagents_read_only_tools_smoke_on_empty_db(cli_db):
         "list_image_providers": {},
         "get_settings": {},
         "get_system_info": {},
+        "list_agent_threads": {},
+        "get_thread_messages": {"thread_id": 1},
     }
 
     missing = set(calls) - set(tool_map)
