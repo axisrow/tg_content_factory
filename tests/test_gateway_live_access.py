@@ -6,10 +6,11 @@ projects use it, one DM handler, and every granted project sees each DM event.
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+from telethon_floodgate import TelegramRateLimitedError
 
 from tg_agent.gateway.store import GatewayStore
 from tg_agent.gateway.telegram import LiveTelegramAccess
@@ -88,6 +89,35 @@ async def test_projects_share_one_live_connection_and_every_project_sees_each_dm
         await access.close()
 
         assert auth.connections[0].disconnected
+    finally:
+        await access.close()
+        await store.close()
+        release_all_session_locks()
+
+
+async def test_cold_account_connection_respects_a_pending_flood_write(tmp_path, monkeypatch):
+    monkeypatch.setenv("TGCF_SESSION_LOCK_DIR", str(tmp_path / "locks"))
+    store = GatewayStore(tmp_path / "gateway")
+    await store.open()
+    auth = LocalAuth()
+    access = LiveTelegramAccess(store, auth)
+    project = PROJECTS[0]
+    try:
+        await store.register_project(project, tmp_path / project, "a" * 40)
+        ready = await store.import_account("+100", "ready-session")
+        waiting = await store.import_account("+200", "waiting-session")
+        await store.grant(project, ready)
+        await store.grant(project, waiting)
+        await access.connection(project, ready)
+        access._pool._rpc_pending_account_deadlines = {
+            waiting: datetime.now(timezone.utc) + timedelta(minutes=10),
+        }
+
+        with pytest.raises(TelegramRateLimitedError) as caught:
+            await access.connection(project, waiting)
+
+        assert 590 < caught.value.retry_after_sec <= 600
+        assert len(auth.connections) == 1
     finally:
         await access.close()
         await store.close()

@@ -125,6 +125,11 @@ Projects publish, collect and run every other Telegram command through their own
 services, as in standalone mode: there are no artifacts, receipts or operation kinds to
 keep in sync with the native code.
 
+Upgrades keep the old `operations` journal for delivery checks and rollback.
+Each project imports its legacy notification bots once and keeps its current
+tokens. If the relay loses a publish reply after sending, the target is marked
+unconfirmed and skipped by the next publish attempt until manually checked.
+
 ## Process control
 
 ```sh

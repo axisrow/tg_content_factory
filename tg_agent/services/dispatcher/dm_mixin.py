@@ -12,8 +12,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+from telethon_floodgate import TelegramRateLimitedError
+
 from tg_agent.services.dispatcher._errors import TelegramCommandRetryLaterError
-from tg_agent.services.telegram_actions import TelegramActionService
+from tg_agent.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
 
 if TYPE_CHECKING:
     from tg_agent.services.dispatcher._base import _DispatcherProtocol
@@ -60,9 +62,25 @@ class DmCommandsMixin(_Base):
                 text=draft.reply_text,
                 is_user=True,  # DM-диалог: не пробовать канал первым (#1830)
             )
-        except BaseException:
+        except BaseException as exc:
             await drafts.release_claim(draft_id)
-            raise
+            if isinstance(exc, TelegramRateLimitedError):
+                retry_at = datetime.now(timezone.utc) + timedelta(seconds=max(0, exc.retry_after_sec))
+            elif isinstance(exc, TelegramActionClientUnavailableError):
+                retry_at = await self._account_flood_until(draft.phone)
+            else:
+                raise
+            if retry_at is None:
+                raise
+            raise TelegramCommandRetryLaterError(
+                run_after=retry_at + timedelta(seconds=1),
+                reason=f"send from {draft.phone} delayed until {retry_at.isoformat()}",
+                result_payload={
+                    "state": "waiting_flood_wait",
+                    "phone": draft.phone,
+                    "next_available_at_utc": retry_at.isoformat(),
+                },
+            ) from exc
         marked = await drafts.mark_sent(draft_id, result.message_id)
         return {
             "draft_id": draft_id,

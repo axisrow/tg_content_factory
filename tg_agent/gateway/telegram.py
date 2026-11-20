@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 
 from telethon import events
+from telethon_floodgate import TelegramRateLimitedError
 
 from tg_agent.config import TelegramRuntimeConfig
 from tg_agent.gateway.owned_pool import GatewayClientPool
@@ -97,6 +99,12 @@ class LiveTelegramAccess:
             if account not in self.sessions:
                 accounts = await self._pool._db.get_live_usable_accounts(active_only=True)
                 record = next(row for row in accounts if row.phone == account)
+                # The RPC guard knows about a new wait before its SQLite write completes.
+                pending = getattr(self._pool, "_rpc_pending_account_deadlines", {}).get(account)
+                now = datetime.now(timezone.utc)
+                flood_until = max(record.flood_wait_until or now, pending or now)
+                if flood_until > now:
+                    raise TelegramRateLimitedError(account, "flood_wait", (flood_until - now).total_seconds())
                 await self._pool._connect_account(record)
                 # Gateway accounts connect lazily, so this is the gateway-side
                 # pool startup: re-verify the cached premium flag live (#1749)

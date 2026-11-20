@@ -82,6 +82,11 @@ _PASS_THROUGH_WRAPPERS = tuple(
     if wrapper is not None
 )
 _MAX_WRAPPER_DEPTH = 8
+_SEND_REQUESTS = (
+    functions.messages.SendMessageRequest,
+    functions.messages.SendMediaRequest,
+    functions.messages.SendMultiMediaRequest,
+)
 
 
 class RelayError(RuntimeError):
@@ -111,6 +116,10 @@ class RelayForbiddenError(RelayError):
 
 class RelayAccountUnavailableError(ConnectionError):
     """The owner has no live connection for the requested account."""
+
+
+class RelayDeliveryUnconfirmedError(ConnectionError):
+    """The relay link broke after a send request could have reached the owner."""
 
 
 class RelayRemoteError(RelayError):
@@ -708,24 +717,36 @@ class RelayConnection:
             for op, fields in self._replay:
                 await self._send_and_wait(op, fields)
 
-    async def call(self, op: str, **fields: Any) -> Any:
+    async def call(self, op: str, *, delivery_sensitive: bool = False, **fields: Any) -> Any:
         await self._ensure_open()
-        return await self._send_and_wait(op, fields)
+        return await self._send_and_wait(op, fields, delivery_sensitive=delivery_sensitive)
 
-    async def _send_and_wait(self, op: str, fields: dict) -> Any:
-        if self._closed:
-            raise ConnectionError("the relay connection to the session owner is closed")
+    async def _send_and_wait(self, op: str, fields: dict, *, delivery_sensitive: bool = False) -> Any:
         self._next_id += 1
         request_id = self._next_id
-        future = asyncio.get_running_loop().create_future()
-        self._pending[request_id] = future
+        frame = _dump({"id": request_id, "op": op, **fields})
+        future = None
         try:
             async with self._write_lock:
-                self._writer.write(_dump({"id": request_id, "op": op, **fields}))
-                await self._writer.drain()
+                if self._closed or self._writer.is_closing():
+                    raise ConnectionError("the relay connection to the session owner is closed")
+                future = asyncio.get_running_loop().create_future()
+                self._pending[request_id] = future
+                self._writer.write(frame)
+                try:
+                    await self._writer.drain()
+                except OSError:
+                    if not future.done():
+                        raise
             return await future
+        except OSError as exc:
+            if delivery_sensitive and future is not None:
+                raise RelayDeliveryUnconfirmedError("Relay response lost after sending — delivery unconfirmed") from exc
+            raise
         finally:
             self._pending.pop(request_id, None)
+            if future is not None and future.done() and not future.cancelled():
+                future.exception()
 
     async def _read_loop(self) -> None:
         reader = self._reader
@@ -817,8 +838,14 @@ class RelaySender:
 
     async def _invoke(self, request: Any) -> Any:
         body = base64.b64encode(bytes(request)).decode("ascii")
+        query = request
+        while isinstance(query, _PASS_THROUGH_WRAPPERS):
+            query = query.query
         try:
-            raw = await self._connection.call("invoke", phone=self._phone, dc=self.dc_id, body=body)
+            raw = await self._connection.call(
+                "invoke", delivery_sensitive=isinstance(query, _SEND_REQUESTS),
+                phone=self._phone, dc=self.dc_id, body=body,
+            )
         except RelayRemoteError as exc:
             raise rebuild_error(exc.payload, request) from None
         with BinaryReader(base64.b64decode(raw)) as reader:

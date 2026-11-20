@@ -96,7 +96,7 @@ async def gateway_account_id(db, phone: str) -> str | None:
     return row[0] if row else None
 
 
-async def restore_gateway_bots(db, client: TelegramGatewayClient) -> int:
+async def restore_gateway_bots(db, client: TelegramGatewayClient, project_id: str) -> int:
     """Take back notification bots a pre-#1868 enrollment moved into the gateway.
 
     Projects send notifications natively again; a bot whose token was blanked
@@ -104,15 +104,11 @@ async def restore_gateway_bots(db, client: TelegramGatewayClient) -> int:
     """
     from tg_agent.models import NotificationBot
 
-    restored = 0
-    for payload in await client.export_bots():
-        bot = NotificationBot.model_validate(payload)
-        current = await db.repos.notification_bots.get_bot(bot.tg_user_id)
-        if current is not None and current.bot_token:
-            continue
-        await db.repos.notification_bots.save_bot(bot)
-        restored += 1
-    return restored
+    marker = f"gateway_bots_restored:{project_id}"
+    if await db.get_setting(marker) is not None:
+        return 0
+    bots = [NotificationBot.model_validate(payload) for payload in await client.export_bots()]
+    return await db.repos.notification_bots.restore_legacy_bots(marker, bots)
 
 
 async def connect_project(config, db) -> TelegramGatewayClient:
@@ -124,7 +120,7 @@ async def connect_project(config, db) -> TelegramGatewayClient:
     client = await TelegramGatewayClient.from_config(config)
     try:
         await ProjectAccountCatalog(db, client).refresh()
-        if await restore_gateway_bots(db, client):
+        if await restore_gateway_bots(db, client, config.gateway["project_id"]):
             logger.info("Notification bots restored from the shared gateway")
     except BaseException:
         await client.close()

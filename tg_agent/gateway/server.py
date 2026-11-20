@@ -266,9 +266,9 @@ class GatewayHub:
 
     async def _export_bots(self, project: str, _message, _peer) -> list[dict]:
         """Notification bots the gateway kept for this project (pre-#1868 enrollments)."""
-        from tg_agent.gateway.notifications import BotStorage
+        from tg_agent.gateway.notifications import list_legacy_bots
 
-        return [bot.model_dump(mode="json") for bot in await BotStorage(self.store, project).list_bots()]
+        return [bot.model_dump(mode="json") for bot in await list_legacy_bots(self.store, project)]
 
     # -------------------------------------------------------------- admin ops
 

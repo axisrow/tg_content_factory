@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -410,28 +411,63 @@ async def test_a_two_factor_challenge_reaches_the_project_and_secrets_are_cleare
     assert payload["password_2fa"] == payload["code"] == ""
 
 
-async def test_connecting_a_project_takes_back_bots_an_older_enrollment_moved(gateway, db, monkeypatch):
-    """CLI-only projects too: every gateway CLI run connects through connect_project."""
+async def test_connecting_a_project_imports_older_bots_once(gateway, db, monkeypatch):
     from tg_agent.gateway import catalog
-    from tg_agent.gateway.notifications import BotStorage
     from tg_agent.models import NotificationBot
 
-    await BotStorage(gateway.store, PROJECT_A).save_bot(
-        NotificationBot(tg_user_id=10, bot_username="legacy_bot", bot_token="123456789:moved-token"))
+    bots = [
+        NotificationBot(tg_user_id=10, bot_username="legacy_bot", bot_token="123456789:moved-token"),
+        NotificationBot(tg_user_id=20, bot_username="older_bot", bot_token="123456789:older-token"),
+    ]
+    async with gateway.store.transaction() as conn:
+        await conn.executemany(
+            "INSERT INTO gateway_project_bots VALUES (?,?,?)",
+            [(PROJECT_A, bot.tg_user_id, gateway.store.cipher.encrypt(bot.model_dump_json())) for bot in bots],
+        )
     await db.repos.notification_bots.save_bot(NotificationBot(tg_user_id=10, bot_username="legacy_bot",
                                                               bot_token=""))
-    connection = await gateway.connect(TOKEN_A)
+    await db.repos.notification_bots.save_bot(
+        NotificationBot(tg_user_id=20, bot_username="current_bot", bot_token="123456789:current-token"))
 
     async def from_config(cls, config):
-        return TelegramGatewayClient(connection)
+        return TelegramGatewayClient(await gateway.connect(TOKEN_A))
 
     monkeypatch.setattr(TelegramGatewayClient, "from_config", classmethod(from_config))
+    config = SimpleNamespace(gateway={"project_id": PROJECT_A})
+    await asyncio.gather(catalog.connect_project(config, db), catalog.connect_project(config, db))
 
-    client = await catalog.connect_project(object(), db)
-
-    assert client.connection is connection
     assert (await db.repos.notification_bots.get_bot(10)).bot_token == "123456789:moved-token"
+    assert (await db.repos.notification_bots.get_bot(20)).bot_token == "123456789:current-token"
     assert [row.phone for row in await db.get_account_summaries(active_only=False)] == [PHONE]
+    await db.repos.notification_bots.delete_bot(10)
+    client = await catalog.connect_project(config, db)
+
+    assert await db.repos.notification_bots.get_bot(10) is None
+    assert len(await client.export_bots()) == 2
+
+
+async def test_failed_bot_import_rolls_back_and_retries(db):
+    from tg_agent.gateway.catalog import restore_gateway_bots
+    from tg_agent.models import NotificationBot
+
+    bots = [
+        NotificationBot(tg_user_id=user_id, bot_username="offline_bot", bot_token="123456789:offline-token")
+        for user_id in (10, 20)
+    ]
+    async def export_bots():
+        return [bot.model_dump(mode="json") for bot in bots]
+
+    client = SimpleNamespace(export_bots=export_bots)
+    await db.execute_write(
+        "CREATE TRIGGER fail_second_bot BEFORE INSERT ON notification_bots WHEN NEW.tg_user_id=20 "
+        "BEGIN SELECT RAISE(ABORT, 'offline test write failure'); END"
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="offline test write failure"):
+        await restore_gateway_bots(db, client, PROJECT_A)
+    assert await db.repos.notification_bots.count() == 0
+    await db.execute_write("DROP TRIGGER fail_second_bot")
+    assert await restore_gateway_bots(db, client, PROJECT_A) == 2
+    assert await db.repos.notification_bots.count() == 2
 
 
 async def test_botfather_runs_on_the_gateway_connection_of_a_granted_account(gateway, monkeypatch):

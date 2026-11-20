@@ -111,9 +111,6 @@ class GatewayStore:
         self._connection = await aiosqlite.connect(path)
         self._connection.row_factory = aiosqlite.Row
         await self._connection.executescript(SCHEMA)
-        # The operation queue and its receipts are gone (#1868): projects run
-        # Telegram requests over the relay.
-        await self._connection.execute("DROP TABLE IF EXISTS operations")
         await self._connection.commit()
 
     async def close(self) -> None:
@@ -269,10 +266,11 @@ class GatewayStore:
         return self.cipher.decrypt(row[0])
 
     async def subscriptions(self) -> list[tuple[str, str]]:
-        """One authorized bootstrap context for every shared active account."""
+        """One authorized bootstrap context for each shared account ready to connect."""
         async with self.transaction() as db:
             async with db.execute("SELECT MIN(g.project_id),a.id FROM accounts a JOIN grants g "
-                                  "ON g.account_id=a.id WHERE a.active=1 AND g.active=1 GROUP BY a.id") as cur:
+                                  "ON g.account_id=a.id WHERE a.active=1 AND g.active=1 "
+                                  "AND a.flood_until<=? GROUP BY a.id", (time.time(),)) as cur:
                 return [tuple(row) for row in await cur.fetchall()]
 
     async def session(self, project: str, account: str) -> str:

@@ -27,6 +27,7 @@ from tg_agent.telegram.relay import (
     RELAY_PROTOCOL,
     RelayAccountUnavailableError,
     RelayConnection,
+    RelayDeliveryUnconfirmedError,
     RelayEndpoint,
     RelayForbiddenError,
     RelayProtocolError,
@@ -358,28 +359,36 @@ def test_entity_rows_read_sqlite_sessions_with_text_phones(tmp_path):
         session.close()
 
 
-async def test_pending_requests_fail_when_the_owner_goes_away():
-    gate = asyncio.Event()
+@pytest.mark.parametrize(
+    ("request_type", "error"),
+    [
+        (functions.updates.GetStateRequest, ConnectionError),
+        (lambda: functions.upload.SaveFilePartRequest(1, 0, b"offline"), ConnectionError),
+        (
+            lambda: functions.InvokeWithoutUpdatesRequest(
+                functions.messages.SendMediaRequest(types.InputPeerUser(42, 1), types.InputMediaDice("🎲"), "")
+            ),
+            RelayDeliveryUnconfirmedError,
+        ),
+    ],
+    ids=["read", "upload-part", "wrapped-send-media"],
+)
+async def test_pending_requests_fail_when_the_owner_goes_away(request_type, error):
+    accepted = asyncio.Event()
 
     async def blocked(request):
-        await gate.wait()
-        return _state()
+        accepted.set()
+        await asyncio.Future()
 
-    server = RelayServer(Owner({PHONE: FakeOwnerClient(blocked)}))
-    port = await server.start()
-    connection = await RelayConnection.open(
-        RelayEndpoint(port=port, token="secret-token", pid=os.getpid(), protocol=RELAY_PROTOCOL)
-    )
-    try:
+    async with running({PHONE: FakeOwnerClient(blocked)}) as (server, connection):
         client = await _client(connection)
-        pending = asyncio.create_task(client(functions.updates.GetStateRequest()))
-        await asyncio.sleep(0.05)
+        pending = asyncio.create_task(client(request_type()))
+        async with asyncio.timeout(5):
+            await accepted.wait()
         await server.stop()
-        with pytest.raises(ConnectionError):
-            await pending
-    finally:
-        gate.set()
-        await connection.close()
+        with pytest.raises(error) as caught:
+            await asyncio.wait_for(pending, timeout=5)
+        assert type(caught.value) is error
 
 
 async def test_concurrent_requests_are_matched_to_their_callers():

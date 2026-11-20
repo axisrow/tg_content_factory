@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     from tg_agent.config import AppConfig
     from tg_agent.database import Database
+    from tg_agent.gateway.client import TelegramGatewayClient
     from tg_agent.live_runtime_pause import LiveRuntimePauseGate
     from tg_agent.scheduler.service import SchedulerManager
     from tg_agent.search.engine import SearchEngine
@@ -35,6 +36,7 @@ class _DispatcherProtocol(Protocol):
 
     _db: "Database"
     _pool: "ClientPool"
+    _gateway: "TelegramGatewayClient | None"
     _config: "AppConfig | None"
     _collector: "Collector | None"
     _scheduler: "SchedulerManager | None"

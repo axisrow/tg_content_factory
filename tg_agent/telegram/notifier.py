@@ -9,6 +9,7 @@ import pybreaker
 
 from tg_agent.database.bundles import NotificationBundle
 from tg_agent.services.notification_target_service import NotificationTargetService
+from tg_agent.telegram.relay import RelayDeliveryUnconfirmedError
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +140,7 @@ class Notifier:
         """Invalidate the cached me.id. Call when the notification account changes."""
         self._cached_me_id = None
 
-    async def notify(self, text: str, *, propagate_throttle: bool = False) -> bool:
+    async def notify(self, text: str) -> bool:
         # The send is async and already returns a bool (it swallows its own
         # exceptions), so it runs outside pybreaker; we only feed the outcome
         # through the synchronous state machine. pybreaker owns open/half-open/
@@ -160,8 +161,7 @@ class Notifier:
             # no cooldown. Treat cancellation as a failed probe (re-opens).
             ok = False
             try:
-                ok = (await self._attempt_send(text, propagate_throttle=True) if propagate_throttle
-                      else await self._attempt_send(text))
+                ok = await self._attempt_send(text)
             finally:
                 self._record_outcome(ok)
             return ok
@@ -217,7 +217,7 @@ class Notifier:
     def _raise_probe_error() -> None:
         raise _NotifierProbeError
 
-    async def _attempt_send(self, text: str, *, propagate_throttle: bool = False) -> bool:
+    async def _attempt_send(self, text: str) -> bool:
         try:
             # Fast path: if me.id is cached and a bot is configured, skip the
             # Telegram client entirely — _send_via_bot_api is a pure HTTP call.
@@ -259,9 +259,9 @@ class Notifier:
                 # read-only get_me above is reversible and stays a plain failure.
                 try:
                     await asyncio.wait_for(client.send_message(target, text), timeout=30.0)
-                except asyncio.TimeoutError:
+                except (asyncio.TimeoutError, RelayDeliveryUnconfirmedError):
                     logger.error(
-                        "Timeout sending notification to %s — delivery unconfirmed; "
+                        "No confirmation when sending notification to %s — delivery unconfirmed; "
                         "not retrying to avoid a duplicate message",
                         target,
                     )
@@ -269,31 +269,35 @@ class Notifier:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            if propagate_throttle:
-                from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitedError
-
-                if isinstance(e, (HandledFloodWaitError, TelegramRateLimitedError)):
-                    raise
             logger.error("Failed to send notification: %s", e)
             return False
 
 
 async def _send_via_bot_api(token: str, chat_id: int, text: str) -> bool:
     url = _BOT_API_URL.format(token=token)
+    may_have_sent = False
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(
+            request = session.post(
                 url,
                 json={"chat_id": chat_id, "text": text},
                 timeout=aiohttp.ClientTimeout(total=30),
-            ) as resp:
+                allow_redirects=False,
+            )
+            may_have_sent = True
+            async with request as resp:
                 data = await resp.json()
-                if not data.get("ok"):
-                    logger.error("Bot API error: %s", data)
+                if data.get("ok") is False:
+                    logger.error("Bot API rejected notification (code %s)", data.get("error_code"))
                     return False
+                if data.get("ok") is not True:
+                    logger.warning("Bot API delivery unconfirmed after an invalid response")
         return True
     except asyncio.CancelledError:
         raise
-    except Exception as e:
-        logger.error("Bot API call failed: %s", e)
+    except Exception as exc:
+        if may_have_sent and not isinstance(exc, (aiohttp.ClientConnectorError, aiohttp.ConnectionTimeoutError)):
+            logger.warning("Bot API delivery unconfirmed after %s", type(exc).__name__)
+            return True
+        logger.error("Bot API call failed before sending (%s)", type(exc).__name__)
         return False

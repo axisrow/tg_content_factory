@@ -6,13 +6,17 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pybreaker
 import pytest
 
 from tests.helpers import wait_until
+from tests.test_notification_matcher import _FakeNotifiedStore, make_message, make_query
 from tg_agent.database.bundles import NotificationBundle
 from tg_agent.models import NotificationBot
+from tg_agent.services.notification_matcher import NotificationMatcher
 from tg_agent.telegram.notifier import Notifier, _send_via_bot_api
+from tg_agent.telegram.relay import RelayDeliveryUnconfirmedError
 
 
 @pytest.fixture
@@ -29,6 +33,37 @@ def mock_notification_bundle():
     bundle = MagicMock(spec=NotificationBundle)
     bundle.get_bot = AsyncMock(return_value=None)
     return bundle
+
+
+@pytest.mark.anyio
+async def test_bot_api_lost_response_does_not_repeat_the_notification(
+    mock_target_service, mock_notification_bundle, caplog,
+):
+    token = "123456:synthetic-test-token"
+    mock_notification_bundle.get_bot.return_value = NotificationBot(
+        tg_user_id=123, bot_username="offline_bot", bot_token=token
+    )
+    notifier = Notifier(mock_target_service, 123, mock_notification_bundle)
+    notifier._cached_me_id = 123
+    response = AsyncMock()
+    response.json.side_effect = asyncio.TimeoutError(f"response lost for {token}")
+    request = AsyncMock()
+    request.__aenter__.return_value = response
+    session = MagicMock()
+    session.__aenter__.return_value = session
+    session.post.return_value = request
+    notified = _FakeNotifiedStore()
+    matcher = NotificationMatcher(notifier, notified_store=notified)
+    messages, queries = [make_message("offline match")], [make_query("match")]
+
+    with patch("tg_agent.telegram.notifier.aiohttp.ClientSession", return_value=session):
+        await matcher.match_and_notify(messages, queries)
+        await matcher.match_and_notify(messages, queries)
+
+    assert session.post.call_count == 1
+    assert notified.recorded == {(1, messages[0].channel_id, messages[0].message_id)}
+    assert "delivery unconfirmed" in caplog.text
+    assert token not in caplog.text
 
 
 class TestNotifierFastPath:
@@ -748,6 +783,17 @@ class TestSendViaBotApi:
 
         assert result is False
 
+    @pytest.mark.anyio
+    async def test_send_via_bot_api_connect_timeout_can_retry(self):
+        request = AsyncMock()
+        request.__aenter__.side_effect = aiohttp.ConnectionTimeoutError()
+        session = MagicMock()
+        session.__aenter__.return_value = session
+        session.post.return_value = request
+
+        with patch("tg_agent.telegram.notifier.aiohttp.ClientSession", return_value=session):
+            assert await _send_via_bot_api("123456:ABC-DEF", 789, "Test message") is False
+
 
 class TestNotifierSendTimeoutUnconfirmed:
     """Orphaned-request guard (issues #1267/#1268/#1260, class #1239).
@@ -778,8 +824,9 @@ class TestNotifierSendTimeoutUnconfirmed:
         )
 
     @pytest.mark.anyio
+    @pytest.mark.parametrize("error", [asyncio.TimeoutError, RelayDeliveryUnconfirmedError])
     async def test_send_timeout_reports_success_so_retry_does_not_duplicate(
-        self, mock_target_service, caplog
+        self, mock_target_service, caplog, error,
     ):
         """A timed-out send is an UNCONFIRMED delivery, not a failure: ``notify``
         returns ``True`` so a retrying caller does not re-send (issue #1239).
@@ -791,7 +838,7 @@ class TestNotifierSendTimeoutUnconfirmed:
         mock_client = MagicMock()
         # A timed-out send raises TimeoutError exactly as asyncio.wait_for would
         # on expiry — the request may already be on its way to Telegram.
-        mock_client.send_message = AsyncMock(side_effect=asyncio.TimeoutError)
+        mock_client.send_message = AsyncMock(side_effect=error)
         notifier = self._direct_send_notifier(mock_target_service, mock_client)
 
         with caplog.at_level("ERROR", logger="tg_agent.telegram.notifier"):

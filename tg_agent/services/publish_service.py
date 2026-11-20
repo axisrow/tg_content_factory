@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from tg_agent.database import Database
 from tg_agent.models import ContentPipeline, GenerationRun, PipelinePublishMode, PipelineTarget
 from tg_agent.telegram.backends import adapt_transport_session
+from tg_agent.telegram.relay import RelayDeliveryUnconfirmedError
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ CLIENT_RELEASE_TIMEOUT_SEC = 5.0
 
 
 class _PublishUncertaintyPersistenceError(RuntimeError):
-    """The publish claim must remain held when cancellation cannot be recorded."""
+    """The publish claim must remain held when an uncertain send cannot be recorded."""
 
 
 def _consume_release_task(task: asyncio.Task[Any]) -> None:
@@ -255,9 +256,14 @@ class PublishService:
                     # Pass only this target: set_metadata unions target-progress
                     # lists with the current DB value, avoiding resurrection of
                     # targets resolved concurrently by an operator.
-                    await self._db.repos.generation_runs.set_metadata(
-                        run.id, {"unconfirmed_targets": [key]}
-                    )
+                    try:
+                        await self._db.repos.generation_runs.set_metadata(
+                            run.id, {"unconfirmed_targets": [key]}
+                        )
+                    except (asyncio.CancelledError, Exception) as exc:
+                        raise _PublishUncertaintyPersistenceError(
+                            f"Could not persist uncertain send for {key}"
+                        ) from exc
                     continue
                 if not result.success:
                     continue
@@ -462,6 +468,15 @@ class PublishService:
 
         except _PublishUncertaintyPersistenceError:
             raise
+        except RelayDeliveryUnconfirmedError as exc:
+            delivery_uncertain = True
+            return PublishResult(
+                success=False,
+                error=str(exc),
+                uncertain=True,
+                phone=acquired_phone,
+                dialog_id=target.dialog_id,
+            )
         except asyncio.TimeoutError:
             # A timeout BEFORE the send (client acquisition / flood wait / entity
             # resolution). Nothing was dispatched, so this is a plain failure the

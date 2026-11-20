@@ -172,6 +172,18 @@ class DialogsCommandsMixin(_Base):
         return {"phone": result.phone, "forwarded": result.count}
 
     async def _account_flood_until(self, phone: str) -> datetime | None:
+        if self._gateway is not None:
+            try:
+                rows = await self._gateway.accounts()
+            except (OSError, RuntimeError):
+                pass
+            else:
+                now_epoch = time.time()
+                for row in rows:
+                    if row["phone"] == phone and row["active"] and row["flood_until"] > now_epoch:
+                        return datetime.fromtimestamp(row["flood_until"], timezone.utc)
+                return None
+
         accounts: list[Any] = []
         for getter_name in ("get_account_summaries", "get_accounts"):
             getter = getattr(self._db, getter_name, None)

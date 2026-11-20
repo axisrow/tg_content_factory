@@ -76,3 +76,25 @@ async def test_reopened_store_uses_its_own_key(shared, tmp_path):
     finally:
         await reopened.close()
 
+
+async def test_open_preserves_legacy_operation_receipts(shared, tmp_path):
+    project = str(uuid4())
+    await shared.register_project(project, tmp_path / "legacy", secrets.token_urlsafe(32))
+    receipts = [
+        (project, "deferred-send", "first-fingerprint", "{}", "deferred", '{"retry_at":600}', 10.0),
+        (project, "uncertain-send", "second-fingerprint", "{}", "uncertain", '{"error":"TimeoutError"}', 20.0),
+    ]
+    async with shared.transaction() as db:
+        await db.execute(
+            "CREATE TABLE operations (project_id TEXT NOT NULL REFERENCES projects(id), request_id TEXT NOT NULL, "
+            "fingerprint TEXT NOT NULL, payload TEXT NOT NULL, state TEXT NOT NULL, result TEXT, "
+            "created_at REAL NOT NULL DEFAULT 0, PRIMARY KEY(project_id,request_id))"
+        )
+        await db.executemany("INSERT INTO operations VALUES (?,?,?,?,?,?,?)", receipts)
+
+    await shared.close()
+    await shared.open()
+
+    async with shared.transaction() as db, db.execute("SELECT * FROM operations ORDER BY request_id") as cursor:
+        assert [tuple(row) for row in await cursor.fetchall()] == receipts
+

@@ -96,8 +96,12 @@ def test_two_cli_workers_share_gateway_and_keep_project_databases(tmp_path, filt
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             expected = [0 if filtered_a else 2, 1]
-            if all(rows(project / "project.db", "SELECT COUNT(*) FROM messages")[0][0] == count
-                   for (project, _), count in zip(projects, expected, strict=True)):
+            expected_cursors = [0 if filtered_a else 7, 7]
+            if all(
+                rows(project / "project.db", "SELECT COUNT(*) FROM messages") == [(count,)]
+                and rows(project / "project.db", "SELECT last_collected_id FROM channels") == [(cursor,)]
+                for (project, _), count, cursor in zip(projects, expected, expected_cursors, strict=True)
+            ):
                 break
             for project, worker in projects:
                 assert worker.poll() is None, (project / "worker.log").read_text()[-5000:]
