@@ -96,6 +96,18 @@ async def gateway_account_id(db, phone: str) -> str | None:
     return row[0] if row else None
 
 
+def auto_reply_guard(db, client: TelegramGatewayClient):
+    """``(phone, dialog_id) -> bool``: may this project send automatic messages there?"""
+
+    async def guard(phone: str, dialog_id: int) -> bool:
+        account_id = await gateway_account_id(db, phone)
+        if account_id is None:
+            return False
+        return await client.can_auto_reply(account_id, dialog_id)
+
+    return guard
+
+
 async def restore_gateway_bots(db, client: TelegramGatewayClient, project_id: str) -> int:
     """Take back notification bots a pre-#1868 enrollment moved into the gateway.
 

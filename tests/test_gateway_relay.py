@@ -208,6 +208,32 @@ async def test_dm_pushes_skip_projects_without_a_grant_on_the_account(gateway):
         await pushed.wait()
 
 
+async def test_a_stuck_subscriber_does_not_delay_dm_pushes_to_the_others(gateway):
+    class Subscriber:
+        closed = False
+
+        def __init__(self, push):
+            self.push = push
+
+    async def stuck(_kind):
+        await asyncio.Future()  # a client whose socket buffer is full
+
+    pushed = asyncio.Event()
+
+    async def healthy(_kind):
+        pushed.set()
+
+    gateway.hub._event_listeners[Subscriber(stuck)] = PROJECT_A
+    gateway.hub._event_listeners[Subscriber(healthy)] = PROJECT_A
+    fan_out = asyncio.create_task(gateway.hub.notify_events(gateway.account))
+    try:
+        async with asyncio.timeout(5):
+            await pushed.wait()
+    finally:
+        fan_out.cancel()
+        await asyncio.gather(fan_out, return_exceptions=True)
+
+
 async def test_an_expired_event_cursor_asks_for_history_recovery(gateway):
     project = TelegramGatewayClient(await gateway.connect(TOKEN_A))
     payload = {"kind": "dm", "dialog_id": 5, "message_id": 1, "text": "old", "out": False, "date": None}
@@ -328,7 +354,7 @@ async def test_an_expired_event_cursor_recovers_dm_history_on_the_relay(gateway,
     pages = [[missed], []]
     reads = []
 
-    async def history(raw_client, *, api_id, api_hash, peer, min_id, limit):
+    async def history(raw_client, *, api_id, api_hash, peer, min_id, limit, offset_date=None):
         reads.append((raw_client, peer, min_id))
         return pages.pop(0)
 
@@ -358,6 +384,32 @@ async def test_an_expired_event_cursor_recovers_dm_history_on_the_relay(gateway,
     assert await db.get_setting("gateway_event_cursor") == "1"
     assert await _acknowledged(gateway.store, PROJECT_A) == 1
     assert consumer.status()["resync_required"] is False
+
+
+async def test_the_worker_pool_picks_up_accounts_the_gateway_serves_later(gateway, db):
+    """An account granted, or out of a flood wait, after the worker started joins its
+    relayed pool with the catalog refresh; a flooded one waits (main re-read every 5 s)."""
+    await gateway.store.grant(PROJECT_A, gateway.other)
+    await gateway.store.flood(gateway.other, time.time() + 600)
+    initialized = asyncio.Event()
+
+    class Pool:
+        phones = None
+
+        async def initialize(self, *, phones=None):
+            self.phones = phones
+            initialized.set()
+
+    pool = Pool()
+    consumer = GatewayDmConsumer(pool, db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
+    await consumer.start()
+    try:
+        async with asyncio.timeout(5):
+            await initialized.wait()
+    finally:
+        await consumer.stop()
+
+    assert pool.phones == [PHONE]
 
 
 class _RelayedDmClient:
@@ -414,7 +466,7 @@ async def test_dm_recovery_reads_on_from_the_archive_and_never_backfills(gateway
     await _archive(db, 2, chat_id=5)
     reads = []
 
-    async def history(raw_client, *, api_id, api_hash, peer, min_id, limit):
+    async def history(raw_client, *, api_id, api_hash, peer, min_id, limit, offset_date=None):
         reads.append((peer, min_id))
         return []
 
@@ -431,6 +483,38 @@ async def test_dm_recovery_reads_on_from_the_archive_and_never_backfills(gateway
     assert reads == [(5, 2)]
     assert await db.get_setting("gateway_event_cursor") == "1"
     assert consumer.status()["resync_required"] is False
+
+
+async def test_dm_recovery_reads_conversations_started_while_the_project_was_behind(gateway, db, monkeypatch):
+    """Such a conversation's events expired with the rest and nothing of it is archived,
+    but its last message is newer than anything the project saw: it is read from that
+    point. A never-archived dialog with nothing newer is still not read."""
+    await _expire_the_event_cursor(gateway)
+    seen = datetime.now(timezone.utc) - timedelta(days=9)
+    await db.repos.dm_messages.record(DmMessage(phone=PHONE, chat_id=5, message_id=1, out=False, text="known",
+                                                message_date=seen))
+    started = SimpleNamespace(id=4, date=datetime.now(timezone.utc) - timedelta(days=3), text="hello", out=False)
+    reads = []
+
+    async def history(raw_client, *, api_id, api_hash, peer, min_id, limit, offset_date=None):
+        reads.append((peer, min_id, offset_date))
+        return [started] if (peer, min_id) == (8, 0) else []
+
+    class Pool(_RecoveryPool):
+        async def get_dialogs_for_phone(self, phone, *, include_dm, refresh):
+            return [{"channel_type": "dm", "dialog_id": 5, "channel_id": 5, "last_message_date": seen},
+                    {"channel_type": "dm", "dialog_id": 8, "channel_id": 8, "last_message_date": started.date},
+                    {"channel_type": "dm", "dialog_id": 9, "channel_id": 9,
+                     "last_message_date": seen - timedelta(days=30)}]
+
+    monkeypatch.setattr(dm_consumer, "read_dialog_history_since", history)
+    consumer = GatewayDmConsumer(Pool("relayed-client"), db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
+
+    await consumer.consume()
+
+    assert reads == [(5, 1, None), (8, 0, seen), (8, 4, None)]
+    assert await _rows(db, "SELECT chat_id,message_id,text FROM incoming_dms") == [(8, 4, "hello")]
+    assert await db.get_setting("gateway_event_cursor") == "1"
 
 
 async def test_dm_recovery_reads_history_without_project_credentials(gateway, db):

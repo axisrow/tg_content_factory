@@ -1233,6 +1233,37 @@ class TestCollectCommand:
         assert "120s" in out
         assert "Collected" not in out
 
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            {"command": "collect", "channel_id": 103, "full": False},
+            {"command": "channel", "channel_action": "collect", "identifier": "103", "full": False,
+             "direct": False, "wait": False},
+        ],
+        ids=["collect-channel-id", "channel-collect"],
+    )
+    def test_terminal_verdict_is_one_line_and_stamps_the_row(self, cli_env_with_pool, capsys, argv):
+        """A terminal resolver verdict: one line, no traceback, the queue's stamp (#1783)."""
+        from tg_agent.cli.commands import channel as channel_cli
+        from tg_agent.cli.commands import collect as collect_cli
+        from tg_agent.telegram.collector import Collector
+        from tg_agent.telegram.collector_types import ChannelCollectionTerminalError
+
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {"+70001112233": AsyncMock()}
+        _add_channel(cli_env, channel_id=103, title="Gone Channel")
+        command = argv.pop("command")
+        exc = ChannelCollectionTerminalError("HistoryNumericUnresolved", "no account knows the id")
+
+        with patch.object(Collector, "collect_single_channel", new_callable=AsyncMock, side_effect=exc):
+            (collect_cli if command == "collect" else channel_cli).run(_ns(**argv))
+
+        out = capsys.readouterr().out
+        assert "HistoryNumericUnresolved" in out and "Collected" not in out
+        asyncio.run(cli_env.initialize())
+        channel = next(ch for ch in asyncio.run(cli_env.get_channels()) if ch.channel_id == 103)
+        assert channel.terminal_code == "HistoryNumericUnresolved"
+
     def test_collect_enqueue_warns_about_active_resolve_backoff(
         self, cli_env_with_pool, capsys
     ):

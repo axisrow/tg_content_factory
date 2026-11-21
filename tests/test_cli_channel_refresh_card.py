@@ -582,6 +582,26 @@ def test_refresh_card_success_clears_transient_review(cli_env, capsys):
     assert _get_channel(db, 915).review_reason == "uncertain"
 
 
+def test_refresh_card_stamps_invalid_username(cli_env, capsys):
+    """#1787: a numeric miss whose stored username is invalid is terminal — the
+    row carries the stamp, so the bulk enqueue AND the next refresh-card pass skip it."""
+    db = cli_env
+    _add_stale_channel(db, channel_id=908, title="Old", username="dead908")
+
+    pool = FakeDirectPool(
+        resolve_by_id={908: {"gone": True}},
+        meta_by_id={},
+        resolve_by_username={"dead908": {"gone": True, "code": "UsernameInvalidError"}},
+    )
+    _run_refresh_card(db, pool, identifier="908")
+
+    assert "SKIP" in capsys.readouterr().out
+    ch = _get_channel(db, 908)
+    assert ch.title == "Old"
+    assert ch.terminal_code == "UsernameInvalidError"
+    assert ch.terminal_at is not None
+
+
 def test_refresh_card_bulk_skips_terminal_stamped_channels(cli_env, capsys):
     """#1787: the --all pass defers channels carrying an active terminal stamp
     (same window as the bulk enqueue) — no pool calls for them, count reported."""

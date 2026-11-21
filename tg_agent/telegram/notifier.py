@@ -281,7 +281,9 @@ async def _send_via_bot_api(token: str, chat_id: int, text: str) -> bool:
             request = session.post(
                 url,
                 json={"chat_id": chat_id, "text": text},
-                timeout=aiohttp.ClientTimeout(total=30),
+                # A stalled connect must end as ConnectionTimeoutError (nothing
+                # sent, retryable), not as the total timeout's plain TimeoutError.
+                timeout=aiohttp.ClientTimeout(total=30, connect=10),
                 allow_redirects=False,
             )
             may_have_sent = True

@@ -7,7 +7,7 @@ import logging
 import typer
 
 from tg_agent.cli import runtime, worker_handoff
-from tg_agent.cli.commands.channel import _handoff_collect_to_worker, report_pending_approval
+from tg_agent.cli.commands.channel import _handoff_collect_to_worker, report_pending_approval, stamp_terminal_verdict
 from tg_agent.cli.commands.common import (
     _NEG_ID_POSITIONAL,
     apply_startup,
@@ -22,6 +22,7 @@ from tg_agent.telegram.collector import (
     UsernameResolveFloodWaitDeferredError,
     UsernameResolveRateLimitedError,
 )
+from tg_agent.telegram.collector_types import ChannelCollectionTerminalError
 
 
 def print_resolve_backoff_warning(pool) -> None:
@@ -134,6 +135,10 @@ async def collect_impl(
                     f"All accounts are flood-waited until {retry_at} "
                     f"(retry in {exc.retry_after_sec}s); try again later."
                 )
+                return
+            except ChannelCollectionTerminalError as exc:
+                await stamp_terminal_verdict(db, channel, exc)
+                print(f"Channel {channel_id} cannot be collected: {exc}")
                 return
             print(f"Collected {count} messages from channel {channel_id}")
         else:

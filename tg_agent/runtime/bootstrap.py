@@ -517,15 +517,9 @@ def _pool_is_relayed(pool) -> bool:
 
 def _gateway_auto_reply_guard(db, gateway_client):
     """May this project send automatic messages in a dialog? The gateway decides."""
-    from tg_agent.gateway.catalog import gateway_account_id
+    from tg_agent.gateway.catalog import auto_reply_guard
 
-    async def guard(phone: str, dialog_id: int) -> bool:
-        account_id = await gateway_account_id(db, phone)
-        if account_id is None:
-            return False
-        return await gateway_client.can_auto_reply(account_id, dialog_id)
-
-    return guard
+    return auto_reply_guard(db, gateway_client)
 
 
 async def _initialize_startup_telegram_pool(

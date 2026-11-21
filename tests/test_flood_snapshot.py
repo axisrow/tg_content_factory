@@ -260,6 +260,53 @@ async def test_a_relayed_pool_neither_restores_nor_writes(db):
     assert await db.get_setting(FLOOD_GUARD_SNAPSHOT_SETTING) == stored
 
 
+async def test_a_snapshot_that_could_not_be_read_is_reported_and_never_overwritten(db, caplog):
+    owner = await _restored(ClientPool(TelegramAuth(1, "hash"), db), db)
+    while owner._rate_limit_gate.try_acquire(PHONE, "history") == 0.0:
+        pass
+    await owner.persist_flood_guard_snapshot()
+    stored = await db.get_setting(FLOOD_GUARD_SNAPSHOT_SETTING)
+
+    pool = ClientPool(TelegramAuth(1, "hash"), db)
+    pool.clients[PHONE] = cast(Any, object())  # it holds the very account the snapshot covers
+    unreadable = SimpleNamespace(get_setting=AsyncMock(side_effect=RuntimeError("database is locked")))
+    with caplog.at_level(logging.WARNING):
+        await _restored(pool, unreadable)
+    await pool.persist_flood_guard_snapshot()
+
+    assert [record.exc_info is not None for record in caplog.records] == [True]
+    assert await db.get_setting(FLOOD_GUARD_SNAPSHOT_SETTING) == stored
+
+
+async def test_owner_pools_on_different_accounts_keep_each_others_spend(db):
+    """Two daemon-less CLIs, one account each, both started from the same snapshot."""
+    first = await _restored(ClientPool(TelegramAuth(1, "hash"), db), db)
+    second = await _restored(ClientPool(TelegramAuth(1, "hash"), db), db)
+    first.clients[PHONE] = cast(Any, object())
+    second.clients[OTHER] = cast(Any, object())
+    while second._rate_limit_gate.try_acquire(OTHER, "history") == 0.0:
+        pass
+    while first._rate_limit_gate.try_acquire(PHONE, "history") == 0.0:
+        pass
+
+    await second.persist_flood_guard_snapshot()
+    await first.persist_flood_guard_snapshot()  # saves last, never having seen the other spend
+    third = await _restored(ClientPool(TelegramAuth(1, "hash"), db), db)
+
+    assert third._rate_limit_gate.try_acquire(OTHER, "history") > 0
+    assert third._rate_limit_gate.try_acquire(PHONE, "history") > 0
+
+
+def test_a_carried_over_circuit_keeps_its_deadline():
+    """Another owner's open circuit, carried into a later snapshot, ends when it did."""
+    circuit = {"operation": "telegram_send_message", "phone": OTHER, "state": "open", "fails": 1}
+    stored = {"version": 1, "taken_at": 1000.0, "breaker": [{**circuit, "open_for": 300.0}]}
+
+    merged = flood_snapshot.merge_flood_snapshots(stored, {"version": 1, "taken_at": 1100.0}, {PHONE})
+
+    assert merged["breaker"] == [{**circuit, "open_for": 200.0}]
+
+
 async def test_a_corrupt_setting_never_fails_the_pool(db, caplog):
     await db.set_setting(FLOOD_GUARD_SNAPSHOT_SETTING, "not-json")
     with caplog.at_level(logging.WARNING):

@@ -21,6 +21,7 @@ import time
 from collections.abc import Awaitable, Callable
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Any
 
 import tg_shared
 from tg_agent.gateway.server import GatewayHub
@@ -192,6 +193,27 @@ def ensure_gateway(root: Path, *, timeout: float = 30) -> dict:
         launcher.release()
 
 
+async def _housekeeping(store: GatewayStore, access: Any) -> None:
+    persist_flood_guards: Callable[[], Awaitable[None]] | None = getattr(access, "persist_flood_guards", None)
+    start: Callable[[], Awaitable[None]] | None = getattr(access, "start", None)
+    while True:
+        try:
+            await store.expire_events(now=time.time())
+        except Exception as exc:  # noqa: BLE001 - housekeeping must never stop the gateway
+            logger.warning("Gateway event expiry delayed: %s", type(exc).__name__)
+        if callable(persist_flood_guards):
+            # The shared accounts' spent flood budget survives a gateway restart.
+            await persist_flood_guards()
+        if callable(start):
+            # An account that could not connect at startup (a flood wait, an outage)
+            # connects once it can, so its DMs are journaled again.
+            try:
+                await start()
+            except Exception as exc:  # noqa: BLE001 - housekeeping must never stop the gateway
+                logger.warning("Gateway account reconnect delayed: %s", type(exc).__name__)
+        await asyncio.sleep(FLOOD_GUARD_PERSIST_INTERVAL_SEC)
+
+
 async def serve(root: Path, *, access_factory=None) -> None:
     root = await asyncio.to_thread(root.resolve)
     profile = _enrolled_profile(root)
@@ -220,20 +242,7 @@ async def serve(root: Path, *, access_factory=None) -> None:
         start = getattr(access, "start", None)
         if start is not None:
             await start()
-
-        async def housekeeping():
-            persist_flood_guards: Callable[[], Awaitable[None]] | None = getattr(access, "persist_flood_guards", None)
-            while True:
-                try:
-                    await store.expire_events(now=time.time())
-                except Exception as exc:  # noqa: BLE001 - housekeeping must never stop the gateway
-                    logger.warning("Gateway event expiry delayed: %s", type(exc).__name__)
-                if callable(persist_flood_guards):
-                    # The shared accounts' spent flood budget survives a gateway restart.
-                    await persist_flood_guards()
-                await asyncio.sleep(FLOOD_GUARD_PERSIST_INTERVAL_SEC)
-
-        cleanup = asyncio.create_task(housekeeping(), name="gateway-housekeeping")
+        cleanup = asyncio.create_task(_housekeeping(store, access), name="gateway-housekeeping")
         server = RelayServer(hub, ops=hub.ops)
         port = await server.start()
         record = {"port": port, "instance": secrets.token_urlsafe(32), "pid": os.getpid(),

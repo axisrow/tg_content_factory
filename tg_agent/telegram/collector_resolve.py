@@ -104,12 +104,28 @@ def _dead_username_code(exc: BaseException) -> str | None:
     return None
 
 
-def _miss_is_about_the_channel(collector: "Collector", channel: Channel, phone: str, channel_id: int) -> bool:
-    """A numeric miss on ``phone`` says something about the channel itself only
-    when no other account is recorded as its owner — a miss on an arbitrary
-    account proves nothing while the owner is merely unavailable (#1245)."""
-    owner = channel.preferred_phone or collector._pool.get_phone_for_channel(channel_id)
-    return owner is None or owner == phone
+def _transient_miss(exc: BaseException) -> bool:
+    """Telethon reports a request that kept failing (-500 and the like) as a
+    ValueError too; unlike a peer miss it says nothing about the peer."""
+    return isinstance(exc, ValueError) and str(exc).startswith("Request was unsuccessful")
+
+
+async def _id_unknown_to_every_account(
+    collector: "Collector", channel: Channel, phone: str, channel_id: int, miss: BaseException
+) -> bool:
+    """True only when ``miss`` on ``phone`` is a real peer miss and every other
+    active account misses the id too — a miss on one account proves nothing while
+    another, perhaps unconnected, may know the channel (#1245)."""
+    if not isinstance(miss, (ValueError, TypeError)) or _transient_miss(miss):
+        return False
+    verdict: dict[str, bool] = {}
+    found = await collector._discover_phone_for_channel(
+        channel_id, exclude=phone, channel_type=channel.channel_type, verdict=verdict
+    )
+    if found is not None:
+        collector._pool.register_channel_phone(channel_id, found)  # the next pass reads there
+        return False
+    return bool(verdict.get("conclusive"))
 
 
 class ResolveOutcome:
@@ -151,6 +167,56 @@ class ResolveOutcome:
         self.channel = channel
         self.flood_wait_sec = flood_wait_sec
         self.flood_wait_operation = flood_wait_operation
+
+
+async def _fall_back_to_the_id(
+    collector: "Collector",
+    channel: Channel,
+    session,
+    phone: str,
+    channel_id: int,
+    *,
+    terminal: tuple[str, str] | None,
+    cause: BaseException | None = None,
+) -> ResolveOutcome:
+    """The stored username no longer leads to this channel: look the row up by id.
+
+    Found → the operator reviews the new name. Unknown to every active account →
+    ``terminal`` (code, detail) when given. Anything else is transient: review.
+    """
+    try:
+        entity = await collector._pool.resolve_entity_with_warm(
+            session,
+            phone,
+            _channel_peer(channel, channel_id),
+            operation="collect_channel_resolve_channel_id",
+        )
+    except HandledFloodWaitError as exc:
+        return ResolveOutcome(
+            flood_wait_sec=exc.info.wait_seconds,
+            flood_wait_operation=exc.info.operation,
+        )
+    except Exception as miss:
+        if terminal is not None and await _id_unknown_to_every_account(collector, channel, phone, channel_id, miss):
+            # Nothing recovers this row until an operator fixes it (#1783). The
+            # queue stamps it; the bulk enqueue stops spending a resolve on it
+            # every round.
+            raise ChannelCollectionTerminalError(*terminal) from cause or miss
+        logger.warning(
+            "Channel %d: all entity lookups failed transiently, marking for review",
+            channel_id,
+        )
+        if channel.id:
+            await collector._db.repos.channels.set_channel_review(channel.id, "resolve_transient_error")
+        return ResolveOutcome(action="stop")
+    new_title = getattr(entity, "title", None) or channel.title or channel.username or str(channel_id)
+    await collector._handle_meta_change_review(
+        channel,
+        getattr(entity, "username", None),
+        new_title,
+        log_prefix="Channel",
+    )
+    return ResolveOutcome(action="stop")
 
 
 async def _resolve_by_username(
@@ -221,65 +287,34 @@ async def _resolve_by_username(
             channel_id,
             channel.username,
         )
-        try:
-            fallback_entity = await collector._pool.resolve_entity_with_warm(
-                session,
-                phone,
-                _channel_peer(channel, channel_id),
-                operation="collect_channel_resolve_channel_id",
-            )
-        except HandledFloodWaitError as exc:
-            return ResolveOutcome(
-                flood_wait_sec=exc.info.wait_seconds,
-                flood_wait_operation=exc.info.operation,
-            )
-        except Exception as fallback_exc:
-            dead_code = _dead_username_code(username_exc)
-            if (
-                dead_code is not None
-                and isinstance(fallback_exc, (ValueError, TypeError))
-                and _miss_is_about_the_channel(collector, channel, phone, channel_id)
-            ):
-                # Telegram says nobody owns the name and no account knows the
-                # id: nothing recovers this row until an operator fixes it
-                # (#1783). The queue stamps it; the bulk enqueue stops spending
-                # a resolve on it every round.
-                raise ChannelCollectionTerminalError(
-                    dead_code, f"@{channel.username} is vacant and the stored id is unknown"
-                ) from username_exc
-            logger.warning(
-                "Channel %d: all entity lookups failed transiently, marking for review",
-                channel_id,
-            )
-            if channel.id:
-                await collector._db.repos.channels.set_channel_review(channel.id, "resolve_transient_error")
-            return ResolveOutcome(action="stop")
-        new_username = getattr(fallback_entity, "username", None)
-        new_title = (
-            getattr(fallback_entity, "title", None)
-            or channel.title
-            or channel.username
-            or str(channel_id)
-        )
-        await collector._handle_meta_change_review(
+        # Telegram says nobody owns the name: terminal once no account knows the id.
+        dead_code = _dead_username_code(username_exc)
+        return await _fall_back_to_the_id(
+            collector,
             channel,
-            new_username,
-            new_title,
-            log_prefix="Channel",
+            session,
+            phone,
+            channel_id,
+            terminal=(dead_code, f"@{channel.username} is vacant and the stored id is unknown") if dead_code else None,
+            cause=username_exc,
         )
-        return ResolveOutcome(action="stop")
     foreign = _username_owner_mismatch(entity, channel_id)
     if foreign is not None:
         # The stored username now leads somewhere else. Streaming it would file
-        # someone else's posts under this channel's id, so nothing is read and
-        # the row goes to the operator (#1769, #1779).
+        # someone else's posts under this channel's id, so nothing is read; the
+        # row is looked up by its id instead (#1769, #1779).
         logger.warning(
-            "Channel %d: stored username now belongs to %s; nothing collected, row untouched",
+            "Channel %d: stored username now belongs to %s; nothing collected, looking the id up",
             channel_id,
             foreign,
         )
-        raise ChannelCollectionTerminalError(
-            "UsernameChannelIdMismatch", f"@{channel.username} now belongs to {foreign}"
+        return await _fall_back_to_the_id(
+            collector,
+            channel,
+            session,
+            phone,
+            channel_id,
+            terminal=("UsernameChannelIdMismatch", f"@{channel.username} now belongs to {foreign}"),
         )
     if channel.id and channel.review_reason in TRANSIENT_REVIEW_REASONS:
         await collector._db.repos.channels.clear_channel_review(channel.id)
@@ -422,8 +457,8 @@ async def _resolve_by_numeric(
         )
         if channel.id:
             await collector._db.repos.channels.set_channel_review(channel.id, "resolve_account_unavailable")
-        if verdict.get("conclusive"):
-            # Every connected account answered with a peer miss and the row has
+        if verdict.get("conclusive") and not _transient_miss(miss):
+            # Every active account answered with a peer miss and the row has
             # no username to warm the entity from: nothing will ever recover it
             # (#1805). The queue stamps it instead of sweeping every account's
             # dialogs for it again on the next round.

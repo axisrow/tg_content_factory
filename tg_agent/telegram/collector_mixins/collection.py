@@ -48,6 +48,7 @@ from tg_agent.telegram.collector_resolve import (
     RESOLVE_USERNAME_OPERATION,
     ResolveOutcome,
     _peer_for_channel_type,
+    _transient_miss,
     resolve_channel_entity,
 )
 from tg_agent.telegram.collector_types import (
@@ -1231,12 +1232,19 @@ class CollectionMixin:
         the entity, or None if no account has access.
 
         ``verdict["conclusive"]`` (when a dict is passed) says why nothing was found:
-        ``True`` only when every other connected account answered with a peer miss,
-        ``False`` as soon as one was unavailable, flooded or failed otherwise — a
-        transient failure proves nothing about the channel.
+        ``True`` only when every other active account is connected and answered
+        with a peer miss, ``False`` as soon as one was not connected, unavailable,
+        flooded or failed otherwise — a transient failure proves nothing about the
+        channel.
         """
+        connected = self._pool.connected_phones()
         conclusive = True
-        for candidate in self._pool.connected_phones() - {exclude}:
+        if verdict is not None:
+            # An active account out of the pool (it failed to connect, or sat out
+            # a flood wait at startup) may well be the one that knows the channel.
+            active = {account.phone for account in await self._db.get_account_summaries(active_only=True)}
+            conclusive = not (active - connected - {exclude})
+        for candidate in connected - {exclude}:
             result = await self._pool.get_client_by_phone(candidate)
             if result is None:
                 conclusive = False
@@ -1267,9 +1275,12 @@ class CollectionMixin:
                     "_discover_phone_for_channel: flood wait on %s: %ds", mask_phone(p), wait_seconds
                 )
                 continue
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as miss:
                 # This account does not know the peer — the only answer that
-                # counts as evidence about the channel itself.
+                # counts as evidence about the channel itself; a request that
+                # kept failing is not that answer.
+                if _transient_miss(miss):
+                    conclusive = False
                 continue
             except Exception:
                 conclusive = False

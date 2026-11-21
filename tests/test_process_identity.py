@@ -46,6 +46,8 @@ def test_start_identity_is_read_in_a_fixed_locale(monkeypatch):
         (RU, None, False),
         ("", "", False),
         ("no digits", "none here", False),
+        ("Wed Oct 21 10:12:13 2026", "Sat Nov 21 10:12:13 2026", False),
+        ("пятница, 19 ноября 2026 г. 21:58:20", C, False),
     ],
     ids=[
         "identical",
@@ -58,6 +60,8 @@ def test_start_identity_is_read_in_a_fixed_locale(monkeypatch):
         "process-gone",
         "both-empty",
         "no-numbers-to-compare",
+        "fixed-locale-record-another-month",
+        "locale-record-same-numbers-other-order",
     ],
 )
 def test_same_start_identity(recorded, current, same):

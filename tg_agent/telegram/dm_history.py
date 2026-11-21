@@ -25,6 +25,7 @@ second cache here would just add a staleness window we don't control.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from telethon_floodgate import run_with_flood_wait_retry
@@ -108,8 +109,12 @@ async def read_dialog_history_since(
     peer: Any,
     min_id: int = 0,
     limit: int = 200,
+    offset_date: datetime | None = None,
 ) -> list[DialogMessage]:
     """Read messages OLDEST-FIRST, strictly above ``min_id`` — catch-up page.
+
+    ``offset_date`` (with ``min_id=0``) starts the page after that moment instead:
+    a dialog with no known message id yet.
 
     Это тот же «намеренно некэшированный путь», что tg_messenger `history_since`
     (создан ровно для синхронизации по водяному знаку; никакого TTL-кэша), но с
@@ -127,16 +132,18 @@ async def read_dialog_history_since(
     # через кэширующий history() нельзя. Оба вызова локальны и громко падают
     # при несовместимом апгрейде пакета (AttributeError), не молча.
     raw = await run_with_flood_wait_retry(
-        lambda: _collect_forward(standalone, peer, min_id, limit),
+        lambda: _collect_forward(standalone, peer, min_id, limit, offset_date),
         operation="history_since",
     )
     return [_to_dialog_message(standalone._to_message(m, dialog_id=int(peer))) for m in raw]
 
 
-async def _collect_forward(standalone: Any, peer: Any, min_id: int, limit: int) -> list:
+async def _collect_forward(standalone: Any, peer: Any, min_id: int, limit: int,
+                           offset_date: datetime | None = None) -> list:
+    since = {"offset_date": offset_date} if offset_date is not None else {}
     return [
         m
         async for m in standalone._client.iter_messages(
-            peer, limit=limit, min_id=min_id, reverse=True
+            peer, limit=limit, min_id=min_id, reverse=True, **since
         )
     ]

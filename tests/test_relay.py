@@ -15,11 +15,13 @@ import os
 import stat
 import struct
 import sys
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from telethon import errors, functions, types
 from telethon.extensions import BinaryReader
-from telethon.sessions import SQLiteSession
+from telethon.sessions import MemorySession, SQLiteSession
 from telethon_floodgate import TelegramRateLimitedError
 
 from tg_agent.telegram import relay
@@ -30,6 +32,7 @@ from tg_agent.telegram.relay import (
     RelayDeliveryUnconfirmedError,
     RelayEndpoint,
     RelayForbiddenError,
+    RelayPeer,
     RelayProtocolError,
     RelayServer,
     RelayTelegramClient,
@@ -60,8 +63,10 @@ def _state(pts: int = 1) -> types.updates.State:
 class FakeOwnerClient:
     """Answers like a relayed real client: raw bytes, via the request's ``read_result``."""
 
-    def __init__(self, handler=None, *, dc_id: int = 2, entities=None):
-        self.session = type("S", (), {"dc_id": dc_id, "_entities": set(entities or ())})()
+    def __init__(self, handler=None, *, dc_id: int = 2, entities=None, session: Any = None):
+        if session is None:
+            session = type("S", (), {"dc_id": dc_id, "_entities": set(entities or ())})()
+        self.session = session
         self.handler = handler or (lambda request: _state())
         self.calls: list[tuple[object, object]] = []
         self.borrowed: list[int] = []
@@ -349,6 +354,18 @@ async def test_owner_entity_cache_preloads_the_client_session():
     assert peer == types.InputPeerUser(user_id=123, access_hash=456)
 
 
+async def test_peers_resolved_through_the_relay_join_the_owner_cache():
+    """The owner's client saw only raw bytes, so Telethon cached nothing there; every
+    later lease seeds from the owner's cache, so the owner parses the answer itself."""
+    user = types.User(id=77, access_hash=88, username="friend")
+    resolved = types.contacts.ResolvedPeer(peer=types.PeerUser(77), chats=[], users=[user])
+    session = MemorySession()
+    async with running({PHONE: FakeOwnerClient(lambda request: resolved, session=session)}) as (_, connection):
+        client = await _client(connection)
+        await client(functions.contacts.ResolveUsernameRequest(username="friend"))
+    assert session.get_input_entity(77) == types.InputPeerUser(user_id=77, access_hash=88)
+
+
 def test_entity_rows_read_sqlite_sessions_with_text_phones(tmp_path):
     session = SQLiteSession(str(tmp_path / "owner"))
     try:
@@ -365,13 +382,29 @@ def test_entity_rows_read_sqlite_sessions_with_text_phones(tmp_path):
         (functions.updates.GetStateRequest, ConnectionError),
         (lambda: functions.upload.SaveFilePartRequest(1, 0, b"offline"), ConnectionError),
         (
+            lambda: functions.messages.UploadMediaRequest(
+                types.InputPeerUser(42, 1), types.InputMediaUploadedPhoto(types.InputFile(1, 1, "p.jpg", ""))
+            ),
+            ConnectionError,
+        ),
+        (
             lambda: functions.InvokeWithoutUpdatesRequest(
                 functions.messages.SendMediaRequest(types.InputPeerUser(42, 1), types.InputMediaDice("🎲"), "")
             ),
             RelayDeliveryUnconfirmedError,
         ),
+        (
+            lambda: functions.messages.ForwardMessagesRequest(
+                types.InputPeerUser(42, 1), [7], types.InputPeerUser(43, 1)
+            ),
+            RelayDeliveryUnconfirmedError,
+        ),
+        (
+            lambda: functions.messages.GetBotCallbackAnswerRequest(types.InputPeerUser(42, 1), 7, data=b"buy"),
+            RelayDeliveryUnconfirmedError,
+        ),
     ],
-    ids=["read", "upload-part", "wrapped-send-media"],
+    ids=["read", "upload-part", "album-media-upload", "wrapped-send-media", "forward", "inline-button-press"],
 )
 async def test_pending_requests_fail_when_the_owner_goes_away(request_type, error):
     accepted = asyncio.Event()
@@ -389,6 +422,34 @@ async def test_pending_requests_fail_when_the_owner_goes_away(request_type, erro
         with pytest.raises(error) as caught:
             await asyncio.wait_for(pending, timeout=5)
         assert type(caught.value) is error
+
+
+class StuckWriter:
+    """The owner's end of a client that stopped reading: its socket buffer is full."""
+
+    def __init__(self):
+        self.aborted = False
+        self.transport = SimpleNamespace(abort=lambda: setattr(self, "aborted", True))
+
+    def is_closing(self):
+        return self.aborted
+
+    def write(self, _data):
+        pass
+
+    async def drain(self):
+        await asyncio.Future()
+
+
+async def test_a_client_that_stops_reading_is_dropped_instead_of_blocking(monkeypatch):
+    monkeypatch.setattr(relay, "_DRAIN_TIMEOUT_SEC", 0.05)
+    peer = RelayPeer(cast(asyncio.StreamWriter, StuckWriter()))
+
+    async with asyncio.timeout(5):
+        with pytest.raises(ConnectionError):
+            await peer.push("events")
+        assert peer.closed
+        await peer.push("events")  # a dropped client costs the owner nothing more
 
 
 async def test_concurrent_requests_are_matched_to_their_callers():

@@ -295,8 +295,8 @@ class ClientLifecycleMixin:
     async def _refresh_premium_flags(self, *, stored: dict[str, bool] | None = None) -> None:
         """Live ``is_premium`` refresh via fetch_me for every connected account (#1749).
 
-        The stored flag is a cache of a Telegram fact; the gateway-catalog mirror
-        never downgrades it, so only this live check may change it. Best-effort
+        The stored flag is a cache of a Telegram fact; a gateway project's mirror
+        takes it from the gateway, which runs this check on connect. Best-effort
         and parallel: a failed fetch keeps the previous value and logs a warning.
         """
         checks = [self._refresh_premium_flag(phone, stored.get(phone) if stored else None)

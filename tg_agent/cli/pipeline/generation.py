@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING
 
 from tg_agent.cli import runtime
@@ -19,8 +20,20 @@ from tg_agent.services.pipeline_service import (
 
 
 async def _generation_pool(config, db) -> ClientPool | None:
-    """Telegram pool for generation; next to a live daemon it runs on its relay (#1868)."""
-    _, pool = await runtime.init_pool(config, db)
+    """Telegram pool for generation; next to a live daemon it runs on its relay (#1868).
+
+    Generation itself needs no Telegram: next to a daemon that serves no usable
+    relay it runs pool-less, and Telegram-side nodes fail loudly (#1521).
+    """
+    try:
+        _, pool = await runtime.init_pool(config, db)
+    except runtime.DaemonRelayUnavailableError as exc:
+        print(
+            f"{exc.format_message()} Generating without Telegram access: Telegram-side nodes "
+            "(react/forward/delete-message/edit-message) will fail.",
+            file=sys.stderr,
+        )
+        return None
     return pool
 
 

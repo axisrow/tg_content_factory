@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 
 _NUMBERS = re.compile(r"\d+")
+# `ps -o lstart=` under LC_ALL=C, e.g. "Sat Nov  7 09:05:01 2026".
+_C_LOCALE_START = re.compile(r"[A-Z][a-z]{2} [A-Z][a-z]{2} [ \d]\d \d{2}:\d{2}:\d{2} \d{4}")
 
 
 def process_executable(pid: int) -> str | None:
@@ -41,11 +43,20 @@ def same_start_identity(recorded: object, current: str | None) -> bool:
 
     A record written before the identity was read in a fixed locale holds the
     start time as the writer's locale spelled it. Its numbers (day, year,
-    clock) are the same in every spelling, so those are compared.
+    clock) are the same in every spelling, so those are compared in order; only
+    the year's place depends on the locale. A record already in the fixed
+    locale names the same process only verbatim: the number fallback cannot
+    see the month.
     """
     if not recorded or not current:
         return False
     if recorded == current:
         return True
+    if _C_LOCALE_START.fullmatch(str(recorded)):
+        return False
     numbers = _NUMBERS.findall(str(recorded))
-    return bool(numbers) and sorted(numbers) == sorted(_NUMBERS.findall(current))
+    return bool(numbers) and _year_last(numbers) == _year_last(_NUMBERS.findall(current))
+
+
+def _year_last(numbers: list[str]) -> list[str]:
+    return sorted(numbers, key=lambda number: len(number) == 4)

@@ -460,6 +460,10 @@ async def toggle_impl(config_path: str, *, account_id: int) -> None:
     """Toggle an account's active state."""
     config, db = await runtime.init_db(config_path)
     try:
+        if isinstance(config.gateway, dict) and config.gateway:
+            # Invert the gateway's live state: the mirror may predate a change made
+            # on the gateway itself (`gateway account disable --shared`).
+            await runtime.refresh_gateway_catalog(config, db)
         accounts = await db.get_account_summaries(active_only=False)
         acc = next((a for a in accounts if a.id == account_id), None)
         if not acc:

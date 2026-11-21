@@ -30,6 +30,7 @@ class LiveTelegramAccess:
         self._connect_lock = asyncio.Lock()
         self._pool = None
         self._startup: set[asyncio.Task] = set()
+        self._warm_failures: dict[str, str] = {}  # account -> last connect failure
         # Set by the relay hub (``on_event(account)``): projects granted the account
         # pull its new DM events at once.
         self.on_event = None
@@ -47,7 +48,13 @@ class LiveTelegramAccess:
         try:
             await self.connection(project, account)
         except Exception as exc:
-            logger.warning("Gateway account unavailable: error=%s", type(exc).__name__)
+            # Housekeeping retries every half minute: report each new failure once.
+            failure = type(exc).__name__
+            log = logger.debug if self._warm_failures.get(account) == failure else logger.warning
+            self._warm_failures[account] = failure
+            log("Gateway account unavailable: error=%s", failure)
+        else:
+            self._warm_failures.pop(account, None)
 
     async def _incoming(self, account: str, event) -> None:
         message = event.message

@@ -164,18 +164,22 @@ class GatewayHub:
         DM arrived on an account they cannot see.
         """
         granted: dict[str, bool] = {}
+        targets: list[RelayPeer] = []
         for peer, project in tuple(self._event_listeners.items()):
             if peer.closed:
                 self._event_listeners.pop(peer, None)
                 continue
             if project not in granted:
                 granted[project] = any(str(row["id"]) == account for row in await self.store.accounts(project))
-            if not granted[project]:
-                continue
-            try:
-                await peer.push("events")
-            except (ConnectionError, RuntimeError):
+            if granted[project]:
+                targets.append(peer)
+        # All at once: a subscriber that stopped reading must not delay the others.
+        outcomes = await asyncio.gather(*(peer.push("events") for peer in targets), return_exceptions=True)
+        for peer, outcome in zip(targets, outcomes, strict=True):
+            if isinstance(outcome, (ConnectionError, RuntimeError)):
                 self._event_listeners.pop(peer, None)
+            elif isinstance(outcome, BaseException):
+                raise outcome
 
     async def _project_account(self, project: str, account_id: str) -> str:
         if account_id not in {str(row["id"]) for row in await self.store.accounts(project)}:

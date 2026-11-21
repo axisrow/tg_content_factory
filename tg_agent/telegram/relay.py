@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from telethon import TelegramClient, errors
+from telethon import TelegramClient, errors, utils
 from telethon.errors import RPCError
 from telethon.extensions import BinaryReader
 from telethon.tl import functions
@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 RELAY_PROTOCOL = 1
 _LINE_LIMIT = 64 * 1024 * 1024
 _HANDSHAKE_TIMEOUT_SEC = 10.0
+_DRAIN_TIMEOUT_SEC = 30.0
 
 # Requests a relayed client must never run on the owner's authorization: they
 # would log the owner out, tear down the account's sessions, or take the account
@@ -82,11 +83,23 @@ _PASS_THROUGH_WRAPPERS = tuple(
     if wrapper is not None
 )
 _MAX_WRAPPER_DEPTH = 8
-_SEND_REQUESTS = (
-    functions.messages.SendMessageRequest,
-    functions.messages.SendMediaRequest,
-    functions.messages.SendMultiMediaRequest,
+# Requests whose repeat changes nothing visible on Telegram: reads, file parts (a
+# part re-sent under the same file id overwrites itself) and album media uploads
+# (no message until SendMultiMedia). Any other request may have taken effect when
+# the link broke, so its loss is "delivery unconfirmed".
+_READ_PREFIXES = ("Get", "Search", "Resolve", "Check")
+_REPEATABLE_WRITES = (
+    functions.upload.SaveFilePartRequest,
+    functions.upload.SaveBigFilePartRequest,
+    functions.messages.UploadMediaRequest,
 )
+_ACTION_READS = (functions.messages.GetBotCallbackAnswerRequest,)  # presses an inline button
+
+
+def _repeatable(query: Any) -> bool:
+    if isinstance(query, _REPEATABLE_WRITES):
+        return True
+    return type(query).__name__.startswith(_READ_PREFIXES) and not isinstance(query, _ACTION_READS)
 
 
 class RelayError(RuntimeError):
@@ -119,7 +132,7 @@ class RelayAccountUnavailableError(ConnectionError):
 
 
 class RelayDeliveryUnconfirmedError(ConnectionError):
-    """The relay link broke after a send request could have reached the owner."""
+    """The relay link broke after a write request could have reached the owner."""
 
 
 class RelayRemoteError(RelayError):
@@ -289,6 +302,19 @@ def _read_raw(reader: BinaryReader) -> bytes:
     return reader.read()
 
 
+async def _remember_entities(client: Any, read_result: Callable[[BinaryReader], Any], raw: bytes) -> None:
+    """Cache the answer's users and chats on the owner, as Telethon does after a local call.
+
+    The owner's client saw only raw bytes, and every relayed lease seeds its cache
+    from the owner's: without this each lease resolves the same peers again.
+    """
+    try:
+        with BinaryReader(raw) as reader:
+            await utils.maybe_async(client.session.process_entities(read_result(reader)))
+    except Exception:  # the client parses the same bytes and reports a failure itself
+        logger.debug("relay: the owner could not cache an answer's entities", exc_info=True)
+
+
 def decode_request(body: str) -> TLRequest:
     with BinaryReader(base64.b64decode(body)) as reader:
         request = reader.tgread_object()
@@ -353,7 +379,14 @@ class RelayPeer:
             if self._writer.is_closing():
                 return
             self._writer.write(_dump(message))
-            await self._writer.drain()
+            try:
+                async with asyncio.timeout(_DRAIN_TIMEOUT_SEC):
+                    await self._writer.drain()
+            except TimeoutError:
+                # A client that stopped reading (hung, SIGSTOPped) must not hold the
+                # owner's tasks hostage: drop it, as if its connection broke.
+                self._writer.transport.abort()
+                raise ConnectionError("the relay client stopped reading; connection dropped") from None
 
 
 class RelayServer:
@@ -477,6 +510,7 @@ class RelayServer:
         request = decode_request(str(message.get("body") or ""))
         check_allowed(request)
         client = await self._owner.client(grant, str(message.get("phone") or ""))
+        read_result = request.read_result
         request.read_result = _read_raw  # the client parses the answer itself
         dc_id = message.get("dc")
         home = getattr(getattr(client, "session", None), "dc_id", None)
@@ -490,6 +524,7 @@ class RelayServer:
             raw = await client(request)
         if not isinstance(raw, (bytes, bytearray)):
             raise RelayError(f"the owner returned a parsed {type(raw).__name__}, not raw bytes")
+        await _remember_entities(client, read_result, bytes(raw))
         return base64.b64encode(bytes(raw)).decode("ascii")
 
     # BotFather setup is a conversation: it waits for replies, which Telegram
@@ -843,7 +878,7 @@ class RelaySender:
             query = query.query
         try:
             raw = await self._connection.call(
-                "invoke", delivery_sensitive=isinstance(query, _SEND_REQUESTS),
+                "invoke", delivery_sensitive=not _repeatable(query),
                 phone=self._phone, dc=self.dc_id, body=body,
             )
         except RelayRemoteError as exc:

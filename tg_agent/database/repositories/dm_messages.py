@@ -14,13 +14,14 @@ Prune/TTL у архива нет сознательно — это его смы
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 import aiosqlite
 
 from tg_agent.database.pool import ReadConnection
 from tg_agent.models import DmMessage
-from tg_agent.utils.datetime import parse_datetime
+from tg_agent.utils.datetime import normalize_utc, parse_datetime
 
 if TYPE_CHECKING:
     from tg_agent.database.facade import Database
@@ -83,6 +84,12 @@ class DmMessagesRepository:
         )
         row = await cur.fetchone()
         return int(row["n"]) if row and row["n"] is not None else 0
+
+    async def latest_message_date(self) -> datetime | None:
+        """Дата новейшего сообщения архива: докуда проект уже видел переписку."""
+        cur = await self._db.execute("SELECT MAX(message_date) AS d FROM dm_messages")
+        row = await cur.fetchone()
+        return normalize_utc(parse_datetime(row["d"])) if row else None
 
     async def count(self, phone: str | None = None) -> int:
         """Число сообщений архива; с `phone` — по одному аккаунту."""

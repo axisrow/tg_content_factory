@@ -168,6 +168,7 @@ class ClientPool(
         self._auth = auth
         # A relayed pool (#1868) runs every request on the session owner's
         # connection; the owner keeps the auth key and the shared limiter state.
+        self.relay = relay
         self._relay = relay
         self._require_rpc_guard = True
         self._db = db

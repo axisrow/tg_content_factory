@@ -130,6 +130,22 @@ async def test_a_legacy_serve_daemon_fails_at_once_without_the_grace_wait(config
     pool_cls.assert_not_called()
 
 
+async def test_generation_runs_without_telegram_next_to_a_legacy_serve_daemon(
+    config, daemon, pool_spy, monkeypatch, capsys
+):
+    """Generation needs no Telegram: a daemon without a usable relay does not stop it (#1521)."""
+    from tg_agent.cli.pipeline.generation import _generation_pool
+
+    pool_cls, _auth_cls, _pool = pool_spy
+    monkeypatch.setattr(worker_handoff, "daemon_is_legacy_panel", lambda _config: True)
+
+    assert await _generation_pool(config, _db()) is None
+
+    err = capsys.readouterr().err
+    assert "legacy `serve` panel" in err and "without Telegram access" in err
+    pool_cls.assert_not_called()
+
+
 def test_the_legacy_panel_is_recognised_by_its_command(config, monkeypatch):
     monkeypatch.setattr(worker_handoff, "read_pid", lambda _path: 4242)
     monkeypatch.setattr(worker_handoff.process_control, "_process_command",

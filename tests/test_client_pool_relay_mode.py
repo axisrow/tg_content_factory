@@ -62,6 +62,21 @@ async def test_relayed_pool_runs_requests_on_the_owner_connection(relayed_pool):
     assert raw.session.get_input_entity(7) == types.InputPeerUser(user_id=7, access_hash=8)
 
 
+async def test_native_leases_resolve_cached_peers_offline_too(relayed_pool):
+    """Sends, publishing and live reads take native leases: without the owner's
+    cache each of them would spend the owner's resolve budget on known peers."""
+    pool, _connection, _owner = relayed_pool
+    await pool.initialize()
+
+    result = await pool.get_native_client_by_phone(PHONE)
+    assert result is not None
+    session, phone = result
+    try:
+        assert session.raw_client.session.get_input_entity(7) == types.InputPeerUser(user_id=7, access_hash=8)
+    finally:
+        await pool.release_client(phone, session=session)
+
+
 async def test_relayed_pool_leaves_the_shared_limiter_state_to_the_owner(relayed_pool, db):
     pool, _connection, _owner = relayed_pool
     await pool.initialize()

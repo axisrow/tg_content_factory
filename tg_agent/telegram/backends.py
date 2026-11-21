@@ -1678,9 +1678,9 @@ class RelayBackend(TelegramBackend):
             self.client_preparer(client, account)
         client.flood_sleep_threshold = 0
         await client.connect()
-        if not ephemeral:
-            # Cached peers resolve offline, like on the owner's own session.
-            await client.load_owner_entities()
+        # Cached peers resolve offline, like on the owner's own session — native
+        # leases too: sends, publishing and live reads take those.
+        await client.load_owner_entities()
         return BackendClientLease(
             phone=account.phone,
             session=TelegramTransportSession(client),

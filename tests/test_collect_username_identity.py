@@ -21,7 +21,7 @@ from telethon.tl.types import InputPeerChannel, InputPeerUser, PeerChannel
 from tests.helpers import AsyncIterMessages, FakeCliTelethonClient, make_mock_pool
 from tg_agent.collection_queue import CollectionQueue
 from tg_agent.config import SchedulerConfig
-from tg_agent.models import Channel
+from tg_agent.models import Account, Channel
 from tg_agent.telegram.collector import Collector
 
 STORED_ID = 123
@@ -44,21 +44,27 @@ def _message(msg_id: int, text: str):
     )
 
 
-def _resolver(username_owner):
-    """A session that has never seen the stored id and resolves @ch live."""
+def _resolver(username_owner, id_answer=None):
+    """A session that resolves @ch live; the stored id answers ``id_answer``,
+    by default the miss of a session that has never seen it."""
 
     def resolve(peer):
-        if isinstance(peer, str):
-            return username_owner
         if isinstance(peer, PeerChannel):
-            return ValueError("Could not find the input entity")
+            return id_answer if id_answer is not None else ValueError("Could not find the input entity")
         return username_owner
 
     return resolve
 
 
 async def _collect(
-    db, real_pool_harness_factory, username_owner, *, username: str | None = "ch", dialogs_warm: bool = False
+    db,
+    real_pool_harness_factory,
+    username_owner,
+    *,
+    username: str | None = "ch",
+    dialogs_warm: bool = False,
+    id_answer=None,
+    idle_phone: str | None = None,
 ):
     await db.add_channel(Channel(channel_id=STORED_ID, title="Tracked", username=username))
     channel = (await db.get_channels())[0]
@@ -66,12 +72,15 @@ async def _collect(
     harness.queue_cli_client(
         phone=PHONE,
         client=FakeCliTelethonClient(
-            entity_resolver=_resolver(username_owner),
+            entity_resolver=_resolver(username_owner, id_answer),
             iter_messages_factory=lambda *args, **kwargs: AsyncIterMessages([_message(11, "post")]),
         ),
     )
     await harness.add_account(PHONE, session_string="session-a", is_primary=True)
     await harness.initialize_connected_accounts()
+    if idle_phone is not None:
+        # Active, but not connected: it may well know the channel.
+        await db.add_account(Account(phone=idle_phone, session_string="session-b"))
     if dialogs_warm:
         harness.pool.mark_dialogs_fetched(PHONE)
     collector = Collector(harness.pool, db, SchedulerConfig())
@@ -200,34 +209,91 @@ async def test_numeric_id_no_account_knows_is_terminal(db, real_pool_harness_fac
     assert await _stored(db) == 0
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("username", "username_owner"),
+    [(None, ValueError("Could not find the input entity")), ("ch", _vacant_as_telethon_reports_it())],
+    ids=["numeric-id", "vacant-username"],
+)
+async def test_unknown_id_is_not_terminal_while_an_account_is_not_connected(
+    db, real_pool_harness_factory, username, username_owner
+):
+    """The account that knows the channel may be the one that failed to connect."""
+    _, _, _, refusal = await _collect(
+        db, real_pool_harness_factory, username_owner, username=username, dialogs_warm=True, idle_phone="+7002"
+    )
+
+    assert refusal is None
+    assert await _stored(db) == 0
+
+
+@pytest.mark.anyio
+async def test_a_failing_request_is_not_a_terminal_miss(db, real_pool_harness_factory):
+    """Telethon reports a request that kept failing (-500) as a ValueError too."""
+    _, _, _, refusal = await _collect(
+        db,
+        real_pool_harness_factory,
+        ValueError("Could not find the input entity"),
+        username=None,
+        dialogs_warm=True,
+        id_answer=ValueError("Request was unsuccessful 6 time(s)"),
+    )
+
+    assert refusal is None
+
+
+@pytest.mark.anyio
+async def test_reoccupied_username_of_a_channel_whose_id_resolves_goes_to_review(db, real_pool_harness_factory):
+    """The tracked channel lives on under a new name: the operator reviews the rename."""
+    card = SimpleNamespace(id=STORED_ID, username="renamed", title="Tracked")
+
+    channel, _, _, refusal = await _collect(
+        db, real_pool_harness_factory, InputPeerChannel(channel_id=FOREIGN_ID, access_hash=1), id_answer=card
+    )
+
+    assert refusal is None
+    assert await _stored(db) == 0
+    row = await db.repos.channels.get_channel_by_pk(channel.id)
+    assert row is not None and row.username == "renamed"
+
+
 # ---------------------------------------------------------------------------
 # Rediscovery verdict: only a peer miss is evidence about the channel
 # ---------------------------------------------------------------------------
 
 
-async def _verdict(get_client_by_phone) -> dict[str, bool]:
+async def _verdict(get_client_by_phone, *, idle: tuple[str, ...] = ()) -> dict[str, bool]:
     pool = make_mock_pool()
     pool.get_client_by_phone = get_client_by_phone
-    pool.connected_phones = MagicMock(return_value={"+7002"})
+    pool.connected_phones = MagicMock(return_value={PHONE, "+7002"})
     pool.is_dialogs_fetched = MagicMock(return_value=True)
     pool.release_client = AsyncMock()
-    collector = Collector(pool, MagicMock(), SchedulerConfig())
+    db = MagicMock()
+    db.get_account_summaries = AsyncMock(return_value=[SimpleNamespace(phone=p) for p in (PHONE, "+7002", *idle)])
+    collector = Collector(pool, db, SchedulerConfig())
     verdict: dict[str, bool] = {}
     assert await collector._discover_phone_for_channel(STORED_ID, PHONE, verdict=verdict) is None
     return verdict
 
 
+def _missing_client(failure):
+    client = AsyncMock()
+    client.get_entity = AsyncMock(side_effect=failure)
+    return AsyncMock(return_value=(client, "+7002"))
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize(
     ("failure", "conclusive"),
-    [(ValueError("no access"), True), (RuntimeError("network down"), False)],
-    ids=["peer-miss", "transient-error"],
+    [
+        (ValueError("no access"), True),
+        (RuntimeError("network down"), False),
+        (ValueError("Request was unsuccessful 6 time(s)"), False),
+    ],
+    ids=["peer-miss", "transient-error", "failing-request"],
 )
 async def test_discovery_verdict_counts_only_peer_misses(failure, conclusive):
-    client = AsyncMock()
-    client.get_entity = AsyncMock(side_effect=failure)
-
-    verdict = await _verdict(AsyncMock(return_value=(client, "+7002")))
+    verdict = await _verdict(_missing_client(failure))
 
     assert verdict == {"conclusive": conclusive}
 
@@ -235,5 +301,12 @@ async def test_discovery_verdict_counts_only_peer_misses(failure, conclusive):
 @pytest.mark.anyio
 async def test_discovery_verdict_is_inconclusive_when_an_account_is_unavailable():
     verdict = await _verdict(AsyncMock(return_value=None))
+
+    assert verdict == {"conclusive": False}
+
+
+@pytest.mark.anyio
+async def test_discovery_verdict_is_inconclusive_while_an_active_account_is_not_connected():
+    verdict = await _verdict(_missing_client(ValueError("no access")), idle=("+7003",))
 
     assert verdict == {"conclusive": False}

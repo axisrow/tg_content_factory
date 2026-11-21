@@ -21,7 +21,7 @@ from tg_agent.cli.commands.common import (
     resolve_channel,
     run_async,
 )
-from tg_agent.collection_queue import TERMINAL_CODE_MISMATCH
+from tg_agent.collection_queue import TERMINAL_CODE_MISMATCH, TERMINAL_USERNAME_CODES
 from tg_agent.database.bundles import ChannelBundle
 from tg_agent.filters.probe import ProbeMessage, probe_channel_snapshots
 from tg_agent.models import Channel, CollectionTaskStatus, StatsAllTaskPayload
@@ -49,6 +49,7 @@ from tg_agent.telegram.collector import (
     UsernameResolveRateLimitedError,
 )
 from tg_agent.telegram.collector_resolve import TRANSIENT_REVIEW_REASONS
+from tg_agent.telegram.collector_types import ChannelCollectionTerminalError
 from tg_agent.utils.json import safe_json_dumps
 
 
@@ -839,6 +840,10 @@ async def _resolve_card_miss_fallback(db, pool, ch, *, numeric_review_reason, re
     # after the resolved id matches the stored one — a username reoccupied by
     # another channel must never leak a foreign card onto this row.
     info = await pool.resolve_channel(ch.username, signal_gone=True, **resolve_kwargs)
+    if info and info.get("code") == "UsernameInvalidError":
+        # The stored name can never resolve again: terminal (#1787), so the bulk
+        # passes defer the row instead of re-burning the resolve budget.
+        await _stamp_terminal(db, ch, "UsernameInvalidError")
     resolved = (
         abs(int(info.get("channel_id") or 0))
         if info and not info.get("gone") and not info.get("review") else 0
@@ -1625,6 +1630,10 @@ async def collect_impl(
                 f"{run_after.astimezone().isoformat()} "
                 f"(retry in {exc.retry_after_sec}s)"
             )
+        except ChannelCollectionTerminalError as exc:
+            await db.update_collection_task(task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500])
+            await stamp_terminal_verdict(db, ch, exc)
+            print(f"Channel {ch.channel_id} cannot be collected: {exc}")
         except Exception as exc:
             await db.update_collection_task(
                 task_id,
@@ -1636,6 +1645,12 @@ async def collect_impl(
         if pool:
             await pool.disconnect_all()
         await db.close()
+
+
+async def stamp_terminal_verdict(db, channel, exc: ChannelCollectionTerminalError) -> None:
+    """Stamp the row as the collection queue does, so bulk collection defers it (#1783)."""
+    if exc.code in TERMINAL_USERNAME_CODES and channel.id is not None:
+        await _stamp_terminal(db, channel, exc.code)
 
 
 # --------------------------------------------------------------------------- #

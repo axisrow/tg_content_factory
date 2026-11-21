@@ -23,6 +23,7 @@ from tg_agent.gateway.client import GatewayRequestError
 from tg_agent.models import DmMessage, IncomingDm
 from tg_agent.telegram.dm_catchup import load_dm_catchup_settings
 from tg_agent.telegram.dm_history import read_dialog_history_since
+from tg_agent.utils.datetime import normalize_utc
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,10 @@ class GatewayDmConsumer:
                 if loop.time() >= next_refresh:
                     await ProjectAccountCatalog(self.db, self.client).refresh()
                     next_refresh = loop.time() + _CATALOG_REFRESH_SEC
+                    try:
+                        await self._connect_new_accounts()
+                    except Exception as exc:  # DM delivery goes on regardless
+                        logger.warning("Gateway accounts not reconnected: %s", type(exc).__name__)
                 await self.consume()
             except GatewayRequestError as exc:
                 self._resync_required = exc.status == 410
@@ -81,6 +86,14 @@ class GatewayDmConsumer:
                     await self._events_waiting.wait()
             except TimeoutError:
                 pass
+
+    async def _connect_new_accounts(self):
+        """Accounts the gateway serves now (granted, or out of a flood wait, after this
+        worker started) join the relayed pool; a flooded one would only fail again."""
+        now = datetime.now(timezone.utc)
+        phones = [account.phone for account in await self.db.get_account_summaries(active_only=True)
+                  if account.flood_wait_until is None or normalize_utc(account.flood_wait_until) <= now]
+        await self.pool.initialize(phones=phones)
 
     async def consume(self):
         cursor = int(await self.db.get_setting("gateway_event_cursor") or 0)
@@ -130,6 +143,9 @@ class GatewayDmConsumer:
         # recovery are subsequently replayed and deduplicated by local unique keys.
         floor = await self.client.event_floor()
         settings = await load_dm_catchup_settings(self.db)
+        # How far the project had seen before it fell behind, taken before this
+        # recovery archives anything newer.
+        seen_until = await self.db.repos.dm_messages.latest_message_date()
         for account in await self.client.accounts():
             if not account["active"]:
                 continue
@@ -142,16 +158,19 @@ class GatewayDmConsumer:
                 mode, staleness = settings.resolve(phone, chat)
                 if mode == "ignore":
                     continue
-                await self._recover_dialog(phone, chat, mode, staleness)
+                last = dialog.get("last_message_date")
+                # A conversation started while the project was behind: read on from there.
+                since = seen_until if seen_until and last and normalize_utc(last) > seen_until else None
+                await self._recover_dialog(phone, chat, mode, staleness, since=since)
         await self.db.set_setting("gateway_event_cursor", str(floor))
         await self.client.acknowledge(floor)
 
-    async def _recover_dialog(self, phone, chat, mode, staleness):
+    async def _recover_dialog(self, phone, chat, mode, staleness, *, since=None):
         cursor = await self.db.repos.dm_messages.max_message_id(phone, chat)
-        if not cursor:
-            # Nothing of this dialog is archived, so there is no known point to
-            # read on from, and starting at zero pulls its whole history.
-            # Backfill is the explicit `dialogs archive-history`.
+        if not cursor and since is None:
+            # Nothing of this dialog is archived and nothing in it is newer than what
+            # the project saw: no known point to read on from, and starting at zero
+            # pulls its whole history. Backfill is the explicit `dialogs archive-history`.
             return
         acquired = await self.pool.get_client_by_phone(phone)
         if acquired is None:
@@ -160,7 +179,8 @@ class GatewayDmConsumer:
         try:
             while True:
                 rows = await read_dialog_history_since(
-                    session.raw_client, api_id=0, api_hash="", peer=chat, min_id=cursor, limit=200)
+                    session.raw_client, api_id=0, api_hash="", peer=chat, min_id=cursor, limit=200,
+                    offset_date=None if cursor else since)
                 if not rows:
                     break
                 async with self.db.transaction() as conn:

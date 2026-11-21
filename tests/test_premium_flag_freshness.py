@@ -3,9 +3,9 @@
 The factory ``is_premium`` flag is a *cache of a Telegram fact*, and three
 paths used to let it go stale or get corrupted:
 
-* the gateway-catalog mirror (``sync_gateway_catalog``) overwrote it verbatim,
-  so a stale gateway side flipped a Premium account to No at every pool start
-  (the repository-level no-downgrade rule is pinned in
+* the gateway-catalog mirror (``sync_gateway_catalog``) overwrote it verbatim
+  while the gateway side never re-checked it (since #1868 the gateway verifies
+  it on every connect and the mirror takes it as is — pinned in
   ``tests/repositories/test_accounts_repository.py``);
 * pool startup verified premium live for *new* accounts only;
 * premium-gated operations trusted the stored flag and refused without a

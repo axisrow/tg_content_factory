@@ -794,6 +794,22 @@ class TestSendViaBotApi:
         with patch("tg_agent.telegram.notifier.aiohttp.ClientSession", return_value=session):
             assert await _send_via_bot_api("123456:ABC-DEF", 789, "Test message") is False
 
+    @pytest.mark.anyio
+    async def test_send_via_bot_api_stalled_connect_can_retry(self, monkeypatch):
+        """A connect that never completes sent nothing: the notification stays retryable."""
+        real_timeout = aiohttp.ClientTimeout
+
+        async def stalled_connect(*_args, **_kwargs):
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(aiohttp.TCPConnector, "_create_connection", stalled_connect)
+        # The notifier's own timeouts, a hundred times shorter.
+        monkeypatch.setattr(
+            aiohttp, "ClientTimeout", lambda **kw: real_timeout(**{k: v / 100 for k, v in kw.items()})
+        )
+
+        assert await _send_via_bot_api("123456:ABC-DEF", 789, "Test message") is False
+
 
 class TestNotifierSendTimeoutUnconfirmed:
     """Orphaned-request guard (issues #1267/#1268/#1260, class #1239).

@@ -195,6 +195,49 @@ def restore_flood_guards(
     return counts
 
 
+def merge_flood_snapshots(stored: Any, own: dict[str, Any], phones: set[str]) -> dict[str, Any]:
+    """``own`` for the accounts this pool holds (``phones``), ``stored`` for the rest.
+
+    An account has one owner at a time (one auth key, one connection), so a
+    daemon-less CLI on one account no longer erases what another spent on its own.
+    A stored payload this build cannot read is replaced.
+    """
+    if not isinstance(stored, dict) or stored.get("version") != _VERSION:
+        return own
+    try:
+        old_gate, own_gate = stored.get("gate") or {}, own.get("gate") or {}
+        categories: dict[str, dict[str, Any]] = {}
+        for category, entries in (old_gate.get("categories") or {}).items():
+            categories[category] = {phone: entry for phone, entry in entries.items() if phone not in phones}
+        for category, entries in (own_gate.get("categories") or {}).items():
+            categories.setdefault(category, {}).update(
+                {phone: entry for phone, entry in entries.items() if phone in phones}
+            )
+        peers = [row for row in old_gate.get("peers") or () if row[0] not in phones]
+        peers += [row for row in own_gate.get("peers") or () if row[0] in phones]
+        # A carried cooldown counts from its own snapshot's time, not from ours.
+        elapsed = max(0.0, float(own["taken_at"]) - float(stored["taken_at"]))
+        breaker = [
+            {**entry, "open_for": max(0.0, float(entry.get("open_for") or 0.0) - elapsed)}
+            for entry in stored.get("breaker") or ()
+            if entry["phone"] not in phones
+        ]
+        breaker += [entry for entry in own.get("breaker") or () if entry["phone"] in phones]
+    except (AttributeError, TypeError, ValueError, KeyError, IndexError) as exc:
+        logger.warning("flood-guard snapshot: stored state replaced (%s)", type(exc).__name__)
+        return own
+    # ponytail: the process-wide ceiling stays the writer's; merge its stamps if
+    # two daemon-less owners ever have to share one outgoing budget.
+    merged = {key: value for key, value in own.items() if key not in ("gate", "breaker")}
+    gate = {key: value for key, value in (("categories", {c: e for c, e in categories.items() if e}),
+                                          ("peers", peers)) if value}
+    if gate:
+        merged["gate"] = gate
+    if breaker:
+        merged["breaker"] = breaker
+    return merged
+
+
 class FloodSnapshotMixin:
     """Persist and restore a pool's flood guards (owner pools only)."""
 
@@ -206,16 +249,32 @@ class FloodSnapshotMixin:
         }
 
     async def persist_flood_guard_snapshot(self) -> None:
-        """Best-effort: write the guards' state; a failure never breaks the caller."""
+        """Best-effort: write the guards' state; a failure never breaks the caller.
+
+        Read-modify-write in one transaction, merged per account: another owner's
+        concurrent save of other accounts survives ours (:func:`merge_flood_snapshots`).
+        """
         db = getattr(self, "_db", None)
         if db is None or vars(self).get("_relay") is not None:
             return  # a relayed pool is gated by the owner, whose snapshot is authoritative
         restored = vars(self).get("_flood_guard_restore_task")
-        if restored is None or not restored.done():
+        if restored is None or not restored.done() or vars(self).get("_flood_guard_restore_failed"):
             return  # a pool that never replayed the stored state must not overwrite it
         try:
-            payload = snapshot_flood_guards(**self._flood_guards())
-            await db.set_setting(FLOOD_GUARD_SNAPSHOT_SETTING, json.dumps(payload, separators=(",", ":")))
+            own = snapshot_flood_guards(**self._flood_guards())
+            async with db.transaction() as conn:
+                cursor = await conn.execute("SELECT value FROM settings WHERE key = ?", (FLOOD_GUARD_SNAPSHOT_SETTING,))
+                row = await cursor.fetchone()
+                try:
+                    stored = json.loads(row[0]) if row and row[0] else None
+                except (TypeError, ValueError):
+                    stored = None
+                payload = merge_flood_snapshots(stored, own, set(getattr(self, "clients", {})))
+                await conn.execute(
+                    "INSERT INTO settings (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (FLOOD_GUARD_SNAPSHOT_SETTING, json.dumps(payload, separators=(",", ":"))),
+                )
         except Exception:
             logger.debug("Failed to persist the flood-guard snapshot", exc_info=True)
 
@@ -226,6 +285,10 @@ class FloodSnapshotMixin:
         try:
             value = await db.get_setting(FLOOD_GUARD_SNAPSHOT_SETTING)
         except Exception:
+            # The stored accounting is unknown, not empty: saving over it would
+            # hand its spent budget back on the next start.
+            self._flood_guard_restore_failed = True
+            logger.warning("flood-guard snapshot not restored; this pool will not save over it", exc_info=True)
             return
         if not value:
             return

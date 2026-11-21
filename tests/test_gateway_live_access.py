@@ -6,15 +6,19 @@ projects use it, one DM handler, and every granted project sees each DM event.
 """
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from telethon_floodgate import TelegramRateLimitedError
 
+from tg_agent.gateway import runtime
 from tg_agent.gateway.store import GatewayStore
 from tg_agent.gateway.telegram import LiveTelegramAccess
 from tg_agent.telegram.session_lock import release_all_session_locks
+from tg_shared.auth import TelegramAuth
 
 pytestmark = pytest.mark.aiosqlite_serial
 
@@ -93,6 +97,50 @@ async def test_projects_share_one_live_connection_and_every_project_sees_each_dm
         await access.close()
         await store.close()
         release_all_session_locks()
+
+
+async def test_housekeeping_reconnects_accounts_that_could_not_connect_at_startup(monkeypatch):
+    """An account flooded when the gateway started connects once the wait is over."""
+    monkeypatch.setattr(runtime, "FLOOD_GUARD_PERSIST_INTERVAL_SEC", 0.01)
+    retried = asyncio.Event()
+    starts = []
+
+    class Store:
+        async def expire_events(self, *, now):
+            pass
+
+    class Access:
+        async def start(self):
+            starts.append(1)
+            if len(starts) >= 2:
+                retried.set()
+
+    housekeeping = asyncio.create_task(runtime._housekeeping(cast(GatewayStore, Store()), Access()))
+    try:
+        async with asyncio.timeout(5):
+            await retried.wait()
+    finally:
+        housekeeping.cancel()
+        await asyncio.gather(housekeeping, return_exceptions=True)
+
+
+async def test_a_repeated_account_failure_is_reported_once(tmp_path, monkeypatch, caplog):
+    store = GatewayStore(tmp_path / "gateway")
+    await store.open()
+    access = LiveTelegramAccess(store, cast(TelegramAuth, LocalAuth()))
+
+    async def unavailable(project, account):
+        raise ConnectionError("network down")
+
+    monkeypatch.setattr(access, "connection", unavailable)
+    try:
+        with caplog.at_level(logging.DEBUG, logger="tg_agent.gateway.telegram"):
+            await access._warm(PROJECTS[0], "account")
+            await access._warm(PROJECTS[0], "account")  # the next housekeeping round
+        assert [record.levelno for record in caplog.records] == [logging.WARNING, logging.DEBUG]
+    finally:
+        await access.close()
+        await store.close()
 
 
 async def test_cold_account_connection_respects_a_pending_flood_write(tmp_path, monkeypatch):
