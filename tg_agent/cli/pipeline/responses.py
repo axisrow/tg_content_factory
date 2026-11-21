@@ -224,8 +224,8 @@ def render_pipeline_run_result(args: requests.PipelineRunCommand, run_obj: Any) 
         print(run_obj.generated_text)
     if args.publish:
         print(
-            "Publish requested — publishing via targets is not implemented in CLI; "
-            "Use the web UI or implement account targets."
+            "Publish requested — this command does not publish to targets; "
+            "publish the run with `tg-agent pipeline publish`."
         )
 
 

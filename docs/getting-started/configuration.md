@@ -6,18 +6,14 @@
 
 ```yaml
 telegram:
-  api_id: ${TELEGRAM_API_ID}
-  api_hash: ${TELEGRAM_API_HASH}
+  api_id: ${TG_API_ID}
+  api_hash: ${TG_API_HASH}
 
 database:
-  path: data/db.sqlite
-
-web:
-  host: 127.0.0.1
-  port: 8000
+  path: data/tg_search.db
 ```
 
-По умолчанию веб-панель слушает только `127.0.0.1` (localhost) — доступ есть только с этой же машины. Чтобы открыть доступ из локальной сети, осознанно смените `host` на `0.0.0.0` **и** задайте надёжный `WEB_PASS`: `serve` откажется стартовать на не-loopback адресе со слабым или пустым паролем.
+Секция `web:` (`host`, `port`, `password`) нужна только опциональной веб-панели (`serve`, пакет `tg-webui`); воркер-демон HTTP-сервер не поднимает. Он слушает только локальный relay на 127.0.0.1 (случайный порт, токен) и публикует его endpoint рядом с файлом БД (`<db>.relay.json`, права 0600): по нему CLI-процессы выполняют Telegram-запросы на подключении демона.
 
 ## Переменные окружения
 
@@ -27,20 +23,14 @@ web:
 
 | Переменная | Описание |
 |-----------|----------|
-| `TELEGRAM_API_ID` | API ID из my.telegram.org |
-| `TELEGRAM_API_HASH` | API Hash из my.telegram.org |
+| `TG_API_ID` | API ID из my.telegram.org |
+| `TG_API_HASH` | API Hash из my.telegram.org |
 
-### Аутентификация Web UI
-
-| Переменная | Описание |
-|-----------|----------|
-| `WEB_PASS` | Пароль для входа в Web UI (username: `admin`) |
-
-### AI-агент
+### Агент контент-пайплайнов и провайдеры LLM
 
 | Переменная | Описание |
 |-----------|----------|
-| `ANTHROPIC_API_KEY` | Ключ Anthropic API (для Claude-backend агента) |
+| `ANTHROPIC_API_KEY` | Ключ Anthropic API (бэкенд `claude-agent-sdk` агента пайплайнов) |
 | `CLAUDE_CODE_OAUTH_TOKEN` | OAuth-токен Claude Code (альтернатива API-ключу) |
 | `OPENAI_API_KEY` | OpenAI (LLM провайдер для пайплайнов) |
 | `COHERE_API_KEY` | Cohere (LLM провайдер) |
@@ -81,21 +71,30 @@ web:
     → прежнее предупреждение. `tg-agent key status` показывает источник,
     `tg-agent key clear` удаляет ключ. Слой отключается `TG_AGENT_SECRET_STORE=off`.
 
+!!! tip "Режим gateway"
+    Проекту, подключённому к общему gateway (`tg-agent global enable --account PHONE`),
+    свой `SESSION_ENCRYPTION_KEY` не нужен: сессиями владеет gateway, а живые команды
+    проекта выполняются на его подключении через relay.
+
 !!! danger "Session string = полный доступ к аккаунту"
     Расшифрованная StringSession эквивалентна паролю аккаунта. Перенос сессий
-    между инстансами и правила безопасности (export/import, HTTPS, audit) описаны
-    в гайде [Operators → SSO Session Transfer](../operators/sso-session-transfer.md).
+    между инстансами и правила безопасности (export/import, защищённый канал,
+    защита от перезаписи) описаны в гайде
+    [Operators → SSO Session Transfer](../operators/sso-session-transfer.md).
 
 ## Первый запуск
 
-Веб-панель — устаревшая (legacy) поверхность в опциональном PyPI-пакете `tg-webui` ([github.com/axisrow/tg_webui](https://github.com/axisrow/tg_webui)), в `pip install tg-agent` он не входит: установите `pip install tg-webui` (потребуется также `tg-shared`, его на PyPI пока нет). Без пакета `serve` завершится с кодом 1 и подсказкой; фоновому воркеру (`restart` / `worker`) веб-панель не нужна.
-
 ```bash
-# Запустить Web UI (нужен пакет tg-webui)
-python -m tg_agent.main serve
+# Авторизовать аккаунт (интерактивно: телефон + код входа — вводит человек)
+python -m tg_agent.main account add
+python -m tg_agent.main account list
 
-# Или указать пароль напрямую
-python -m tg_agent.main serve --web-pass mysecret
+# Воркер-демон: сбор по расписанию, очереди. Сначала останавливает прежний демон,
+# затем работает в этом процессе — запускайте в фоне, под tmux или systemd.
+python -m tg_agent.main restart
+
+# Из другого терминала: read-only проверка — поднят ли демон, PID, хранилище
+python -m tg_agent.main daemon status
 ```
 
-Откройте `http://localhost:8080` и войдите через Settings → Auth для добавления Telegram аккаунта.
+Демон необязателен: без него каждая живая команда подключает аккаунт сама. Пока он работает, он владеет Telegram-подключениями, и живые команды выполняются на его подключении через локальный relay — без второго входа и без очереди. После обновления tg-agent перезапустите демон один раз (`restart`): старый демон не обслуживает relay, и живые команды рядом с ним сразу падают с этой подсказкой.

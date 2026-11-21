@@ -4,45 +4,35 @@
 
 ## Добавление каналов
 
-=== "CLI"
-    ```bash
-    python -m tg_agent.main channel add @channel_username
-    python -m tg_agent.main channel add -1001234567890
-    python -m tg_agent.main channel import channels.txt
-    ```
-
-=== "Web"
-    `GET /channels/` → Add Channel / Import
+```bash
+python -m tg_agent.main channel add @channel_username
+python -m tg_agent.main channel add -1001234567890
+python -m tg_agent.main channel import channels.txt
+```
 
 ## Сбор сообщений
 
 Инкрементальный сбор: только новые сообщения с момента последнего сбора.
 
-=== "CLI"
-    ```bash
-    python -m tg_agent.main collect                          # все каналы
-    python -m tg_agent.main channel collect --channel-id ID  # один канал
-    python -m tg_agent.main collect sample --limit 10        # превью без сохранения
-    ```
+```bash
+python -m tg_agent.main collect                          # все каналы
+python -m tg_agent.main channel collect ID               # один канал
+python -m tg_agent.main collect sample CHANNEL_ID --limit 10  # превью без сохранения
+```
 
-=== "Web"
-    `POST /channels/collect-all` · `POST /channels/{pk}/collect`
+Пока работает воркер-демон, сбор уходит в его очередь (и сразу его будит); подробнее — [Сбор сообщений](collection.md).
 
 ## Управление
 
-=== "CLI"
-    ```bash
-    python -m tg_agent.main channel list
-    python -m tg_agent.main channel toggle --channel-id ID
-    python -m tg_agent.main channel delete --channel-id ID
-    python -m tg_agent.main channel stats --channel-id ID
-    python -m tg_agent.main channel refresh-types
-    python -m tg_agent.main channel refresh-meta         # about, linked_chat_id
-    python -m tg_agent.main channel refresh-card         # все открытые метаданные: title, username, type, about, linked_chat_id, has_comments
-    ```
-
-=== "Web"
-    `POST /channels/{pk}/toggle` · `POST /channels/{pk}/delete`
+```bash
+python -m tg_agent.main channel list
+python -m tg_agent.main channel toggle --channel-id ID
+python -m tg_agent.main channel delete --channel-id ID
+python -m tg_agent.main channel stats --channel-id ID
+python -m tg_agent.main channel refresh-types
+python -m tg_agent.main channel refresh-meta         # about, linked_chat_id
+python -m tg_agent.main channel refresh-card         # все открытые метаданные: title, username, type, about, linked_chat_id, has_comments
+```
 
 ## Метаданные канала
 

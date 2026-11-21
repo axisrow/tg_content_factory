@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable
 import typer
 from telethon_floodgate import HandledFloodWaitError, is_blocking_flood_wait_until
 
-from tg_agent.cli import runtime, worker_handoff
+from tg_agent.cli import runtime
 from tg_agent.cli.commands.common import (
     _NEG_ID_POSITIONAL,
     OutputFormat,
@@ -20,7 +20,6 @@ from tg_agent.cli.commands.common import (
     run_async,
     sync_prompt,
 )
-from tg_agent.cli.worker_handoff import serve_is_running
 from tg_agent.models import DialogMessage, TelegramCommandStatus
 from tg_agent.parsers import parse_identifiers
 from tg_agent.services.account_service import resolve_default_phone
@@ -393,9 +392,6 @@ async def _dialogs_edit_message_media(args, db, pool) -> None:
     phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
-    # --file names a path on the CLI's own machine, so like download-media this
-    # action has no worker hand-off (see _HANDOFF_COMMANDS): a split-deployment
-    # worker could not see the file, and it silently edits nothing.
     if args.text is None:
         target = "(current caption preserved)"
     elif args.text == "":
@@ -762,10 +758,6 @@ async def _dialogs_read(args, db, pool) -> None:
 
 async def _dialogs_archive_history(args, db, pool) -> None:
     """Backfill full DM history of an account into the dm_messages archive (#1453)."""
-    if serve_is_running(runtime.load_config(args.config)):
-        print("A running worker owns this Telegram session — stop it first")
-        print("(second MTProto connection on the same session = silent brick).")
-        return
     phone = await _resolve_phone(db, pool, args)
     if phone is None:
         return
@@ -1167,225 +1159,12 @@ async def _dialogs_queue(args, db, pool) -> None:
         print(f"Cancelled pending commands: {cancelled}.")
 
 
-# action -> (queue command_type, argparse attrs forming its payload).
-#
-# Mirrors what the web UI enqueues in tg_webui/dialogs/handlers.py, so a CLI
-# hand-off produces a row the worker's TelegramCommandDispatcher already knows
-# how to execute. Actions absent here have no queue equivalent (local views such
-# as `cache-status`, or the `queue` group itself) and keep running in-process.
-_HANDOFF_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
-    "send": ("dialogs.send", ("recipient", "text", "silent")),
-    "join": ("dialogs.join", ("target",)),
-    "resolve": ("dialogs.resolve", ("identifier",)),
-    "edit-message": ("dialogs.edit_message", ("chat_id", "message_id", "text")),
-    # Drafts carry no local paths, so both actions hand off like sends do.
-    "draft-save": ("dialogs.draft_save", ("chat_id", "text", "parse_mode", "reply_to", "no_webpage")),
-    "draft-list": ("dialogs.draft_list", ()),
-    "delete-message": ("dialogs.delete_message", ("chat_id", "message_ids")),
-    "forward": ("dialogs.forward_messages", ("from_chat", "to_chat", "message_ids")),
-    "pin-message": ("dialogs.pin_message", ("chat_id", "message_id", "notify")),
-    "unpin-message": ("dialogs.unpin_message", ("chat_id", "message_id")),
-    "react": ("dialogs.react", ("chat_id", "message_id", "emoji", "clear")),
-    # download-media is deliberately absent: --output-dir names a path on the
-    # CLI's own machine, but the worker (possibly a different machine/container
-    # in a split deployment) always saves to its own data/downloads/ — the same
-    # contract the web UI already uses (it never sends output_dir either). A
-    # user-supplied path silently going nowhere the worker can see would be
-    # worse than staying in-process, where --output-dir is honored exactly
-    # (Codex, PR #1324 round 3 audit).
-    "participants": ("dialogs.participants", ("chat_id", "limit", "search")),
-    "edit-admin": ("dialogs.edit_admin", ("chat_id", "user_id", "is_admin", "title")),
-    "edit-permissions": (
-        "dialogs.edit_permissions",
-        ("chat_id", "user_id", "until_date", "send_messages", "send_media"),
-    ),
-    "kick": ("dialogs.kick", ("chat_id", "user_id")),
-    "broadcast-stats": ("dialogs.broadcast_stats", ("chat_id",)),
-    "archive": ("dialogs.archive", ("chat_id",)),
-    "unarchive": ("dialogs.unarchive", ("chat_id",)),
-    "mark-read": ("dialogs.mark_read", ("chat_id", "max_id")),
-    "refresh": ("dialogs.refresh", ()),
-    "cache-clear": ("dialogs.cache_clear", ()),
-}
-
-
-# Mutating commands whose in-process handlers prompt before acting. The
-# hand-off path bypasses those handlers, so it must prompt for the same set —
-# otherwise "no" would still queue the action.
-#
-# archive/unarchive/mark-read are deliberately absent: their in-process
-# handlers (_dialogs_archive, _dialogs_unarchive, _dialogs_mark_read) never
-# call _confirm_or_abort either, and their Typer commands don't build a `yes`
-# Namespace attribute — including them here made every hand-off crash with
-# AttributeError before reaching the queue (Codex, PR #1324 round 2).
-_HANDOFF_NEEDS_CONFIRMATION = frozenset(
-    {
-        "dialogs.send",
-        "dialogs.join",
-        "dialogs.edit_message",
-        "dialogs.delete_message",
-        "dialogs.forward_messages",
-        "dialogs.pin_message",
-        "dialogs.unpin_message",
-        "dialogs.react",
-        "dialogs.edit_admin",
-        "dialogs.edit_permissions",
-        "dialogs.kick",
-    }
-)
-
-
-async def _resolve_handoff_phone(args, db) -> str:
-    """Pick the default phone for a hand-off payload, mirroring `_resolve_phone`.
-
-    The in-process path resolves an omitted ``--phone`` to the connected DB
-    primary account; the hand-off path has no pool (that's the point — it must
-    not open a second connection), so it uses the same DB rule without the
-    connected-set constraint (#1480). Queuing an empty phone made the worker's
-    ``TelegramActionService._client`` reject the command outright with "client
-    unavailable" for every hand-off run without an explicit ``--phone`` (Codex,
-    PR #1324 round 2).
-    """
-    explicit = getattr(args, "phone", None)
-    if explicit:
-        return explicit
-    return await resolve_default_phone(db) or ""
-
-
-# Typer options that are declared `str | None` (free-text "true/false", since
-# they need a third "not specified" state that a paired boolean flag can't
-# express) but the worker handler does `bool(payload[field])`. In Python
-# bool("false") is True, so a raw string here would let e.g. "deny sending
-# messages" silently enqueue as "allow" — normalize to a real bool the same
-# way `_dialogs_edit_permissions` (the in-process handler) already does
-# (Codex, PR #1324 round 3).
-_HANDOFF_STRING_BOOL_FIELDS = frozenset({"send_messages", "send_media"})
-# DB-only views: while a daemon owns the sessions they run without a pool
-# instead of being refused by ``init_pool`` (#1521).
-_POOL_FREE_WHILE_DAEMON_ACTIONS = frozenset({"queue", "cache-status"})
-_HANDOFF_WAIT_ACTIONS = frozenset({"resolve", "participants", "broadcast-stats", "refresh", "draft-list"})
-_HANDOFF_WAIT_TIMEOUT_SEC = 900.0
-_HANDOFF_POLL_INTERVAL_SEC = 1.0
-
-
-async def _wait_for_handoff_command(db, command_id: int, action: str, *, output_format: str = "text") -> None:
-    """Wait for a read hand-off and print the worker's persisted result."""
-    terminal = {
-        TelegramCommandStatus.SUCCEEDED,
-        TelegramCommandStatus.FAILED,
-        TelegramCommandStatus.CANCELLED,
-    }
-    deadline = asyncio.get_running_loop().time() + _HANDOFF_WAIT_TIMEOUT_SEC
-    while True:
-        command = await TelegramCommandService(db).get(command_id)
-        if command is None:
-            print(f"Команда #{command_id} исчезла из очереди.")
-            return
-        if command.status in terminal:
-            if command.status != TelegramCommandStatus.SUCCEEDED:
-                print(f"Команда #{command_id} завершилась ошибкой: {command.error or command.status.value}")
-                return
-            result = command.result_payload or {}
-            if action in {"participants", "broadcast-stats"} and result.get("scope"):
-                snapshot_type = f"dialogs_{'participants' if action == 'participants' else 'broadcast_stats'}"
-                snapshot = await db.repos.runtime_snapshots.get_snapshot(snapshot_type, result["scope"])
-                # Filtered participant results are returned inline and must not
-                # be replaced by the shared unfiltered snapshot for this chat.
-                if snapshot and not (action == "participants" and "participants" in result):
-                    result = {**result, **snapshot.payload}
-            _print_handoff_result(action, result, output_format=output_format)
-            return
-        if asyncio.get_running_loop().time() >= deadline:
-            print(
-                f"Команда #{command_id} всё ещё в статусе '{command.status}' "
-                f"после {int(_HANDOFF_WAIT_TIMEOUT_SEC)}с ожидания; она продолжит выполняться в воркере."
-            )
-            return
-        await asyncio.sleep(_HANDOFF_POLL_INTERVAL_SEC)
-
-
-def _print_handoff_result(action: str, result: dict, *, output_format: str = "text") -> None:
-    if action == "resolve":
-        entity = result.get("entity") or {}
-        print(f"Title: {entity.get('title', '')}")
-        print(f"Type: {entity.get('channel_type', '')}")
-        print(f"ID: {entity.get('channel_id', '')}")
-        if entity.get("username"):
-            print(f"Username: @{entity['username']}")
-    elif action == "participants":
-        participants = result.get("participants") or []
-        if not participants:
-            print("No participants found.")
-            return
-        print("ID           First name                Last name                 Username")
-        print("-" * 90)
-        for participant in participants:
-            print(
-                f"{str(participant.get('id', '')):<12} "
-                f"{str(participant.get('first_name', ''))[:25]:<25} "
-                f"{str(participant.get('last_name', ''))[:25]:<25} "
-                f"{('@' + participant['username']) if participant.get('username') else '':<25}"
-            )
-        print(f"\nTotal: {len(participants)}")
-    elif action == "broadcast-stats":
-        print("Broadcast stats:")
-        for key, value in (result.get("stats") or {}).items():
-            print(f"  {key}: {value}")
-    elif action == "refresh":
-        if result.get("partial"):
-            print(
-                result.get("warning")
-                or "Обход диалогов завершился частично; устаревшие записи не удалялись."
-            )
-        else:
-            print(f"Dialogs refreshed: {result.get('dialogs_count', 0)} total.")
-    elif action == "draft-list":
-        _print_drafts(result.get("drafts") or [], output_format=output_format)
-
-
-async def _handoff_dialog_action(args: argparse.Namespace, db) -> bool:
-    """Queue a dialogs action for the running worker; True when handed off.
-
-    Returns False when the action has no queue equivalent, so the caller falls
-    back to running it in-process. The payload mirrors the web UI's, which is
-    what ``TelegramCommandDispatcher`` expects.
-    """
-    entry = _HANDOFF_COMMANDS.get(args.dialogs_action)
-    if entry is None:
-        return False
-
-    command_type, fields = entry
-    payload: dict = {"phone": await _resolve_handoff_phone(args, db)}
-    for field in fields:
-        value = getattr(args, field, None)
-        if value is None:
-            continue
-        if field in _HANDOFF_STRING_BOOL_FIELDS and isinstance(value, str):
-            value = _parse_permission_bool(value, "--" + field.replace("_", "-"))
-        payload[field] = value
-
-    # Confirmation normally lives inside each in-process handler, which the
-    # hand-off path skips — re-gate here so answering "no" never queues work.
-    if command_type in _HANDOFF_NEEDS_CONFIRMATION:
-        details = ", ".join(f"{key}={value}" for key, value in payload.items() if value != "")
-        if not _confirm_or_abort(
-            args,
-            f"Queue {command_type} for the running worker:",
-            f"  {details}",
-        ):
-            return True
-
-    command_id = await TelegramCommandService(db).enqueue(
-        command_type,
-        payload=payload,
-        requested_by="cli:dialogs",
-    )
-    print(f"Сервер запущен: команда {command_type} #{command_id} поставлена в очередь воркера.")
-    if getattr(args, "wait", False) and args.dialogs_action in _HANDOFF_WAIT_ACTIONS:
-        await _wait_for_handoff_command(
-            db, command_id, args.dialogs_action, output_format=getattr(args, "format", "text")
-        )
-    return True
+# Typer options declared `str | None` (free-text "true/false": they need a third
+# "not specified" state a paired boolean flag cannot express). Validated up front
+# so a malformed value fails before any connection is made.
+_PERMISSION_BOOL_FIELDS = frozenset({"send_messages", "send_media"})
+# DB-only views: never worth a Telegram connection.
+_POOL_FREE_ACTIONS = frozenset({"queue", "cache-status"})
 
 
 # action -> (handler, needs_channel_service_cls). Depth-2 `queue` dispatches on
@@ -1445,33 +1224,24 @@ async def _dispatch(
     so the two entry points execute byte-identical logic.
     """
     if args.dialogs_action == "edit-permissions":
-        for field in _HANDOFF_STRING_BOOL_FIELDS:
+        for field in _PERMISSION_BOOL_FIELDS:
             _parse_permission_bool(getattr(args, field, None), "--" + field.replace("_", "-"))
     config, db = await runtime_mod.init_db(args.config)
 
-    # A live `serve` owns the Telegram session files; opening a second pool here
-    # risks `database is locked`. Actions with a queue equivalent go to the
-    # worker instead, unless --direct was passed.
-    if not getattr(args, "direct", False) and worker_handoff.serve_is_running(config):
+    if args.dialogs_action in _POOL_FREE_ACTIONS:
         try:
-            handed_off = await _handoff_dialog_action(args, db)
-        except Exception:
+            handler, _needs_channel_service = _DIALOGS_HANDLERS[args.dialogs_action]
+            await handler(args, db, None)
+        finally:
             await db.close()
-            raise
-        if handed_off:
-            await db.close()
-            return
-        if args.dialogs_action in _POOL_FREE_WHILE_DAEMON_ACTIONS:
-            try:
-                handler, _needs_channel_service = _DIALOGS_HANDLERS[args.dialogs_action]
-                await handler(args, db, None)
-            finally:
-                await db.close()
-            return
+        return
 
-    _, pool = await runtime_mod.init_pool(
-        config, db, allow_live_daemon=bool(getattr(args, "direct", False))
-    )
+    # With a live daemon the pool runs on the daemon's connections (#1868).
+    try:
+        _, pool = await runtime_mod.init_pool(config, db)
+    except BaseException:
+        await db.close()
+        raise
     try:
         entry = _DIALOGS_HANDLERS.get(args.dialogs_action)
         if entry is not None:
@@ -1544,7 +1314,6 @@ def _run_dialogs(ctx: typer.Context, dialogs_action: str, **ns_kwargs) -> None:
     ns = argparse.Namespace(
         config=ctx.obj.config,
         dialogs_action=dialogs_action,
-        direct=worker_handoff.direct_requested(),
         **ns_kwargs,
     )
     run_async(_dispatch(ns))
@@ -1563,10 +1332,9 @@ def dialogs_list(
 def dialogs_refresh(
     ctx: typer.Context,
     phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
-    wait: bool = typer.Option(False, "--wait", help="When handed to the worker, wait and print the result"),
 ) -> None:
     """Refresh dialog cache from Telegram."""
-    _run_dialogs(ctx, "refresh", phone=phone, wait=wait)
+    _run_dialogs(ctx, "refresh", phone=phone)
 
 
 @dialogs_app.command("resolve", context_settings=_NEG_ID_POSITIONAL)
@@ -1574,10 +1342,9 @@ def dialogs_resolve(
     ctx: typer.Context,
     identifier: str = typer.Argument(..., help="Identifier to resolve"),
     phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
-    wait: bool = typer.Option(False, "--wait", help="When handed to the worker, wait and print the result"),
 ) -> None:
     """Resolve @username, t.me link, or numeric ID."""
-    _run_dialogs(ctx, "resolve", identifier=identifier, phone=phone, wait=wait)
+    _run_dialogs(ctx, "resolve", identifier=identifier, phone=phone)
 
 
 @dialogs_app.command("leave", context_settings=_NEG_ID_POSITIONAL)
@@ -1723,10 +1490,9 @@ def dialogs_draft_list(
     ctx: typer.Context,
     phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--format", help="Output format (default: text)"),
-    wait: bool = typer.Option(False, "--wait", help="When handed to the worker, wait and print the result"),
 ) -> None:
     """List all drafts for the account (formatted drafts include message_html)."""
-    _run_dialogs(ctx, "draft-list", phone=phone, format=output_format.value, wait=wait)
+    _run_dialogs(ctx, "draft-list", phone=phone, format=output_format.value)
 
 
 @dialogs_app.command("delete-message", context_settings=_NEG_ID_POSITIONAL)
@@ -1858,8 +1624,8 @@ def dialogs_archive_history(
 
     Reads every personal dialog of the account page by page and stores both
     incoming and outgoing messages in the dm_messages table (no TTL).
-    Resumable: re-running skips already-archived history. Run it with the
-    worker STOPPED — it opens a second connection on the same session.
+    Resumable: re-running skips already-archived history. Next to a running
+    daemon it reads on the daemon's connection (#1868).
     """
     _run_dialogs(ctx, "archive-history", phone=phone, chat_id=chat_id)
 
@@ -1883,8 +1649,8 @@ def dialogs_export_history(
     Walks each chat newest→oldest in 100-message pages through the shared
     read_history action and writes {"chats": {...}} keyed by dialog id.
     The output file doubles as resume state — re-run to skip exported chats.
-    Run it with the worker STOPPED (or pass --direct) — it opens a live
-    Telegram connection.
+    Next to a running daemon it reads on the daemon's connection (#1868);
+    otherwise it connects the account itself.
     """
     _run_dialogs(
         ctx, "export-history", chat_ids=chat_ids, output=output, phone=phone,
@@ -1899,10 +1665,9 @@ def dialogs_participants(
     phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     limit: int = typer.Option(200, "--limit", help="Max participants to fetch (default: 200)"),
     search: str = typer.Option("", "--search", help="Search query to filter participants"),
-    wait: bool = typer.Option(False, "--wait", help="When handed to the worker, wait and print the result"),
 ) -> None:
     """List participants of a channel/group."""
-    _run_dialogs(ctx, "participants", chat_id=chat_id, phone=phone, limit=limit, search=search, wait=wait)
+    _run_dialogs(ctx, "participants", chat_id=chat_id, phone=phone, limit=limit, search=search)
 
 
 @dialogs_app.command("edit-admin", context_settings=_NEG_ID_POSITIONAL)
@@ -1965,10 +1730,9 @@ def dialogs_broadcast_stats(
     ctx: typer.Context,
     chat_id: str = typer.Argument(..., help="Channel ID or @username"),
     phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
-    wait: bool = typer.Option(False, "--wait", help="When handed to the worker, wait and print the result"),
 ) -> None:
     """Get broadcast statistics for a channel."""
-    _run_dialogs(ctx, "broadcast-stats", chat_id=chat_id, phone=phone, wait=wait)
+    _run_dialogs(ctx, "broadcast-stats", chat_id=chat_id, phone=phone)
 
 
 @dialogs_app.command("archive", context_settings=_NEG_ID_POSITIONAL)

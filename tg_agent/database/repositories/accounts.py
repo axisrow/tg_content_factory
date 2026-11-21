@@ -736,12 +736,10 @@ class AccountsRepository:
         projection of those decisions, never an automatic activation policy.
         No other project account state is available through this catalog.
 
-        ``is_premium`` is the one exception (#1749): it is a cached Telegram
-        fact, not an operator decision, and the gateway-side catalog key is
-        only refreshed on a live profile read. Mirroring it verbatim let a
-        stale catalog flip a Premium account to No every pool start, so the
-        mirror may only raise it; a downgrade requires a live fetch_me check
-        (pool startup refresh / premium-gated re-check).
+        ``is_premium`` is a cached Telegram fact, not an operator decision. The
+        gateway re-verifies it live whenever it connects an account (#1749,
+        #1868) and a relayed pool runs no check of its own, so the mirror takes
+        it verbatim: a lapsed Premium must reach ``acquire_premium``.
         """
         assert self._database is not None
         async with self._database.transaction() as conn:
@@ -761,7 +759,7 @@ class AccountsRepository:
                                    "DO UPDATE SET session_string='',"
                                    "is_primary=excluded.is_primary,is_active=excluded.is_active,"
                                    "flood_wait_until=excluded.flood_wait_until,"
-                                   "is_premium=max(accounts.is_premium,excluded.is_premium)",
+                                   "is_premium=excluded.is_premium",
                                    (row["phone"], int(row.get("is_primary", False)), int(row["active"]), flood,
                                     int(row.get("is_premium", False))))
                 cursor = await conn.execute("SELECT id FROM accounts WHERE phone=?", (row["phone"],))

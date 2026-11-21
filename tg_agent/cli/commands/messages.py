@@ -178,23 +178,6 @@ async def messages_read_impl(
                 cli_error("No connected accounts.")
             if phone not in pool.clients:
                 cli_error(f"Account {phone} not connected.")
-            from tg_agent.gateway.pool import GatewayPool
-
-            if isinstance(pool, GatewayPool):
-                from tg_agent.gateway.formatters import live_message_lines
-
-                peer = int(identifier) if identifier.lstrip("-").isdigit() else identifier
-                data = await pool.read_messages(peer, phone=phone, limit=limit, offset_id=offset_id,
-                    topic_id=topic_id, include_reaction_users=include_reaction_users,
-                    reaction_users_limit=reaction_users_limit)
-                print("\n".join(live_message_lines(data, reverse=True)) if data["messages"] else "No messages found.")
-                if data.get("reaction_users_incomplete"):
-                    print(
-                        "Reaction users incomplete: a local rate limit deferred some lookups; "
-                        "retry later to fetch the rest.",
-                        file=sys.stderr,
-                    )
-                return
             result = await pool.get_native_client_by_phone(phone)
             if result is None:
                 cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")

@@ -28,10 +28,7 @@ class PhotoTarget:
 
 class PhotoTaskService:
     async def _send_item(self, item_id, **kwargs):
-        from tg_agent.gateway.context import gateway_intent
-
-        with gateway_intent(f"photo-item:{item_id}"):
-            return await self._publish.send_now(**kwargs)
+        return await self._publish.send_now(**kwargs)
 
     def __init__(self, bundle: PhotoLoaderBundle, publish: PhotoPublishService):
         self._bundle = bundle

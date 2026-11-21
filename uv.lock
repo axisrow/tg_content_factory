@@ -278,19 +278,6 @@ wheels = [
 ]
 
 [[package]]
-name = "authlib"
-version = "1.9.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cryptography" },
-    { name = "joserfc" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c9/dc/087c08741a98d234c9b98beef8a28d3c309f814d14b6156422c5815bf6d6/authlib-1.9.1.tar.gz", hash = "sha256:5c7d9848f47cac340f060f76ae0bc09b59f5c8e89cc1bb032d4370a0c55b5974", size = 182700, upload-time = "2026-10-14T14:17:52.307Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/44/a46089266de32a0d809023b6bf31b80a1f26a46954446a7ce695a565cbea/authlib-1.9.1-py2.py3-none-any.whl", hash = "sha256:8b9be8b1e5174dcbf5520e984f1a22dc2edae5b6e40a61d4cedbf86b97e9e69b", size = 266042, upload-time = "2026-10-14T14:17:50.695Z" },
-]
-
-[[package]]
 name = "babel"
 version = "2.18.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1114,41 +1101,6 @@ wheels = [
 ]
 
 [[package]]
-name = "google-adk"
-version = "2.14.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiosqlite" },
-    { name = "authlib" },
-    { name = "click" },
-    { name = "cryptography" },
-    { name = "fastapi" },
-    { name = "google-auth", extra = ["pyopenssl"] },
-    { name = "google-genai" },
-    { name = "graphviz" },
-    { name = "httpx" },
-    { name = "jsonschema" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-sdk" },
-    { name = "packaging" },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "python-multipart" },
-    { name = "pyyaml" },
-    { name = "requests" },
-    { name = "starlette" },
-    { name = "tenacity" },
-    { name = "typing-extensions" },
-    { name = "uvicorn" },
-    { name = "watchdog" },
-    { name = "websockets" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ca/b4/79b0b2140d45274a7d0e502cf0aa8d01d671e9c2f35d2eb96df2165d8c96/google_adk-2.14.0.tar.gz", hash = "sha256:c6762050a8d1edac10f03730f99500733e862b729422dbd63187154dc470b7f0", size = 4574051, upload-time = "2026-11-07T01:03:34.755Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9f/06/4329fd6fda8c85ad3f70256d502d45d636a125e85fb4a85848a98d061938/google_adk-2.14.0-py3-none-any.whl", hash = "sha256:f7d8c79bafc4f9215402219c9542db0bde702952448a09ffd51c5bd22b135b0e", size = 5302590, upload-time = "2026-11-07T01:03:32.405Z" },
-]
-
-[[package]]
 name = "google-auth"
 version = "2.62.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1162,9 +1114,6 @@ wheels = [
 ]
 
 [package.optional-dependencies]
-pyopenssl = [
-    { name = "cryptography" },
-]
 requests = [
     { name = "requests" },
 ]
@@ -1188,15 +1137,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/83/a4/b83b378b4a2fbbfb300c3fde0ff9f443f049c33e2accedf06bc0ad9bf393/google_genai-2.33.0.tar.gz", hash = "sha256:fced7f746da45264b34bcf6044a6fcdb91ebad1825e95c324ee48addb6e557ae", size = 758627, upload-time = "2026-10-23T00:06:28.332Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ba/3b/9ae8e16c5b2177bfdec1c64769a93eea9093de684e0bbb95c10c77645fef/google_genai-2.33.0-py3-none-any.whl", hash = "sha256:f3f8ab696b35caf95c222e05268740c1ccd6934257890506be73b126150d3b14", size = 1222487, upload-time = "2026-10-23T00:06:26.528Z" },
-]
-
-[[package]]
-name = "graphviz"
-version = "0.21"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f8/b3/3ac91e9be6b761a4b30d66ff165e54439dcd48b83f4e20d644867215f6ca/graphviz-0.21.tar.gz", hash = "sha256:20743e7183be82aaaa8ad6c93f8893c923bd6658a04c32ee115edb3c8a835f78", size = 200434, upload-time = "2025-06-15T09:35:05.824Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/91/4c/e0ce1ef95d4000ebc1c11801f9b944fa5910ecc15b5e351865763d8657f8/graphviz-0.21-py3-none-any.whl", hash = "sha256:54f33de9f4f911d7e84e4191749cac8cc5653f815b06738c54db9a15ab8b1e42", size = 47300, upload-time = "2025-06-15T09:35:04.433Z" },
 ]
 
 [[package]]
@@ -1885,18 +1825,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d5/1d/537ab090f302b838943a1b56497dd53059b9a9b46a074936470173a2e207/joblib-1.6.0.tar.gz", hash = "sha256:2ccc96785b12046c08fd6d55839c12857831b54a3c1673ffadd2f04bfc4eda03", size = 327903, upload-time = "2026-08-31T09:39:04.122Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/18/53/84099323c2ec4be98d935f63c033ac4151ee83836ca1050ede3b3aadf155/joblib-1.6.0-py3-none-any.whl", hash = "sha256:3dbbf9f6e4b592a2357b854608e980fe6390d131d7a82f011a377ef2ebef7aba", size = 306115, upload-time = "2026-08-31T09:39:02.298Z" },
-]
-
-[[package]]
-name = "joserfc"
-version = "1.7.7"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cryptography" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/bd/15/48ff246732232d35ee234228def22b52455fcc55577f06146602399a29b0/joserfc-1.7.7.tar.gz", hash = "sha256:471d0fd12a5a0d1c0942de280f39efe6f597878315033270b504d4d006d25510", size = 237446, upload-time = "2026-10-19T00:30:29.974Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/df/9f/934db284aa22f37af59708e382903860d4b81329c137b1b0ed2745daeb65/joserfc-1.7.7-py3-none-any.whl", hash = "sha256:06979cfbab78bc802f14c0358f32969826cc26720e13cb38926ffdc86bc0cb2c", size = 71758, upload-time = "2026-10-19T00:30:28.498Z" },
 ]
 
 [[package]]
@@ -3097,33 +3025,6 @@ wheels = [
 ]
 
 [[package]]
-name = "opentelemetry-sdk"
-version = "1.45.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-semantic-conventions" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/7b/1a/74a21d4d6969fb8b432ac397e66112a8167a6deb267ea4559dbaf2fe91ef/opentelemetry_sdk-1.45.2.tar.gz", hash = "sha256:7eec4de13dd21ff3a1670dcb0e02079e692736f94d733dfdce5af461d884248d", size = 221705, upload-time = "2026-10-29T17:29:54.685Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9f/a5/9a3b793ef48245f2336a16beb2324c2397dbb3f987cd68942f77cca06156/opentelemetry_sdk-1.45.2-py3-none-any.whl", hash = "sha256:ff974ea70ee4f1d51e2ec152db37c2b626c7bf82bb3f7d86114fd8704e7199c6", size = 141756, upload-time = "2026-10-29T17:29:33.722Z" },
-]
-
-[[package]]
-name = "opentelemetry-semantic-conventions"
-version = "0.66b2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "opentelemetry-api" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/37/3f/50f95972b50e8e353f5b9342034c9cd17730f1956f009ce6a3fbbd89f9ce/opentelemetry_semantic_conventions-0.66b2.tar.gz", hash = "sha256:7da5f1a5dc4383eb66711d4d3d3e71824d9403ac1559fea021cc103c1a4c4976", size = 150246, upload-time = "2026-10-29T17:29:55.682Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/67/bd/6bf33ed31521c565931c037e9e81bac47c1acb000e850c6e24220e2a0c00/opentelemetry_semantic_conventions-0.66b2-py3-none-any.whl", hash = "sha256:4cbe61e5f9275d57ab31708446e7938ef4291ebbe6a7fca6f7a629c5acae87d8", size = 206280, upload-time = "2026-10-29T17:29:35.062Z" },
-]
-
-[[package]]
 name = "orjson"
 version = "3.13.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3747,7 +3648,7 @@ resolution-markers = [
     "python_full_version < '3.11.5'",
 ]
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8b/04/e7c1fe4dc78a6fdbfd6c337b1c3732ff543b8a397683ab38378447baa331/pyee-13.0.1.tar.gz", hash = "sha256:0b931f7c14535667ed4c7e0d531716368715e860b988770fc7eb8578d1f67fc8", size = 31655, upload-time = "2026-02-14T21:12:28.044Z" }
 wheels = [
@@ -3764,7 +3665,7 @@ resolution-markers = [
     "python_full_version == '3.12.*'",
 ]
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version >= '3.12'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1d/f1/fdedc2c75c3e31a330659c85e5793bb18b3397981fbf0844c6dee5b18926/pyee-14.0.0.tar.gz", hash = "sha256:76dd0f4314ecd27f02dc73589dea7fd3853f9b6176d8ef9b122860657e3602de", size = 98760, upload-time = "2026-08-13T04:26:11.021Z" }
 wheels = [
@@ -4506,7 +4407,7 @@ resolution-markers = [
     "python_full_version < '3.11.5'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7a/97/5a3609c4f8d58b039179648e62dd220f89864f56f7357f5d4f45c29eb2cc/scipy-1.17.1.tar.gz", hash = "sha256:95d8e012d8cb8816c226aef832200b1d45109ed4464303e997c5b13122b297c0", size = 30573822, upload-time = "2026-02-23T00:26:24.851Z" }
 wheels = [
@@ -4582,7 +4483,7 @@ resolution-markers = [
     "python_full_version == '3.12.*'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7e/74/66de6258867beb2ef08f35f9f2ac017a52cacd5081714d239ff1a442d458/scipy-1.18.1.tar.gz", hash = "sha256:52c4b7422442aba924d03ad4019852b08a92e64ea187b933135687bfe2747307", size = 30781235, upload-time = "2026-08-21T23:28:50.599Z" }
 wheels = [
@@ -4934,7 +4835,7 @@ wheels = [
 
 [[package]]
 name = "tg-agent"
-version = "0.2.4.2"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -4980,9 +4881,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-adk = [
-    { name = "google-adk" },
-]
 codex = [
     { name = "openai-codex" },
 ]
@@ -5022,7 +4920,6 @@ requires-dist = [
     { name = "cryptography", specifier = ">=48.0.0" },
     { name = "deepagents", specifier = ">=0.6.4" },
     { name = "fastapi", specifier = ">=0.136.3,<0.163" },
-    { name = "google-adk", marker = "extra == 'adk'", specifier = ">=1.16.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "huggingface-hub", specifier = ">=1.16.4" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.168.1" },
@@ -5075,7 +4972,7 @@ requires-dist = [
     { name = "vulture", marker = "extra == 'dev'", specifier = ">=2.16" },
     { name = "wheel", marker = "extra == 'dev'" },
 ]
-provides-extras = ["dev", "docs", "codex", "adk"]
+provides-extras = ["dev", "docs", "codex"]
 
 [[package]]
 name = "tg-messenger"

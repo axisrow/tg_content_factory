@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+import asyncio
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from inspect import isawaitable
+from typing import Any
 
 from tg_agent.database import Database
 from tg_agent.database.bundles import NotificationBundle
@@ -36,6 +38,22 @@ class NotificationTargetService:
             notifications = NotificationBundle.from_database(notifications)
         self._notifications = notifications
         self._pool = pool
+        self._user_ids: dict[str, int] = {}
+
+    async def account_user_id(self) -> int:
+        """Telegram user id of the notification account.
+
+        It never changes, so Telegram is asked once per account. The worker
+        needs it on every heartbeat, and a `get_me` each time used up the
+        account's hourly flood budget and locked the account out (#1868).
+        """
+        status = await self.describe_target()
+        if status.state == "available" and status.effective_phone in self._user_ids:
+            return self._user_ids[status.effective_phone]
+        async with self.use_client() as (client, phone):
+            me = await asyncio.wait_for(client.get_me(), timeout=15.0)
+        self._user_ids[phone] = me.id
+        return me.id
 
     async def get_configured_phone(self) -> str | None:
         raw = (await self._notifications.get_setting(SETTING_KEY) or "").strip()
@@ -200,7 +218,7 @@ class NotificationTargetService:
         if status.state != "available" or status.effective_phone is None:
             raise RuntimeError(status.message)
 
-        getter = getattr(self._pool, "get_client_by_phone", None)
+        getter: Callable[[str], Awaitable[Any]] | None = getattr(self._pool, "get_client_by_phone", None)
         if not callable(getter):
             raise RuntimeError("Notification target pool does not support client access.")
         result = await getter(status.effective_phone)

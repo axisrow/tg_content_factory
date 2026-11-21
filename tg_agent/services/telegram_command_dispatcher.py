@@ -20,6 +20,7 @@ from tg_agent.models import (  # noqa: F401  (RuntimeSnapshot re-exported for te
     TelegramCommandStatus,
 )
 from tg_agent.paths import data_root
+from tg_agent.runtime import wake
 from tg_agent.scheduler.service import SchedulerManager
 from tg_agent.services.dispatcher._constants import (
     COMMAND_STATUS_UPDATE_BUSY_RETRY_INITIAL_SEC,
@@ -122,9 +123,12 @@ class TelegramCommandDispatcher(
         collection_queue: "CollectionQueue | None" = None,
         live_runtime_pause_gate: LiveRuntimePauseGate | None = None,
         notifier: "Notifier | None" = None,
+        gateway=None,
     ):
         self._db = db
         self._pool = pool
+        # Gateway-bound project (#1868): the shared gateway's control client.
+        self._gateway = gateway
         self._config = config
         self._collector = collector
         self._scheduler = scheduler
@@ -138,6 +142,7 @@ class TelegramCommandDispatcher(
         self._notifier = notifier
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
+        self._wake: asyncio.Event | None = None
         self._last_reaction_at_monotonic: dict[str, float] = {}
 
     async def start(self) -> None:
@@ -148,10 +153,16 @@ class TelegramCommandDispatcher(
         recovered = await recovery if inspect.isawaitable(recovery) else 0
         if recovered:
             logger.warning("Recovered %d interrupted dialogs commands on startup", recovered)
+        if self._wake is None:
+            self._wake = wake.subscribe(wake.TELEGRAM_COMMANDS)
         self._task = asyncio.create_task(self._run_loop(), name="telegram_command_dispatcher")
 
     async def stop(self) -> None:
         self._stop_event.set()
+        if self._wake is not None:
+            self._wake.set()  # leave an idle wait at once
+            wake.unsubscribe(wake.TELEGRAM_COMMANDS, self._wake)
+            self._wake = None
         if self._task and not self._task.done():
             self._task.cancel()
             try:
@@ -185,6 +196,8 @@ class TelegramCommandDispatcher(
                 )
                 if not resumed:
                     return
+            if self._wake is not None:
+                self._wake.clear()  # a notify from here on wakes the idle wait below
             command = await self._db.repos.telegram_commands.claim_next_command()
         except DatabaseBusyError:
             # Transient lock while claiming — never let it kill the loop
@@ -193,7 +206,10 @@ class TelegramCommandDispatcher(
             await asyncio.sleep(1.0)
             return
         if command is None:
-            await asyncio.sleep(1.0)
+            if self._wake is not None:
+                await wake.wait(self._wake, 1.0)
+            else:
+                await asyncio.sleep(1.0)
             return
         started_at = time.monotonic()
         is_auth_command = command.command_type.startswith("auth.")
@@ -219,10 +235,7 @@ class TelegramCommandDispatcher(
                 search_fields["query_len"],
             )
         try:
-            from tg_agent.gateway.context import gateway_intent
-
-            with gateway_intent(f"telegram-command:{command.id}"):
-                result = await self._dispatch(command.command_type, command.payload)
+            result = await self._dispatch(command.command_type, command.payload)
         except asyncio.CancelledError:
             await self._update_command_safely(
                 command.id,
@@ -437,21 +450,20 @@ class TelegramCommandDispatcher(
             )
 
     async def _dispatch(self, command_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-        from tg_agent.gateway.pool import GatewayPool
-
-        if isinstance(self._pool, GatewayPool):
+        if self._gateway is not None:
             if command_type.startswith("auth."):
                 auth_payload = dict(payload)
                 for field in ("code", "password_2fa", "session_string"):
                     if field in payload:
                         payload[field] = ""
-                result = await self._pool.authenticate(command_type.split(".", 1)[1], auth_payload)
+                result = await self._gateway.auth(command_type.split(".", 1)[1], auth_payload)
+                await self._gateway_refresh()
                 return {"result": result, "payload_update": {key: value for key, value in payload.items()
                                                             if key not in {"code", "password_2fa"}}}
             if command_type in {"accounts.toggle", "accounts.delete", "accounts.set_primary"}:
                 from tg_agent.gateway.catalog import ProjectAccountCatalog
 
-                catalog = ProjectAccountCatalog(self._db, self._pool.client)
+                catalog = ProjectAccountCatalog(self._db, self._gateway)
                 account_id = int(payload["account_id"])
                 if command_type == "accounts.delete":
                     await catalog.detach(account_id)
@@ -476,6 +488,12 @@ class TelegramCommandDispatcher(
         if not callable(handler):
             raise RuntimeError(f"Unsupported telegram command: {command_type}")
         return await handler(payload)
+
+    async def _gateway_refresh(self) -> None:
+        from tg_agent.gateway.catalog import ProjectAccountCatalog
+
+        await ProjectAccountCatalog(self._db, self._gateway).refresh()
+        await self._pool.initialize()
 
     async def _get_client(self, phone: str):
         result = await self._pool.get_native_client_by_phone(phone)

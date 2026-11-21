@@ -398,10 +398,10 @@ def test_settings_agent_flags_optional():
     ):
         runner.invoke(app, ["settings", "agent"])
         runner.invoke(
-            app, ["settings", "agent", "--backend", "codex", "--prompt-template", "tmpl"]
+            app, ["settings", "agent", "--backend", "deepagents", "--prompt-template", "tmpl"]
         )
     assert mock_impl.call_args_list[0].kwargs == {"backend": None, "prompt_template": None}
-    assert mock_impl.call_args_list[1].kwargs == {"backend": "codex", "prompt_template": "tmpl"}
+    assert mock_impl.call_args_list[1].kwargs == {"backend": "deepagents", "prompt_template": "tmpl"}
 
 
 def test_settings_filter_criteria_floats():

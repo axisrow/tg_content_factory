@@ -21,13 +21,11 @@
 
 ```bash
 python -m tg_agent.main collect                              # все каналы, инкрементально
-python -m tg_agent.main channel collect --channel-id ID     # один канал
-python -m tg_agent.main collect sample --channel-id ID --limit 10  # превью
+python -m tg_agent.main channel collect ID [--wait]          # один канал
+python -m tg_agent.main collect sample CHANNEL_ID --limit 10 # превью
 ```
 
-## Web
-
-`POST /channels/collect-all` · `POST /channels/{pk}/collect`
+Сбор — работа воркер-демона. Пока он запущен, `collect` и `channel collect` ставят задачи в его очередь сбора, и постановка будит воркер сразу, без ожидания поллинга (#1868); `channel collect --wait` дожидается завершения задачи. Без демона `channel collect` (и `collect --channel-id`) собирает канал сам, в своём процессе, а `collect` по всем каналам только ставит задачи — их выполнит воркер при следующем запуске (`tg-agent restart`). `collect sample` ничего не сохраняет и при запущенном демоне читает через его подключение (локальный relay).
 
 ## Статистика
 
@@ -43,5 +41,3 @@ python -m tg_agent.main analytics velocity              # сообщений в 
 ```bash
 python -m tg_agent.main scheduler task-cancel 42
 ```
-
-Web: `POST /scheduler/tasks/{task_id}/cancel`

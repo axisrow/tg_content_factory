@@ -16,6 +16,7 @@ from tg_agent.runtime.bootstrap import build_worker_container, start_container, 
 from tg_agent.runtime.log_handler import LogBuffer
 from tg_agent.services.notification_service import NotificationService
 from tg_agent.services.runtime_diagnostics import HEARTBEAT_INTERVAL_SEC, resolve_snapshot_publish_timeout
+from tg_agent.telegram.flood_snapshot import FLOOD_GUARD_PERSIST_INTERVAL_SEC
 from tg_agent.telegram.utils import normalize_utc
 
 logger = logging.getLogger(__name__)
@@ -147,8 +148,6 @@ async def _publish_accounts_status_snapshot(
                 "resolve_backoffs": resolve_backoffs,
                 "is_warming": is_warming,
                 "timestamp": now.isoformat(),
-                "gateway": (container.pool.gateway_status
-                            if isinstance(getattr(container.pool, "gateway_status", None), dict) else None),
             },
         )
     )
@@ -387,9 +386,14 @@ async def _run_worker_async(config: AppConfig) -> None:
         await _publish_worker_down_snapshot(container, exc)
         await stop_container(container)
         return
+    relay = await _start_owner_relay(container, config)
     publish_timeout = resolve_snapshot_publish_timeout(config.scheduler.snapshot_publish_timeout_sec)
+    flood_guards_saved_at = loop.time()
     try:
         while not stop_event.is_set():
+            if loop.time() - flood_guards_saved_at >= FLOOD_GUARD_PERSIST_INTERVAL_SEC:
+                flood_guards_saved_at = loop.time()
+                await _persist_flood_guards(container)
             try:
                 await asyncio.wait_for(
                     _publish_snapshots(container, stop_event=stop_event),
@@ -425,7 +429,47 @@ async def _run_worker_async(config: AppConfig) -> None:
             except TimeoutError:
                 continue
     finally:
+        if relay is not None:
+            await relay.stop()
         await stop_container(container)
+
+
+async def _persist_flood_guards(container) -> None:
+    """Save the pool's flood-guard state, so a restart keeps the spent budget."""
+    persist = getattr(container.pool, "persist_flood_guard_snapshot", None)
+    if callable(persist):
+        await persist()  # best-effort by contract: it never raises
+
+
+async def _start_owner_relay(container, config: AppConfig):
+    """Serve this worker's pool and queue wake-ups to the project's CLI processes (#1868).
+
+    In gateway mode the pool itself runs on the gateway's relay; the CLI goes to
+    the gateway directly and uses this relay only to wake the worker's queues.
+    """
+    from tg_agent.telegram.client_pool import ClientPool
+    from tg_agent.telegram.relay import relay_endpoint_path, serve_pool_relay
+
+    if not isinstance(container.pool, ClientPool):
+        return None
+    try:
+        return await serve_pool_relay(
+            container.pool, relay_endpoint_path(config.database.path), ops={"wake": _wake_op}
+        )
+    except OSError:
+        logger.exception("session owner relay failed to start; CLI live commands will be refused")
+        return None
+
+
+async def _wake_op(_grant, message: dict, _push) -> bool:
+    """Relay op: a CLI process enqueued work for one of this worker's queues."""
+    from tg_agent.runtime import wake
+
+    queue = str(message.get("queue") or "")
+    if queue not in wake.QUEUES:
+        raise ValueError(f"unknown queue {queue!r}")
+    wake.notify_local(queue)
+    return True
 
 
 def run_worker(config: AppConfig) -> None:

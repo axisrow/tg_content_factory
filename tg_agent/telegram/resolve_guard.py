@@ -238,8 +238,8 @@ class ResolveGuardMixin:
     async def persist_resolve_username_backoff(self) -> None:
         """Persist the per-phone backoff deadlines to DB settings."""
         db = getattr(self, "_db", None)
-        if db is None:
-            return
+        if db is None or vars(self).get("_relay") is not None:
+            return  # a relayed pool leaves the shared limiter state to the owner
         backoff = self._prune_resolve_backoff()
         payload = json.dumps(
             {phone: until.isoformat() for phone, until in backoff.items()}
@@ -339,8 +339,8 @@ class ResolveGuardMixin:
         optimisation, never a failure path.
         """
         db = getattr(self, "_db", None)
-        if db is None:
-            return
+        if db is None or vars(self).get("_relay") is not None:
+            return  # the owner's snapshot is authoritative while it runs
         try:
             payload = json.dumps(self._get_resolve_rate_limiter().snapshot_state())
             await db.set_setting(RESOLVE_LIMITER_SNAPSHOT_SETTING, payload)

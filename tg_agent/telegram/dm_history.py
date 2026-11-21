@@ -25,6 +25,7 @@ second cache here would just add a staleness window we don't control.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from telethon_floodgate import run_with_flood_wait_retry
@@ -41,6 +42,22 @@ def _client_factory(client: object):
         return client
 
     return _factory
+
+
+# tg_messenger refuses empty credentials before it builds a client. Here the
+# client is always injected and never built from them, and a gateway project
+# has none of its own — the gateway holds them (#1868).
+_UNUSED_API_ID = 1
+_UNUSED_API_HASH = "injected-client"
+
+
+def _standalone(client: object, api_id: int, api_hash: str) -> StandaloneTelegramClient:
+    return StandaloneTelegramClient(
+        api_id or _UNUSED_API_ID,
+        (api_hash or "").strip() or _UNUSED_API_HASH,
+        external_session="",
+        client_factory=_client_factory(client),
+    )
 
 
 def _to_dialog_message(msg: _TgMessengerMessage) -> DialogMessage:
@@ -79,12 +96,7 @@ async def read_dialog_history(
     `ClientPool` (e.g. via `TelegramActionService._client`). This function does
     not connect, disconnect, or attach event handlers to it.
     """
-    standalone = StandaloneTelegramClient(
-        api_id,
-        api_hash,
-        external_session="",
-        client_factory=_client_factory(client),
-    )
+    standalone = _standalone(client, api_id, api_hash)
     messages = await standalone.history(peer, limit=limit, offset_id=offset_id)
     return [_to_dialog_message(msg) for msg in messages]
 
@@ -97,8 +109,12 @@ async def read_dialog_history_since(
     peer: Any,
     min_id: int = 0,
     limit: int = 200,
+    offset_date: datetime | None = None,
 ) -> list[DialogMessage]:
     """Read messages OLDEST-FIRST, strictly above ``min_id`` — catch-up page.
+
+    ``offset_date`` (with ``min_id=0``) starts the page after that moment instead:
+    a dialog with no known message id yet.
 
     Это тот же «намеренно некэшированный путь», что tg_messenger `history_since`
     (создан ровно для синхронизации по водяному знаку; никакого TTL-кэша), но с
@@ -110,27 +126,24 @@ async def read_dialog_history_since(
     Same invariants: no connect/disconnect, no event handlers on a client we
     don't own; Message-модель tg_messenger не покидает модуль.
     """
-    standalone = StandaloneTelegramClient(
-        api_id,
-        api_hash,
-        external_session="",
-        client_factory=_client_factory(client),
-    )
+    standalone = _standalone(client, api_id, api_hash)
     # iter_messages и _to_message — внутренности адаптера: публичного
     # reverse-варианта у history_since нет, а обходить наш водяной знак
     # через кэширующий history() нельзя. Оба вызова локальны и громко падают
     # при несовместимом апгрейде пакета (AttributeError), не молча.
     raw = await run_with_flood_wait_retry(
-        lambda: _collect_forward(standalone, peer, min_id, limit),
+        lambda: _collect_forward(standalone, peer, min_id, limit, offset_date),
         operation="history_since",
     )
     return [_to_dialog_message(standalone._to_message(m, dialog_id=int(peer))) for m in raw]
 
 
-async def _collect_forward(standalone: Any, peer: Any, min_id: int, limit: int) -> list:
+async def _collect_forward(standalone: Any, peer: Any, min_id: int, limit: int,
+                           offset_date: datetime | None = None) -> list:
+    since = {"offset_date": offset_date} if offset_date is not None else {}
     return [
         m
         async for m in standalone._client.iter_messages(
-            peer, limit=limit, min_id=min_id, reverse=True
+            peer, limit=limit, min_id=min_id, reverse=True, **since
         )
     ]

@@ -1,4 +1,4 @@
-"""Permission flags must have identical, explicit meanings in both CLI paths."""
+"""Permission flags must have explicit meanings and fail before any connection."""
 
 import argparse
 import asyncio
@@ -20,38 +20,23 @@ from tg_agent.cli.commands import dialogs
     ("0", False), ("off", False), ("OFF", False),
     (None, None), (True, True), (False, False),
 ])
-@pytest.mark.parametrize("handoff", [False, True])
-def test_permission_values_reach_action_or_queue(monkeypatch, raw, expected, handoff):
+def test_permission_values_reach_the_action(monkeypatch, raw, expected):
     args = argparse.Namespace(
         dialogs_action="edit-permissions", chat_id="-100123", user_id="777",
         phone="+123", send_messages=raw, send_media=raw, until_date=None, yes=True,
     )
     action = AsyncMock()
-    enqueue = AsyncMock(return_value=1)
     monkeypatch.setattr(dialogs, "_resolve_phone", AsyncMock(return_value="+123"))
-    monkeypatch.setattr(dialogs, "_resolve_handoff_phone", AsyncMock(return_value="+123"))
     monkeypatch.setattr(dialogs, "TelegramActionService", Mock(return_value=SimpleNamespace(edit_permissions=action)))
-    monkeypatch.setattr(dialogs, "TelegramCommandService", Mock(return_value=SimpleNamespace(enqueue=enqueue)))
-    if handoff:
-        asyncio.run(dialogs._handoff_dialog_action(args, object()))
-        payload = enqueue.call_args.kwargs["payload"]
-        for field in ("send_messages", "send_media"):
-            if raw is None:
-                assert field not in payload
-            else:
-                assert payload[field] is expected
+    if raw is None:
+        # Both permission flags None = usage error, refused up front (#1486).
+        with pytest.raises(typer.Exit):
+            asyncio.run(dialogs._dialogs_edit_permissions(args, object(), object()))
         action.assert_not_called()
     else:
-        if raw is None:
-            # Both permission flags None = usage error, refused up front (#1486).
-            with pytest.raises(typer.Exit):
-                asyncio.run(dialogs._dialogs_edit_permissions(args, object(), object()))
-            action.assert_not_called()
-        else:
-            asyncio.run(dialogs._dialogs_edit_permissions(args, object(), object()))
-            assert action.call_args.kwargs["send_messages"] is expected
-            assert action.call_args.kwargs["send_media"] is expected
-        enqueue.assert_not_called()
+        asyncio.run(dialogs._dialogs_edit_permissions(args, object(), object()))
+        assert action.call_args.kwargs["send_messages"] is expected
+        assert action.call_args.kwargs["send_media"] is expected
 
 
 @pytest.mark.parametrize("option", ["--send-messages", "--send-media"])
@@ -69,12 +54,11 @@ def test_invalid_cli_permission_never_dispatches(monkeypatch, option, raw):
     dispatch.assert_not_called()
 
 
-@pytest.mark.parametrize("direct", [False, True])
 @pytest.mark.parametrize("field", ["send_messages", "send_media"])
-def test_invalid_namespace_rejected_before_runtime(field, direct):
+def test_invalid_namespace_rejected_before_runtime(field):
     runtime = SimpleNamespace(init_db=AsyncMock(), init_pool=AsyncMock())
     args = argparse.Namespace(
-        dialogs_action="edit-permissions", direct=direct, config=None,
+        dialogs_action="edit-permissions", config=None,
         send_messages=None, send_media=None,
     )
     setattr(args, field, "maybe")

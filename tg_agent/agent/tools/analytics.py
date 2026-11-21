@@ -515,8 +515,8 @@ def register(db, client_pool, embedding_service, **kwargs):
             provider_service = await build_provider_service(db, config)
             if not provider_service.has_providers():
                 return _text_response(
-                    "LLM-провайдер не настроен. Добавьте его командой `provider add`, "
-                    "на странице /settings или ключом окружения (например OPENAI_API_KEY)."
+                    "LLM-провайдер не настроен. Добавьте его командой `provider add` "
+                    "или ключом окружения (например OPENAI_API_KEY)."
                 )
 
             # A mistyped model must NOT silently fall back to the stub provider

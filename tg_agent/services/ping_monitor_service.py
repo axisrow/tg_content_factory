@@ -15,6 +15,7 @@ Telegram; задуман для переноса в будущий пакет tg
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 
 from tg_agent.database.repositories.ping_monitors import PingMonitorRepository
@@ -42,9 +43,17 @@ def _next_threshold_days(base_days: int, cycle_count: int) -> int:
 
 
 class PingMonitorService:
-    def __init__(self, repo: PingMonitorRepository, actions: TelegramActionService):
+    def __init__(
+        self,
+        repo: PingMonitorRepository,
+        actions: TelegramActionService,
+        *,
+        auto_reply_guard: Callable[[str, int], Awaitable[bool]] | None = None,
+    ):
         self._repo = repo
         self._actions = actions
+        # Gateway projects: may this project send automatic messages in a dialog?
+        self._auto_reply_guard = auto_reply_guard
 
     async def create_monitor(self, monitor: PingMonitor) -> int:
         return await self._repo.create(monitor)
@@ -122,15 +131,19 @@ class PingMonitorService:
         threshold = _next_threshold_days(monitor.silence_threshold_days, monitor.cycle_count)
         if anchor + timedelta(days=threshold) > now:
             return
-        from tg_agent.gateway.context import gateway_intent
-
-        with gateway_intent(f"ping:{monitor_id}:{monitor.cycle_count}:{anchor.isoformat()}", automatic=True):
-            await self._actions.send_message(
-                phone=monitor.phone,
-                recipient=monitor.dialog_id,
-                text=monitor.nudge_text,
-                is_user=True,  # DM-диалог: не пробовать канал первым (#1830)
-            )
+        # Shared gateway: another project may own automatic replies in this
+        # dialog; the gateway answers who (#1868 — was enforced per operation).
+        if self._auto_reply_guard is not None and not await self._auto_reply_guard(
+            monitor.phone, monitor.dialog_id
+        ):
+            logger.info("ping %s skipped: another project owns automatic replies in this dialog", monitor_id)
+            return
+        await self._actions.send_message(
+            phone=monitor.phone,
+            recipient=monitor.dialog_id,
+            text=monitor.nudge_text,
+            is_user=True,  # DM-диалог: не пробовать канал первым (#1830)
+        )
         await self._repo.update(
             monitor_id, cycle_count=monitor.cycle_count + 1, last_nudge_sent_at=now
         )

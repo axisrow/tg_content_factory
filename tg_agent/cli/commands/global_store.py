@@ -77,7 +77,8 @@ def status_impl(config_path: str) -> None:
         print(f"Project: {binding.project_id}")
         print(f"Project database: {load_config(config_path).database.path}")
         status = run_async(TelegramGatewayClient.inspect_config(load_config(config_path)))
-        print(f"HTTP: {status['http_available']}; dispatcher: {status['dispatcher_running']}")
+        print(f"Gateway relay: {'up' if status.get('available') else 'down'}"
+              + (f" ({status['reason']})" if status.get("reason") else ""))
         for account in status.get("accounts", []):
             print(f"  {account['phone']}: connected={account.get('connected', False)}, "
                   f"primary={bool(account.get('is_primary'))}, active={bool(account['active'])}")

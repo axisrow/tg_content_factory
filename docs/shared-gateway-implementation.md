@@ -1,9 +1,17 @@
 # Shared Telegram gateway
 
 Two projects keep separate SQLite databases and worker processes. The gateway owns
-Telegram accounts, live connections, rate limits, resolve backoff and operation receipts.
-Project tokens grant access only to explicitly attached accounts. Each project has its
-own primary account, collection cursor, filters, schedules and content.
+Telegram accounts, live connections, rate limits and resolve backoff. Project tokens
+grant access only to explicitly attached accounts. Each project has its own primary
+account, collection cursor, filters, schedules and content.
+
+Since #1868 the gateway is a session owner behind the relay
+(`tg_agent/telegram/relay.py`), the same mechanism a local worker daemon uses for
+the CLI: one process holds the authorized connection, everyone else sends raw
+MTProto requests over a loopback socket and parses the raw answers. A project's
+worker and CLI build an ordinary `ClientPool(relay=...)` on the gateway's relay, so
+every command runs the native code path — there is no gateway-specific operation
+protocol, no HTTP server and no operation queue.
 
 ## Connect projects
 
@@ -20,8 +28,9 @@ tg-agent worker
 `--account` is repeatable. Enrollment creates the private gateway key and pins its
 interpreter/module installation. Later projects use the enrolled credentials and key;
 they do not supply the gateway key. The default root is `~/.tg-agent`; set
-`TG_AGENT_GLOBAL_DIR` to relocate it. The gateway binds only to 127.0.0.1 and publishes
-its dynamic port after startup. Concurrent callers use a process lock.
+`TG_AGENT_GLOBAL_DIR` to relocate it. The gateway relay binds only to 127.0.0.1 and
+publishes its dynamic port and relay protocol version in `gateway.endpoint.json` after
+startup. Concurrent callers use a process lock.
 
 The version 2 marker contains the project UUID, gateway root and private token-file
 reference. It does not redirect `database.path` or contain a token/session. Session
@@ -43,8 +52,9 @@ Account toggle/delete in an enrolled project change that project's grant. Shared
 session disable/delete/replacement require explicit `gateway account ... --shared`.
 `global disable` requires the project's worker to be stopped; it revokes that project's
 grants and preserves project content and shared accounts. Standalone mode remains
-available without an enrollment marker. `--direct` uses the gateway in enrolled mode;
-a native local ClientPool constructor is rejected there.
+available without an enrollment marker. In enrolled mode every Telegram request runs
+on the gateway's connection; constructing a local `ClientPool` without the relay is
+rejected there.
 
 ## Migrate legacy global mode
 
@@ -71,35 +81,57 @@ and the marker is replaced last. The independent database path is persisted in c
 Retries resume the recorded migration. A live session owner is reported by PID and
 blocks migration; wrong keys and conflicting shared sessions cannot silently replace it.
 
-## Operations and recovery
+## Requests, control operations and recovery
 
-The authenticated `/v1` protocol has explicit operation kinds and typed inputs.
-The existing TelegramActionService contracts are transported through the gateway,
-including history, search, profiles, dialogs, statistics, topics, participants,
-messages/actions, chat administration and media. Code/QR/2FA login stays in the gateway.
-Publishing and photo tasks upload scoped artifacts, preserve filenames, albums,
-scheduling and reply targets. BotFather and notification operations run in the gateway;
-new notification bot tokens are encrypted there. External speech/image/LLM providers
-run in projects. Large result lists are retrieved in pages of at most 100 items.
+A project opens one relay connection with its token. The handshake returns the
+phones of the accounts granted to it and the relay protocol version; a gateway of
+another version is a hard error asking for `tg-agent gateway restart --shared`.
+Raw MTProto only round-trips between equal Telegram TL layers, so every project
+sharing the gateway must run the same tg-agent/Telethon version as the gateway.
+The gateway runs from the install it was enrolled with; a layer mismatch is
+refused with a message naming that interpreter — upgrade the older install, then
+restart the gateway.
 
-Each operation has a persisted project request UUID and immutable payload. The gateway
-journals `(project_id, request_id)` and alternates projects between operations/history
-pages. Existing ClientPool gates, watchdog, warm caches and backoff run inside the
-gateway. Native actions borrow the connected client instead of creating force-native
-connections. Flood deadlines are shared. Uncertain writes are never automatically
-replayed; pipeline publication exposes the existing uncertain-delivery state. Intent
-contexts cover queued commands, pipeline actions, publication, photo items and pings.
+- **Telegram requests** (`invoke`) run on the gateway's connection of a granted
+  account, concurrently, behind the gateway pool's flood guards, watchdog, warm
+  caches and resolve backoff. Flood deadlines are shared by every project. Requests
+  that would end the shared session (`auth.*`, `account.ResetAuthorization`,
+  `account.DeleteAccount`) are refused. Media from other DCs uses the gateway's
+  exported senders. The gateway's entity cache preloads each project client, so known
+  peers resolve without a network call.
+- **Control operations** are relay operations of the same connection: the project
+  catalog (`accounts`, `account.update`, `account.detach`, `account.export_session`,
+  `account.flood_clear`), readiness (`status`), Code/QR/2FA login (`auth`, the login
+  stays in the gateway), automatic-reply ownership (`reply_owner`,
+  `reply_owner.check`) and DM events (`events`, `events.ack`, `events.recovery`,
+  `events.subscribe`). The administrator token (`gateway-admin.token`) reaches only
+  `admin.*` operations: project registration, shared-account import/export/state,
+  grants and shutdown. A project token never reaches them, and the administrator
+  holds no account.
+- **DM events** fan out to authorized projects. The gateway pushes a notice over the
+  subscribed connection the moment it journals one, and the project's consumer pulls
+  by cursor at once (a 30 s pull is only a safety net); the local archive, journal and
+  cursor commit before acknowledgement. Expired seven-day event cursors trigger history
+  recovery using the project's catch-up policy, read natively over the relay: each dialog
+  is read on from its last archived message, a dialog with nothing archived is left to
+  `dialogs archive-history` (reading it from the start would pull its whole history), and
+  a failed recovery is retried after 15 minutes rather than on every poll.
+  Automatic pings require the exclusive reply owner.
+- **Notification bots** belong to projects again. Bots an older enrollment moved into
+  the gateway are handed back whenever a project connects — worker or CLI
+  (`bots.export`) — and send natively. Creating or deleting a bot is a BotFather
+  conversation that waits for replies, which only the session owner receives as
+  updates; it runs on the gateway's client (`botfather.*` relay operations) and only
+  its outcome reaches the project.
 
-Collection commits a page, derived statistics/reactions and its cursor in one project
-transaction. DM events fan out to authorized projects; local archive/journal/cursor
-commit before acknowledgement. Expired seven-day event cursors trigger history
-recovery using project catch-up policy. Automatic pings require the exclusive owner.
+Projects publish, collect and run every other Telegram command through their own
+services, as in standalone mode: there are no artifacts, receipts or operation kinds to
+keep in sync with the native code.
 
-Artifacts are project-scoped, capped at 128 MiB and expire after 24 hours. Upload
-identities survive retries; changed content cannot replace a prior upload identity.
-A background cleanup removes expired files and abandoned staging directories. Read
-receipts are pruned after 24 hours; write receipts are kept forever so a request ID
-always keeps its fingerprint and uncertain state.
+Upgrades keep the old `operations` journal for delivery checks and rollback.
+Each project imports its legacy notification bots once and keeps its current
+tokens. If the relay loses a publish reply after sending, the target is marked
+unconfirmed and skipped by the next publish attempt until manually checked.
 
 ## Process control
 
@@ -112,44 +144,27 @@ tg-agent gateway stop --shared
 tg-agent gateway restart --shared
 ```
 
-Worker records and gateway discovery records are separate. Signals require provenance, the executable and OS process-start identity; legacy
-numeric PID files without ownership metadata are refused. A database-scoped OS lock prevents a second project
+Worker records and gateway discovery records are separate. Signals require provenance,
+the executable and OS process-start identity; legacy numeric PID files without
+ownership metadata are refused. A database-scoped OS lock prevents a second project
 worker. Shared restart verifies the pinned installation/configuration before stopping,
-then waits for readiness and reports startup failure. Project code-update hooks manage
-only the project's worker. CLI/Web status separates gateway HTTP availability,
-dispatcher readiness and permitted-account connections.
+then waits for the relay to answer and reports startup failure. Project workers
+reconnect to a restarted gateway on their next request. After an upgrade, restart the
+gateway once (`tg-agent gateway restart --shared`): an older gateway that does not
+serve the relay is refused with that hint instead of being used.
 
 ## Acceptance evidence
 
-Offline tests use a local Telegram transport. The main scenario starts two actual
-CLI worker subprocesses through enrollment, with independent databases/cursors and
-filters. Workers collect through their normal queue paths. After project A stops,
-project B performs another Telegram command. A separate test exercises the production
-LiveTelegramAccess/ClientPool cache and verifies one connected client, normalized
-reads, DM fan-out and file publication. No test manually inserts collected posts in
-the CLI-worker acceptance scenario.
+Offline tests stand in for the gateway's Telegram connection with a stub that answers
+raw TL requests. The main scenario starts two actual CLI worker subprocesses through
+enrollment, with independent databases/cursors and filters, sharing one gateway
+connection. Workers collect through their normal queue paths on the relay. After
+project A stops, project B's CLI sends a message through the gateway. Other tests
+cover grants and token scopes, control and administrator operations, revoked grants,
+DM push delivery and recovery, a project `ClientPool` on the gateway relay, an older
+gateway refused with a restart hint, source keys, occupied migration destinations,
+interrupted marker commit, active session owners and concurrent gateway startup.
 
-Additional checks cover rollback of a failed page, replay/uncertainty, grants, scoped
-artifacts, shared FloodWait, DM archive delivery/recovery, source keys, occupied migration
-destinations, interrupted marker commit, active session owners, concurrent gateway
-startup, native-client refusal and CLI command inventory.
-
-Final repository verification is recorded in PR #1715:
-
-```sh
-ruff check tg_agent/ tests/ conftest.py
-python -m pytest tests/ -q -m 'not aiosqlite_serial' -n 2
-python -m pytest tests/ -q -m aiosqlite_serial -n 2 --dist=loadfile
-```
-
-**Live acceptance is blocked:** this environment has neither Telegram API credentials
-nor a configured test account/chats. Offline results do not prove a successful real
-Telegram deployment or every live user-surface effect. The overall task must not be
-marked fully accepted until the requested live two-project scenario and capability
-checks pass. CI links and final offline counts belong to the PR's final-commit evidence.
-
-Existing notification bot tokens are imported into encrypted, project-scoped gateway
-storage before local token fields are cleared. Bot preferences remain independent
-between projects.
-
-![Offline gateway status preview](images/shared-gateway-status.png)
+**Live acceptance needs Telegram credentials:** offline results do not prove a real
+two-project deployment. Run the two-project scenario against a test account before
+relying on it.

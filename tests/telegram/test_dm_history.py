@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tg_agent.telegram.dm_history import read_dialog_history
+from tg_agent.telegram.dm_history import read_dialog_history, read_dialog_history_since
 
 
 def _fail(*_args, **_kwargs):
@@ -120,6 +120,59 @@ async def test_read_dialog_history_empty():
     client = _FakePoolClient([])
     result = await read_dialog_history(client, api_id=123, api_hash="hash", peer=-100, limit=10)
     assert result == []
+
+
+class _FakeForwardClient:
+    """A pool client for the catch-up read: pages oldest-first above ``min_id``."""
+
+    connect = _fail
+    disconnect = _fail
+
+    def __init__(self, messages):
+        self._messages = messages
+
+    def iter_messages(self, peer, limit=200, min_id=0, reverse=False):
+        assert reverse is True
+
+        async def _gen():
+            for m in self._messages:
+                if m.id > min_id:
+                    yield m
+
+        return _gen()
+
+
+def _message(msg_id=1, text="hi"):
+    return SimpleNamespace(
+        id=msg_id, sender_id=10, out=False, date=dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc),
+        text=text, media=None, reply_to=None, forward=None, sender=None,
+    )
+
+
+# A gateway project has no API credentials of its own (the gateway holds them),
+# and the pool client is injected, so nothing here is ever built from them.
+_NO_CREDENTIALS = [(0, ""), (0, "hash"), (123, " ")]
+_NO_CREDENTIALS_IDS = ["neither", "no-api-id", "blank-api-hash"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("api_id", "api_hash"), _NO_CREDENTIALS, ids=_NO_CREDENTIALS_IDS)
+async def test_read_dialog_history_needs_no_credentials_for_an_injected_client(api_id, api_hash):
+    client = _FakePoolClient([_message()])
+
+    result = await read_dialog_history(client, api_id=api_id, api_hash=api_hash, peer=-100)
+
+    assert [m.text for m in result] == ["hi"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("api_id", "api_hash"), _NO_CREDENTIALS, ids=_NO_CREDENTIALS_IDS)
+async def test_read_dialog_history_since_needs_no_credentials_for_an_injected_client(api_id, api_hash):
+    client = _FakeForwardClient([_message(1, "old"), _message(2, "new")])
+
+    result = await read_dialog_history_since(client, api_id=api_id, api_hash=api_hash, peer=5, min_id=1)
+
+    assert [(m.id, m.text) for m in result] == [(2, "new")]
 
 
 def test_client_factory_ignores_args_returns_fixed_client():

@@ -406,22 +406,6 @@ class TestMyTelegramActions:
         assert payload["count"] == 1
         assert payload["drafts"][0]["peer_id"] == 42
 
-    def test_print_handoff_draft_list_respects_json_format(self, capsys):
-        """--format json must survive the worker hand-off print path instead of
-        being hardcoded to text (review finding on the #1863 handoff branch)."""
-        import json as json_mod
-
-        from tg_agent.cli.commands import dialogs as dialogs_cli
-
-        dialogs_cli._print_handoff_result(
-            "draft-list",
-            {"drafts": [{"peer_id": 42, "message": "hi", "message_html": "<b>hi</b>"}]},
-            output_format="json",
-        )
-        payload = json_mod.loads(capsys.readouterr().out)
-        assert payload["count"] == 1
-        assert payload["drafts"][0]["message_html"] == "<b>hi</b>"
-
     def test_unpin_message_action(self, capsys):
         pool = _make_pool_with_clients()
         mock_client = AsyncMock()

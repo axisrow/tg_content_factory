@@ -1,18 +1,13 @@
-"""Every CLI site that opens a Telegram pool must declare how it behaves vs `serve`.
+"""Every CLI site that opens a Telegram pool must declare how it behaves next to the daemon.
 
-`serve` owns the Telegram session files (``data/telegram_sessions/<phone>.session``,
-keyed by phone alone), so a CLI process building its own ``ClientPool`` opens the
-same files and risks ``database is locked``. Two commands already learned that the
-hard way.
+While the worker daemon runs it owns every account connection. ``runtime.init_pool()``
+then builds a pool on the daemon's relay (#1868): the command runs exactly as without
+a daemon, on the daemon's connection. Some work is not a request but a job the daemon
+already runs — collection, the hourly ping sweep — and those sites hand it to the
+daemon's queues instead of doing it here.
 
-This is the guard that stops the class from coming back: a new ``init_pool`` call
-site is a deliberate decision about concurrency, and leaving it unclassified fails
-here rather than silently shipping another competing connection.
-
-Since #1521 ``runtime.init_pool()`` itself refuses while a daemon is live, so the
-default for an unlisted-but-classified site is REFUSED. Only a site that passes
-``allow_live_daemon=...`` can build a pool next to the daemon, and only the
-sites listed in ``BYPASSES_GUARD`` may pass it.
+A new ``init_pool`` call site is a deliberate decision; leaving it unclassified fails
+here rather than silently shipping.
 """
 
 from __future__ import annotations
@@ -24,33 +19,20 @@ import pytest
 
 CLI_DIR = Path(__file__).resolve().parent.parent / "tg_agent" / "cli"
 
-# Consult the daemon before opening a pool: hand work to the running worker
-# through a queue, or (generation) run without Telegram access.
+# Consult the daemon before opening a pool: queue the job for the running worker.
 HANDS_OFF = {
     ("commands/channel.py", "collect_impl"),
     ("commands/collect.py", "collect_impl"),
-    ("commands/dialogs.py", "_dispatch"),
-    # pipeline run / generate (#1521): next to a live daemon generation runs
-    # without a pool — Telegram-side nodes fail without one, so pipelines
-    # containing them need the daemon stopped.
-    ("pipeline/generation.py", "_generation_pool"),
     # ping run-due (#1415): the worker already runs ping_due hourly; a parallel
     # local run would pass the same threshold rule and double-send the nudge —
     # hand off via the PING_DUE task whose has_active_task dedup blocks overlap.
     ("commands/ping.py", "run_due_impl"),
 }
 
-# Refused while a daemon is live (#1521): no queue equivalent, so
-# ``runtime.init_pool()`` raises ``DaemonOwnsSessionsError`` (exit 1, "tg-agent
-# stop" hint) before any pool is built. These used to "run anyway", but since the
-# per-session lock (#1548) the daemon holds every session for its lifetime: the
-# CLI pool only waited out the lock grace per account and came up empty.
-REFUSED_WHILE_DAEMON = {
-    # plugin run --with-pool: generic tools have no worker-queue handoff.
-    # Use the normal guard (or configured gateway), never allow_live_daemon.
+# Run in this process; next to a live daemon the pool runs on its relay.
+RELAYED = {
+    ("commands/agent.py", "chat_impl"),
     ("commands/plugin.py", "plugin_host"),
-    # verify-code (#1521): the account is persisted first; the pool is only a
-    # best-effort premium warm-up whose failure the command already reports.
     ("commands/account.py", "verify_code_impl"),
     ("commands/account.py", "info_impl"),
     ("commands/search.py", "search_impl"),
@@ -64,38 +46,17 @@ REFUSED_WHILE_DAEMON = {
     ("commands/channel.py", "import_impl"),
     ("commands/channel.py", "add_bulk_impl"),
     ("commands/channel.py", "list_for_import_impl"),
+    ("commands/channel.py", "probe_impl"),
     ("commands/collect.py", "collect_sample_impl"),
     ("commands/notification.py", "_build"),
-    ("pipeline/moderation.py", "_pipeline_publish"),
-    # ping create (#1415): --username resolve is a read-only RPC, one RPC per
-    # operator-invoked create — same shape as the diagnostics above.
-    ("commands/ping.py", "create_impl"),
-    # probe (#1622): read-only live quality card for a channel that is not in
-    # the DB yet — the worker queue has no equivalent (it only touches
-    # collected channels).
-    ("commands/channel.py", "probe_impl"),
-    # seeding --live (#1800): read-only last-messages peek for a chat that may
-    # not be in the DB — same shape as messages_read_impl (refuse next to the
-    # daemon, no queue equivalent).
-    ("commands/seeding.py", "_fetch_live_chat_messages"),
-}
-
-# Intentionally untouched: frozen long-lived legacy surfaces with their own
-# lifecycle. They pass ``allow_live_daemon=True`` and keep the pre-#1521
-# behaviour (the session lock still keeps them off the daemon's sessions).
-EXEMPT = {
-    ("commands/agent.py", "chat_impl"),
-    ("commands/mcp_server.py", "_serve"),
-}
-
-CLASSIFIED = HANDS_OFF | REFUSED_WHILE_DAEMON | EXEMPT
-
-# The only sites allowed to pass ``allow_live_daemon``: the exempt surfaces, and
-# hand-off sites forwarding an explicit operator ``--direct``.
-BYPASSES_GUARD = EXEMPT | {
-    ("commands/channel.py", "collect_impl"),
     ("commands/dialogs.py", "_dispatch"),
+    ("commands/ping.py", "create_impl"),
+    ("commands/seeding.py", "_fetch_live_chat_messages"),
+    ("pipeline/generation.py", "_generation_pool"),
+    ("pipeline/moderation.py", "_pipeline_publish"),
 }
+
+CLASSIFIED = HANDS_OFF | RELAYED
 
 
 def _is_init_pool_call(node: ast.AST) -> bool:
@@ -131,14 +92,14 @@ def _pool_call_sites() -> set[tuple[str, str]]:
 def test_every_pool_call_site_is_classified():
     """A new ``init_pool`` call must be classified before it can ship.
 
-    Add the (file, function) pair to HANDS_OFF, REFUSED_WHILE_DAEMON or EXEMPT above —
-    and prefer HANDS_OFF whenever the operation has a queue equivalent.
+    Add the (file, function) pair to HANDS_OFF or RELAYED above — HANDS_OFF only
+    when the operation is a job the daemon's own queues already run.
     """
     unclassified = _pool_call_sites() - CLASSIFIED
 
     assert not unclassified, (
         "These CLI functions open a Telegram pool without declaring how they "
-        f"behave while `serve` is running: {sorted(unclassified)}. "
+        f"behave next to the daemon: {sorted(unclassified)}. "
         "Classify each in tests/test_cli_pool_classification.py."
     )
 
@@ -152,20 +113,13 @@ def test_classification_has_no_stale_entries():
     )
 
 
-def test_the_three_classes_are_disjoint():
-    """A call site has exactly one behaviour; overlap would make the guard lie."""
-    assert not (HANDS_OFF & REFUSED_WHILE_DAEMON)
-    assert not (HANDS_OFF & EXEMPT)
-    assert not (REFUSED_WHILE_DAEMON & EXEMPT)
+def test_the_two_classes_are_disjoint():
+    assert not (HANDS_OFF & RELAYED)
 
 
 @pytest.mark.parametrize("file_name, func_name", sorted(HANDS_OFF))
 def test_hands_off_sites_consult_the_detector(file_name: str, func_name: str):
-    """A HANDS_OFF claim must be backed by a real ``serve_is_running`` check.
-
-    Without this the entry is just a comment: the function could keep connecting
-    unconditionally while the list claims otherwise.
-    """
+    """A HANDS_OFF claim must be backed by a real ``serve_is_running`` check."""
     source = (CLI_DIR / file_name).read_text(encoding="utf-8")
     tree = ast.parse(source)
 
@@ -189,16 +143,17 @@ def test_hands_off_sites_consult_the_detector(file_name: str, func_name: str):
 # mutmut_skip: repo-contract AST scan — mutmut trampoline defs (x_*__mutmut_N)
 # duplicate the guarded call sites inside the mutants sandbox.
 @pytest.mark.mutmut_skip
-def test_only_listed_sites_bypass_the_daemon_guard():
-    """``allow_live_daemon`` re-opens the #1521 hole, so every use must be listed.
+def test_no_site_can_bypass_the_daemon():
+    """There is no escape hatch past the owner any more (#1868): ``phones`` only.
 
-    A refused site passing it would silently build a second pool next to the
-    daemon again; a listed site that stopped passing it makes its claim stale.
+    The former ``allow_live_daemon`` flag let a process connect the daemon's auth
+    key a second time; with the relay nothing needs it.
     """
-    passing = {
-        (file_name, func_name)
+    extra = {
+        (file_name, func_name, kw.arg)
         for file_name, func_name, call in _pool_calls()
-        if any(kw.arg == "allow_live_daemon" for kw in call.keywords)
+        for kw in call.keywords
+        if kw.arg not in {"phones"}
     }
 
-    assert passing == BYPASSES_GUARD
+    assert not extra

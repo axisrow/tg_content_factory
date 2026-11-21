@@ -412,8 +412,8 @@ async def channel_rate_impl(
         provider_service = await build_provider_service(db, config)
         if not provider_service.has_providers():
             print(
-                "LLM provider is not configured. Add one with `provider add`, in the web "
-                "/settings page, or set an API key env var (e.g. OPENAI_API_KEY)."
+                "LLM provider is not configured. Add one with `provider add` "
+                "or set an API key env var (e.g. OPENAI_API_KEY)."
             )
             return
 

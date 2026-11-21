@@ -29,12 +29,13 @@ def require_shared(shared):
         cli_error("This operation affects every attached project and requires --shared")
 
 
-async def administer(path, payload):
+async def administer(op, payload=None, **fields):
+    """One administrator operation on the shared gateway's relay."""
     from tg_agent.gateway.catalog import GatewayAdministrator
 
     client = await GatewayAdministrator.connect(current_store_root())
     try:
-        return await client.call(path, payload)
+        return await client.call(op, payload, **fields)
     finally:
         await client.close()
 
@@ -42,25 +43,14 @@ async def administer(path, payload):
 @accounts_app.command("list")
 def accounts_list(ctx: typer.Context):
     apply_startup(ctx)
-
-    async def listing():
-        from tg_agent.gateway.catalog import GatewayAdministrator
-
-        client = await GatewayAdministrator.connect(current_store_root())
-        try:
-            response = await client.http.get("/v1/admin/accounts")
-            response.raise_for_status()
-            return response.json()
-        finally:
-            await client.close()
-    print(json.dumps(run_async(listing())))
+    print(json.dumps({"accounts": run_async(administer("accounts.list"))}))
 
 
 @accounts_app.command("disable")
 def accounts_disable(ctx: typer.Context, phone: str, shared: bool = typer.Option(False, "--shared")):
     require_shared(shared)
     apply_startup(ctx)
-    run_async(administer("accounts/update", {"phone": phone, "active": False}))
+    run_async(administer("accounts.update", {"phone": phone, "active": False}))
     print("Shared account disabled")
 
 
@@ -68,7 +58,7 @@ def accounts_disable(ctx: typer.Context, phone: str, shared: bool = typer.Option
 def accounts_enable(ctx: typer.Context, phone: str, shared: bool = typer.Option(False, "--shared")):
     require_shared(shared)
     apply_startup(ctx)
-    run_async(administer("accounts/update", {"phone": phone, "active": True}))
+    run_async(administer("accounts.update", {"phone": phone, "active": True}))
     print("Shared account enabled")
 
 
@@ -76,7 +66,7 @@ def accounts_enable(ctx: typer.Context, phone: str, shared: bool = typer.Option(
 def accounts_delete(ctx: typer.Context, phone: str, shared: bool = typer.Option(False, "--shared")):
     require_shared(shared)
     apply_startup(ctx)
-    run_async(administer("accounts/update", {"phone": phone, "delete": True}))
+    run_async(administer("accounts.update", {"phone": phone, "delete": True}))
     print("Shared account session removed; project archives retained")
 
 
@@ -86,7 +76,7 @@ def accounts_import(ctx: typer.Context, phone: str, session_file: Path = typer.O
     require_shared(shared)
     apply_startup(ctx)
     session = session_file.read_text().strip()
-    run_async(administer("accounts/import", {"phone": phone, "session": session}))
+    run_async(administer("accounts.import", {"phone": phone, "session": session}))
     print("Shared account imported")
 
 
@@ -94,18 +84,7 @@ def accounts_import(ctx: typer.Context, phone: str, session_file: Path = typer.O
 def accounts_export(ctx: typer.Context, phone: str, shared: bool = typer.Option(False, "--shared")):
     require_shared(shared)
     apply_startup(ctx)
-
-    async def exporting():
-        from tg_agent.gateway.catalog import GatewayAdministrator
-
-        client = await GatewayAdministrator.connect(current_store_root())
-        try:
-            response = await client.http.get("/v1/admin/accounts/export", params={"phone": phone})
-            response.raise_for_status()
-            return response.json()["session_string"]
-        finally:
-            await client.close()
-    print(run_async(exporting()))
+    print(run_async(administer("accounts.export", phone=phone)))
 
 
 @accounts_app.command("replace-session")
@@ -113,7 +92,7 @@ def accounts_replace(ctx: typer.Context, phone: str, session_file: Path = typer.
                      shared: bool = typer.Option(False, "--shared")):
     require_shared(shared)
     apply_startup(ctx)
-    run_async(administer("accounts/import", {"phone": phone, "session": session_file.read_text().strip(),
+    run_async(administer("accounts.import", {"phone": phone, "session": session_file.read_text().strip(),
                                              "replace": True}))
     print("Shared account session replaced")
 
@@ -123,7 +102,8 @@ def gateway_start(ctx: typer.Context):
     apply_startup(ctx)
     from tg_agent.gateway.runtime import ensure_gateway
 
-    print(ensure_gateway(current_store_root()))
+    record = ensure_gateway(current_store_root())
+    print(json.dumps({"state": "up", "port": record["port"], "pid": record["pid"]}))
 
 
 @gateway_app.command("reply-owner")
@@ -145,9 +125,7 @@ def gateway_reply_owner(ctx: typer.Context, phone: str, dialog_id: int,
             account = next((row for row in await client.accounts() if row["phone"] == phone), None)
             if account is None:
                 cli_error("Account is not attached to this project")
-            response = await client.http.post("/v1/reply-owner", json={"account_id": account["id"],
-                "dialog_id": dialog_id, "release": release})
-            response.raise_for_status()
+            await client.reply_owner(account["id"], dialog_id, release=release)
         finally:
             if client is not None:
                 await client.close()
@@ -183,4 +161,5 @@ def gateway_restart(ctx: typer.Context, shared: bool = typer.Option(False, "--sh
         cli_error("Shared gateway restart requires --shared; `restart` controls only this project's worker")
     from tg_agent.gateway.runtime import restart_gateway
 
-    print(restart_gateway(current_store_root(), shared=True))
+    record = restart_gateway(current_store_root(), shared=True)
+    print(json.dumps({"state": "up", "port": record["port"], "pid": record["pid"]}))

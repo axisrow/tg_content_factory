@@ -204,7 +204,7 @@ async def search_impl(
     if mode in TELEGRAM_SEARCH_MODES:
         _, pool = await runtime.init_pool(config, db)
         if not pool.clients:
-            logging.error("No connected accounts. Run 'serve' and add accounts via web UI.")
+            logging.error(runtime.NO_ACCOUNTS_HINT)
             await db.close()
             return
 

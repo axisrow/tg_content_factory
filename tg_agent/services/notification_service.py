@@ -7,6 +7,7 @@ from tg_agent.database import Database
 from tg_agent.database.bundles import NotificationBundle
 from tg_agent.models import NotificationBot
 from tg_agent.services.notification_target_service import NotificationTargetService
+from tg_agent.telegram import botfather_flows
 from tg_shared import botfather
 
 logger = logging.getLogger(__name__)
@@ -16,15 +17,6 @@ _DEFAULT_BOT_USERNAME_PREFIX = "leadhunter_"
 
 
 class NotificationService:
-    def __new__(cls, notifications, target_service, *args, **kwargs):
-        from tg_agent.gateway.pool import GatewayPool
-
-        if isinstance(getattr(target_service, "_pool", None), GatewayPool):
-            from tg_agent.gateway.notifications import GatewayNotificationService
-
-            return GatewayNotificationService(notifications, target_service, *args, **kwargs)
-        return super().__new__(cls)
-
     def __init__(
         self,
         notifications: NotificationBundle | Database,
@@ -53,7 +45,7 @@ class NotificationService:
             bot_username = f"{self._bot_username_prefix}{slug}_bot"
             bot_name = f"{self._bot_name_prefix} ({slug})"
 
-            token = await botfather.create_bot(client, bot_name, bot_username)
+            token = await botfather_flows.create_bot(client, bot_name, bot_username)
 
             # Send /start to the new bot so it gets initialised. The 30s timeout
             # is REQUIRED, not optional: with connection_retries=None a send on a
@@ -97,9 +89,7 @@ class NotificationService:
 
     async def get_status(self) -> NotificationBot | None:
         """Return bot info for the selected notification account, or None if not set up."""
-        async with self._target_service.use_client() as (client, _phone):
-            me = await asyncio.wait_for(client.get_me(), timeout=15.0)
-        return await self._notifications.get_bot(me.id)
+        return await self._notifications.get_bot(await self._target_service.account_user_id())
 
     async def send_notification(self, message: str) -> bool:
         """Send a one-off notification via the configured bot (or direct message fallback).
@@ -120,8 +110,11 @@ class NotificationService:
             raise RuntimeError("notification_test_failed")
         return True
 
-    async def teardown_bot(self) -> None:
+    async def teardown_bot(self) -> bool:
         """Delete the notification bot via BotFather and remove it from DB.
+
+        Returns ``True`` when BotFather deleted the bot now, ``False`` when
+        Telegram no longer had it and only the stale record was removed.
 
         Idempotent after a remote delete (issue #1085): if the bot is already
         gone from Telegram, ``botfather.delete_bot`` raises
@@ -133,21 +126,24 @@ class NotificationService:
         re-raised *before* the DB-delete: we never wipe the row while the bot
         might still be reachable in Telegram.
         """
-        async with self._target_service.use_client() as (client, _phone):
+        async with self._target_service.use_client() as (client, phone):
             me = await asyncio.wait_for(client.get_me(), timeout=15.0)
             tg_user_id: int = me.id
             bot = await self._notifications.get_bot(tg_user_id)
             if bot is None:
-                raise RuntimeError("No notification bot found for this user")
+                raise RuntimeError(f"No notification bot is recorded for {phone} (Telegram user {tg_user_id})")
 
+            deleted_now = True
             try:
-                await botfather.delete_bot(client, bot.bot_username)
+                await botfather_flows.delete_bot(client, bot.bot_username)
             except botfather.BotNotFoundError:
-                # The bot is no longer in /mybots — it was already deleted in
+                # BotFather no longer has the bot (it is not in its list, or the
+                # account has no bots at all) — it was already deleted in
                 # Telegram (e.g. a previous teardown that then failed at the
-                # DB-delete step). Fall through to the local cleanup so the
-                # orphan row can be removed; this is what makes teardown
+                # DB-delete step, or by hand). Fall through to the local cleanup
+                # so the orphan row can be removed; this is what makes teardown
                 # idempotent and recoverable, not just observable.
+                deleted_now = False
                 logger.info(
                     "Notification bot @%s already absent from Telegram; "
                     "proceeding with local DB cleanup for user %s",
@@ -173,3 +169,4 @@ class NotificationService:
             )
             raise
         logger.info("Notification bot deleted for user %s", tg_user_id)
+        return deleted_now

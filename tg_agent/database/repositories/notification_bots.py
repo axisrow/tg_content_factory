@@ -12,6 +12,21 @@ if TYPE_CHECKING:
     from tg_agent.database.facade import Database
 
 
+_UPSERT_BOT = """
+    INSERT INTO notification_bots (tg_user_id, tg_username, bot_id, bot_username, bot_token)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(tg_user_id) DO UPDATE SET
+        tg_username = excluded.tg_username,
+        bot_id = excluded.bot_id,
+        bot_username = excluded.bot_username,
+        bot_token = excluded.bot_token
+"""
+
+
+def _bot_values(bot: NotificationBot) -> tuple[int, str | None, int | None, str, str]:
+    return bot.tg_user_id, bot.tg_username, bot.bot_id, bot.bot_username, bot.bot_token
+
+
 class NotificationBotsRepository:
     """Персональные боты для уведомлений, созданные через BotFather.
 
@@ -50,19 +65,20 @@ class NotificationBotsRepository:
         assert self._database is not None, (
             "NotificationBotsRepository.save_bot requires a Database reference"
         )
-        cur = await self._database.execute_write(
-            """
-            INSERT INTO notification_bots (tg_user_id, tg_username, bot_id, bot_username, bot_token)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(tg_user_id) DO UPDATE SET
-                tg_username = excluded.tg_username,
-                bot_id = excluded.bot_id,
-                bot_username = excluded.bot_username,
-                bot_token = excluded.bot_token
-            """,
-            (bot.tg_user_id, bot.tg_username, bot.bot_id, bot.bot_username, bot.bot_token),
-        )
+        cur = await self._database.execute_write(_UPSERT_BOT, _bot_values(bot))
         return cur.lastrowid or 0
+
+    async def restore_legacy_bots(self, marker: str, bots: list[NotificationBot]) -> int:
+        """Restore missing credentials and commit the one-time marker together."""
+        assert self._database is not None
+        async with self._database.transaction() as conn:
+            marker_insert = await conn.execute("INSERT OR IGNORE INTO settings (key,value) VALUES (?,'1')", (marker,))
+            if not marker_insert.rowcount:
+                return 0
+            restored = await conn.executemany(
+                _UPSERT_BOT + " WHERE notification_bots.bot_token = ''", map(_bot_values, bots)
+            )
+            return restored.rowcount
 
     async def count(self) -> int:
         """Число зарегистрированных ботов уведомлений."""

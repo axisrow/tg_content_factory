@@ -80,14 +80,17 @@ async def _resolve_credentials(config, db, *, api_id: int | None, api_hash: str 
 
 
 async def _shared_auth(config, db, action, payload):
-    from tg_agent.gateway.pool import GatewayPool
+    """Run a login step inside the shared gateway, then mirror its catalog."""
+    from tg_agent.gateway.catalog import ProjectAccountCatalog
+    from tg_agent.gateway.client import TelegramGatewayClient
 
-    pool = GatewayPool(config, db)
-    await pool.initialize()
+    client = await TelegramGatewayClient.from_config(config)
     try:
-        return await pool.authenticate(action, payload)
+        result = await client.auth(action, payload)
+        await ProjectAccountCatalog(db, client).refresh()
+        return result
     finally:
-        await pool.disconnect_all()
+        await client.close()
 
 
 async def _run_export_session(args: argparse.Namespace, db: Database) -> None:
@@ -428,8 +431,10 @@ async def info_impl(config_path: str, *, phone: str | None = None) -> None:
 
 async def list_impl(config_path: str) -> None:
     """List all accounts with primary/active/premium status."""
-    _, db = await runtime.init_db(config_path)
+    config, db = await runtime.init_db(config_path)
     try:
+        if isinstance(getattr(config, "gateway", None), dict) and config.gateway:
+            await runtime.refresh_gateway_catalog(config, db)
         accounts = await db.get_account_summaries(active_only=False)
         if not accounts:
             print("No accounts found.")
@@ -455,6 +460,10 @@ async def toggle_impl(config_path: str, *, account_id: int) -> None:
     """Toggle an account's active state."""
     config, db = await runtime.init_db(config_path)
     try:
+        if isinstance(config.gateway, dict) and config.gateway:
+            # Invert the gateway's live state: the mirror may predate a change made
+            # on the gateway itself (`gateway account disable --shared`).
+            await runtime.refresh_gateway_catalog(config, db)
         accounts = await db.get_account_summaries(active_only=False)
         acc = next((a for a in accounts if a.id == account_id), None)
         if not acc:
@@ -664,10 +673,10 @@ async def flood_clear_impl(config_path: str, *, phone: str) -> None:
             from tg_agent.gateway.catalog import project_catalog
 
             async with project_catalog(config, db) as catalog:
-                result = await catalog.client.clear_flood(await catalog.reference(acc.id))
+                families = await catalog.client.clear_flood(await catalog.reference(acc.id))
                 await catalog.refresh()
             print(f"Flood wait cleared for {phone}")
-            for family in result.get("families", []):
+            for family in families:
                 print(f"  cleared family flood: {family}")
             return
         await db.update_account_flood(phone, None)

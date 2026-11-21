@@ -17,9 +17,9 @@ from telethon_floodgate import TelegramRateLimitedError
 
 from tg_agent.database import Database, DatabaseBusyError
 from tg_agent.database.bundles import ChannelBundle
-from tg_agent.gateway.pool import GatewayOperationError
 from tg_agent.live_runtime_pause import LiveRuntimePauseGate
 from tg_agent.models import Channel, CollectionTaskStatus
+from tg_agent.runtime import wake
 from tg_agent.telegram.collector import (
     RESOLVE_USERNAME_BACKOFF_BUFFER_SEC,
     AllCollectionClientsFloodedError,
@@ -28,7 +28,7 @@ from tg_agent.telegram.collector import (
     UsernameResolveFloodWaitDeferredError,
     UsernameResolveRateLimitedError,
 )
-from tg_agent.telegram.collector_types import unknown_tl_type_note
+from tg_agent.telegram.collector_types import ChannelCollectionTerminalError, unknown_tl_type_note
 
 logger = logging.getLogger(__name__)
 
@@ -84,14 +84,15 @@ def _is_permanent_collection_error(exc: BaseException) -> bool:
 # name (now someone else's channel), or a resolve that returns nothing usable.
 # Each retry burns real resolve budget, so instead of the daily fail-cycle the
 # channel is stamped and the bulk enqueue skips it for a defer window.
-# On the gateway path the telethon pair arrives as receipt error-codes
-# (UsernameNotOccupiedError/UsernameInvalidError), on the direct path as the
-# raw exceptions — both spellings are terminal.
+# The collector's resolver reports them as ChannelCollectionTerminalError
+# (collector_resolve.py); the raw telethon pair is terminal too.
+# UsernameResolveMiss is no longer produced (it was a code of the gateway
+# operation protocol removed in #1868) but stays valid for rows stamped earlier.
 # HistoryNumericUnresolved (#1805) is the username-less twin: a bare numeric
-# peer-miss with no stored username to recover from burned every gateway
-# account every scheduler round (396 stable peers); it was previously
-# deliberately non-terminal (#1782, when the fallback could still heal it) —
-# the storm proved the no-username subset never heals.
+# peer-miss with no stored username to recover from burned every account
+# every scheduler round (396 stable peers); it was previously deliberately
+# non-terminal (#1782, when the fallback could still heal it) — the storm
+# proved the no-username subset never heals.
 TERMINAL_USERNAME_CODES = frozenset(
     {
         "UsernameInvalidError",
@@ -110,15 +111,13 @@ TERMINAL_CODE_MISMATCH = "UsernameChannelIdMismatch"
 def _terminal_collection_code(exc: BaseException) -> str | None:
     """Terminal username-failure code carried by ``exc``, else ``None``.
 
-    Gateway receipts surface the code in ``GatewayOperationError.code``; the
-    direct-Telethon path raises the raw telethon errors (``code`` attr absent).
-    Raw ValueError (a numeric-miss the username fallback can still heal) is
-    never terminal — but its unrecoverable form (no stored username to heal
-    from) arrives pre-wrapped as HistoryNumericUnresolved and is (#1805).
+    The collector's resolver decides and wraps: a reoccupied username, a vacant
+    one with an unknown id, a numeric id no account knows (#1805). A raw
+    ValueError (a peer miss that may still heal) is never terminal; the raw
+    telethon pair is.
     """
-    if isinstance(exc, GatewayOperationError):
-        code = exc.code
-        return code if code in TERMINAL_USERNAME_CODES else None
+    if isinstance(exc, ChannelCollectionTerminalError):
+        return exc.code if exc.code in TERMINAL_USERNAME_CODES else None
     if isinstance(exc, (UsernameNotOccupiedError, UsernameInvalidError)):
         return type(exc).__name__
     return None
@@ -172,6 +171,7 @@ class CollectionQueue:
         self._known_task_ids: set[int] = set()
         self._pull_task: asyncio.Task | None = None
         self._pull_stop = asyncio.Event()
+        self._pull_wake: asyncio.Event | None = None
         self._shutdown_requested = False
         self._shutdown_event = asyncio.Event()
         self._live_runtime_pause_gate = live_runtime_pause_gate
@@ -595,8 +595,6 @@ class CollectionQueue:
             accepts_cancel_event = True
         if accepts_cancel_event:
             collect_kwargs["cancel_event"] = cancel_event
-        if "signature" in locals() and "intent_key" in signature.parameters:
-            collect_kwargs["intent_key"] = f"collection-task:{task_id}"
         return collect_kwargs
 
     async def _validate_task_pre_dispatch(
@@ -1216,6 +1214,8 @@ class CollectionQueue:
         if self._pull_task is None:
             return
         self._pull_stop.set()
+        if self._pull_wake is not None:
+            self._pull_wake.set()  # leave the idle wait at once
         try:
             await asyncio.wait_for(self._pull_task, timeout=timeout)
         except asyncio.TimeoutError:
@@ -1227,18 +1227,22 @@ class CollectionQueue:
         self._pull_task = None
 
     async def _db_pull_loop(self, interval: float) -> None:
-        while not self._pull_stop.is_set():
-            try:
-                await self._ingest_pending_tasks()
-            except Exception:
-                logger.exception("[collection-queue] DB pull failed")
-            try:
-                # asyncio.timeout avoids the 3.11 wait_for unreleased-waiter
-                # leak (see the supervisor loop above).
-                async with asyncio.timeout(interval):
-                    await self._pull_stop.wait()
-            except TimeoutError:
-                continue
+        # Woken the moment a task row is inserted (#1868); ``interval`` is now
+        # only the safety-net poll.
+        self._pull_wake = wake.subscribe(wake.TASKS)
+        try:
+            while not self._pull_stop.is_set():
+                self._pull_wake.clear()
+                try:
+                    await self._ingest_pending_tasks()
+                except Exception:
+                    logger.exception("[collection-queue] DB pull failed")
+                if self._pull_stop.is_set():
+                    break
+                await wake.wait(self._pull_wake, interval)
+        finally:
+            wake.unsubscribe(wake.TASKS, self._pull_wake)
+            self._pull_wake = None
 
     def _drain_memory_queue(self) -> set[int]:
         drained: set[int] = set()

@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import TYPE_CHECKING, AsyncIterator, cast
+from typing import TYPE_CHECKING, AsyncIterator
 
 from tg_agent.database.pool import ReadConnection
 from tg_agent.database.repositories.message_analytics import MessageAnalyticsMixin
@@ -77,23 +77,6 @@ class MessagesRepository(MessageEmbeddingsMixin, MessageSearchMixin, MessageAnal
         self._fts_available = fts_available
         self._database = database
         self._strict_writes = False
-
-    async def save_collected_page(self, channel_id: int, messages: list[Message], last_id: int) -> int:
-        """Commit messages, derived statistics and the channel cursor together."""
-        if any(message.channel_id != channel_id or message.message_id > last_id for message in messages):
-            raise ValueError("Collection page does not match its channel/cursor")
-        assert self._database is not None
-        async with self._database.transaction() as conn:
-            repository = MessagesRepository(conn, fts_available=self._fts_available,
-                                            database=cast("Database", _TransactionWrites(conn)))
-            repository._strict_writes = True
-            count = await repository.insert_messages_batch(messages)
-            cursor = await conn.execute("UPDATE channels SET last_collected_id=MAX(last_collected_id,?) "
-                                        "WHERE channel_id=?", (last_id, channel_id))
-            if cursor.rowcount != 1:
-                raise ValueError("Collected channel was removed")
-            return count
-
 
     async def insert_message(self, msg: Message) -> bool:
         """Вставить одно сообщение (дубликат по ключу обновляет изменяемые поля); вернуть ``True``, если строка новая.

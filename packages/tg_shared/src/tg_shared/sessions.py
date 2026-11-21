@@ -49,6 +49,11 @@ class FreshEntityStringSession(StringSession):
         for row in self._entities_to_rows(tlo):
             self._store_row(row)
 
+    def add_entity_rows(self, rows: Any) -> None:
+        """Merge ready ``(id, hash, username, phone, name)`` rows, e.g. another session's cache."""
+        for row in rows:
+            self._store_row(tuple(row))
+
     def _store_row(self, row: tuple) -> None:
         current = self._indexed(self._row_by_id, row[_ID])
         if current == row:

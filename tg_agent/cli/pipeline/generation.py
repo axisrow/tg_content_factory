@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING
 
-from tg_agent.cli import runtime, worker_handoff
+from tg_agent.cli import runtime
 
 if TYPE_CHECKING:
     from tg_agent.telegram.client_pool import ClientPool
@@ -20,24 +20,20 @@ from tg_agent.services.pipeline_service import (
 
 
 async def _generation_pool(config, db) -> ClientPool | None:
-    """Telegram pool for generation, or ``None`` while a daemon owns the sessions.
+    """Telegram pool for generation; next to a live daemon it runs on its relay (#1868).
 
-    Generation itself needs no Telegram; Telegram-side nodes (react/forward/
-    delete-message/edit-message) fail loudly without a pool, so a pipeline
-    containing them must run with the daemon stopped. Pipelines without them
-    run pool-less next to a live daemon instead of being refused by
-    ``init_pool`` (#1521).
+    Generation itself needs no Telegram: next to a daemon that serves no usable
+    relay it runs pool-less, and Telegram-side nodes fail loudly (#1521).
     """
-    if not worker_handoff.direct_requested() and worker_handoff.serve_is_running(config):
+    try:
+        _, pool = await runtime.init_pool(config, db)
+    except runtime.DaemonRelayUnavailableError as exc:
         print(
-            "A running tg-agent daemon owns the Telegram sessions: generating without "
-            "Telegram access. Telegram-side nodes (react/forward/delete-message/"
-            "edit-message) will fail — stop the daemon (`tg-agent stop`) to run "
-            "pipelines containing them.",
+            f"{exc.format_message()} Generating without Telegram access: Telegram-side nodes "
+            "(react/forward/delete-message/edit-message) will fail.",
             file=sys.stderr,
         )
         return None
-    _, pool = await runtime.init_pool(config, db)
     return pool
 
 
@@ -59,7 +55,7 @@ async def _pipeline_run(
     provider_service = await build_provider_service(db, config)
     if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
         print(
-            "LLM provider is not configured. Add one in /settings or set an API key "
+            "LLM provider is not configured. Add one with `tg-agent provider add` or set an API key "
             "env var (e.g. OPENAI_API_KEY). Non-LLM pipelines run without a provider."
         )
         return None
@@ -119,7 +115,7 @@ async def _pipeline_generate(
     provider_svc = await build_provider_service(db, config)
     if pipeline_needs_llm(pipeline) and not provider_svc.has_providers():
         print(
-            "LLM provider is not configured. Add one in /settings or set an API key "
+            "LLM provider is not configured. Add one with `tg-agent provider add` or set an API key "
             "env var (e.g. OPENAI_API_KEY). Non-LLM pipelines run without a provider."
         )
         return None
@@ -174,7 +170,10 @@ async def _pipeline_generate_stream(
     # providers; the registry no longer reads env itself (#1050).
     provider_service = await build_provider_service(db, config)
     if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
-        print("LLM provider is not configured. Add one in /settings or set an API key env var (e.g. OPENAI_API_KEY).")
+        print(
+            "LLM provider is not configured. Add one with `tg-agent provider add` "
+            "or set an API key env var (e.g. OPENAI_API_KEY)."
+        )
         return
     if not pipeline_needs_llm(pipeline):
         print("Pipeline has no LLM nodes; nothing to stream.")

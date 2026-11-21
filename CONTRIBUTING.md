@@ -15,7 +15,10 @@ Include:
 
 - `tg-agent --version` (or install commit)
 - the exact command and its full output (add `--debug` if available)
-- how many accounts are configured and whether a `worker` is running
+- how many accounts are configured, whether the worker daemon is running
+  (`tg-agent daemon status`) and whether the project is gateway-bound
+  (`tg-agent global status`) — live commands run on the daemon's or gateway's
+  connection while one is up
 - what you expected vs what happened
 
 Never paste session strings, phone numbers, or `.env` contents — those are
@@ -24,7 +27,7 @@ credentials, not logs.
 ## Architecture map
 
 ```
-entrypoints (tg_agent/cli, tg_webui, tg_agent/agent)   ← no telethon imports allowed here
+entrypoints (tg_agent/cli, tg_agent/agent)       ← no telethon imports allowed here
         ↓
 services + repositories (tg_agent/services, tg_agent/database)
         ↓
@@ -40,6 +43,10 @@ telegram backends (tg_agent/telegram)            ← all raw Telethon lives here
   they document the invariants (lock order, pool↔DB ordering, lease teardown).
 - **Flood control** is `telethon-floodgate` (circuit breaker + rate gate);
   security-warning recovery lives in `mtproto_watchdog.py`.
+- **Session-owner relay** (`tg_agent/telegram/relay.py`, #1868): the process
+  that owns an account's connection (the worker daemon or the shared gateway)
+  serves a loopback relay; every other process runs its MTProto requests on
+  that connection, so each account keeps one authorization and one flood budget.
 - Broader overview: [docs/architecture.md](docs/architecture.md).
 
 ## Development setup
@@ -109,12 +116,11 @@ Advisory tools wired into CI: `bandit`, `pip-audit`. Optional: `mutmut`
 **Lower-bar surfaces** — good first contributions:
 
 - skills and recipes (`skills/`), documentation (`docs/`)
-- individual CLI commands (the CLI is the contract — new capabilities land here)
-- web dashboard fixes (the [tg-webui](https://github.com/axisrow/tg_webui) repo, frozen but accepting bug fixes)
+- individual CLI commands (the CLI is the contract and the only surface — new capabilities land here)
 
 **Higher-bar core** — read first, then propose:
 
-- `tg_agent/telegram/` (pool, flood, watchdog) — invariants are documented in
+- `tg_agent/telegram/` (pool, flood, watchdog, relay) — invariants are documented in
   module docstrings and issue references; changes here deserve an issue first
 
 ## PR expectations

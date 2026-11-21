@@ -39,14 +39,14 @@ def make_message(
     )
 
 
-async def test_collected_page_supports_search_embeddings_and_analytics(db):
-    """A committed page is visible through every repository component exactly once."""
+async def test_inserted_messages_are_visible_to_search_embeddings_and_analytics(db):
+    """An inserted batch is visible through every repository component exactly once."""
     channel_id = 87654
     await db.repos.channels.add_channel(Channel(channel_id=channel_id, title="Repository components"))
     repository = db.repos.messages
     message = make_message(channel_id, 7, "componentneedle", views=10)
-    assert await repository.save_collected_page(channel_id, [message], 7) == 1
-    assert await repository.save_collected_page(channel_id, [message], 7) == 0
+    assert await repository.insert_messages_batch([message]) == 1
+    assert await repository.insert_messages_batch([message]) == 0
 
     page = await repository.search_messages(SearchParams(query="componentneedle"))
     assert page.total == 1
@@ -61,9 +61,6 @@ async def test_collected_page_supports_search_embeddings_and_analytics(db):
     assert [match.id for match in matches] == [message_id]
     assert await repository.count_embeddings() == 1
     assert (await repository.get_stats())["messages"] == 1
-    channel = await db.repos.channels.get_channel_by_channel_id(channel_id)
-    assert channel is not None
-    assert channel.last_collected_id == 7
 
 
 # insert_message tests

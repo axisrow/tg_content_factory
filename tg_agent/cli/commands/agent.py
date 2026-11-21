@@ -235,8 +235,7 @@ async def chat_impl(
     config, db = await runtime.init_db(config_path)
     auth = pool = mgr = None
     try:
-        # Legacy long-lived surface (frozen): keeps its pre-#1521 behaviour.
-        auth, pool = await runtime.init_pool(config, db, allow_live_daemon=True)
+        auth, pool = await runtime.init_pool(config, db)
         mgr = AgentManager(db, config, client_pool=pool)
         await mgr.refresh_settings_cache(preflight=True)
         mgr.initialize()

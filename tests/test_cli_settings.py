@@ -88,7 +88,9 @@ class TestAgent:
         from tg_agent.cli.commands.settings import run
         run(_ns(settings_action="agent", backend="claude-agent-sdk"))
         out = capsys.readouterr().out
-        assert "agent_backend_override = claude-agent-sdk" in out
+        # The old spelling is accepted and stored as the name the runtime reads.
+        assert "agent_backend_override = claude" in out
+        assert "claude-agent-sdk" not in out
 
     def test_agent_set_prompt_template(self, cli_env, capsys):
         from tg_agent.cli.commands.settings import run
@@ -109,7 +111,14 @@ class TestAgent:
         capsys.readouterr()
         run(_ns(settings_action="agent"))
         out = capsys.readouterr().out
-        assert "claude-agent-sdk" in out
+        assert "agent_backend_override = claude" in out
+
+    def test_agent_rejects_a_removed_backend(self, cli_env):
+        import typer
+
+        from tg_agent.cli.commands.settings import run
+        with pytest.raises(typer.BadParameter, match="unknown agent backend 'codex'"):
+            run(_ns(settings_action="agent", backend="codex"))
 
 
 class TestFilterCriteria:

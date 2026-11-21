@@ -7,9 +7,7 @@ responses seed it — ``session.process_entities``. ``get_entity`` /
 ``get_input_entity`` are never stubbed.
 """
 
-import secrets
 from datetime import datetime, timezone
-from uuid import uuid4
 
 import pytest
 from telethon.errors.rpcerrorlist import ChannelInvalidError
@@ -25,11 +23,7 @@ from telethon.tl.types import (
 )
 
 from tests.helpers import sender_responder_to_send
-from tg_agent.gateway.protocol import Send
-from tg_agent.gateway.store import GatewayStore
-from tg_agent.gateway.telegram import LiveTelegramAccess
 from tg_agent.services.telegram_actions import TelegramActionService
-from tg_agent.telegram.session_lock import release_all_session_locks
 
 PHONE = "+70000000282"
 SESSION = "session-id-forms"
@@ -198,43 +192,3 @@ async def test_send_message_accepts_marked_form_after_warm(real_pool_harness_fac
     # only request the whole write dispatches.
     assert _request_names(dispatched) == ["SendMessageRequest"]
 
-
-@pytest.mark.anyio
-@pytest.mark.native_backend_allowed
-async def test_gateway_typed_channel_peer_normalizes_marked_form(tmp_path, monkeypatch):
-    """A typed integer channel peer in the marked form resolves by bare id."""
-    monkeypatch.setenv("TGCF_SESSION_LOCK_DIR", str(tmp_path / "locks"))
-    client, dispatched = make_recording_client()
-
-    class RecordingAuth:
-        async def create_client_from_session(self, session, **kwargs):
-            return client
-
-        async def cleanup(self):
-            pass
-
-    store = GatewayStore(tmp_path / "gateway")
-    await store.open()
-    access = LiveTelegramAccess(store, RecordingAuth())
-    try:
-        account = await store.import_account("+100", "local-transport-session")
-        project = str(uuid4())
-        await store.register_project(project, tmp_path / project, secrets.token_urlsafe(32))
-        await store.grant(project, account)
-        operation = Send(
-            kind="send", account_id=account, peer=MARKED, peer_type="channel", text="hi"
-        )
-        result = await access.execute(project, operation)
-
-        assert result == {"message_id": 77}
-        names = _request_names(dispatched)
-        assert "GetDialogsRequest" not in names
-        get_channels = [r for r in dispatched if isinstance(r, GetChannelsRequest)]
-        # Either a pure cache miss answered by the bare id, or no RPC at all —
-        # never a request for the marked-channel id 100<bare>.
-        for request in get_channels:
-            assert request.id[0].channel_id == BARE
-    finally:
-        await access.close()
-        await store.close()
-        release_all_session_locks()

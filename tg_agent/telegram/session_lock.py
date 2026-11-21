@@ -7,15 +7,18 @@
 #     (worker / web / CLI processes instead of MCP clients);
 #   - DEFAULT_LOCK_DIR points at <tempdir>/tg-agent-session-locks;
 #   - narrow `_fh is None` guards in _record_holder/_clear_holder (Optional
-#     typing, type-checker hygiene; upstream relied on call ordering).
+#     typing, type-checker hygiene; upstream relied on call ordering);
+#   - upstream's shared-lock mode (``acquire(shared=True)``) removed: nothing
+#     used it, and since #1868 non-owner processes reach Telegram through the
+#     owner's relay instead of sharing an auth key.
 """Per-session file lock guarding against concurrent Telegram connections.
 
 Several independent processes run against the same accounts in tg-agent: the
-worker daemon (the default), the legacy web panel, and one-shot CLI commands.
-A one-shot CLI call issued while the worker daemon is live connects the *same*
-auth key a second time; Telegram's abuse protection
-(``AuthKeyDuplicatedError``) can knock out *both* connections rather than just
-the newcomer, killing the session.
+worker daemon (the default) and one-shot CLI commands. While the daemon runs,
+the CLI goes through its relay and never touches the auth key (#1868); the lock
+is the backstop for every other way two processes could connect the *same*
+auth key — Telegram's abuse protection (``AuthKeyDuplicatedError``) can knock
+out *both* connections rather than just the newcomer, killing the session.
 
 This module provides an OS-level advisory file lock (``flock`` on POSIX,
 ``msvcrt.locking`` on Windows) keyed by the session's actual identity (its
@@ -30,16 +33,8 @@ A second instance racing for the same session waits briefly (covers the
 the grace period elapses, raises :class:`SessionLockError` instead of ever
 calling ``connect()`` -- so the live session is never disturbed.
 
-The lock can only ever see processes on this host, and those only collide
-at Telegram when they reach it from different IPs (dual-stack or
-split-tunnel hosts). Where every instance shares one egress IP,
-``acquire(shared=True)`` takes the lock in shared mode instead: shared
-holders coexist with each other, but a shared holder and an exclusive
-holder never overlap, so an operator who never opted in keeps the
-exclusive guarantee. (On Windows, ``msvcrt`` byte-range locks have no
-shared mode; it is emulated with one locked byte per shared holder.) The
-exclusive holder leaves its PID in the lock file so a refused contender can
-name it.
+The lock can only ever see processes on this host. The holder leaves its PID
+in the lock file so a refused contender can name it.
 """
 
 from __future__ import annotations
@@ -56,34 +51,22 @@ from typing import IO, Optional
 if os.name == "nt":
     import msvcrt
 
-    # msvcrt byte-range locks have no shared mode, so emulate one: an exclusive
-    # holder locks byte 0 plus every shared slot, a shared holder locks one free
-    # slot. Shared holders then coexist, and neither kind overlaps an exclusive
-    # one. Locking past the end of the file is allowed.
-    _SHARED_SLOTS = 64
-    # Windows locks are mandatory, so the exclusive holder writes its PID past
-    # the locked bytes, where a refused contender can still read it.
-    _PID_OFFSET = 1 + _SHARED_SLOTS
+    # Windows locks are mandatory, so the holder writes its PID past the locked
+    # byte, where a refused contender can still read it.
+    _PID_OFFSET = 1
 
-    def _lock_range(fh: IO, start: int, length: int) -> bool:
+    def _try_lock(fh: IO) -> bool:
         try:
-            fh.seek(start)
-            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, length)
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError:
             return False
-        fh.locked_range = (start, length)
         return True
 
-    def _try_lock(fh: IO, shared: bool = False) -> bool:
-        if not shared:
-            return _lock_range(fh, 0, 1 + _SHARED_SLOTS)
-        return any(_lock_range(fh, 1 + slot, 1) for slot in range(_SHARED_SLOTS))
-
     def _unlock(fh: IO) -> None:
-        start, length = getattr(fh, "locked_range", (0, 1 + _SHARED_SLOTS))
         try:
-            fh.seek(start)
-            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, length)
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
         except OSError:
             pass
 
@@ -92,10 +75,9 @@ else:
 
     _PID_OFFSET = 0
 
-    def _try_lock(fh: IO, shared: bool = False) -> bool:
+    def _try_lock(fh: IO) -> bool:
         try:
-            mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
-            fcntl.flock(fh.fileno(), mode | fcntl.LOCK_NB)
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             return True
         except OSError:
             return False
@@ -133,21 +115,18 @@ class SessionLock:
         *,
         grace_seconds: float = DEFAULT_GRACE_SECONDS,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
-        shared: bool = False,
     ) -> None:
         """Block (up to ``grace_seconds``) until the lock is free, then take it.
 
-        ``shared`` takes the lock in shared mode: any number of shared holders
-        coexist, but a shared holder and an exclusive holder never overlap.
         Raises :class:`SessionLockError` if the lock is still held once the
         grace period elapses.
         """
         fh = open(self.path, "a+")
         deadline = time.monotonic() + grace_seconds
         while True:
-            if _try_lock(fh, shared=shared):
+            if _try_lock(fh):
                 self._fh = fh
-                self._record_holder(shared)
+                self._record_holder()
                 return
             if time.monotonic() >= deadline:
                 fh.close()
@@ -174,10 +153,7 @@ class SessionLock:
             self._fh = None
 
     def holder_pid(self) -> Optional[int]:
-        """PID left in the lock file by the current exclusive holder, if any.
-
-        Best effort: a shared holder records nothing (there may be several).
-        """
+        """PID left in the lock file by the current holder, if any (best effort)."""
         try:
             with open(self.path, "rb") as fh:
                 fh.seek(_PID_OFFSET)
@@ -189,20 +165,18 @@ class SessionLock:
             return int(parts[0])
         return None
 
-    def _record_holder(self, shared: bool) -> None:
-        # Exclusive holders leave their PID for a refused contender to report;
-        # shared holders wipe whatever a previous exclusive holder left behind.
+    def _record_holder(self) -> None:
+        # The holder leaves its PID for a refused contender to report.
         self._clear_holder()
-        if not shared:
-            fh = self._fh
-            if fh is None:  # pragma: no cover - acquire() always sets _fh first
-                return
-            try:
-                fh.seek(0)
-                fh.write(" " * _PID_OFFSET + str(os.getpid()))
-                fh.flush()
-            except OSError:
-                pass
+        fh = self._fh
+        if fh is None:  # pragma: no cover - acquire() always sets _fh first
+            return
+        try:
+            fh.seek(0)
+            fh.write(" " * _PID_OFFSET + str(os.getpid()))
+            fh.flush()
+        except OSError:
+            pass
 
     def _clear_holder(self) -> None:
         fh = self._fh

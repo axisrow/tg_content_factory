@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tg-agent"
-version = "0.2.4.2"
+version = "0.3.0"
 description = "Telegram automation dependency for coding agents — tg-agent CLI + skill for Claude Code, OpenCode, Codex"
 readme = "README.md"
 license = "MIT"
@@ -144,12 +144,9 @@ dev = [
     "pytest-playwright>=0.8.0",
 ]
 docs = ["mkdocs-material>=9.7.6", "mkdocstrings[python]>=0.25.0"]
-# Codex SDK image provider + agent backend. Optional: all imports are lazy, so
-# without this group the codex provider/backend simply don't register.
+# Codex SDK image provider. Optional: all imports are lazy, so without this
+# group the codex image provider simply doesn't register.
 codex = ["openai-codex>=0.1.0b2"]
-# Google ADK agent backend (Gemini models). Optional: all imports are lazy, so
-# without this group the adk backend simply reports itself unavailable.
-adk = ["google-adk>=1.16.0"]
 
 [project.urls]
 Homepage = "https://github.com/axisrow/tg_content_factory"
@@ -208,7 +205,6 @@ module = [
     "apscheduler.*",
     "boto3",
     "botocore.*",
-    "google.adk.*",
     "langdetect",
     "openpyxl",
     "openpyxl.*",
@@ -247,7 +243,7 @@ markers = [
     "real_provider_smoke: opt-in live provider API smoke test",
     "aiosqlite_serial: tests in one file must stay together while independent files may use xdist workers",
     "codex_image_live: opt-in live Codex SDK image generation test; gate: RUN_CODEX_IMAGE_LIVE=1",
-    "codex_cli_live: opt-in live Codex CLI smoke (image + agent backend via real MCP); gate: RUN_CODEX_CLI_LIVE=1",
+    "codex_cli_live: opt-in live Codex CLI smoke (image generation); gate: RUN_CODEX_CLI_LIVE=1",
     "e2e: end-to-end browser test using Playwright",
     "slow: test is intrinsically slow (real timers/sleeps that can't be scaled away); excluded from the fast feedback loop with `-m 'not slow'`",
     "mutmut_skip: excluded from mutation runs (repo-contract AST/surface scans, out-of-process spawns, network-flaky); filtered by [tool.mutmut] pytest_add_cli_args `-m 'not mutmut_skip'`",
@@ -307,7 +303,7 @@ verbose = 1
 # is installed editable from its local checkout. The sandbox ships
 # everything tests read outside tg_agent/tests, both at collection time (root
 # conftest.py, scripts/) and at run time (.github/workflows/ci.yml,
-# docs/reference/*, adk/). data/ is deliberately NOT copied — it holds the
+# docs/reference/*). data/ is deliberately NOT copied — it holds the
 # live DB; sandbox tests run on tmp/in-memory databases. mutmut never prunes
 # a stale sandbox (deleted files keep their old copies) — `rm -rf mutants`
 # before a rerun.
@@ -321,7 +317,6 @@ also_copy = [
     "scripts",
     ".github/workflows",
     "docs/reference",
-    "adk",
     "mkdocs.yml",
     "config.yaml",
     "docker-compose.yml",

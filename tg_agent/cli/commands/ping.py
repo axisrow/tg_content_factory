@@ -156,12 +156,21 @@ async def run_due_impl(config_path: str) -> None:
             print(f"PING_DUE task #{task_id} queued; the worker will run it.")
             return
         _, pool = await runtime.init_pool(config, db)
+        from tg_agent.gateway.catalog import auto_reply_guard, shared_project
         from tg_agent.services.ping_monitor_service import PingMonitorService
         from tg_agent.services.telegram_actions import TelegramActionService
 
+        guard = None
+        if shared_project(config) and pool.relay is not None:
+            # Another project may own automatic replies in a dialog; the
+            # gateway answers who, as for the worker (#1868).
+            from tg_agent.gateway.client import TelegramGatewayClient
+
+            guard = auto_reply_guard(db, TelegramGatewayClient(pool.relay))
         service = PingMonitorService(
             db.repos.ping_monitors,
             TelegramActionService(pool),
+            auto_reply_guard=guard,
         )
         checked = await service.run_due()
         print(f"Checked {checked} ping monitor(s).")
