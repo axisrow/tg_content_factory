@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Awaitable, Callable
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -221,7 +222,7 @@ async def serve(root: Path, *, access_factory=None) -> None:
             await start()
 
         async def housekeeping():
-            persist_flood_guards = getattr(access, "persist_flood_guards", None)
+            persist_flood_guards: Callable[[], Awaitable[None]] | None = getattr(access, "persist_flood_guards", None)
             while True:
                 try:
                     await store.expire_events(now=time.time())

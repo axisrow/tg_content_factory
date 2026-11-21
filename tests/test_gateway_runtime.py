@@ -98,7 +98,8 @@ def test_concurrent_autostart_reuses_gateway_from_another_directory(tmp_path, mo
         assert record["protocol"] == RELAY_PROTOCOL
         admin = (root / "gateway-admin.token").read_text().strip()
         relay = RelayEndpoint(port=record["port"], token=admin, pid=record["pid"], protocol=RELAY_PROTOCOL)
-        assert probe_endpoint(relay)["pid"] == record["pid"]
+        hello = probe_endpoint(relay)
+        assert hello is not None and hello["pid"] == record["pid"]
         assert probe_endpoint(RelayEndpoint(port=record["port"], token="wrong", pid=record["pid"],
                                             protocol=RELAY_PROTOCOL)) is None
         assert ensure_gateway(root)["port"] == records[0]["port"]
