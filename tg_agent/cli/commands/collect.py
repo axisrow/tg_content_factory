@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+from collections.abc import Callable
 
 import typer
 
@@ -28,7 +29,7 @@ from tg_agent.telegram.collector_types import ChannelCollectionTerminalError
 
 def print_resolve_backoff_warning(pool) -> None:
     """Print active per-account resolve_username backoffs, if any (#790)."""
-    get_remaining = getattr(pool, "get_resolve_username_backoff_remaining_sec", None)
+    get_remaining: Callable[[str], int] | None = getattr(pool, "get_resolve_username_backoff_remaining_sec", None)
     if not callable(get_remaining):
         return
     active: dict[str, int] = {}

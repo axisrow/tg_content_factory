@@ -672,6 +672,8 @@ async def refresh_types_impl(config_path: str) -> None:
                 await pool.release_client(phone)
         updated = failed = deactivated = quarantined = 0
         for ch in channels:
+            if ch.id is None:  # rows read from the DB always carry their pk
+                continue
             identifier = ch.username or str(ch.channel_id)
             try:
                 # numeric_fallback so a stale @username doesn't deactivate a
