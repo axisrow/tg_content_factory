@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, cast
@@ -332,18 +333,26 @@ class ResolveGuardMixin:
     async def persist_resolve_limiter_snapshot(self) -> None:
         """Persist the resolve limiter's per-phone windows to DB settings.
 
-        Wall-clock stamps (and tightened budgets as remaining seconds) survive
-        a daemon restart: the next boot replays them against the new clock, so
+        Wall-clock stamps and tightened-budget deadlines survive a daemon
+        restart: the next boot replays them against the new clock, so
         sustained volume already spent stays against the budget instead of
-        resetting it (floodgate #26). Best-effort — a snapshot is an
-        optimisation, never a failure path.
+        resetting it, and a tightened budget ends when it would have
+        (floodgate #26). Best-effort — a snapshot is an optimisation, never a
+        failure path.
         """
         db = getattr(self, "_db", None)
         if db is None or vars(self).get("_relay") is not None:
             return  # the owner's snapshot is authoritative while it runs
         try:
-            payload = json.dumps(self._get_resolve_rate_limiter().snapshot_state())
-            await db.set_setting(RESOLVE_LIMITER_SNAPSHOT_SETTING, payload)
+            taken_at = time.time()
+            snapshot = self._get_resolve_rate_limiter().snapshot_state()
+            for entry in snapshot.values():
+                if "tightened" in entry:
+                    # floodgate (<0.2) keeps only the seconds left and restarts
+                    # that countdown on restore; the deadline lets the next boot
+                    # count the downtime (restore_resolve_limiter_snapshot).
+                    entry["tightened"]["expires_at"] = taken_at + entry["tightened"]["expires_in"]
+            await db.set_setting(RESOLVE_LIMITER_SNAPSHOT_SETTING, json.dumps(snapshot))
         except Exception:
             logger.debug("Failed to persist resolve limiter snapshot", exc_info=True)
 
@@ -362,6 +371,13 @@ class ResolveGuardMixin:
             return
         if isinstance(snapshot, dict):
             try:
+                now = time.time()
+                for entry in snapshot.values():
+                    tightened = entry.get("tightened")
+                    if tightened and "expires_at" in tightened:
+                        # Only the seconds still left, so the downtime counts.
+                        # Snapshots from before the deadline replay as they did.
+                        tightened["expires_in"] = float(tightened["expires_at"]) - now
                 self._get_resolve_rate_limiter().restore_state(snapshot)
             except (TypeError, ValueError, KeyError, AttributeError) as exc:
                 # A dict payload with a wrong per-entry shape (hand-edited

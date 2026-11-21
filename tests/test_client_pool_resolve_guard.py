@@ -3,13 +3,15 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telethon.errors import FloodWaitError
-from telethon_floodgate import HandledFloodWaitError, ResolveRateLimiter, UsernameResolveRateLimitedError
+from telethon_floodgate import HandledFloodWaitError, ResolveRateLimiter, UsernameResolveRateLimitedError, rate_limiter
 
 from tests.helpers import make_resolve_limiter
+from tg_agent.telegram import resolve_guard
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.telegram.resolve_guard import (
     DEFAULT_RESOLVE_VOLUME_MAX_CALLS,
@@ -172,6 +174,48 @@ async def test_restore_resolve_limiter_snapshot_ignores_wrong_entry_shape():
     pool._resolve_rate_limiter = ResolveRateLimiter(jitter_sec=0.0)
     await pool.restore_resolve_limiter_snapshot(pool._db)
     assert pool._resolve_rate_limiter.snapshot_state() == {}
+
+
+@pytest.mark.anyio
+async def test_a_restored_tightened_budget_counts_the_downtime(monkeypatch):
+    """A budget tightened for 4 h ends 4 h after the flood, not 4 h after the
+    restart: floodgate replays only the seconds left, so the downtime was added."""
+    now = [5000.0]  # wall = now; old monotonic = now - 4000; new = now - 7000
+    wall = SimpleNamespace(time=lambda: now[0])
+    monkeypatch.setattr(resolve_guard, "time", wall)
+    monkeypatch.setattr(rate_limiter, "time", wall)
+    old = ClientPool.__new__(ClientPool)
+    db = SimpleNamespace(set_setting=AsyncMock())
+    old._db = cast(Any, db)
+    old._resolve_rate_limiter = ResolveRateLimiter(jitter_sec=0.0, time_func=lambda: now[0] - 4000.0)
+    assert old._resolve_rate_limiter.try_acquire("+7001") == 0.0
+    old._resolve_rate_limiter.tighten("+7001", duration_sec=4 * 3600.0)
+    await old.persist_resolve_limiter_snapshot()
+    payload = db.set_setting.await_args.args[1]
+
+    now[0] += 3600.0  # the restart took an hour
+    fresh = ClientPool.__new__(ClientPool)
+    fresh._db = cast(Any, SimpleNamespace(get_setting=AsyncMock(return_value=payload)))
+    fresh._resolve_rate_limiter = ResolveRateLimiter(jitter_sec=0.0, time_func=lambda: now[0] - 7000.0)
+    await fresh.restore_resolve_limiter_snapshot(fresh._db)
+
+    assert fresh._resolve_rate_limiter.snapshot_state()["+7001"]["tightened"]["expires_in"] == 3 * 3600.0
+
+
+@pytest.mark.anyio
+async def test_a_snapshot_without_deadlines_still_restores_its_tightened_budget():
+    """Snapshots stored before the deadline was added replay as they used to."""
+    source = ResolveRateLimiter(jitter_sec=0.0)
+    assert source.try_acquire("+7001") == 0.0
+    source.tighten("+7001", duration_sec=4 * 3600.0)
+    payload = json.dumps(source.snapshot_state())
+
+    pool = ClientPool.__new__(ClientPool)
+    pool._db = cast(Any, SimpleNamespace(get_setting=AsyncMock(return_value=payload)))
+    pool._resolve_rate_limiter = ResolveRateLimiter(jitter_sec=0.0)
+    await pool.restore_resolve_limiter_snapshot(pool._db)
+
+    assert pool._resolve_rate_limiter.snapshot_state()["+7001"]["tightened"]["expires_in"] > 3 * 3600.0
 
 
 @pytest.mark.anyio
