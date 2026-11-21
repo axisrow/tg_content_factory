@@ -59,6 +59,22 @@ async def create_bot(client: TelegramClient, name: str, username: str) -> str:
         resp = await conv.get_response()
 
         token_match = _TOKEN_RE.search(resp.text)
+        if not token_match and _is_error(resp.text):
+            # BotFather refused the username ("Sorry, this username is already
+            # taken." / "... is invalid."): it waits for another one, nothing
+            # was created. A taken name is most likely an earlier notification
+            # bot of this account, perhaps another project's live one, so the
+            # hint is the prefix — never deleting that bot (#1868).
+            hint = ""
+            if "taken" in resp.text.lower():
+                hint = (
+                    " (this account probably has a notification bot with that name already, perhaps another"
+                    " project's; set notifications.bot_username_prefix to create a separate one)"
+                )
+            raise RuntimeError(
+                f"BotFather refused the username @{username}, so no bot was created{hint}. "
+                f"BotFather said: {_shown(resp)}"
+            )
         if not token_match:
             # The username step already succeeded, so BotFather has CREATED the
             # bot in Telegram. A regex miss here (e.g. BotFather changed its

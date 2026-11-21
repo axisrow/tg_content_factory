@@ -352,3 +352,36 @@ async def test_delete_bot_keyboardless_reply_is_generic_error_not_bot_not_found(
     # Must NOT be the recoverable subclass — the bot might still be live.
     assert not isinstance(exc_info.value, botfather.BotNotFoundError)
     assert _sent(conv) == ["/deletebot"]
+
+
+@pytest.mark.parametrize(
+    ("refusal", "names_the_prefix"),
+    [
+        ("Sorry, this username is already taken. Please try something different.", True),
+        ("Sorry, this username is invalid.", False),
+    ],
+    ids=["taken", "invalid"],
+)
+async def test_create_bot_refused_username_creates_no_orphan(refusal, names_the_prefix, caplog):
+    """A refused username created no bot, so there is no orphan to report.
+
+    Found live (#1868): "this username is already taken" came back as an
+    orphan bot that "must be deleted manually". A taken name most likely
+    belongs to an earlier notification bot of the same account, perhaps
+    another project's, so the hint points at the prefix, not at deleting it.
+    """
+    conv = _make_conv(
+        _reply("Alright, a new bot. How are we going to call it? Please choose a name for your bot."),
+        _reply("Good. Now let's choose a username for your bot. It must end in `bot`."),
+        _reply(refusal),
+    )
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(RuntimeError) as exc_info:
+            await botfather.create_bot(_client_with(conv), "MyBot", "mybot_bot")
+
+    message = str(exc_info.value)
+    assert "refused the username @mybot_bot, so no bot was created" in message
+    assert refusal in message
+    assert "orphan" not in (message + caplog.text).lower()
+    assert ("notifications.bot_username_prefix" in message) is names_the_prefix
