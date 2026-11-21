@@ -31,7 +31,7 @@ from tg_agent.gateway.protocol import (
     UpdateGrant,
 )
 from tg_agent.gateway.store import EventCursorExpiredError, GatewayConflictError, GatewayStore
-from tg_agent.telegram.relay import RELAY_PROTOCOL, RelayAccountUnavailableError, RelayPeer
+from tg_agent.telegram.relay import RELAY_PROTOCOL, OpHandler, RelayAccountUnavailableError, RelayPeer
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,9 @@ class GatewayHub:
             "admin.accounts.export": self._export_account,
             "admin.grants": self._grant,
         }
-        self.ops = {name: self._for_project(handler) for name, handler in project_ops.items()}
+        self.ops: dict[str, OpHandler] = {
+            name: self._for_project(handler) for name, handler in project_ops.items()
+        }
         self.ops.update({name: self._for_admin(handler) for name, handler in admin_ops.items()})
 
     # ------------------------------------------------------------------ owner
@@ -111,11 +113,13 @@ class GatewayHub:
         return Grant(project) if project else None
 
     async def phones(self, grant: Grant) -> list[str]:
-        if grant.admin:
+        if grant.project is None:
             return []
         return [row["phone"] for row in await self.store.accounts(grant.project) if row.get("active")]
 
     async def client(self, grant: Grant, phone: str) -> Any:
+        if grant.project is None:
+            raise RelayAccountUnavailableError(f"{phone} is not granted to this project")
         rows = [row for row in await self.store.accounts(grant.project) if row.get("active")]
         row = next((row for row in rows if row["phone"] == phone), None)
         if row is None:

@@ -15,6 +15,7 @@ import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from telethon import functions, types
@@ -265,9 +266,11 @@ async def test_a_project_pool_on_the_gateway_relay_runs_on_the_shared_connection
     pool = ClientPool(TelegramAuth(1, "hash"), db, relay=await gateway.connect(TOKEN_A))
     try:
         await pool.initialize()
-        raw = pool.clients[PHONE].raw_client
+        session: Any = pool.clients[PHONE]
+        raw = session.raw_client
         assert isinstance(raw, RelayTelegramClient)
-        assert (await raw.get_me()).id == 4242
+        me = await raw.get_me()
+        assert isinstance(me, types.User) and me.id == 4242
     finally:
         await pool.disconnect_all()
 
@@ -536,7 +539,7 @@ async def test_failed_bot_import_rolls_back_and_retries(db):
     async def export_bots():
         return [bot.model_dump(mode="json") for bot in bots]
 
-    client = SimpleNamespace(export_bots=export_bots)
+    client = cast(TelegramGatewayClient, SimpleNamespace(export_bots=export_bots))
     await db.execute_write(
         "CREATE TRIGGER fail_second_bot BEFORE INSERT ON notification_bots WHEN NEW.tg_user_id=20 "
         "BEGIN SELECT RAISE(ABORT, 'offline test write failure'); END"
