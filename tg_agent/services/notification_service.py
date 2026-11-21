@@ -89,9 +89,7 @@ class NotificationService:
 
     async def get_status(self) -> NotificationBot | None:
         """Return bot info for the selected notification account, or None if not set up."""
-        async with self._target_service.use_client() as (client, _phone):
-            me = await asyncio.wait_for(client.get_me(), timeout=15.0)
-        return await self._notifications.get_bot(me.id)
+        return await self._notifications.get_bot(await self._target_service.account_user_id())
 
     async def send_notification(self, message: str) -> bool:
         """Send a one-off notification via the configured bot (or direct message fallback).

@@ -262,6 +262,67 @@ async def test_get_status_no_bot(db, real_pool_harness_factory):
     assert result is None
 
 
+async def _connect_counted_account(harness, phone: str, me_id: int, *, is_primary: bool = False):
+    """Connect an account and return its pool client, whose `get_me` awaits are counted."""
+    client = FakeCliTelethonClient(me=SimpleNamespace(id=me_id, username=None))
+    harness.queue_cli_client(phone=phone, client=client)
+    await harness.add_account(phone=phone, session_string=f"session-{me_id}", is_primary=is_primary)
+    await harness.initialize_connected_accounts()
+    return client
+
+
+@pytest.mark.anyio
+async def test_get_status_asks_telegram_for_the_account_once(db, real_pool_harness_factory):
+    """The worker reads the bot on every heartbeat; an account's user id never changes.
+
+    Found live (#1868): a `get_me` on each read used up the notification
+    account's hourly flood budget and locked the account out for about an hour.
+    """
+    harness = real_pool_harness_factory()
+    client = await _connect_counted_account(harness, "+70001111111", 555, is_primary=True)
+    target = NotificationTargetService(db, harness.pool)
+    asked_before = client.get_me.await_count
+
+    for _ in range(3):  # three heartbeats, each with its own NotificationService, as in the worker
+        assert await NotificationService(db, target).get_status() is None
+
+    assert client.get_me.await_count - asked_before == 1
+
+
+@pytest.mark.anyio
+async def test_get_status_follows_a_change_of_the_notification_account(db, real_pool_harness_factory):
+    for user_id in (555, 777):
+        await db.save_notification_bot(NotificationBot(
+            tg_user_id=user_id, tg_username=None, bot_id=user_id + 1, bot_username=f"bot_{user_id}",
+            bot_token=f"{user_id}:AABBCCDDEEFFaabbccddeeffAABBCCDDEEFF",
+        ))
+    harness = real_pool_harness_factory()
+    await _connect_counted_account(harness, "+70001111111", 555, is_primary=True)
+    await _connect_counted_account(harness, "+70002222222", 777)
+    target = NotificationTargetService(db, harness.pool)
+    svc = NotificationService(db, target)
+
+    first = await svc.get_status()
+    await target.set_configured_phone("+70002222222")
+    second = await svc.get_status()
+
+    assert first is not None and second is not None
+    assert (first.tg_user_id, second.tg_user_id) == (555, 777)
+
+
+@pytest.mark.anyio
+async def test_get_status_refuses_an_unavailable_account_it_has_seen(db, real_pool_harness_factory):
+    """A remembered user id must not make a disconnected account look usable."""
+    harness = real_pool_harness_factory()
+    await _connect_counted_account(harness, "+70001111111", 555, is_primary=True)
+    svc = NotificationService(db, NotificationTargetService(db, harness.pool))
+    await svc.get_status()
+    harness.pool.clients.pop("+70001111111")
+
+    with pytest.raises(RuntimeError, match="не подключён"):
+        await svc.get_status()
+
+
 @pytest.mark.anyio
 async def test_get_status_returns_bot(db, real_pool_harness_factory):
     saved = NotificationBot(

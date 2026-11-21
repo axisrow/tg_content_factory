@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -36,6 +37,22 @@ class NotificationTargetService:
             notifications = NotificationBundle.from_database(notifications)
         self._notifications = notifications
         self._pool = pool
+        self._user_ids: dict[str, int] = {}
+
+    async def account_user_id(self) -> int:
+        """Telegram user id of the notification account.
+
+        It never changes, so Telegram is asked once per account. The worker
+        needs it on every heartbeat, and a `get_me` each time used up the
+        account's hourly flood budget and locked the account out (#1868).
+        """
+        status = await self.describe_target()
+        if status.state == "available" and status.effective_phone in self._user_ids:
+            return self._user_ids[status.effective_phone]
+        async with self.use_client() as (client, phone):
+            me = await asyncio.wait_for(client.get_me(), timeout=15.0)
+        self._user_ids[phone] = me.id
+        return me.id
 
     async def get_configured_phone(self) -> str | None:
         raw = (await self._notifications.get_setting(SETTING_KEY) or "").strip()
