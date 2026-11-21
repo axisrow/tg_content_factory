@@ -12,13 +12,15 @@ import asyncio
 import json
 import logging
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from telethon_floodgate import FloodCircuitBreaker, RateLimitSpec, TelegramRateLimitGate
+from telethon_floodgate import FloodCircuitBreaker, RateLimitSpec, TelegramRateLimitGate, rate_limiter
 from telethon_floodgate.flood_breaker import TelegramOperationSuspendedError
 
 from tg_agent.runtime import worker
+from tg_agent.telegram import flood_snapshot
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.telegram.flood_snapshot import (
     FLOOD_GUARD_SNAPSHOT_SETTING,
@@ -85,6 +87,68 @@ def test_an_open_circuit_keeps_its_remaining_cooldown():
         fresh.check("telegram_stream_messages", PHONE)
     assert 90 < suspended.value.retry_after_sec <= 100
     fresh.check("telegram_stream_messages", OTHER)  # other accounts are not suspended
+
+
+def test_restoring_never_lengthens_a_cooldown_through_rounding(monkeypatch):
+    """CI once saw 100.0004 s of a 100 s pause: the cooldown and the snapshot time
+    were rounded to milliseconds, and here both would round up."""
+    tick = 2**-11  # ~0.49 ms, exact in binary: no float error below
+    now = [5000.0 - 2 * tick]  # wall = now; old monotonic = now - 4000; new = now - 7000
+    monkeypatch.setattr(flood_snapshot, "time", SimpleNamespace(time=lambda: now[0]))
+    old = FloodCircuitBreaker(threshold=1, cooldown_seconds=300.0, time_func=lambda: now[0] - 4000.0)
+    old.record_flood("telegram_stream_messages", PHONE)
+    deadline = now[0] + 300.0
+    now[0] += tick
+    payload = _round_trip(snapshot_flood_guards(breaker=old))
+
+    now[0] += 200.0  # the restart took 200 s
+    fresh = FloodCircuitBreaker(threshold=1, cooldown_seconds=300.0, time_func=lambda: now[0] - 7000.0)
+    restore_flood_guards(payload, breaker=fresh)
+
+    with pytest.raises(TelegramOperationSuspendedError) as suspended:
+        fresh.check("telegram_stream_messages", PHONE)
+    assert suspended.value.retry_after_sec <= deadline - now[0]
+
+
+def test_time_spent_restoring_never_lengthens_a_cooldown(monkeypatch):
+    """Time passing between the restore's two clock reads (a large gate restore)
+    must count as elapsed, not as extra cooldown."""
+    now = [5000.0]  # wall = now; old monotonic = now - 4000; new = now - 7000
+    monkeypatch.setattr(flood_snapshot, "time", SimpleNamespace(time=lambda: now[0]))
+    old = FloodCircuitBreaker(threshold=1, cooldown_seconds=300.0, time_func=lambda: now[0] - 4000.0)
+    old.record_flood("telegram_stream_messages", PHONE)
+    deadline = now[0] + 300.0
+    payload = _round_trip(snapshot_flood_guards(breaker=old))
+    now[0] += 200.0  # the restart took 200 s
+
+    def wall_clock_then_a_slow_step():
+        read = now[0]
+        now[0] += 1.0
+        return read
+
+    monkeypatch.setattr(flood_snapshot, "time", SimpleNamespace(time=wall_clock_then_a_slow_step))
+    fresh = FloodCircuitBreaker(threshold=1, cooldown_seconds=300.0, time_func=lambda: now[0] - 7000.0)
+    restore_flood_guards(payload, breaker=fresh)
+
+    with pytest.raises(TelegramOperationSuspendedError) as suspended:
+        fresh.check("telegram_stream_messages", PHONE)
+    assert suspended.value.retry_after_sec <= deadline - now[0]
+
+
+def test_restoring_never_lengthens_a_gate_wait_through_rounding(monkeypatch):
+    tick = 2**-11  # window stamps rounded to milliseconds would round up here
+    now = [5000.0 - tick]  # wall = now; old monotonic = now - 4000; new = now - 7000
+    monkeypatch.setattr(rate_limiter, "time", SimpleNamespace(time=lambda: now[0]))  # the gate's wall clock
+    old = _gate(time_func=lambda: now[0] - 4000.0)
+    for _ in range(3):
+        assert old.try_acquire(PHONE, "history") == 0.0  # the window is full now
+    payload = _round_trip(snapshot_flood_guards(gate=old))
+
+    now[0] += 30.0
+    fresh = _gate(time_func=lambda: now[0] - 7000.0)
+    restore_flood_guards(payload, gate=fresh)
+
+    assert fresh.try_acquire(PHONE, "history") <= 30.0  # the calls leave the 60 s window in 30 s
 
 
 def test_a_half_open_trial_of_the_old_process_becomes_a_fresh_trial():
@@ -229,10 +293,11 @@ async def test_the_worker_saves_the_guards_through_its_pool():
 async def test_the_gateway_saves_its_shared_pool_guards():
     from tg_agent.gateway.telegram import LiveTelegramAccess
 
-    access = LiveTelegramAccess(SimpleNamespace(), SimpleNamespace())
+    access = LiveTelegramAccess(cast(Any, SimpleNamespace()), cast(Any, SimpleNamespace()))
     await access.persist_flood_guards()  # no pool yet: nothing to save, no error
-    access._pool = SimpleNamespace(persist_flood_guard_snapshot=AsyncMock())
+    pool = SimpleNamespace(persist_flood_guard_snapshot=AsyncMock())
+    access._pool = cast(Any, pool)
 
     await access.persist_flood_guards()
 
-    access._pool.persist_flood_guard_snapshot.assert_awaited_once()
+    pool.persist_flood_guard_snapshot.assert_awaited_once()

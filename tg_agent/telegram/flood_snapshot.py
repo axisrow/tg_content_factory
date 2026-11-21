@@ -40,18 +40,10 @@ _VERSION = 1
 _BREAKER_STATES = frozenset({"closed", "open", "half_open"})
 
 
-def _round_stamps(entry: dict[str, Any]) -> dict[str, Any]:
-    rounded = dict(entry)
-    for tier in ("burst", "sustained"):
-        if tier in rounded:
-            rounded[tier] = [round(float(stamp), 3) for stamp in rounded[tier]]
-    return rounded
-
-
 def _live_entries(limiter_snapshot: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Per-phone entries that still carry something: in-window stamps or a tightened budget."""
     return {
-        str(phone): _round_stamps(entry)
+        str(phone): entry
         for phone, entry in limiter_snapshot.items()
         if entry.get("burst") or entry.get("sustained") or entry.get("tightened")
     }
@@ -99,14 +91,16 @@ def _snapshot_breaker(breaker: Any) -> list[dict[str, Any]]:
             "phone": str(phone),
             "state": str(state),
             "fails": count,
-            "open_for": round(max(0.0, deadline - now), 3) if deadline is not None else 0.0,
+            "open_for": max(0.0, deadline - now) if deadline is not None else 0.0,
         })
     return entries
 
 
 def snapshot_flood_guards(*, gate: Any = None, breaker: Any = None, ceiling: Any = None) -> dict[str, Any]:
     """A JSON-ready snapshot of the pool's flood guards (empty components are omitted)."""
-    payload: dict[str, Any] = {"version": _VERSION, "taken_at": round(time.time(), 3)}
+    # Times stay exact (rounding one up lengthened a restored pause), and the wall
+    # clock is read before any component clock: the gap can only shorten a cooldown.
+    payload: dict[str, Any] = {"version": _VERSION, "taken_at": time.time()}
     for name, build in (
         ("gate", lambda: _snapshot_gate(gate)),
         ("breaker", lambda: _snapshot_breaker(breaker)),
@@ -141,8 +135,14 @@ def _restore_gate(gate: Any, state: dict[str, Any]) -> tuple[int, int]:
     return categories, peers
 
 
-def _restore_breaker(breaker: Any, entries: list[dict[str, Any]], elapsed: float) -> int:
+def _restore_breaker(breaker: Any, entries: list[dict[str, Any]], taken_at: Any) -> int:
+    # The breaker clock first, the wall clock second: time passing between the two
+    # reads then counts as elapsed instead of stretching the resumed cooldown.
     now = breaker._time()
+    try:
+        elapsed = max(0.0, time.time() - float(taken_at))
+    except (TypeError, ValueError):
+        elapsed = 0.0
     restored = 0
     for entry in entries:
         key = (str(entry["operation"]), str(entry["phone"]))
@@ -176,10 +176,6 @@ def restore_flood_guards(
     if not isinstance(payload, dict) or payload.get("version") != _VERSION:
         logger.warning("flood-guard snapshot ignored: unknown format")
         return counts
-    try:
-        elapsed = max(0.0, time.time() - float(payload.get("taken_at")))
-    except (TypeError, ValueError):
-        elapsed = 0.0
     if gate is not None and payload.get("gate"):
         try:
             counts["categories"], counts["peers"] = _restore_gate(gate, payload["gate"])
@@ -187,7 +183,7 @@ def restore_flood_guards(
             logger.warning("flood-guard snapshot: gate skipped (%s)", type(exc).__name__)
     if breaker is not None and payload.get("breaker"):
         try:
-            counts["breaker"] = _restore_breaker(breaker, payload["breaker"], elapsed)
+            counts["breaker"] = _restore_breaker(breaker, payload["breaker"], payload.get("taken_at"))
         except (AttributeError, TypeError, ValueError, KeyError) as exc:
             logger.warning("flood-guard snapshot: breaker skipped (%s)", type(exc).__name__)
     if ceiling is not None and payload.get("ceiling"):
