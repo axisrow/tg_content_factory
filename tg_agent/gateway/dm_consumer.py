@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 
 _EVENT_POLL_SEC = 30.0
 _CATALOG_REFRESH_SEC = 60.0
+# ponytail: one fixed pause after a failed recovery; make it grow if a long
+# outage should cost fewer dialog sweeps than four an hour.
+_RECOVERY_RETRY_SEC = 900.0
 
 
 class GatewayDmConsumer:
@@ -37,6 +40,7 @@ class GatewayDmConsumer:
         self.client = client
         self._task = None
         self._resync_required = False
+        self._recover_not_before = 0.0
         self._events_waiting = asyncio.Event()
 
     async def start(self):
@@ -86,7 +90,16 @@ class GatewayDmConsumer:
             if exc.status != 410:
                 raise
             self._resync_required = True
-            await self.recover()
+            loop = asyncio.get_running_loop()
+            if loop.time() < self._recover_not_before:
+                return
+            try:
+                await self.recover()
+            except Exception:
+                # A recovery sweeps every account's dialog list, so a failing one
+                # waits before the next try instead of repeating that on each poll.
+                self._recover_not_before = loop.time() + _RECOVERY_RETRY_SEC
+                raise
             self._resync_required = False
             return
         if not events:

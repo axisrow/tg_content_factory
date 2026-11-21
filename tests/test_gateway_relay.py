@@ -356,6 +356,85 @@ async def test_an_expired_event_cursor_recovers_dm_history_on_the_relay(gateway,
     assert consumer.status()["resync_required"] is False
 
 
+class _RelayedDmClient:
+    """The raw client a relayed pool hands out: only forward history pages are read."""
+
+    def __init__(self, messages):
+        self._messages = messages
+
+    def iter_messages(self, peer, limit=200, min_id=0, reverse=False):
+        async def page():
+            for message in self._messages:
+                if message.id > min_id:
+                    yield message
+
+        return page()
+
+
+class _RecoveryPool:
+    def __init__(self, raw_client):
+        self.raw_client = raw_client
+        self.sweeps = 0
+
+    async def get_dialogs_for_phone(self, phone, *, include_dm, refresh):
+        self.sweeps += 1
+        return [{"channel_type": "dm", "dialog_id": 5, "channel_id": 5}]
+
+    async def get_client_by_phone(self, phone):
+        return SimpleNamespace(raw_client=self.raw_client), phone
+
+    async def release_client(self, phone):
+        pass
+
+
+async def _expire_the_event_cursor(gateway):
+    old = {"kind": "dm", "dialog_id": 5, "message_id": 1, "text": "expired", "out": False, "date": None}
+    await gateway.store.record_event(gateway.account, "5:1:0", old, now=time.time() - 8 * 86400)
+
+
+async def test_dm_recovery_reads_history_without_project_credentials(gateway, db):
+    """The real history reader, not a stand-in: a gateway project has no API credentials.
+
+    Found on a live stand: the reader refused the empty credentials the consumer
+    passes, so the recovery never finished.
+    """
+    await _expire_the_event_cursor(gateway)
+    missed = SimpleNamespace(id=3, sender_id=5, out=False, date=datetime.now(timezone.utc) - timedelta(minutes=5),
+                             text="missed", media=None, reply_to=None, forward=None, sender=None)
+    pool = _RecoveryPool(_RelayedDmClient([missed]))
+    consumer = GatewayDmConsumer(pool, db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
+
+    await consumer.consume()
+
+    assert await _rows(db, "SELECT message_id,text,processed FROM incoming_dms") == [(3, "missed", 1)]
+    assert await db.get_setting("gateway_event_cursor") == "1"
+    assert consumer.status()["resync_required"] is False
+
+
+@pytest.mark.parametrize(("pause", "sweeps"), [(900.0, 1), (0.0, 2)], ids=["inside-the-pause", "after-the-pause"])
+async def test_a_failed_dm_recovery_is_not_repeated_on_every_poll(gateway, db, monkeypatch, pause, sweeps):
+    """Every recovery sweeps an account's whole dialog list; a failing one must not do it each poll."""
+    await _expire_the_event_cursor(gateway)
+
+    async def unavailable(*_args, **_kwargs):
+        raise RuntimeError("history unavailable")
+
+    monkeypatch.setattr(dm_consumer, "read_dialog_history_since", unavailable)
+    monkeypatch.setattr(dm_consumer, "_RECOVERY_RETRY_SEC", pause, raising=False)
+    pool = _RecoveryPool(raw_client="relayed-client")
+    consumer = GatewayDmConsumer(pool, db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
+
+    with pytest.raises(RuntimeError):
+        await consumer.consume()
+    try:
+        await consumer.consume()  # the next poll
+    except RuntimeError:
+        pass
+
+    assert pool.sweeps == sweeps
+    assert consumer.status()["resync_required"] is True
+
+
 class _Login:
     """A Telegram login that hands out secrets the gateway must never relay."""
 

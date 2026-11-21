@@ -43,6 +43,22 @@ def _client_factory(client: object):
     return _factory
 
 
+# tg_messenger refuses empty credentials before it builds a client. Here the
+# client is always injected and never built from them, and a gateway project
+# has none of its own — the gateway holds them (#1868).
+_UNUSED_API_ID = 1
+_UNUSED_API_HASH = "injected-client"
+
+
+def _standalone(client: object, api_id: int, api_hash: str) -> StandaloneTelegramClient:
+    return StandaloneTelegramClient(
+        api_id or _UNUSED_API_ID,
+        (api_hash or "").strip() or _UNUSED_API_HASH,
+        external_session="",
+        client_factory=_client_factory(client),
+    )
+
+
 def _to_dialog_message(msg: _TgMessengerMessage) -> DialogMessage:
     media_type = msg.media.kind if msg.media is not None else None
     sender_name = None
@@ -79,12 +95,7 @@ async def read_dialog_history(
     `ClientPool` (e.g. via `TelegramActionService._client`). This function does
     not connect, disconnect, or attach event handlers to it.
     """
-    standalone = StandaloneTelegramClient(
-        api_id,
-        api_hash,
-        external_session="",
-        client_factory=_client_factory(client),
-    )
+    standalone = _standalone(client, api_id, api_hash)
     messages = await standalone.history(peer, limit=limit, offset_id=offset_id)
     return [_to_dialog_message(msg) for msg in messages]
 
@@ -110,12 +121,7 @@ async def read_dialog_history_since(
     Same invariants: no connect/disconnect, no event handlers on a client we
     don't own; Message-модель tg_messenger не покидает модуль.
     """
-    standalone = StandaloneTelegramClient(
-        api_id,
-        api_hash,
-        external_session="",
-        client_factory=_client_factory(client),
-    )
+    standalone = _standalone(client, api_id, api_hash)
     # iter_messages и _to_message — внутренности адаптера: публичного
     # reverse-варианта у history_since нет, а обходить наш водяной знак
     # через кэширующий history() нельзя. Оба вызова локальны и громко падают
