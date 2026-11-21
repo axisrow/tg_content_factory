@@ -112,7 +112,10 @@ restart the gateway.
   subscribed connection the moment it journals one, and the project's consumer pulls
   by cursor at once (a 30 s pull is only a safety net); the local archive, journal and
   cursor commit before acknowledgement. Expired seven-day event cursors trigger history
-  recovery using the project's catch-up policy, read natively over the relay.
+  recovery using the project's catch-up policy, read natively over the relay: each dialog
+  is read on from its last archived message, a dialog with nothing archived is left to
+  `dialogs archive-history` (reading it from the start would pull its whole history), and
+  a failed recovery is retried after 15 minutes rather than on every poll.
   Automatic pings require the exclusive reply owner.
 - **Notification bots** belong to projects again. Bots an older enrollment moved into
   the gateway are handed back whenever a project connects — worker or CLI

@@ -27,7 +27,7 @@ from tg_agent.gateway.client import GatewayRequestError, TelegramGatewayClient
 from tg_agent.gateway.dm_consumer import GatewayDmConsumer
 from tg_agent.gateway.server import GatewayHub
 from tg_agent.gateway.store import GatewayStore, private_key
-from tg_agent.models import Account
+from tg_agent.models import Account, DmMessage
 from tg_agent.telegram import backends
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.telegram.relay import (
@@ -323,6 +323,7 @@ async def test_the_project_dm_consumer_stores_pushed_events_at_once(gateway, db,
 async def test_an_expired_event_cursor_recovers_dm_history_on_the_relay(gateway, db, monkeypatch):
     old = {"kind": "dm", "dialog_id": 5, "message_id": 1, "text": "expired", "out": False, "date": None}
     await gateway.store.record_event(gateway.account, "5:1:0", old, now=time.time() - 8 * 86400)
+    await _archive(db, 1)  # the dialog's known point: recovery reads on from it
     missed = SimpleNamespace(id=3, date=datetime.now(timezone.utc) - timedelta(minutes=5), text="missed", out=False)
     pages = [[missed], []]
     reads = []
@@ -350,7 +351,7 @@ async def test_an_expired_event_cursor_recovers_dm_history_on_the_relay(gateway,
 
     await consumer.consume()
 
-    assert reads == [("relayed-client", 5, 0), ("relayed-client", 5, 3)]
+    assert reads == [("relayed-client", 5, 1), ("relayed-client", 5, 3)]
     assert pool.released == [PHONE]
     # The default catch-up mode journals recovered messages without replying to them.
     assert await _rows(db, "SELECT message_id,text,processed FROM incoming_dms") == [(3, "missed", 1)]
@@ -395,6 +396,43 @@ async def _expire_the_event_cursor(gateway):
     await gateway.store.record_event(gateway.account, "5:1:0", old, now=time.time() - 8 * 86400)
 
 
+async def _archive(db, message_id, *, chat_id=5):
+    """One archived message: the dialog's known point, from which a recovery reads on."""
+    await db.repos.dm_messages.record(DmMessage(
+        phone=PHONE, chat_id=chat_id, message_id=message_id, out=False, text="known",
+        message_date=datetime.now(timezone.utc) - timedelta(days=30),
+    ))
+
+
+async def test_dm_recovery_reads_on_from_the_archive_and_never_backfills(gateway, db, monkeypatch):
+    """A dialog with nothing archived has no known point: reading it pulls its whole history.
+
+    Found on a live stand: a freshly attached project would have re-read every
+    personal dialog of every granted account. Backfill is `dialogs archive-history`.
+    """
+    await _expire_the_event_cursor(gateway)
+    await _archive(db, 2, chat_id=5)
+    reads = []
+
+    async def history(raw_client, *, api_id, api_hash, peer, min_id, limit):
+        reads.append((peer, min_id))
+        return []
+
+    class Pool(_RecoveryPool):
+        async def get_dialogs_for_phone(self, phone, *, include_dm, refresh):
+            return [{"channel_type": "dm", "dialog_id": 5, "channel_id": 5},
+                    {"channel_type": "bot", "dialog_id": 7, "channel_id": 7}]
+
+    monkeypatch.setattr(dm_consumer, "read_dialog_history_since", history)
+    consumer = GatewayDmConsumer(Pool("relayed-client"), db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
+
+    await consumer.consume()
+
+    assert reads == [(5, 2)]
+    assert await db.get_setting("gateway_event_cursor") == "1"
+    assert consumer.status()["resync_required"] is False
+
+
 async def test_dm_recovery_reads_history_without_project_credentials(gateway, db):
     """The real history reader, not a stand-in: a gateway project has no API credentials.
 
@@ -402,6 +440,7 @@ async def test_dm_recovery_reads_history_without_project_credentials(gateway, db
     passes, so the recovery never finished.
     """
     await _expire_the_event_cursor(gateway)
+    await _archive(db, 1)
     missed = SimpleNamespace(id=3, sender_id=5, out=False, date=datetime.now(timezone.utc) - timedelta(minutes=5),
                              text="missed", media=None, reply_to=None, forward=None, sender=None)
     pool = _RecoveryPool(_RelayedDmClient([missed]))
@@ -418,6 +457,7 @@ async def test_dm_recovery_reads_history_without_project_credentials(gateway, db
 async def test_a_failed_dm_recovery_is_not_repeated_on_every_poll(gateway, db, monkeypatch, pause, sweeps):
     """Every recovery sweeps an account's whole dialog list; a failing one must not do it each poll."""
     await _expire_the_event_cursor(gateway)
+    await _archive(db, 1)
 
     async def unavailable(*_args, **_kwargs):
         raise RuntimeError("history unavailable")

@@ -148,6 +148,11 @@ class GatewayDmConsumer:
 
     async def _recover_dialog(self, phone, chat, mode, staleness):
         cursor = await self.db.repos.dm_messages.max_message_id(phone, chat)
+        if not cursor:
+            # Nothing of this dialog is archived, so there is no known point to
+            # read on from, and starting at zero pulls its whole history.
+            # Backfill is the explicit `dialogs archive-history`.
+            return
         acquired = await self.pool.get_client_by_phone(phone)
         if acquired is None:
             return
