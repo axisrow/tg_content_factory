@@ -553,7 +553,9 @@ notification setup | status | delete | test | dry-run | set-account
 # no longer has it (deleted by hand, or the account has no bots) — then only the stale
 # local record is removed and the output says so. A failed setup/status/delete/test is
 # one line on stderr with exit 1. `setup` on a taken bot name creates nothing and says
-# so; set notifications.bot_username_prefix for a separate bot.
+# so; set notifications.bot_username_prefix for a separate bot. An account at the bot
+# limit creates nothing either: never delete its bots to make room (BotFather advises
+# it, but they may be other projects' live bots) — pick another account with set-account.
 telegraph login --short-name N [--author-name A] [--author-url U]
 telegraph create --title T --file f.md [--author-name A] [--author-url U] [--format json]
 # telegraph: publishes a public telegra.ph page from markdown (#1703). `login`

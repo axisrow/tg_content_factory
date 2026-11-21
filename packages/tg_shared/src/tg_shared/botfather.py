@@ -46,6 +46,15 @@ async def create_bot(client: TelegramClient, name: str, username: str) -> str:
 
         # BotFather asks for display name
         if _is_error(resp.text):
+            if "add more than" in resp.text.lower():
+                # The account is at the bot limit. BotFather advises deleting a bot;
+                # our consumers are programs that may take that literally, and the
+                # account's bots may be other projects' live ones (#1868).
+                raise RuntimeError(
+                    "BotFather refused to create a bot: this account is at the bot limit, so no bot was created."
+                    " Do not delete any of its bots to make room (they may belong to other projects); pick"
+                    f" another account with `notification set-account`. BotFather said: {_shown(resp)}"
+                )
             raise RuntimeError(f"BotFather: {resp.text}")
 
         await conv.send_message(name)

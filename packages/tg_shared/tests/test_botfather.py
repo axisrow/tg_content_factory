@@ -83,8 +83,9 @@ async def test_create_bot_botfather_error_on_name():
     mock_client = MagicMock()
     mock_client.conversation.return_value = mock_conv
 
-    with pytest.raises(RuntimeError, match="BotFather"):
+    with pytest.raises(RuntimeError, match="BotFather") as exc_info:
         await botfather.create_bot(mock_client, "MyBot", "mybot_bot")
+    assert "bot limit" not in str(exc_info.value)  # only the limit reply gets the limit hint
 
 
 async def test_create_bot_no_token_in_response():
@@ -385,3 +386,25 @@ async def test_create_bot_refused_username_creates_no_orphan(refusal, names_the_
     assert refusal in message
     assert "orphan" not in (message + caplog.text).lower()
     assert ("notifications.bot_username_prefix" in message) is names_the_prefix
+
+
+async def test_create_bot_at_the_bot_limit_warns_against_deleting_bots():
+    """At the bot limit BotFather advises deleting a bot; the consumers are
+    programs that may take that literally, and the account's bots may be other
+    projects' live ones (#1868; this reply came from an account with 40 bots).
+    """
+    limit = (
+        "Sorry, you can't add more than 40 bots. To create a new bot, delete one of your bots"
+        " or transfer ownership of one of your bots to a different person."
+    )
+    conv = _make_conv(_reply(limit))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await botfather.create_bot(_client_with(conv), "MyBot", "mybot_bot")
+
+    message = str(exc_info.value)
+    assert "bot limit, so no bot was created" in message
+    assert "Do not delete any of its bots" in message
+    assert "notification set-account" in message
+    assert limit in message
+    assert _sent(conv) == ["/newbot"]
