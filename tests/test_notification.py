@@ -169,11 +169,13 @@ async def test_setup_bot_custom_prefix(db, real_pool_harness_factory):
         bot = await svc.setup_bot()
 
     assert bot.bot_username == "acme_bob_bot"
-    created_client = mock_create.await_args.args[0]
+    created = mock_create.await_args
+    assert created is not None
+    created_client = created.args[0]
     # use_client() now returns pool session (reuses persistent connection)
     pool_session = harness.pool.clients["+70001111111"]
     assert created_client.raw_client is pool_session.raw_client
-    assert mock_create.await_args.args[1:] == ("Acme (bob)", "acme_bob_bot")
+    assert created.args[1:] == ("Acme (bob)", "acme_bob_bot")
 
 
 @pytest.mark.anyio
