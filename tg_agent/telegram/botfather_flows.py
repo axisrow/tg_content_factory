@@ -33,4 +33,4 @@ async def delete_bot(client: Any, bot_username: str) -> None:
     if relayed is None:
         await botfather.delete_bot(client, bot_username)
     elif not await relayed.owner_delete_bot(bot_username):
-        raise botfather.BotNotFoundError(f"Bot @{bot_username.lstrip('@')} not found in /mybots")
+        raise botfather.BotNotFoundError(f"Bot @{bot_username.lstrip('@')} not found in BotFather's list")

@@ -13,10 +13,10 @@ _TOKEN_RE = re.compile(r"(\d{8,}:[A-Za-z0-9_\-]{35,})")
 
 
 class BotNotFoundError(RuntimeError):
-    """The requested bot is absent from BotFather's ``/mybots`` list.
+    """The requested bot is absent from BotFather's list of this account's bots.
 
     Raised by :func:`delete_bot` when the bot button is missing from the
-    ``/mybots`` keyboard — i.e. the bot does not exist in Telegram for this
+    keyboard BotFather offers — i.e. the bot does not exist in Telegram for this
     account (typically because it was already deleted). This is a *distinct,
     recoverable* signal, NOT a generic BotFather failure: a repeat teardown can
     treat it as "the Telegram delete already happened" and safely proceed to the
@@ -81,81 +81,72 @@ async def create_bot(client: TelegramClient, name: str, username: str) -> str:
         return token_match.group(1)
 
 
-def _has_inline(message: Message, text: str) -> bool:
-    """Return True if any inline button's text contains *text* (case-insensitive).
+def _button_texts(message: Message) -> list[str]:
+    """Texts of the keyboard buttons under *message*; empty when it offers none.
 
-    Mirrors the matching used by :func:`_click_inline` so callers can probe for a
-    button (e.g. the bot entry in ``/mybots``) without clicking it.
+    A reply that only removes the keyboard carries a markup without rows.
     """
-    if not message.reply_markup:
-        return False
-    low = text.lower()
-    for row in message.reply_markup.rows:
-        for button in row.buttons:
-            btn_text = getattr(button, "text", "") or ""
-            if low in btn_text.lower():
-                return True
-    return False
+    rows = getattr(message.reply_markup, "rows", None) or []
+    return [getattr(button, "text", "") or "" for row in rows for button in row.buttons]
+
+
+_CONFIRM_DELETE = "Yes, I am totally sure."
+
+
+def _shown(message: Message) -> str:
+    """BotFather's reply text, safe to put into an error or a log line."""
+    return repr(_redact_tokens(message.text or "")[:200])
 
 
 async def delete_bot(client: TelegramClient, bot_username: str) -> None:
     """Delete a bot via BotFather by username.
 
-    Raises :class:`BotNotFoundError` if the bot is absent from ``/mybots`` (it
-    no longer exists in Telegram for this account); the caller can treat that as
+    A plain message exchange: ``/deletebot``, the bot's username, the
+    confirmation phrase. The ``/mybots`` menu does the same with button
+    presses that BotFather answers by editing its message, and on a live run
+    those edits never reached the waiting conversation (#1868).
+
+    Raises :class:`BotNotFoundError` if BotFather does not list the bot (it no
+    longer exists in Telegram for this account); the caller can treat that as
     an already-completed delete and continue with local cleanup (#1085).
     """
     target = bot_username.lstrip("@")
     async with client.conversation(BOTFATHER, timeout=60) as conv:
-        await conv.send_message("/mybots")
+        await conv.send_message("/deletebot")
         resp = await conv.get_response()
 
         # BotNotFoundError is the *recoverable* signal (caller may then delete the
         # DB row), so it must mean "the bot is genuinely absent from a valid
-        # /mybots listing" — NOT "BotFather gave an unexpected reply". A reply
-        # WITHOUT an inline keyboard is not a bot list at all (an error/rate-limit
-        # message, or format drift); the live bot may still exist, so raise a
-        # GENERIC error that teardown will NOT forgive, leaving the DB row intact.
-        # Mapping this to BotNotFoundError would risk wiping a live bot's row
-        # (#1085 review, Codex finding).
-        if not resp.reply_markup:
-            safe = _redact_tokens(resp.text or "")
-            raise RuntimeError(
-                f"Unexpected BotFather reply to /mybots (no bot list): {safe[:200]!r}"
-            )
+        # listing" — NOT "BotFather gave an unexpected reply". A reply WITHOUT a
+        # keyboard is not a bot list at all (an error/rate-limit message, or
+        # format drift); the live bot may still exist, so raise a GENERIC error
+        # that teardown will NOT forgive, leaving the DB row intact. Mapping this
+        # to BotNotFoundError would risk wiping a live bot's row (#1085 review,
+        # Codex finding).
+        bots = _button_texts(resp)
+        if not bots:
+            raise RuntimeError(f"Unexpected BotFather reply to /deletebot (no bot list): {_shown(resp)}")
 
-        # The reply IS a /mybots listing. If our bot's button is absent from it,
-        # the bot was already deleted in Telegram — that is the recoverable
+        # The reply IS a listing. If our bot's button is absent from it, the bot
+        # was already deleted in Telegram — that is the recoverable
         # BotNotFoundError the caller can treat as "TG step already done".
-        if not _has_inline(resp, target):
-            logger.info("Bot @%s not found in /mybots — already deleted in Telegram", target)
-            raise BotNotFoundError(f"Bot @{target} not found in /mybots")
-        await _click_inline(resp, target)
-        resp = await conv.get_edit()
+        if not any(target.lower() in text.lower() for text in bots):
+            logger.info("Bot @%s is not in BotFather's list — already deleted in Telegram", target)
+            raise BotNotFoundError(f"Bot @{target} not found in BotFather's list")
 
-        # Click "Delete Bot"
-        await _click_inline(resp, "Delete Bot")
+        await conv.send_message(f"@{target}")
         resp = await conv.get_response()
+        # The phrase below deletes whichever bot BotFather has selected, and
+        # that cannot be undone: it goes out only for a reply naming this bot.
+        if f"@{target}".lower() not in (resp.text or "").lower():
+            raise RuntimeError(f"BotFather did not select @{target} for deletion: {_shown(resp)}")
 
-        # Confirm — click "Yes, I am totally sure."
-        await _click_inline(resp, "sure")
-        await conv.get_response()
+        await conv.send_message(_CONFIRM_DELETE)
+        resp = await conv.get_response()
+        if "gone" not in (resp.text or "").lower():
+            raise RuntimeError(f"BotFather did not confirm that @{target} is deleted: {_shown(resp)}")
 
         logger.info("Bot @%s deleted via BotFather", bot_username)
-
-
-async def _click_inline(message: Message, text: str) -> None:
-    """Click the first inline button whose text contains *text* (case-insensitive)."""
-    if not message.reply_markup:
-        raise RuntimeError(f"No inline keyboard on message: {message.text[:80]!r}")
-    for row in message.reply_markup.rows:
-        for button in row.buttons:
-            btn_text = getattr(button, "text", "") or ""
-            if text.lower() in btn_text.lower():
-                data = getattr(button, "data", None)
-                await message.click(data=data)
-                return
-    raise RuntimeError(f"Button containing {text!r} not found")
 
 
 def _is_error(text: str) -> bool:

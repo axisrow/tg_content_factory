@@ -8,6 +8,7 @@ notification-service flows (``test_setup_bot_*`` etc.) stayed behind in
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -40,13 +41,11 @@ def _make_message(button_rows: list[list[str]], text: str = "") -> MagicMock:
 _VALID_TOKEN = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
 
 
-def _make_conv(*get_response_values, get_edit_value=None) -> AsyncMock:
+def _make_conv(*get_response_values) -> AsyncMock:
     mock_conv = AsyncMock()
     mock_conv.__aenter__ = AsyncMock(return_value=mock_conv)
     mock_conv.__aexit__ = AsyncMock(return_value=None)
     mock_conv.get_response = AsyncMock(side_effect=list(get_response_values))
-    if get_edit_value is not None:
-        mock_conv.get_edit = AsyncMock(return_value=get_edit_value)
     return mock_conv
 
 
@@ -64,32 +63,6 @@ def test_is_error_matches_invalid():
 
 def test_is_error_ok():
     assert botfather._is_error("Done! Congratulations on your new bot.") is False
-
-
-async def test_click_inline_finds_button():
-    msg = _make_message([["Delete Bot", "Cancel"]])
-    await botfather._click_inline(msg, "delete")
-    msg.click.assert_awaited_once()
-
-
-async def test_click_inline_case_insensitive():
-    msg = _make_message([["Yes, I am totally sure."]])
-    await botfather._click_inline(msg, "sure")
-    msg.click.assert_awaited_once()
-
-
-async def test_click_inline_no_keyboard():
-    msg = MagicMock()
-    msg.text = "plain text"
-    msg.reply_markup = None
-    with pytest.raises(RuntimeError, match="No inline keyboard"):
-        await botfather._click_inline(msg, "delete")
-
-
-async def test_click_inline_button_not_found():
-    msg = _make_message([["Cancel", "Back"]])
-    with pytest.raises(RuntimeError, match="not found"):
-        await botfather._click_inline(msg, "delete")
 
 
 async def test_create_bot_success():
@@ -129,7 +102,7 @@ async def test_create_bot_no_token_in_response():
 
 # ---------------------------------------------------------------------------
 # Brittle BotFather parsing (issue #1041) — failure modes around create_bot's
-# token regex, _click_inline button matching, and _is_error coverage. The token
+# token regex and _is_error coverage. The token
 # regex in particular is a blind spot: by the time it runs, BotFather has
 # ALREADY created the bot, so a regex miss orphans a live bot in Telegram.
 # ---------------------------------------------------------------------------
@@ -237,89 +210,128 @@ def test_is_error_matches_too_many_requests():
     assert botfather._is_error("Sorry, too many attempts. Please try again later.") is True
 
 
-async def test_click_inline_localized_label_raises_clearly():
-    """_click_inline matches by English substring; a localized keyboard misses.
+_PROMPT = (
+    "OK, you selected @mybot_bot. Are you sure?\n\n"
+    "Send 'Yes, I am totally sure.' to confirm you really want to delete this bot."
+)
+_DONE = "Done! The bot is gone. /help"
 
-    This documents the brittleness called out in #1041: if BotFather renders
-    the keyboard in another language, the substring match fails and we get a
-    clear 'not found' error rather than a silent wrong-button click.
+
+def _listing(*usernames: str) -> MagicMock:
+    """BotFather's "Choose a bot to delete." reply: one keyboard button per bot."""
+    return _make_message([[name] for name in usernames], text="Choose a bot to delete.")
+
+
+def _reply(text: str) -> MagicMock:
+    msg = MagicMock()
+    msg.text = text
+    msg.reply_markup = None
+    return msg
+
+
+def _client_with(conv: AsyncMock) -> MagicMock:
+    client = MagicMock()
+    client.conversation.return_value = conv
+    return client
+
+
+def _sent(conv: AsyncMock) -> list[str]:
+    return [call.args[0] for call in conv.send_message.await_args_list]
+
+
+@pytest.mark.parametrize("asked", ["@mybot_bot", "mybot_bot", "@MyBot_Bot"], ids=["at", "bare", "other-case"])
+async def test_delete_bot_needs_no_message_edits(asked):
+    """A plain message exchange, with no button presses and no waiting for edits.
+
+    Found live (#1868): BotFather's edits of its ``/mybots`` message never
+    reached the waiting conversation and the delete timed out twice, while its
+    plain replies kept arriving.
     """
-    # Russian "Удалить бота" instead of "Delete Bot".
-    msg = _make_message([["Удалить бота", "Отмена"]])
-    with pytest.raises(RuntimeError, match="not found"):
-        await botfather._click_inline(msg, "Delete Bot")
-    msg.click.assert_not_awaited()
+    conv = _make_conv(_listing("@mybot_bot"), _reply(_PROMPT), _reply(_DONE))
+    conv.get_edit = AsyncMock(side_effect=asyncio.TimeoutError)
+
+    await botfather.delete_bot(_client_with(conv), asked)
+
+    assert _sent(conv) == ["/deletebot", "@" + asked.lstrip("@"), "Yes, I am totally sure."]
 
 
-async def test_delete_bot_success():
-    bot_msg = _make_message([["@mybot_bot"]])
-    options_msg = _make_message([["Bot Info", "Delete Bot"]])
-    confirm_msg = _make_message([["Yes, I am totally sure."]])
-    done_msg = MagicMock(text="Bot deleted!")
-
-    mock_conv = _make_conv(
-        bot_msg,
-        confirm_msg,
-        done_msg,
-        get_edit_value=options_msg,
-    )
-    mock_client = MagicMock()
-    mock_client.conversation.return_value = mock_conv
-
-    await botfather.delete_bot(mock_client, "@mybot_bot")
-
-    bot_msg.click.assert_awaited_once()
-    options_msg.click.assert_awaited_once()
-    confirm_msg.click.assert_awaited_once()
-
-
-async def test_delete_bot_missing_from_mybots_raises_bot_not_found():
-    """RED→GREEN (#1085): a bot absent from /mybots is a distinct, recoverable signal.
+async def test_delete_bot_missing_from_the_list_raises_bot_not_found():
+    """RED→GREEN (#1085): a bot absent from BotFather's list is a distinct, recoverable signal.
 
     When ``teardown_bot``'s first BotFather call already destroyed the bot but the
     DB-delete then failed, the row becomes an orphan (issue #1041). A *repeat*
-    teardown calls ``delete_bot`` again, but the bot is gone from Telegram, so it
-    is no longer listed in ``/mybots`` and the first ``_click_inline`` (which looks
-    up the bot button) finds nothing.
+    teardown calls ``delete_bot`` again, but the bot is gone from Telegram, so
+    BotFather no longer lists it.
 
-    That "bot is not in /mybots" condition must be a *typed* signal
-    (``BotNotFoundError``) — separable from a real BotFather failure — so the
-    caller can treat it as "TG step already done, proceed to DB cleanup" instead
-    of a hard error that strands the orphan row forever.
+    That condition must be a *typed* signal (``BotNotFoundError``) — separable
+    from a real BotFather failure — so the caller can treat it as "TG step
+    already done, proceed to DB cleanup" instead of a hard error that strands
+    the orphan row forever.
     """
-    # /mybots reply that does NOT contain our bot — only some other bot.
-    mybots_msg = _make_message([["@someone_else_bot"]])
-    mock_conv = _make_conv(mybots_msg)
-    mock_client = MagicMock()
-    mock_client.conversation.return_value = mock_conv
+    conv = _make_conv(_listing("@someone_else_bot"))
 
     with pytest.raises(botfather.BotNotFoundError):
-        await botfather.delete_bot(mock_client, "@leadhunter_gone_bot")
+        await botfather.delete_bot(_client_with(conv), "@leadhunter_gone_bot")
+
+    assert _sent(conv) == ["/deletebot"]
 
 
-async def test_delete_bot_keyboardless_reply_is_generic_error_not_bot_not_found():
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "OK, you selected @other_bot. Are you sure?\n\nSend 'Yes, I am totally sure.' to confirm.",
+        "Invalid bot selected. Please try again.",
+        "Sorry, too many attempts. Please try again later.",
+    ],
+    ids=["another-bot", "refused", "rate-limited"],
+)
+async def test_delete_bot_never_confirms_an_unexpected_choice(prompt):
+    """The confirmation is irreversible: it is sent only for a prompt that names our bot."""
+    conv = _make_conv(_listing("@mybot_bot"), _reply(prompt))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await botfather.delete_bot(_client_with(conv), "@mybot_bot")
+
+    assert not isinstance(exc_info.value, botfather.BotNotFoundError)
+    assert _sent(conv) == ["/deletebot", "@mybot_bot"]
+
+
+async def test_delete_bot_reports_a_deletion_botfather_did_not_confirm():
+    """Without BotFather's "gone" the bot may still live, so its DB row must stay."""
+    conv = _make_conv(_listing("@mybot_bot"), _reply(_PROMPT), _reply("Sorry, something went wrong."))
+
+    with pytest.raises(RuntimeError, match="did not confirm") as exc_info:
+        await botfather.delete_bot(_client_with(conv), "@mybot_bot")
+
+    assert not isinstance(exc_info.value, botfather.BotNotFoundError)
+
+
+@pytest.mark.parametrize(
+    "markup",
+    [None, MagicMock(spec=[])],
+    ids=["no-markup", "keyboard-removed"],
+)
+async def test_delete_bot_keyboardless_reply_is_generic_error_not_bot_not_found(markup):
     """RED→GREEN (#1085, Codex finding): an error/keyboard-less reply is NOT "bot gone".
 
     ``BotNotFoundError`` is the *recoverable* signal that lets ``teardown_bot``
     skip the Telegram step and delete the DB row. It must therefore mean "the bot
-    is genuinely absent from a valid /mybots listing" — NOT "BotFather replied
-    with something we didn't expect". If ``/mybots`` returns an error, a
-    rate-limit, or any reply WITHOUT an inline keyboard (so we never saw a bot
-    list at all), the live bot may still exist. Mapping that to
-    ``BotNotFoundError`` would let teardown wipe the DB row while the bot is
-    alive — a data-loss orphan flip. Such a reply must raise a *generic*
-    RuntimeError (which ``teardown_bot`` does NOT forgive), leaving the row
-    intact.
+    is genuinely absent from a valid listing" — NOT "BotFather replied with
+    something we didn't expect". If ``/deletebot`` returns an error, a
+    rate-limit, or any reply WITHOUT keyboard buttons (so we never saw a bot
+    list at all — a markup that only removes the keyboard has no rows), the
+    live bot may still exist. Mapping that to ``BotNotFoundError`` would let
+    teardown wipe the DB row while the bot is alive — a data-loss orphan flip.
+    Such a reply must raise a *generic* RuntimeError (which ``teardown_bot``
+    does NOT forgive), leaving the row intact.
     """
-    # A plain text BotFather reply (rate-limit / transient error) — no keyboard.
-    err_msg = MagicMock()
-    err_msg.text = "Sorry, too many requests. Please try again later."
-    err_msg.reply_markup = None
-    mock_conv = _make_conv(err_msg)
-    mock_client = MagicMock()
-    mock_client.conversation.return_value = mock_conv
+    # A plain text BotFather reply (rate-limit / transient error) — no bot list.
+    err_msg = _reply("Sorry, too many requests. Please try again later.")
+    err_msg.reply_markup = markup
+    conv = _make_conv(err_msg)
 
-    with pytest.raises(RuntimeError) as exc_info:
-        await botfather.delete_bot(mock_client, "@leadhunter_alive_bot")
+    with pytest.raises(RuntimeError, match="no bot list") as exc_info:
+        await botfather.delete_bot(_client_with(conv), "@leadhunter_alive_bot")
     # Must NOT be the recoverable subclass — the bot might still be live.
     assert not isinstance(exc_info.value, botfather.BotNotFoundError)
+    assert _sent(conv) == ["/deletebot"]
