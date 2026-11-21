@@ -55,7 +55,8 @@ async def test_live_username_resolve_records_per_phone_long_flood_backoff():
     """#790: a long flood on one phone freezes only that phone, not the pool."""
     pool = ClientPool.__new__(ClientPool)
     pool.report_flood = AsyncMock()
-    pool._db = SimpleNamespace(set_setting=AsyncMock())
+    db = SimpleNamespace(set_setting=AsyncMock())
+    pool._db = cast(Any, db)
     pool.clients = {"+7001": object(), "+7002": object()}
     pool._resolve_rate_limiter = ResolveRateLimiter(jitter_sec=0.0)
 
@@ -78,15 +79,15 @@ async def test_live_username_resolve_records_per_phone_long_flood_backoff():
     # ...so the pool-level aggregate reports "a free phone exists".
     assert pool.get_resolve_username_backoff_remaining_sec() == 0
     # A flood persists both the per-phone backoff and the limiter snapshot.
-    assert pool._db.set_setting.await_count == 2
-    persisted_keys = {call.args[0] for call in pool._db.set_setting.await_args_list}
+    assert db.set_setting.await_count == 2
+    persisted_keys = {call.args[0] for call in db.set_setting.await_args_list}
     assert persisted_keys == {
         RESOLVE_BACKOFF_BY_PHONE_SETTING,
         RESOLVE_LIMITER_SNAPSHOT_SETTING,
     }
     backoff_call = next(
         call
-        for call in pool._db.set_setting.await_args_list
+        for call in db.set_setting.await_args_list
         if call.args[0] == RESOLVE_BACKOFF_BY_PHONE_SETTING
     )
     stored = json.loads(backoff_call.args[1])
@@ -103,7 +104,8 @@ async def test_live_username_resolve_small_flood_tightens_sustained_budget():
     persists the limiter snapshot, so a restart keeps the tightened state."""
     pool = ClientPool.__new__(ClientPool)
     pool.report_flood = AsyncMock()
-    pool._db = SimpleNamespace(set_setting=AsyncMock())
+    db = SimpleNamespace(set_setting=AsyncMock())
+    pool._db = cast(Any, db)
     pool.clients = {}
     pool._resolve_rate_limiter = ResolveRateLimiter(jitter_sec=0.0)
 
@@ -125,8 +127,8 @@ async def test_live_username_resolve_small_flood_tightens_sustained_budget():
     assert entry["tightened"]["cap"] == DEFAULT_RESOLVE_VOLUME_MAX_CALLS // 2
     assert entry["tightened"]["expires_in"] > 0
     # ...and the snapshot is persisted for the next boot.
-    pool._db.set_setting.assert_awaited_once()
-    key, value = pool._db.set_setting.await_args.args
+    db.set_setting.assert_awaited_once()
+    key, value = db.set_setting.await_args.args
     assert key == RESOLVE_LIMITER_SNAPSHOT_SETTING
     stored = json.loads(value)
     # `expires_in` is a float captured at snapshot time — compare semantics,
@@ -145,7 +147,7 @@ async def test_restore_resolve_limiter_snapshot_replays_volume():
     payload = json.dumps(source.snapshot_state())
 
     pool = ClientPool.__new__(ClientPool)
-    pool._db = SimpleNamespace(get_setting=AsyncMock(return_value=payload))
+    pool._db = cast(Any, SimpleNamespace(get_setting=AsyncMock(return_value=payload)))
     pool._resolve_rate_limiter = ResolveRateLimiter(jitter_sec=0.0)
     await pool.restore_resolve_limiter_snapshot(pool._db)
 
@@ -157,7 +159,7 @@ async def test_restore_resolve_limiter_snapshot_replays_volume():
 @pytest.mark.anyio
 async def test_restore_resolve_limiter_snapshot_ignores_corrupt_payload():
     pool = ClientPool.__new__(ClientPool)
-    pool._db = SimpleNamespace(get_setting=AsyncMock(return_value="not-json"))
+    pool._db = cast(Any, SimpleNamespace(get_setting=AsyncMock(return_value="not-json")))
     pool._resolve_rate_limiter = ResolveRateLimiter(jitter_sec=0.0)
     await pool.restore_resolve_limiter_snapshot(pool._db)
     assert pool._resolve_rate_limiter.snapshot_state() == {}
@@ -168,9 +170,7 @@ async def test_restore_resolve_limiter_snapshot_ignores_wrong_entry_shape():
     """A JSON-dict payload with malformed per-phone entries must not fail
     daemon boot (review #1777): the limiter starts from its own budget."""
     pool = ClientPool.__new__(ClientPool)
-    pool._db = SimpleNamespace(
-        get_setting=AsyncMock(return_value=json.dumps({"+7001": {"burst": "oops"}}))
-    )
+    pool._db = cast(Any, SimpleNamespace(get_setting=AsyncMock(return_value=json.dumps({"+7001": {"burst": "oops"}}))))
     pool._resolve_rate_limiter = ResolveRateLimiter(jitter_sec=0.0)
     await pool.restore_resolve_limiter_snapshot(pool._db)
     assert pool._resolve_rate_limiter.snapshot_state() == {}
@@ -223,10 +223,11 @@ async def test_disconnect_all_persists_limiter_snapshot():
     """A managed stop carries the sustained-volume picture to the next boot."""
     pool = ClientPool.__new__(ClientPool)
     pool.clients = {}
-    pool._db = SimpleNamespace(set_setting=AsyncMock())
+    db = SimpleNamespace(set_setting=AsyncMock())
+    pool._db = cast(Any, db)
     await pool.disconnect_all()
-    pool._db.set_setting.assert_awaited_once()
-    key, value = pool._db.set_setting.await_args.args
+    db.set_setting.assert_awaited_once()
+    key, value = db.set_setting.await_args.args
     assert key == RESOLVE_LIMITER_SNAPSHOT_SETTING
     assert json.loads(value) == {}
 
@@ -234,7 +235,8 @@ async def test_disconnect_all_persists_limiter_snapshot():
 def _make_pool(clients: dict | None = None):
     class FakePool(ResolveGuardMixin):
         def __init__(self):
-            self._resolve_rate_limiter = None
+            self._db: Any = None
+            self._resolve_rate_limiter = cast(Any, None)
             self._resolve_username_backoff_until_utc = {}
             self._resolve_ramp_up_until_utc = {}
             self._resolve_ramp_up_last_call_utc = {}
@@ -344,9 +346,7 @@ class TestHasRotatableResolvePhone:
         pool.clients = clients
         # available_exclusive_count is the async lease-pool filter for generic
         # flood wait + in-use; capture the candidate set it is asked about.
-        pool._lease_pool = SimpleNamespace(
-            available_exclusive_count=AsyncMock(side_effect=available_count)
-        )
+        pool._lease_pool = cast(Any, SimpleNamespace(available_exclusive_count=AsyncMock(side_effect=available_count)))
         return pool
 
     @pytest.mark.anyio
@@ -397,7 +397,7 @@ class TestNextResolveCapableAt:
         pool._resolve_ramp_up_last_call_utc = {}
         pool._resolve_ramp_up_min_interval_sec = 5.0
         pool.clients = clients
-        pool._db = SimpleNamespace()
+        pool._db = cast(Any, SimpleNamespace())
         monkeypatch.setattr(
             "tg_agent.telegram.pool_flood.load_live_usable_accounts",
             AsyncMock(return_value=accounts),
