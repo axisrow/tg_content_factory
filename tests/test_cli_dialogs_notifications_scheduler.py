@@ -1243,7 +1243,7 @@ class TestCollectCommand:
         ids=["collect-channel-id", "channel-collect"],
     )
     def test_terminal_verdict_is_one_line_and_stamps_the_row(self, cli_env_with_pool, capsys, argv):
-        """A terminal resolver verdict: one line, no traceback, the queue's stamp (#1783)."""
+        """A terminal resolver verdict: one stderr line, exit 1, the queue's stamp (#1783, #1486)."""
         from tg_agent.cli.commands import channel as channel_cli
         from tg_agent.cli.commands import collect as collect_cli
         from tg_agent.telegram.collector import Collector
@@ -1256,10 +1256,12 @@ class TestCollectCommand:
         exc = ChannelCollectionTerminalError("HistoryNumericUnresolved", "no account knows the id")
 
         with patch.object(Collector, "collect_single_channel", new_callable=AsyncMock, side_effect=exc):
-            (collect_cli if command == "collect" else channel_cli).run(_ns(**argv))
+            with pytest.raises(typer.Exit) as exit_info:
+                (collect_cli if command == "collect" else channel_cli).run(_ns(**argv))
 
-        out = capsys.readouterr().out
-        assert "HistoryNumericUnresolved" in out and "Collected" not in out
+        assert exit_info.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "HistoryNumericUnresolved" in captured.err and "Collected" not in captured.out
         asyncio.run(cli_env.initialize())
         channel = next(ch for ch in asyncio.run(cli_env.get_channels()) if ch.channel_id == 103)
         assert channel.terminal_code == "HistoryNumericUnresolved"

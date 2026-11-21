@@ -18,6 +18,7 @@ from tg_agent.cli import runtime, worker_handoff
 from tg_agent.cli.commands.common import (
     _NEG_ID_POSITIONAL,
     apply_startup,
+    cli_error,
     resolve_channel,
     run_async,
 )
@@ -1633,7 +1634,7 @@ async def collect_impl(
         except ChannelCollectionTerminalError as exc:
             await db.update_collection_task(task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500])
             await stamp_terminal_verdict(db, ch, exc)
-            print(f"Channel {ch.channel_id} cannot be collected: {exc}")
+            cli_error(f"Channel {ch.channel_id} cannot be collected: {exc}")
         except Exception as exc:
             await db.update_collection_task(
                 task_id,

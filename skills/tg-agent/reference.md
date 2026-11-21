@@ -116,7 +116,9 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
   identifier argument is required (there is no interactive selection). One-off; exit when
   done. With a live daemon the channel is queued to the daemon's collection queue.
   A pending-approval identifier is reported as such with the approve/reject commands
-  instead of the misleading "not found" (#1701).
+  instead of the misleading "not found" (#1701). Without a daemon, a terminal verdict
+  (vacant or reoccupied username, unknown id) — here and in `collect --channel-id` —
+  is one stderr line with exit 1, and the row gets the queue's terminal stamp (#1783).
 - `channel stats` — queue stats collection: one channel by identifier; `--all` refreshes
   channels whose stats are missing **or older than** `stats_all_skip_fresh_hours` (24h),
   oldest first, capped per run at `stats_all_max_channels_per_run` (10; `--max-channels N`

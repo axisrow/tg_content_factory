@@ -11,6 +11,7 @@ from tg_agent.cli.commands.channel import _handoff_collect_to_worker, report_pen
 from tg_agent.cli.commands.common import (
     _NEG_ID_POSITIONAL,
     apply_startup,
+    cli_error,
     run_async,
 )
 from tg_agent.database.bundles import ChannelBundle
@@ -138,8 +139,7 @@ async def collect_impl(
                 return
             except ChannelCollectionTerminalError as exc:
                 await stamp_terminal_verdict(db, channel, exc)
-                print(f"Channel {channel_id} cannot be collected: {exc}")
-                return
+                cli_error(f"Channel {channel_id} cannot be collected: {exc}")
             print(f"Collected {count} messages from channel {channel_id}")
         else:
             channel_bundle = ChannelBundle.from_database(db)
