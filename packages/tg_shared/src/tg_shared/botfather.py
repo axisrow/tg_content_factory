@@ -16,7 +16,8 @@ class BotNotFoundError(RuntimeError):
     """The requested bot is absent from BotFather's list of this account's bots.
 
     Raised by :func:`delete_bot` when the bot button is missing from the
-    keyboard BotFather offers — i.e. the bot does not exist in Telegram for this
+    keyboard BotFather offers, or BotFather says the account has no bots — i.e.
+    the bot does not exist in Telegram for this
     account (typically because it was already deleted). This is a *distinct,
     recoverable* signal, NOT a generic BotFather failure: a repeat teardown can
     treat it as "the Telegram delete already happened" and safely proceed to the
@@ -106,9 +107,10 @@ async def delete_bot(client: TelegramClient, bot_username: str) -> None:
     presses that BotFather answers by editing its message, and on a live run
     those edits never reached the waiting conversation (#1868).
 
-    Raises :class:`BotNotFoundError` if BotFather does not list the bot (it no
-    longer exists in Telegram for this account); the caller can treat that as
-    an already-completed delete and continue with local cleanup (#1085).
+    Raises :class:`BotNotFoundError` if BotFather does not list the bot, or says
+    the account has no bots at all (it no longer exists in Telegram for this
+    account); the caller can treat that as an already-completed delete and
+    continue with local cleanup (#1085).
     """
     target = bot_username.lstrip("@")
     async with client.conversation(BOTFATHER, timeout=60) as conv:
@@ -125,6 +127,12 @@ async def delete_bot(client: TelegramClient, bot_username: str) -> None:
         # Codex finding).
         bots = _button_texts(resp)
         if not bots:
+            # The one exception is BotFather saying in its own words that the
+            # account has no bots ("You don't have any bots yet. Use the /newbot
+            # command to create a new bot first."): an empty list, so ours is gone.
+            if "have any bots" in (resp.text or ""):
+                logger.info("BotFather has no bots on this account — @%s is already deleted in Telegram", target)
+                raise BotNotFoundError(f"BotFather has no bots on this account, so @{target} no longer exists")
             raise RuntimeError(f"Unexpected BotFather reply to /deletebot (no bot list): {_shown(resp)}")
 
         # The reply IS a listing. If our bot's button is absent from it, the bot

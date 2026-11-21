@@ -237,6 +237,11 @@ python -m tg_agent.main notification set-account --phone PHONE
 owner (the worker daemon or the shared gateway, when one runs) — the only
 process that receives BotFather's replies.
 
+`notification delete` exits 0 both when BotFather deletes the bot and when
+Telegram no longer has it (then only the stale local record is removed, and the
+output says so). A failed `setup` / `status` / `delete` / `test` prints one line
+on stderr and exits 1.
+
 ## photo-loader
 
 ```bash

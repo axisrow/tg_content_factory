@@ -549,6 +549,10 @@ style init | list | show --channel <id>  # local-only per-channel style specs (#
 # prints the spec — read it to render content in the channel's voice, and fill a
 # fresh template in together with the user.
 notification setup | status | delete | test | dry-run | set-account
+# notification: `delete` exits 0 both when BotFather deletes the bot and when Telegram
+# no longer has it (deleted by hand, or the account has no bots) — then only the stale
+# local record is removed and the output says so. A failed setup/status/delete/test is
+# one line on stderr with exit 1.
 telegraph login --short-name N [--author-name A] [--author-url U]
 telegraph create --title T --file f.md [--author-name A] [--author-url U] [--format json]
 # telegraph: publishes a public telegra.ph page from markdown (#1703). `login`

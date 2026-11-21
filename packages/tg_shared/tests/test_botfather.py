@@ -306,6 +306,23 @@ async def test_delete_bot_reports_a_deletion_botfather_did_not_confirm():
     assert not isinstance(exc_info.value, botfather.BotNotFoundError)
 
 
+async def test_delete_bot_on_an_account_without_bots_finds_the_bot_gone():
+    """BotFather saying the account has no bots is an empty list: the bot is gone.
+
+    So it is the recoverable ``BotNotFoundError`` (#1085), with a message that
+    says why, and the caller only drops the stale record. The wording is
+    BotFather's own. Any other reply without a bot list stays the generic
+    "unexpected reply" error of the test below, which keeps the record.
+    """
+    conv = _make_conv(_reply("You don't have any bots yet. Use the /newbot command to create a new bot first."))
+
+    with pytest.raises(botfather.BotNotFoundError, match="no bots on this account") as exc_info:
+        await botfather.delete_bot(_client_with(conv), "@mybot_bot")
+
+    assert "@mybot_bot" in str(exc_info.value)
+    assert _sent(conv) == ["/deletebot"]
+
+
 @pytest.mark.parametrize(
     "markup",
     [None, MagicMock(spec=[])],

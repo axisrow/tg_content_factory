@@ -110,8 +110,11 @@ class NotificationService:
             raise RuntimeError("notification_test_failed")
         return True
 
-    async def teardown_bot(self) -> None:
+    async def teardown_bot(self) -> bool:
         """Delete the notification bot via BotFather and remove it from DB.
+
+        Returns ``True`` when BotFather deleted the bot now, ``False`` when
+        Telegram no longer had it and only the stale record was removed.
 
         Idempotent after a remote delete (issue #1085): if the bot is already
         gone from Telegram, ``botfather.delete_bot`` raises
@@ -123,21 +126,24 @@ class NotificationService:
         re-raised *before* the DB-delete: we never wipe the row while the bot
         might still be reachable in Telegram.
         """
-        async with self._target_service.use_client() as (client, _phone):
+        async with self._target_service.use_client() as (client, phone):
             me = await asyncio.wait_for(client.get_me(), timeout=15.0)
             tg_user_id: int = me.id
             bot = await self._notifications.get_bot(tg_user_id)
             if bot is None:
-                raise RuntimeError("No notification bot found for this user")
+                raise RuntimeError(f"No notification bot is recorded for {phone} (Telegram user {tg_user_id})")
 
+            deleted_now = True
             try:
                 await botfather_flows.delete_bot(client, bot.bot_username)
             except botfather.BotNotFoundError:
-                # The bot is no longer in /mybots — it was already deleted in
+                # BotFather no longer has the bot (it is not in its list, or the
+                # account has no bots at all) — it was already deleted in
                 # Telegram (e.g. a previous teardown that then failed at the
-                # DB-delete step). Fall through to the local cleanup so the
-                # orphan row can be removed; this is what makes teardown
+                # DB-delete step, or by hand). Fall through to the local cleanup
+                # so the orphan row can be removed; this is what makes teardown
                 # idempotent and recoverable, not just observable.
+                deleted_now = False
                 logger.info(
                     "Notification bot @%s already absent from Telegram; "
                     "proceeding with local DB cleanup for user %s",
@@ -163,3 +169,4 @@ class NotificationService:
             )
             raise
         logger.info("Notification bot deleted for user %s", tg_user_id)
+        return deleted_now

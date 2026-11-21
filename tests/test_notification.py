@@ -379,7 +379,7 @@ async def test_teardown_bot_success(db, real_pool_harness_factory):
         "tg_agent.services.notification_service.botfather.delete_bot",
         new_callable=AsyncMock,
     ):
-        await svc.teardown_bot()
+        assert await svc.teardown_bot() is True
 
     assert await db.get_notification_bot(777) is None
 
@@ -486,7 +486,8 @@ async def test_teardown_bot_idempotent_after_orphan_cleans_db(db, real_pool_harn
         new_callable=AsyncMock,
         side_effect=botfather.BotNotFoundError("@leadhunter_grace_bot not in /mybots"),
     ):
-        await svc.teardown_bot()
+        # False: BotFather deleted nothing now, only the stale record went.
+        assert await svc.teardown_bot() is False
 
     # The orphan row must be gone — teardown is idempotent.
     assert await db.get_notification_bot(1010) is None
@@ -547,7 +548,9 @@ async def test_teardown_bot_no_bot_raises(db, real_pool_harness_factory):
     )
     svc = NotificationService(db, NotificationTargetService(db, harness.pool))
 
-    with pytest.raises(RuntimeError, match="No notification bot"):
+    # The record is keyed by the account's Telegram user id, so the message
+    # names both: a project that switched accounts sees which one it asked.
+    with pytest.raises(RuntimeError, match=r"No notification bot is recorded for \+70001111111 \(Telegram user 888\)"):
         await svc.teardown_bot()
 
 
