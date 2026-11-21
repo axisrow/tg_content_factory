@@ -5,8 +5,10 @@ import logging
 import os
 import re
 import signal
+import sys
 import time
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 import pytest
 
@@ -123,3 +125,58 @@ def test_an_older_running_gateway_is_a_hard_error_asking_for_restart(tmp_path):
     })
     with pytest.raises(GatewayProtocolError, match="gateway restart --shared"):
         endpoint(root)
+
+
+def test_an_older_gateway_started_under_another_locale_still_asks_for_restart(tmp_path, monkeypatch):
+    """`ps` prints a start time per locale; the record and the caller may disagree.
+
+    Found on a live run: the caller's locale differed from the gateway's, the
+    identities did not match and the running gateway was reported as down.
+    """
+    from tg_agent.gateway import runtime
+    from tg_agent.gateway.runtime import GatewayProtocolError, _atomic_record
+
+    root = tmp_path / "private"
+    configure(root, api_id=12345, api_hash="offline-test-api-hash")
+    _atomic_record(root / "gateway.endpoint.json", {
+        "port": 1, "instance": "old", "pid": os.getpid(), "store_root": str(root), "role": "gateway",
+        "start_identity": "пятница, 20 ноября 2026 г. 21:58:19",
+    })
+    monkeypatch.setattr(runtime, "process_start_identity", lambda pid: "Fri Nov 20 21:58:19 2026")
+
+    with pytest.raises(GatewayProtocolError, match="gateway restart --shared"):
+        endpoint(root)
+
+
+@pytest.mark.parametrize("exits", [True, False], ids=["exits", "ignores-the-signal"])
+def test_stopping_an_older_gateway_started_under_another_locale(tmp_path, monkeypatch, exits):
+    """`gateway stop --shared` is the documented upgrade step; a locale mismatch must not refuse
+    it, nor take a gateway that is still running for a stopped one."""
+    from tg_agent.gateway import runtime
+    from tg_agent.gateway.runtime import _atomic_record, stop_gateway
+
+    root = tmp_path / "private"
+    configure(root, api_id=12345, api_hash="offline-test-api-hash")
+    _atomic_record(root / "gateway.endpoint.json", {
+        "port": 1, "instance": "old", "pid": 4242, "store_root": str(root.resolve()), "role": "gateway",
+        "python": sys.executable, "start_identity": "пятница, 20 ноября 2026 г. 21:58:19",
+    })
+    observed: dict[str, str | None] = {"identity": "Fri Nov 20 21:58:19 2026"}
+    signalled = []
+
+    def kill(pid, sig):
+        signalled.append((pid, sig))
+        if exits:
+            observed["identity"] = None
+
+    monkeypatch.setattr(runtime, "process_start_identity", lambda pid: observed["identity"])
+    monkeypatch.setattr(runtime, "process_executable", lambda pid: str(Path(sys.executable).resolve()))
+    monkeypatch.setattr(runtime.os, "kill", kill)
+
+    if exits:
+        stop_gateway(root, shared=True, timeout=1)
+    else:
+        with pytest.raises(TimeoutError, match="did not stop"):
+            stop_gateway(root, shared=True, timeout=0.2)
+
+    assert signalled == [(4242, signal.SIGTERM)]

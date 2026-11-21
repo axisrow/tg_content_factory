@@ -298,7 +298,9 @@ def test_stop_server_permission_denied_on_sigkill(tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-def _write_owner_record(path: Path, *, project_root: Path) -> None:
+def _write_owner_record(
+    path: Path, *, project_root: Path, start_identity: str = "foreign-start-identity"
+) -> None:
     owner = {
         "pid": 123,
         "role": "worker",
@@ -306,9 +308,30 @@ def _write_owner_record(path: Path, *, project_root: Path) -> None:
         "store_root": str(path.resolve().parent),
         "executable": str(Path(sys.executable).resolve()),
         "executable_observed": str(Path(sys.executable).resolve()),
-        "start_identity": "foreign-start-identity",
+        "start_identity": start_identity,
     }
     path.with_name(path.name + ".owner.json").write_text(json.dumps(owner), encoding="utf-8")
+
+
+def test_stop_server_recognises_a_daemon_started_under_another_locale(tmp_path):
+    """The owner record and the caller may render one start time in two locales (#1868 live run)."""
+    path = tmp_path / "worker.pid"
+    path.write_text("123\n", encoding="utf-8")
+    _write_owner_record(
+        path, project_root=Path.cwd().resolve(), start_identity="пятница, 20 ноября 2026 г. 21:58:19"
+    )
+    alive_states = iter([True, False])
+
+    with patch("tg_agent.cli.process_control.is_process_alive",
+               side_effect=lambda pid: next(alive_states)):
+        with patch("tg_agent.cli.process_control.is_expected_server_process", return_value=True):
+            with patch("tg_agent.cli.process_control.process_start_identity",
+                       return_value="Fri Nov 20 21:58:19 2026"):
+                with patch("tg_agent.cli.process_control.os.kill") as mock_kill:
+                    outcome = stop_server(path, timeout_sec=0.5)
+
+    assert outcome.result is StopResult.STOPPED, outcome.message
+    mock_kill.assert_called_once()
 
 
 def test_stop_server_force_signals_despite_foreign_provenance(tmp_path):

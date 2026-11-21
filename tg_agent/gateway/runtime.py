@@ -35,7 +35,7 @@ from tg_agent.telegram.relay import (
     probe_endpoint,
 )
 from tg_agent.telegram.session_lock import SessionLock
-from tg_agent.utils.process_identity import process_executable, process_start_identity
+from tg_agent.utils.process_identity import process_executable, process_start_identity, same_start_identity
 from tg_shared.auth import TelegramAuth
 
 logger = logging.getLogger(__name__)
@@ -107,7 +107,8 @@ def endpoint(root: Path) -> dict | None:
     except (OSError, ValueError, KeyError):
         return None
     if record.get("protocol") is None:
-        if record.get("pid") and process_start_identity(record["pid"]) == record.get("start_identity"):
+        if record.get("pid") and same_start_identity(record.get("start_identity"),
+                                                     process_start_identity(record["pid"])):
             raise GatewayProtocolError(
                 "An older Telegram gateway is running (PID %s); restart it once: "
                 "`tg-agent gateway restart --shared`" % record["pid"]
@@ -322,14 +323,14 @@ def stop_gateway(root: Path, *, shared: bool, timeout: float = 30) -> None:
                 or not record.get("start_identity")
                 or not record.get("python")
                 or str(Path(record["python"]).resolve()) != process_executable(record["pid"])
-                or process_start_identity(record["pid"]) != record["start_identity"]):
+                or not same_start_identity(record["start_identity"], process_start_identity(record["pid"]))):
             raise RuntimeError("Cannot verify the gateway process owner; refusing to signal its PID")
         os.kill(record["pid"], signal.SIGTERM)
     else:
         asyncio.run(_relay_admin_call(root, record, "admin.shutdown"))
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if process_start_identity(record["pid"]) != record["start_identity"]:
+        if not same_start_identity(record["start_identity"], process_start_identity(record["pid"])):
             return
         time.sleep(0.05)
     raise TimeoutError("Shared gateway did not stop; no unrelated process was signalled")
