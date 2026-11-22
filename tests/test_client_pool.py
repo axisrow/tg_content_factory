@@ -526,6 +526,65 @@ async def test_warm_rate_limit_gate_skips_phone_and_continues(real_pool_harness_
 
 
 @pytest.mark.anyio
+async def test_warm_runs_despite_a_lookup_only_family_flood(
+    real_pool_harness_factory, monkeypatch, caplog
+):
+    """#1879: a resolve-family flood does not stop the dialog sweep.
+
+    The sweep is a "dialogs" read; skipping an account Telegram holds only on
+    username lookups leaves the entity cache cold exactly where the collector
+    then runs cache-only.
+    """
+    monkeypatch.setattr("tg_agent.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
+    harness = real_pool_harness_factory()
+    resolve_flooded = FakeCliTelethonClient(dialogs=[])
+    ok = FakeCliTelethonClient(dialogs=[])
+
+    await _setup_warm_harness(
+        harness,
+        {
+            "+70000000001": resolve_flooded,
+            "+70000000002": ok,
+        },
+    )
+    await harness.pool.report_family_flood("+70000000001", 3600, "resolve")
+
+    with caplog.at_level("INFO", logger="tg_agent.telegram.pool_dialogs"):
+        await harness.pool.warm_all_dialogs()
+
+    resolve_flooded.get_dialogs.assert_awaited()
+    ok.get_dialogs.assert_awaited()
+    assert "because active flood-wait is stored" not in caplog.text
+
+
+@pytest.mark.anyio
+async def test_warm_skips_phone_with_a_dialogs_family_flood(
+    real_pool_harness_factory, monkeypatch, caplog
+):
+    """#1832/#1879: the sweep's own family flooded — no Telegram call, skip."""
+    monkeypatch.setattr("tg_agent.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
+    harness = real_pool_harness_factory()
+    dialogs_flooded = FakeCliTelethonClient(dialogs=[])
+    ok = FakeCliTelethonClient(dialogs=[])
+
+    await _setup_warm_harness(
+        harness,
+        {
+            "+70000000001": dialogs_flooded,
+            "+70000000002": ok,
+        },
+    )
+    await harness.pool.report_family_flood("+70000000001", 3600, "dialogs")
+
+    with caplog.at_level("INFO", logger="tg_agent.telegram.pool_dialogs"):
+        await harness.pool.warm_all_dialogs()
+
+    dialogs_flooded.get_dialogs.assert_not_awaited()
+    ok.get_dialogs.assert_awaited()
+    assert "because active flood-wait is stored" in caplog.text
+
+
+@pytest.mark.anyio
 async def test_warm_single_phone_timeout(real_pool_harness_factory, monkeypatch, caplog):
     """A hanging get_dialogs should time out and not block other phones."""
     import asyncio

@@ -70,6 +70,9 @@ logger = logging.getLogger(__name__)
 WARM_SINGLE_PHONE_TIMEOUT_SEC = 30.0
 WARM_ALL_PHONES_TOTAL_SEC = 150.0
 WARM_STAGGER_DELAY_SEC = 1.0
+# The flood family of the sweep itself (telegram_warm_dialog_cache): only an
+# active flood here skips an account's warm-up (#1832, #1879).
+WARM_DIALOG_FAMILY = "dialogs"
 
 # Resumable dialog sweep (#1359).  A full sweep over a few thousand dialogs does
 # not finish in one pass: Telegram throttles it mid-way regardless of how much
@@ -513,10 +516,15 @@ class DialogsMixin:
                     now=now,
                 )
             }
-            # Family-scoped read floods block the dialog sweep too (#1832):
-            # the sweep IS the read traffic that earned them.
+            # Family-scoped read floods block the sweep only when the sweep's
+            # own family is flooded (#1832): warm_dialog_cache is a "dialogs"
+            # read. A flood on username lookups (#1879) or history must not
+            # stop the cache from warming — the collector runs cache-only on
+            # exactly such accounts.
             family_floods = await self._db.repos.accounts.list_active_family_floods(now=now)
-            flood_waited |= set(family_floods)
+            flood_waited |= {
+                phone for phone, families in family_floods.items() if WARM_DIALOG_FAMILY in families
+            }
         except Exception:
             logger.debug("warm_all_dialogs: failed to load flood-wait status", exc_info=True)
         phones_list = list(self._connected_phones())
