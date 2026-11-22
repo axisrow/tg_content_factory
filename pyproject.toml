@@ -9,7 +9,9 @@ version = "0.2.5"
 description = "Telegram automation dependency for coding agents — tg-agent CLI + skill for Claude Code, OpenCode, Codex"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.11"
+# >=3.11.5: soupsieve 4.x (the line that clears the Dependabot ReDoS/DoS
+# alerts) requires it; the old <3.11.5 lock slice kept soupsieve 2.10 alive.
+requires-python = ">=3.11.5"
 authors = [
     {name = "Axisrow"}
 ]
