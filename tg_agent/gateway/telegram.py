@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING, cast
 
 from telethon import events
 from telethon_floodgate import TelegramRateLimitedError
@@ -16,6 +17,11 @@ from tg_agent.gateway.pool_storage import GatewayPoolStorage
 from tg_agent.gateway.store import GatewayStore
 from tg_agent.telegram.backends import TelegramTransportSession
 from tg_shared.auth import TelegramAuth
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from tg_agent.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +39,7 @@ class LiveTelegramAccess:
         self._warm_failures: dict[str, str] = {}  # account -> last connect failure
         # Set by the relay hub (``on_event(account)``): projects granted the account
         # pull its new DM events at once.
-        self.on_event = None
+        self.on_event: Callable[[str], Awaitable[None]] | None = None
 
     async def start(self) -> None:
         for project, account in await self.store.subscriptions():
@@ -48,11 +54,13 @@ class LiveTelegramAccess:
         try:
             await self.connection(project, account)
         except Exception as exc:
-            # Housekeeping retries every half minute: report each new failure once.
+            # Housekeeping retries every half minute: a new failure is reported once,
+            # with its text and traceback; its repeats stay one-line debug notes.
             failure = type(exc).__name__
-            log = logger.debug if self._warm_failures.get(account) == failure else logger.warning
+            first = self._warm_failures.get(account) != failure
             self._warm_failures[account] = failure
-            log("Gateway account unavailable: error=%s", failure)
+            log = logger.warning if first else logger.debug
+            log("Gateway account unavailable: account=%s error=%s: %s", account, failure, exc, exc_info=first)
         else:
             self._warm_failures.pop(account, None)
 
@@ -68,6 +76,7 @@ class LiveTelegramAccess:
 
     async def report_flood(self, phone: str, wait_seconds: int) -> None:
         # The adapter's phone key is the stable gateway account UUID.
+        assert self._pool is not None, "flood report before the gateway pool exists"
         await self._pool.report_flood(phone, wait_seconds)
 
     def account_status(self, account: str) -> dict:
@@ -96,10 +105,11 @@ class LiveTelegramAccess:
             if self._pool is None:
                 storage = GatewayPoolStorage(self.store)
                 await storage.initialize()
-                self._pool = GatewayClientPool(self.auth, storage, runtime_config=TelegramRuntimeConfig(
+                pool_db = cast("Database", storage)  # implements the account slice of Database the pool uses
+                self._pool = GatewayClientPool(self.auth, pool_db, runtime_config=TelegramRuntimeConfig(
                     backend_mode="native", session_cache_dir=str(self.store.root / "telegram_sessions")))
                 await self._pool.initialize(phones=[])
-                self.sessions = self._pool.clients
+                self.sessions = cast(dict[str, TelegramTransportSession], self._pool.clients)
             existing = self.sessions.get(account)
             if existing is not None and not existing.raw_client.is_connected():
                 await self._pool.remove_client(account)
