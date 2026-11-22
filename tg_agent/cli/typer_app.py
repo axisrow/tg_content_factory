@@ -88,13 +88,17 @@ def run_async(coro: Coroutine[Any, Any, _T]) -> _T:
     return asyncio.run(coro)
 
 
-def apply_startup(ctx: typer.Context) -> None:
+def apply_startup(ctx: typer.Context, *, rotate_log: bool = False) -> None:
     """Run the global startup side effects, ported 1:1 from ``main()``.
 
     Reproduces ``tg_agent/cli/main.py::main()`` lines 37–48: export the resolved
     config path as ``TG_CONFIG_PATH`` (abspath, so spawned subprocesses such as
     plugins inherit the right config / DB), load the ``.env`` next to the
     config, set up logging and ensure the data directories exist.
+
+    ``rotate_log`` marks the long-lived processes (``worker``/``serve``) that
+    own ``app.log`` and may rotate it; every other process appends without
+    rotating (#1880).
 
     Migrated commands call this as their first line. It lives here — on the
     command execution path — rather than in ``main_callback`` so that a
@@ -116,7 +120,7 @@ def apply_startup(ctx: typer.Context) -> None:
     os.environ["TG_CONFIG_PATH"] = os.path.abspath(state.config)
 
     load_cli_dotenv(state.config)
-    setup_logging()
+    setup_logging(rotate=rotate_log)
     ensure_data_dirs()
 
 
