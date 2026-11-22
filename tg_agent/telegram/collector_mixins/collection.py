@@ -471,8 +471,12 @@ class CollectionMixin:
             else:
                 result = await self._pool.get_available_client(allow_families=allowed)
         elif attempted_resolve_phones:
+            # A retry after a failed lookup must land on an account that can
+            # look up: every family flood — resolve included (#1879) — blocks
+            # here. With the collection allowance this pick bounced between
+            # accounts that cannot resolve either.
             result = await self._pool.get_available_client(
-                exclude_phones=set(attempted_resolve_phones), allow_families=allowed
+                exclude_phones=set(attempted_resolve_phones)
             )
         else:
             # Any account can read a username channel; its own one, which holds
@@ -483,7 +487,12 @@ class CollectionMixin:
             )
 
         if result is None:
-            availability = await self.get_collection_availability()
+            # Judged by the rule the pick used: the strict retry pick reports
+            # strictly, so "no pick" cannot meet an "available" report — that
+            # mismatch is what looped the queue (#1879).
+            availability = await self.get_collection_availability(
+                allow_families=frozenset() if attempted_resolve_phones else None
+            )
             if await self._wait_for_transient_collection_flood(availability):
                 return _ACQUIRE_RETRY
             await self._raise_collection_unavailability(availability)

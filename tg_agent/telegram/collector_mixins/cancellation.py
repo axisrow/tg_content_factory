@@ -6,7 +6,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from inspect import isawaitable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from telethon_floodgate import (
     is_transient_flood_wait_seconds,
@@ -20,7 +20,7 @@ from tg_agent.telegram.collector_types import (
 from tg_agent.telegram.flood_scope import COLLECTION_ALLOWED_FAMILIES
 
 if TYPE_CHECKING:
-    from typing import Any, Protocol, TypeAlias, cast
+    from typing import Any, Protocol, TypeAlias
 
     from tg_agent.telegram.collector import Collector as _RuntimeCollector
 
@@ -100,13 +100,19 @@ class CancellationMixin:
             return cast("datetime | None", result)
         return self._pool.get_resolve_username_backoff_until()
 
-    async def get_collection_availability(self: "Collector"):
+    async def get_collection_availability(
+        self: "Collector", allow_families: frozenset[str] | None = None
+    ):
         availability_fn = getattr(self._pool, "get_stats_availability", None)
         if callable(availability_fn):
             # Judged like collection's own pick, which keeps lookup-flooded
             # accounts (#1879): otherwise "available" meets "no account" and the
-            # queue loops on "no active connected clients".
-            result = availability_fn(allow_families=COLLECTION_ALLOWED_FAMILIES)
+            # queue loops on "no active connected clients". The lookup-retry
+            # pick passes frozenset() — it must find an account that can
+            # actually look up, so its report judges strictly too.
+            result = availability_fn(
+                allow_families=COLLECTION_ALLOWED_FAMILIES if allow_families is None else allow_families
+            )
             if asyncio.iscoroutine(result):
                 return await result
         return await self._fallback_collection_availability()
