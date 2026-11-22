@@ -1,3 +1,13 @@
+# Channel and group access keys of pool sessions (#1877, tg_agent/telegram/entity_store.py).
+# One table for the project DB and the gateway's (pool_storage.CACHE_SCHEMA). `account`
+# is the pool's account key (a phone; the account UUID in the gateway), `auth_key_id` the
+# login the key belongs to, `date` epoch seconds of the last write.
+SESSION_ENTITIES_SQL = (
+    "CREATE TABLE IF NOT EXISTS session_entities (account TEXT NOT NULL, auth_key_id TEXT NOT NULL, "
+    "id INTEGER NOT NULL, hash INTEGER NOT NULL, username TEXT, phone TEXT, name TEXT, "
+    "date INTEGER NOT NULL, PRIMARY KEY (account, id))"
+)
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY,
@@ -765,4 +775,4 @@ CREATE TABLE IF NOT EXISTS account_family_floods (
     updated_at TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (phone, family)
 );
-"""
+""" + SESSION_ENTITIES_SQL + ";\n"

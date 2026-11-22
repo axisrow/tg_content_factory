@@ -435,10 +435,11 @@ async def _run_worker_async(config: AppConfig) -> None:
 
 
 async def _persist_flood_guards(container) -> None:
-    """Save the pool's flood-guard state, so a restart keeps the spent budget."""
-    persist = getattr(container.pool, "persist_flood_guard_snapshot", None)
-    if callable(persist):
-        await persist()  # best-effort by contract: it never raises
+    """Save the pool's flood-guard state and channel keys, so a restart keeps both (#1877)."""
+    for name in ("persist_flood_guard_snapshot", "persist_session_entities"):
+        persist = getattr(container.pool, name, None)
+        if callable(persist):
+            await persist()  # best-effort by contract: it never raises
 
 
 async def _start_owner_relay(container, config: AppConfig):

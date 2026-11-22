@@ -330,11 +330,12 @@ async def test_initialize_restores_once_per_pool_lifetime(db, monkeypatch):
 
 
 async def test_the_worker_saves_the_guards_through_its_pool():
-    pool = SimpleNamespace(persist_flood_guard_snapshot=AsyncMock())
+    pool = SimpleNamespace(persist_flood_guard_snapshot=AsyncMock(), persist_session_entities=AsyncMock())
 
     await worker._persist_flood_guards(SimpleNamespace(pool=pool))
 
     pool.persist_flood_guard_snapshot.assert_awaited_once()
+    pool.persist_session_entities.assert_awaited_once()  # channel keys on the same cadence (#1877)
 
 
 async def test_the_gateway_saves_its_shared_pool_guards():
@@ -342,9 +343,10 @@ async def test_the_gateway_saves_its_shared_pool_guards():
 
     access = LiveTelegramAccess(cast(Any, SimpleNamespace()), cast(Any, SimpleNamespace()))
     await access.persist_flood_guards()  # no pool yet: nothing to save, no error
-    pool = SimpleNamespace(persist_flood_guard_snapshot=AsyncMock())
+    pool = SimpleNamespace(persist_flood_guard_snapshot=AsyncMock(), persist_session_entities=AsyncMock())
     access._pool = cast(Any, pool)
 
     await access.persist_flood_guards()
 
     pool.persist_flood_guard_snapshot.assert_awaited_once()
+    pool.persist_session_entities.assert_awaited_once()  # channel keys on the same cadence (#1877)

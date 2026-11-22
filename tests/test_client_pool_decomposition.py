@@ -93,6 +93,9 @@ PUBLIC_CONTRACT: frozenset[str] = frozenset(
         "resolve_channel",
         "resolve_any_entity",
         "fetch_channel_meta",
+        # channel access keys (EntityStoreMixin, #1877)
+        "persist_session_entities",
+        "restore_session_entities",
     }
 )
 

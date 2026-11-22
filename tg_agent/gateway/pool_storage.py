@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from tg_agent.database.repositories.dialog_cache import DialogCacheRepository
+from tg_agent.database.schema import SESSION_ENTITIES_SQL
 from tg_agent.models import Account, AccountSummary
 
 CACHE_SCHEMA = (
@@ -17,6 +18,8 @@ CACHE_SCHEMA = (
     # is epoch seconds like accounts.flood_until.
     "CREATE TABLE IF NOT EXISTS account_family_floods(phone TEXT NOT NULL,family TEXT NOT NULL,"
     "until REAL NOT NULL,PRIMARY KEY(phone,family))",
+    # Channel access keys of the gateway's sessions (#1877), the same table as the project's.
+    SESSION_ENTITIES_SQL,
 )
 
 
