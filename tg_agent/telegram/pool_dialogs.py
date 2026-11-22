@@ -63,6 +63,7 @@ from tg_agent.telegram.utils import normalize_utc
 
 if TYPE_CHECKING:
     from tg_agent.database import Database
+    from tg_agent.telegram.client_pool import ClientPool, StatsClientAvailability
 
 logger = logging.getLogger(__name__)
 
@@ -250,11 +251,14 @@ class DialogsMixin:
             self, phone: str, *, wait_for_flood: bool = False
         ) -> tuple[TelegramTransportSession, str] | None: ...
 
-        async def release_client(self, phone: str) -> None: ...
+        async def release_client(self, phone: str, *, session: TelegramTransportSession | None = None) -> None: ...
 
         async def run_live_username_resolve(self, *args: object, **kwargs: object) -> object: ...
 
-        def _is_live_username_peer(self, peer: object) -> bool: ...
+        async def get_stats_availability(self) -> StatsClientAvailability: ...
+
+        @staticmethod
+        def _is_live_username_peer(peer: object) -> bool: ...
 
     # ------------------------------------------------------------------ #
     # channel ↔ phone routing
@@ -771,6 +775,9 @@ class DialogsMixin:
                     # so the retry resolves like a post-warm retry.
                     return await _resolve(f"{operation}_after_fetch")
                 raise
+            cursors: dict[str, _DialogCursor] | None = None
+            cursor: _DialogCursor | None = None
+            previous_position = None
             if reuse_warm_cache:
                 cursors = getattr(self, "_metadata_warm_cursors", None)
                 if cursors is None:
@@ -795,7 +802,11 @@ class DialogsMixin:
                     timeout=warm_timeout,
                 )
             except asyncio.TimeoutError:
-                if reuse_warm_cache and (cursor.offset_id, cursor.offset_peer) != previous_position:
+                if (
+                    reuse_warm_cache
+                    and cursor is not None
+                    and (cursor.offset_id, cursor.offset_peer) != previous_position
+                ):
                     # Yield the dispatcher after a productive timed chunk;
                     # the next receipt resumes from this saved page.
                     raise TelegramRateLimitedError(phone, "metadata_warm_resume", 1.0) from None
@@ -809,7 +820,7 @@ class DialogsMixin:
                     exc.retry_after_sec,
                 )
                 raise
-            if reuse_warm_cache:
+            if reuse_warm_cache and cursors is not None:
                 cursors.pop(phone, None)
             self.mark_dialogs_fetched(phone)
             return await _resolve(f"{operation}_after_warm")
@@ -1055,7 +1066,8 @@ class DialogsMixin:
                         availability = await self.get_stats_availability()
                         if availability.state == "all_flooded":
                             raise AllCollectionClientsFloodedError(
-                                availability.retry_after_sec, availability.next_available_at_utc,
+                                cast(int, availability.retry_after_sec),
+                                cast(datetime, availability.next_available_at_utc),
                             )
                     # The owning account is unavailable (flood/disconnected): we cannot
                     # trustworthily confirm gone, so do NOT deactivate. Flag for review
@@ -1073,7 +1085,8 @@ class DialogsMixin:
                     availability = await self.get_stats_availability()
                     if availability.state == "all_flooded":
                         raise AllCollectionClientsFloodedError(
-                            availability.retry_after_sec, availability.next_available_at_utc,
+                            cast(int, availability.retry_after_sec),
+                            cast(datetime, availability.next_available_at_utc),
                         )
                 if last_flood_error is not None:
                     raise last_flood_error
@@ -1337,7 +1350,8 @@ class DialogsMixin:
                 availability = await self.get_stats_availability()
                 if availability.state == "all_flooded":
                     raise AllCollectionClientsFloodedError(
-                        availability.retry_after_sec, availability.next_available_at_utc,
+                        cast(int, availability.retry_after_sec),
+                        cast(datetime, availability.next_available_at_utc),
                     )
             logger.warning("fetch_channel_meta: no available client for channel_id %s", channel_id)
             return None
@@ -1831,7 +1845,7 @@ class DialogsMixin:
         started_at = time.perf_counter()
         stats = DialogFetchStats()
         snapshot = DialogSnapshotWriter(
-            self, acquired_phone, cache_mode, stats, chunk_size=DIALOG_FETCH_UPSERT_CHUNK
+            cast("ClientPool", self), acquired_phone, cache_mode, stats, chunk_size=DIALOG_FETCH_UPSERT_CHUNK
         )
         try:
             await self._sweep_dialogs_for_phone(

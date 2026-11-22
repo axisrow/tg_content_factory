@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from telethon import functions, types
@@ -38,10 +39,10 @@ async def relayed_pool(db, monkeypatch):
     monkeypatch.setattr(backends, "acquire_session_lock", no_lock)
     await db.add_account(Account(phone=PHONE, session_string="owner-only-session", is_active=True))
     pool = ClientPool(TelegramAuth(1, "hash"), db, relay=connection)
-    pool._materializer = SimpleNamespace(
+    pool._materializer = cast(Any, SimpleNamespace(
         materialize=lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no session file in relay mode")),
         ensure_empty_env_file=lambda: "",
-    )
+    ))
     try:
         yield pool, connection, owner_client
     finally:
@@ -57,10 +58,10 @@ async def test_relayed_pool_runs_requests_on_the_owner_connection(relayed_pool):
     raw = pool.clients[PHONE].raw_client
     assert isinstance(raw, RelayTelegramClient)
     me = await raw.get_me()
-    assert me.id == 4242
+    assert cast(Any, me).id == 4242
     assert owner_client.calls
     # The owner's entity cache came along: cached peers resolve offline.
-    assert raw.session.get_input_entity(7) == types.InputPeerUser(user_id=7, access_hash=8)
+    assert cast(Any, raw.session).get_input_entity(7) == types.InputPeerUser(user_id=7, access_hash=8)
 
 
 async def test_native_leases_resolve_cached_peers_offline_too(relayed_pool):

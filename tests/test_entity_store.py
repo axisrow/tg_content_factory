@@ -209,4 +209,4 @@ async def test_a_client_gets_its_keys_before_the_pool_hands_it_out(db, monkeypat
         assert await pool._acquire_from_lease(AccountLease(account=account, shared=True)) is not None
 
     assert seen == [(PHONE, raw, False)]
-    assert pool.clients[PHONE].raw_client is raw
+    assert cast(Any, pool.clients[PHONE]).raw_client is raw

@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -75,7 +76,7 @@ async def test_collect_channel_flood_wait_retry(collector, mock_pool, mock_db):
     # First call to iter_messages raises FloodWait, second succeeds
     async def mock_iter(*args, **kwargs):
         if not hasattr(mock_iter, "called"):
-            mock_iter.called = True
+            cast(Any, mock_iter).called = True
             raise FloodWaitError(5)
         m = MagicMock(id=11, text="msg", date=datetime.now(timezone.utc))
         m.sender.first_name = "First"
@@ -150,7 +151,7 @@ async def test_notification_queries_logic(collector, mock_db):
     notifier = AsyncMock()
     collector._notifier = notifier
     collector._notification_matcher = NotificationMatcher(notifier)
-    sq = SearchQuery(id=1, query="test", is_regex=False, is_fts=False)
+    sq = cast(Any, SearchQuery)(id=1, query="test", is_regex=False, is_fts=False)
     mock_db.get_notification_queries.return_value = [sq]
 
     # Need messages with actual text and channel_username for link
@@ -172,7 +173,7 @@ async def test_notification_queries_private_channel_link(collector, mock_db):
     notifier = AsyncMock()
     collector._notifier = notifier
     collector._notification_matcher = NotificationMatcher(notifier)
-    sq = SearchQuery(id=1, query="hello", is_regex=False, is_fts=False)
+    sq = cast(Any, SearchQuery)(id=1, query="hello", is_regex=False, is_fts=False)
     mock_db.get_notification_queries.return_value = [sq]
 
     msgs = [
@@ -211,7 +212,7 @@ async def test_empty_ledger_does_not_replay_backlog(collector, mock_db):
     collected messages are matched; the backlog rescan is skipped entirely."""
     notifier = AsyncMock()
     collector._notifier = notifier
-    sq = SearchQuery(id=1, query="hit", is_regex=False, is_fts=False)
+    sq = cast(Any, SearchQuery)(id=1, query="hit", is_regex=False, is_fts=False)
     mock_db.get_notification_queries.return_value = [sq]
 
     store = _LedgerStore()  # empty ledger -> has_any() is False
@@ -244,7 +245,7 @@ async def test_seeded_ledger_replays_backlog_for_retry(collector, mock_db):
     failed send is retried (dedup keeps it from duplicating already-sent ones)."""
     notifier = AsyncMock()
     collector._notifier = notifier
-    sq = SearchQuery(id=1, query="hit", is_regex=False, is_fts=False)
+    sq = cast(Any, SearchQuery)(id=1, query="hit", is_regex=False, is_fts=False)
     mock_db.get_notification_queries.return_value = [sq]
 
     store = _LedgerStore(seeded_channels={1})  # ledger already has rows for channel 1

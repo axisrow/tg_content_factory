@@ -53,9 +53,9 @@ def _tl_bytes(result) -> bytes:
     if isinstance(result, list):
         return struct.pack("<Ii", VECTOR, len(result)) + b"".join(bytes(item) for item in result)
     if result is True:
-        return bytes(types.BoolTrue())
+        return bytes(cast(Any, types).BoolTrue())
     if result is False:
-        return bytes(types.BoolFalse())
+        return bytes(cast(Any, types).BoolFalse())
     return bytes(result)
 
 
@@ -145,7 +145,7 @@ async def test_request_round_trips_through_the_owner_connection():
         assert isinstance(state, types.updates.State)
         assert state.pts == 77
         assert client.is_connected()
-        await client.disconnect()
+        await cast(Any, client).disconnect()
     assert isinstance(owner.calls[0][1], functions.updates.GetStateRequest)
 
 
@@ -155,7 +155,7 @@ async def test_vector_result_is_parsed_by_the_client_reader():
     async with running({PHONE: owner}) as (_, connection):
         client = await _client(connection)
         user = await client.get_me()
-        assert user.id == 4242
+        assert cast(Any, user).id == 4242
 
 
 async def test_telegram_errors_keep_their_type_and_capture():
@@ -353,7 +353,7 @@ async def test_owner_entity_cache_preloads_the_client_session():
     async with running({PHONE: owner}) as (_, connection):
         client = await _client(connection)
         assert await client.load_owner_entities() == 1
-        peer = client.session.get_input_entity(123)
+        peer = cast(Any, client.session).get_input_entity(123)
     assert peer == types.InputPeerUser(user_id=123, access_hash=456)
 
 

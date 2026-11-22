@@ -2,10 +2,14 @@
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 
 from tg_agent.database.repositories.dialog_cache import DialogCacheRepository
 from tg_agent.database.schema import SESSION_ENTITIES_SQL
 from tg_agent.models import Account, AccountSummary
+
+if TYPE_CHECKING:
+    from tg_agent.database import Database
 
 CACHE_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
@@ -29,7 +33,7 @@ class GatewayPoolStorage:
         self.store = store
         self.db = store._connection
         self.repos = SimpleNamespace(accounts=self, channels=self,
-                                     dialog_cache=DialogCacheRepository(self.db, database=self))
+                                     dialog_cache=DialogCacheRepository(self.db, database=cast("Database", self)))
 
     async def initialize(self):
         async with self.transaction() as conn:

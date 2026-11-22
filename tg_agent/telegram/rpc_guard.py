@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 from telethon import TelegramClient, errors
 from telethon_floodgate import (
@@ -64,7 +64,7 @@ def rpc_operation(operation: str) -> Iterator[RpcOperation]:
     try:
         yield current
     except BaseException as exc:
-        exc.rpc_diagnostics = diagnostic_fields(exc, current=current)
+        cast(Any, exc).rpc_diagnostics = diagnostic_fields(exc, current=current)
         raise
     finally:
         current.active = False
@@ -115,7 +115,7 @@ def bind_rpc_guard(client: Any, pool: Any, phone: str | None) -> None:
         return
     client.flood_sleep_threshold = 0
     guard = OwnedRpcGuard(client, pool, phone)
-    client._tg_owned_rpc_guard = guard
+    cast(Any, client)._tg_owned_rpc_guard = guard
     pool._rpc_guard_enabled = True
 
 
@@ -187,7 +187,7 @@ class OwnedRpcGuard:
         getter = getattr(getattr(self.pool, "_db", None), "get_accounts", None)
         if callable(getter) and (loaded is None or now - loaded >= 60.0):
             generation = getattr(self.pool, "_rpc_account_generation", 0)
-            accounts = await getter()
+            accounts = await cast(Any, getter)()
             # A report concurrent with this DB read takes precedence over a
             # stale snapshot. Periodic refresh also honors operator clears.
             if generation == getattr(self.pool, "_rpc_account_generation", 0):
@@ -200,7 +200,7 @@ class OwnedRpcGuard:
         getter = getattr(self.pool, "family_flood_deadline", None)
         if callable(getter):
             for family in {_family(m) for m in members if m.read_only}:
-                deadline = await getter(self.phone, family)
+                deadline = await cast(Any, getter)(self.phone, family)
                 pending = getattr(self.pool, "_rpc_pending_family_deadlines", {}).get((self.phone, family))
                 self.deadlines[family] = max(deadline or pending, pending) if pending else deadline
 
@@ -279,7 +279,8 @@ class OwnedRpcGuard:
             current.confirmed += 1
         if not isinstance(exception, FLOOD_ERRORS):
             return
-        seconds = max(1, int(exception.seconds))
+        flood = cast(Any, exception)
+        seconds = max(1, int(flood.seconds))
         deadline = datetime.now(timezone.utc) + timedelta(seconds=seconds)
         if member.read_only:
             self.deadlines[_family(member)] = deadline
@@ -305,13 +306,13 @@ class OwnedRpcGuard:
             limiter = getattr(self.pool, "_resolve_rate_limiter", None)
             if isinstance(limiter, ResolveRateLimiter):
                 limiter.tighten(self.phone)
-        exception.flood_reporting = self._spawn(self._report(member, exception, deadline))
+        flood.flood_reporting = self._spawn(self._report(member, flood, deadline))
 
     async def _report(self, member: RpcDispatchAdmission, exception: BaseException, deadline: datetime) -> None:
-        seconds = max(1, int(exception.seconds))
+        seconds = max(1, int(cast(Any, exception).seconds))
         reporter = getattr(self.pool, "report_family_flood", None)
         if member.read_only and callable(reporter):
-            await reporter(self.phone, seconds, _family(member), operation=member.operation)
+            await cast(Any, reporter)(self.phone, seconds, _family(member), operation=member.operation)
             # The durable reporter has updated the shared family cache. Never
             # clear a later concurrent signal while completing this report.
             pending = getattr(self.pool, "_rpc_pending_family_deadlines", {})
@@ -329,4 +330,4 @@ class OwnedRpcGuard:
         if member.rpc == "ResolveUsernameRequest":
             await self.pool.persist_resolve_username_backoff()
             await self.pool.persist_resolve_limiter_snapshot()
-        exception.flood_reported = True
+        cast(Any, exception).flood_reported = True
