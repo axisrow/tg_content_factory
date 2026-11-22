@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler, WatchedFileHandler
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from tg_agent.cli.runtime import (
@@ -60,6 +61,47 @@ class TestSetupLogging:
             root.handlers = original_handlers
             root.setLevel(original_root_level)
             aiosqlite_logger.setLevel(original_aiosqlite_level)
+
+
+    def test_setup_logging_appends_without_rotating_by_default(self, tmp_path):
+        """#1880/#1879: only the daemons rotate app.log. A short-lived CLI
+        process (or a test run) appends through a WatchedFileHandler, so it
+        cannot rotate the file out from under a running daemon."""
+        root = logging.getLogger()
+        original_handlers = root.handlers[:]
+        original_level = root.level
+        root.handlers.clear()
+
+        try:
+            setup_logging(log_path=tmp_path / "app.log")
+            file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
+            assert len(file_handlers) == 1
+            assert type(file_handlers[0]) is WatchedFileHandler
+        finally:
+            for h in root.handlers[:]:
+                if h not in original_handlers:
+                    h.close()
+            root.handlers = original_handlers
+            root.setLevel(original_level)
+
+    def test_setup_logging_rotates_only_when_asked(self, tmp_path):
+        """rotate=True — the worker/serve daemons — keeps the RotatingFileHandler."""
+        root = logging.getLogger()
+        original_handlers = root.handlers[:]
+        original_level = root.level
+        root.handlers.clear()
+
+        try:
+            setup_logging(log_path=tmp_path / "app.log", rotate=True)
+            file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
+            assert len(file_handlers) == 1
+            assert type(file_handlers[0]) is RotatingFileHandler
+        finally:
+            for h in root.handlers[:]:
+                if h not in original_handlers:
+                    h.close()
+            root.handlers = original_handlers
+            root.setLevel(original_level)
 
 
 class TestEnsureDataDirs:

@@ -90,6 +90,7 @@ PUBLIC_CONTRACT: frozenset[str] = frozenset(
         "available_collection_client_count",
         "has_rotatable_resolve_phone",
         "next_resolve_capable_at",
+        "lookup_capable_phone_count",
         # resolve / meta
         "resolve_channel",
         "resolve_any_entity",

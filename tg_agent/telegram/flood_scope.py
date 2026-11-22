@@ -31,6 +31,11 @@ WRITE_FAMILY_CATEGORIES = {"send", "channel_lifecycle", "admin_action"}
 # can never be scoped narrower than the account.
 UNSCOPED_OPERATIONS = {"telegram_invoke_request"}
 
+# Families whose flood still lets an account collect (#1879): a channel with a
+# cached access key needs no username lookup, and the collector keeps such an
+# account in cache-only mode, so no lookup is sent on it.
+COLLECTION_ALLOWED_FAMILIES = frozenset({"resolve"})
+
 
 def resolve_operation_family(
     operation: str,

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from telethon.errors import FloodWaitError
+from telethon.tl.types import InputPeerChannel, PeerChannel
+from telethon_floodgate import UsernameResolveRateLimitedError
 
 from tests.helpers import AsyncIterMessages, FakeCliTelethonClient
 from tg_agent.config import SchedulerConfig
@@ -437,3 +440,75 @@ async def test_collect_channel_stats_transient_error_skips_without_deactivation(
 
     saved = await db.get_channel_stats(-100777)
     assert len(saved) == 0
+
+
+def _username_lookups(client) -> list:
+    """Calls that looked a channel up by its username (a str argument)."""
+    calls = [*client.get_input_entity.await_args_list, *client.get_entity.await_args_list]
+    return [call for call in calls if call.args and isinstance(call.args[0], str)]
+
+
+async def _pool_flooded_on_lookups(harness_factory, cached):
+    """Two connected accounts, both under a Telegram flood on username lookups only (#1879)."""
+    harness = harness_factory()
+    clients = []
+    for phone in ("+7001", "+7002"):
+        client = FakeCliTelethonClient(
+            entity_resolver=lambda _peer: _resolved_channel_entity(123, "ch"),
+            iter_messages_factory=lambda *args, **kwargs: AsyncIterMessages([_message(11)]),
+        )
+        # Telethon's local entity cache: the transport session reads client.session.
+        cast(Any, client).session = SimpleNamespace(get_input_entity=cached)
+        harness.queue_cli_client(phone=phone, client=client)
+        clients.append(client)
+    await harness.add_account("+7001", session_string="session-a", is_primary=True)
+    await harness.add_account("+7002", session_string="session-b")
+    await harness.initialize_connected_accounts()
+    for phone in ("+7001", "+7002"):
+        await harness.pool.report_family_flood(phone, 3600, "resolve")
+    return harness, clients
+
+
+@pytest.mark.anyio
+async def test_lookup_flood_on_every_account_still_collects_a_channel_with_a_known_key(
+    db, real_pool_harness_factory
+):
+    """#1879: a flood on username lookups alone kept every account out of collection
+    and looped the queue on 'no active connected clients'. A cached key needs no
+    lookup: the channel is collected, and no lookup is sent."""
+    await db.add_channel(Channel(channel_id=123, title="Ch", username="ch"))
+    channel = (await db.get_channels())[0]
+
+    def _cached(peer):
+        if isinstance(peer, PeerChannel) and peer.channel_id == 123:
+            return InputPeerChannel(channel_id=123, access_hash=5)
+        raise ValueError("not cached")
+
+    harness, clients = await _pool_flooded_on_lookups(real_pool_harness_factory, _cached)
+    collector = Collector(harness.pool, db, SchedulerConfig())
+
+    assert await collector.collect_single_channel(channel) == 1
+    assert [call for client in clients for call in _username_lookups(client)] == []
+
+
+@pytest.mark.anyio
+async def test_lookup_flood_on_every_account_defers_a_channel_without_a_key(
+    db, real_pool_harness_factory
+):
+    """#1879: without a cached key the channel waits for the first account that can
+    look it up again — no lookup on the flooded accounts, no 'no clients' loop."""
+    await db.add_channel(Channel(channel_id=123, title="Ch", username="ch"))
+    channel = (await db.get_channels())[0]
+
+    def _not_cached(_peer):
+        raise ValueError("not cached")
+
+    harness, clients = await _pool_flooded_on_lookups(real_pool_harness_factory, _not_cached)
+    collector = Collector(harness.pool, db, SchedulerConfig())
+
+    with pytest.raises(UsernameResolveRateLimitedError) as exc_info:
+        await collector.collect_single_channel(channel)
+
+    # The retry waits for the earliest lookup flood to end (an hour here).
+    assert exc_info.value.retry_after_sec > 3000
+    assert [call for client in clients for call in _username_lookups(client)] == []

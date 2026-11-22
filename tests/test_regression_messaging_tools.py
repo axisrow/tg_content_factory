@@ -13,7 +13,12 @@ from tg_agent.database import Database
 
 
 def _downloads_dir() -> Path:
-    return Path(__file__).resolve().parents[1] / "data" / "downloads"
+    # The same dir the download_media handler allows (#1880): the runtime data
+    # root, which the suite points at a per-process temp dir — not the
+    # checkout's data/.
+    from tg_agent.agent.tools.messaging_media import _downloads_dir as handler_dir
+
+    return handler_dir()
 
 
 # ---------------------------------------------------------------------------

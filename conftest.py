@@ -4,6 +4,7 @@ import ast
 import os
 import re
 import sys
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -15,6 +16,19 @@ import pytest
 for _package_src in sorted((Path(__file__).resolve().parent / "packages").glob("*/src")):
     if str(_package_src) not in sys.path:
         sys.path.insert(0, str(_package_src))
+
+# #1880: tests must never write into the checkout's runtime data/ — a run used
+# to leave its own app.log (rotating the daemon's file out from under it), a
+# tg_search.db and session files behind. data_root() reads TG_AGENT_DATA_DIR at
+# call time, so pointing it at a per-process temp dir before anything resolves
+# paths isolates every worker (xdist workers are separate processes). The DB
+# path itself comes from config (data/tg_search.db relative to cwd), which
+# tests already isolate via chdir/tmp_path. Live real-TG runs manage their own
+# env and never rely on this default.
+os.environ.setdefault(
+    "TG_AGENT_DATA_DIR",
+    tempfile.mkdtemp(prefix="tg-agent-testdata-"),
+)
 
 _REAL_TG_PARALLEL_GATES = (
     "RUN_REAL_TELEGRAM_SAFE",

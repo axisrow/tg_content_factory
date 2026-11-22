@@ -186,9 +186,10 @@ class TestStartupSideEffects:
 
         assert result.exit_code == 0
         # Same trio of side effects as tg_agent/cli/main.py::main(), and dotenv is
-        # passed the raw config path (not the abspath), matching main().
+        # passed the raw config path (not the abspath), matching main(). Plain
+        # commands append to app.log — only worker/serve rotate it (#1880).
         mock_dotenv.assert_called_once_with("x.yaml")
-        mock_log.assert_called_once_with()
+        mock_log.assert_called_once_with(rotate=False)
         mock_dirs.assert_called_once_with()
 
     def test_subcommand_help_skips_startup_side_effects(self, monkeypatch):
@@ -230,7 +231,7 @@ class TestStartupSideEffects:
             apply_startup(ctx)
             apply_startup(ctx)
 
-        mock_log.assert_called_once_with()
+        mock_log.assert_called_once_with(rotate=False)
         mock_dirs.assert_called_once_with()
         mock_dotenv.assert_called_once_with("once.yaml")
 

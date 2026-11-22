@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Iterable
-from logging.handlers import RotatingFileHandler
+from logging.handlers import RotatingFileHandler, WatchedFileHandler
 from pathlib import Path
 
 import click
@@ -42,7 +42,15 @@ def install_log_redaction(handler: logging.Handler, *, fmt: str = _LOG_FORMAT) -
     handler.setFormatter(RedactingFormatter(fmt, datefmt=datefmt))
 
 
-def setup_logging(log_path: Path | None = None) -> None:
+def setup_logging(log_path: Path | None = None, *, rotate: bool = False) -> None:
+    """Attach the app.log file handler.
+
+    ``rotate`` is for the long-lived processes that own ``app.log`` — the
+    worker/serve daemons; only they may rotate it. Every other CLI process
+    appends through a ``WatchedFileHandler``, which follows renames: a
+    short-lived command or a test run can no longer rotate the file out from
+    under the daemon and leave it writing into ``app.log.1`` (#1880, #1879).
+    """
     log_path = log_path or app_log_path()
     logging.basicConfig(
         level=logging.INFO,
@@ -59,15 +67,21 @@ def setup_logging(log_path: Path | None = None) -> None:
     for h in root.handlers:
         install_log_redaction(h)
     for h in root.handlers:
-        if isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", None) == str(log_path):
+        if (
+            isinstance(h, (RotatingFileHandler, WatchedFileHandler))
+            and getattr(h, "baseFilename", None) == str(log_path)
+        ):
             return
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    rfh = RotatingFileHandler(
-        str(log_path),
-        maxBytes=10 * 1024 * 1024,
-        backupCount=3,
-        encoding="utf-8",
-    )
+    if rotate:
+        rfh: logging.Handler = RotatingFileHandler(
+            str(log_path),
+            maxBytes=10 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
+    else:
+        rfh = WatchedFileHandler(str(log_path), encoding="utf-8")
     install_log_redaction(rfh)
     root.addHandler(rfh)
 

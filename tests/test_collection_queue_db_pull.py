@@ -540,7 +540,8 @@ async def test_relayed_username_budget_refusal_names_the_username_limit(tmp_path
     queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
-        caplog.set_level(logging.WARNING, logger="tg_agent.collection_queue")
+        # The deferral line is INFO now (#1879): designed quiet waiting.
+        caplog.set_level(logging.INFO, logger="tg_agent.collection_queue")
         queue = _make_queue(_RelayedUsernameBudgetCollector(), db)
         channel = (await db.get_channels(active_only=True))[0]
         task_id = await queue.enqueue(channel)
@@ -580,12 +581,41 @@ async def test_resolve_deferrals_are_spread_one_budget_step_apart(tmp_path):
         queue = _make_queue(TwoAccounts(), db)
         earliest = datetime.now(timezone.utc) + timedelta(seconds=40)
 
-        slots = [queue._resolve_retry_at(earliest) for _ in range(3)]
+        slots = [await queue._resolve_retry_at(earliest) for _ in range(3)]
 
         for index, slot in enumerate(slots):
             assert earliest + timedelta(seconds=30 * index) <= slot < earliest + timedelta(seconds=30 * (index + 1))
         # A later refusal that frees up sooner still queues behind the slots taken.
-        assert queue._resolve_retry_at(earliest - timedelta(seconds=30)) >= earliest + timedelta(seconds=90)
+        assert await queue._resolve_retry_at(earliest - timedelta(seconds=30)) >= earliest + timedelta(seconds=90)
+    finally:
+        if queue is not None:
+            await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_resolve_deferrals_follow_the_accounts_that_can_look_up(tmp_path):
+    """#1879: slots spend one sustained-budget minute per lookup-capable account,
+    not per worker. One capable account among four workers gets a slot a minute —
+    spreading by workers would send four lookups a minute and re-flood it."""
+    class OneCapableOfFour(_UsernameResolveRateLimitedCollector):
+        def collection_worker_count(self) -> int:
+            return 4
+
+        def lookup_capable_phone_count(self) -> int:
+            return 1
+
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        queue = _make_queue(OneCapableOfFour(), db)
+        earliest = datetime.now(timezone.utc) + timedelta(seconds=40)
+
+        slots = [await queue._resolve_retry_at(earliest) for _ in range(3)]
+
+        for index, slot in enumerate(slots):
+            assert earliest + timedelta(seconds=60 * index) <= slot < earliest + timedelta(seconds=60 * (index + 1))
     finally:
         if queue is not None:
             await queue.shutdown()

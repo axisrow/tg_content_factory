@@ -156,14 +156,14 @@ def serve(
     ),
 ) -> None:
     """Start web server."""
-    apply_startup(ctx)
+    apply_startup(ctx, rotate_log=True)
     serve_cmd.serve_web(ctx.obj.config, web_pass=web_pass, no_worker=no_worker)
 
 
 @app.command()
 def worker(ctx: typer.Context) -> None:
     """Start the Telegram worker runtime (managed daemon: PID file, no web panel)."""
-    apply_startup(ctx)
+    apply_startup(ctx, rotate_log=True)
     worker_cmd.serve_worker(ctx.obj.config)
 
 

@@ -184,19 +184,39 @@ class CollectionQueue:
         self._stop_workers = False
         self._resolve_retry_cursor: datetime | None = None
 
-    def _resolve_retry_at(self, earliest: datetime) -> datetime:
+    async def _resolve_retry_at(self, earliest: datetime) -> datetime:
         """The next free username-lookup retry slot at or after ``earliest`` (#1877).
 
         Every refused task used to wake at the same moment and be refused again
         together. Slots follow the deferral order, so the queue's oldest tasks go
-        first; a random offset inside the slot keeps them out of step.
+        first; a random offset inside the slot keeps them out of step. One budget
+        minute is spread over the accounts that can look up (#1879), not over
+        every worker slot — one capable account then gets a slot a minute, not
+        four.
         """
-        step = self.RESOLVE_RETRY_STEP_SEC / self._target_worker_count()
+        step = self.RESOLVE_RETRY_STEP_SEC / await self._lookup_slot_share()
         slot = earliest
         if self._resolve_retry_cursor is not None:
             slot = max(earliest, self._resolve_retry_cursor + timedelta(seconds=step))
         self._resolve_retry_cursor = slot
         return slot + timedelta(seconds=random.uniform(0, step))
+
+    async def _lookup_slot_share(self) -> int:
+        """The retry-step denominator: lookup-capable accounts (#1879), falling
+        back to the worker count for collectors without the counter."""
+        counter = getattr(self._collector, "lookup_capable_phone_count", None)
+        if callable(counter):
+            try:
+                count = counter()
+                if asyncio.iscoroutine(count):
+                    count = await count
+                return max(1, int(cast("Any", count)))
+            except Exception:
+                logger.debug(
+                    "lookup_capable_phone_count failed; spacing retry slots by workers",
+                    exc_info=True,
+                )
+        return self._target_worker_count()
 
     async def enqueue(self, channel: Channel, force: bool = False, full: bool = False) -> int | None:
         payload = {"full": full}
@@ -822,7 +842,9 @@ class CollectionQueue:
             await self._defer_collection_task(
                 task_id, channel, force=force, full=full, run_after=run_after, note=note
             )
-            logger.warning(
+            # Designed quiet waiting (#1879): one INFO line per task, not a
+            # warning mass — only "no active connected clients" stays loud.
+            logger.info(
                 "Rescheduled collection task %d for channel %d until %s: all clients flooded",
                 task_id,
                 channel.channel_id,
@@ -830,7 +852,7 @@ class CollectionQueue:
             )
             return CollectionFailureOutcome(keep_known_task_id=True)
         if isinstance(exc, UsernameResolveFloodWaitDeferredError):
-            run_after = self._resolve_retry_at(
+            run_after = await self._resolve_retry_at(
                 exc.next_available_at + timedelta(seconds=RESOLVE_USERNAME_BACKOFF_BUFFER_SEC)
             )
             note = (
@@ -840,7 +862,7 @@ class CollectionQueue:
             await self._defer_collection_task(
                 task_id, channel, force=force, full=full, run_after=run_after, note=note
             )
-            logger.warning(
+            logger.info(
                 "Rescheduled collection task %d for channel %d until %s: username resolve flood wait",
                 task_id,
                 channel.channel_id,
@@ -848,7 +870,7 @@ class CollectionQueue:
             )
             return CollectionFailureOutcome(keep_known_task_id=True)
         if isinstance(exc, UsernameResolveRateLimitedError):
-            run_after = self._resolve_retry_at(exc.run_after_with_buffer())
+            run_after = await self._resolve_retry_at(exc.run_after_with_buffer())
             note = (
                 "Отложено: resolve_username rate-limited до "
                 f"{run_after.astimezone(timezone.utc).isoformat()}"
@@ -856,7 +878,7 @@ class CollectionQueue:
             await self._defer_collection_task(
                 task_id, channel, force=force, full=full, run_after=run_after, note=note
             )
-            logger.warning(
+            logger.info(
                 "Rescheduled collection task %d for channel %d until %s: "
                 "username resolve rate-limited on %s",
                 task_id,
@@ -881,7 +903,7 @@ class CollectionQueue:
             await self._defer_collection_task(
                 task_id, channel, force=force, full=full, run_after=run_after, note=note
             )
-            logger.warning(
+            logger.info(
                 "Rescheduled collection task %d for channel %d until %s: %s rate-limited on %s",
                 task_id,
                 channel.channel_id,

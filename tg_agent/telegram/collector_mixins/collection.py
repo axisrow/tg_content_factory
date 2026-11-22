@@ -60,6 +60,7 @@ from tg_agent.telegram.collector_types import (
     _format_channel_log_name,
     unknown_tl_type_note,
 )
+from tg_agent.telegram.flood_scope import COLLECTION_ALLOWED_FAMILIES
 from tg_agent.utils.safe_logging import mask_phone
 
 if TYPE_CHECKING:
@@ -440,6 +441,9 @@ class CollectionMixin:
         error when no client can be used.
         """
         channel_id = channel.channel_id
+        # An account flooded on username lookups only still collects (#1879):
+        # cache-only below keeps it from sending a lookup.
+        allowed = COLLECTION_ALLOWED_FAMILIES
 
         # For private groups (no username):
         #   1. preferred_phone from DB (persists across restarts)
@@ -463,10 +467,14 @@ class CollectionMixin:
                     # which drains the entire in-memory collection queue in
                     # collection_queue.py — one busy preferred phone must not
                     # wipe every other channel's pending task (#1245).
-                    result = await self._pool.get_available_client()
+                    result = await self._pool.get_available_client(allow_families=allowed)
             else:
-                result = await self._pool.get_available_client()
+                result = await self._pool.get_available_client(allow_families=allowed)
         elif attempted_resolve_phones:
+            # A retry after a failed lookup must land on an account that can
+            # look up: every family flood — resolve included (#1879) — blocks
+            # here. With the collection allowance this pick bounced between
+            # accounts that cannot resolve either.
             result = await self._pool.get_available_client(
                 exclude_phones=set(attempted_resolve_phones)
             )
@@ -474,11 +482,17 @@ class CollectionMixin:
             # Any account can read a username channel; its own one, which holds
             # its access hash (#1877), goes first while it is free and unflooded.
             result = await self._pool.get_available_client(
-                prefer=channel.preferred_phone or self._pool.get_phone_for_channel(channel_id)
+                prefer=channel.preferred_phone or self._pool.get_phone_for_channel(channel_id),
+                allow_families=allowed,
             )
 
         if result is None:
-            availability = await self.get_collection_availability()
+            # Judged by the rule the pick used: the strict retry pick reports
+            # strictly, so "no pick" cannot meet an "available" report — that
+            # mismatch is what looped the queue (#1879).
+            availability = await self.get_collection_availability(
+                allow_families=frozenset() if attempted_resolve_phones else None
+            )
             if await self._wait_for_transient_collection_flood(availability):
                 return _ACQUIRE_RETRY
             await self._raise_collection_unavailability(availability)
@@ -488,8 +502,8 @@ class CollectionMixin:
         self._reset_collection_unavailability_log()
         session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self._pool)
 
-        # Per-account resolve backoff (#552/#790): while this phone is in a
-        # flood backoff the channel runs in cache-only mode on it — a cached
+        # Per-account resolve backoff (#552/#790) or a Telegram flood on lookups
+        # (#1879): the channel runs in cache-only mode on this phone — a cached
         # InputPeer still collects for free, a cache miss rotates to another
         # account or defers the channel (handled at the resolve call site).
         resolve_cache_only = False
@@ -497,7 +511,7 @@ class CollectionMixin:
             backoff_remaining_sec = self._get_resolve_username_backoff_remaining_sec(
                 phone
             )
-            if backoff_remaining_sec > 0:
+            if backoff_remaining_sec > 0 or await self._lookup_flooded(phone):
                 resolve_cache_only = True
                 # DEBUG (#1877): most channels collect from a cached key; the
                 # ones that cannot are logged where they rotate or defer.

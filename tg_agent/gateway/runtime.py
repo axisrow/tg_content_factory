@@ -297,6 +297,10 @@ def setup_gateway_logging(root: Path, *, max_bytes: int = 10 * 1024 * 1024,
     if not attached:
         logging.getLogger().addHandler(handler)
         os.chmod(root / "gateway.log", 0o600)
+    # The gateway's own INFO lines — account connects, entity-store loads, one
+    # per relayed ResolveUsername — belong in the log too (#1879); libraries
+    # (telethon, floodgate) stay at the root's WARNING.
+    logging.getLogger("tg_agent").setLevel(logging.INFO)
     return handler
 
 
