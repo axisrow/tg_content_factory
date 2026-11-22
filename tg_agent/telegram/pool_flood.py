@@ -34,7 +34,7 @@ from telethon_floodgate import (
 
 from tg_agent.database.live_accounts import load_live_usable_accounts
 from tg_agent.telegram.backends import TelegramTransportSession
-from tg_agent.telegram.flood_scope import family_floods_repo, is_read_family
+from tg_agent.telegram.flood_scope import COLLECTION_ALLOWED_FAMILIES, family_floods_repo, is_read_family
 from tg_agent.telegram.tool_flood_scope import current_tool_flood_scope
 from tg_agent.telegram.utils import normalize_utc
 
@@ -177,7 +177,10 @@ class FloodRotationMixin:
         return await self._lease_pool.available_exclusive_count(self._connected_phones())
 
     async def available_collection_client_count(self) -> int:
-        return await self._lease_pool.available_exclusive_count(self._connected_phones())
+        # Same accounts as collection's own pick (#1879).
+        return await self._lease_pool.available_exclusive_count(
+            self._connected_phones(), allow_families=COLLECTION_ALLOWED_FAMILIES
+        )
 
     async def get_premium_client(self) -> tuple[TelegramTransportSession, str] | None:
         """Get first available premium client.
@@ -256,14 +259,19 @@ class FloodRotationMixin:
             return "Premium-аккаунты временно недоступны из-за Flood Wait."
         return "Premium-аккаунт недоступен."
 
-    async def get_stats_availability(self):
-        """Describe stats client availability for batch scheduling decisions."""
+    async def get_stats_availability(self, *, allow_families: frozenset[str] = frozenset()):
+        """Describe client availability for batch scheduling decisions.
+
+        Pass the ``allow_families`` of the pick it stands for (#1879).
+        """
         # Imported lazily-by-name from the host module to avoid a circular import
         # of the StatsClientAvailability dataclass at module load time.
         from tg_agent.telegram.client_pool import StatsClientAvailability
 
         state, retry_after_sec, next_available_at_utc = (
-            await self._lease_pool.snapshot_stats_availability(self._connected_phones())
+            await self._lease_pool.snapshot_stats_availability(
+                self._connected_phones(), allow_families=allow_families
+            )
         )
         return StatsClientAvailability(
             state=state,

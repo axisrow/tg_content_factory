@@ -10,6 +10,7 @@ from telethon.tl import types
 from tg_agent.models import Channel, ChannelStats, Message, SearchQuery
 from tg_agent.services.notification_matcher import NotificationMatcher
 from tg_agent.telegram.collector import AllStatsClientsFloodedError, Collector, NoActiveStatsClientsError
+from tg_agent.telegram.flood_scope import COLLECTION_ALLOWED_FAMILIES
 
 
 @pytest.fixture
@@ -552,8 +553,11 @@ async def test_username_channel_goes_to_the_account_that_holds_its_key(collector
 
     await collector._acquire_collection_client(channel, set())
 
-    # Collection's own pick with the channel's account first: floods still count.
-    mock_pool.get_available_client.assert_awaited_once_with(prefer="+7888")
+    # Collection's own pick with the channel's account first: floods still count,
+    # except a flood on username lookups alone (#1879).
+    mock_pool.get_available_client.assert_awaited_once_with(
+        prefer="+7888", allow_families=COLLECTION_ALLOWED_FAMILIES
+    )
 
 
 @pytest.mark.anyio
@@ -565,7 +569,9 @@ async def test_username_channel_skips_accounts_that_failed_its_lookup(collector,
 
     assert phone == "+7999"
     mock_pool.get_client_by_phone.assert_not_awaited()
-    mock_pool.get_available_client.assert_awaited_once_with(exclude_phones={"+7888"})
+    mock_pool.get_available_client.assert_awaited_once_with(
+        exclude_phones={"+7888"}, allow_families=COLLECTION_ALLOWED_FAMILIES
+    )
 
 
 @pytest.mark.anyio

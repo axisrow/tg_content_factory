@@ -67,6 +67,21 @@ def test_setup_gateway_logging_rotates_and_keeps_backups(tmp_path):
         _detach(handler)
 
 
+def test_setup_gateway_logging_keeps_the_gateway_info_lines(tmp_path):
+    """#1879: the gateway's INFO lines (account connects, entity-store loads, one per
+    ResolveUsername) never reached gateway.log — only WARNING and above did."""
+    project_logger = logging.getLogger("tg_agent")
+    level = project_logger.level
+    handler = setup_gateway_logging(tmp_path)
+    try:
+        logging.getLogger("tg_agent.telegram.relay").info("relay: ResolveUsername @x account=a: ok in 5ms")
+        handler.flush()
+        assert "ResolveUsername" in (tmp_path / "gateway.log").read_text()
+    finally:
+        _detach(handler)
+        project_logger.setLevel(level)
+
+
 def test_setup_gateway_logging_is_idempotent(tmp_path):
     """A repeated setup call must not double-attach (duplicate lines)."""
     first = setup_gateway_logging(tmp_path)

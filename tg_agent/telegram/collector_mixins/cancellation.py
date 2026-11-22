@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from inspect import isawaitable
 from typing import TYPE_CHECKING
 
@@ -17,6 +17,7 @@ from tg_agent.telegram.collector_types import (
     AllCollectionClientsFloodedError,
     NoActiveCollectionClientsError,
 )
+from tg_agent.telegram.flood_scope import COLLECTION_ALLOWED_FAMILIES
 
 if TYPE_CHECKING:
     from typing import Any, Protocol, TypeAlias
@@ -43,6 +44,23 @@ class CancellationMixin:
         # (#785). With ``phone`` — that account's window; without — the
         # pool-wide aggregate (0 while any connected account is free, #790).
         return self._pool.get_resolve_username_backoff_remaining_sec(phone)
+
+    async def _lookup_flooded(self: "Collector", phone: str) -> bool:
+        """True while Telegram holds ``phone`` in a flood on username lookups.
+
+        Such an account still collects channels whose key is cached (#1879), but
+        must not send a lookup: touching the flooded family again can earn a
+        longer wait. The per-family row (#1832) lives in the DB, so the resolve
+        backoff map above does not know it. Doubles without the pool method
+        read as not flooded.
+        """
+        getter = getattr(self._pool, "family_flood_deadline", None)
+        if not callable(getter):
+            return False
+        deadline = getter(phone, "resolve")
+        if isawaitable(deadline):
+            deadline = await deadline
+        return isinstance(deadline, datetime) and deadline > datetime.now(timezone.utc)
 
     async def _can_rotate_resolve(self: "Collector", attempted_phones: set[str]) -> bool:
         """True if another connected account outside ``attempted_phones`` can
@@ -85,7 +103,10 @@ class CancellationMixin:
     async def get_collection_availability(self: "Collector"):
         availability_fn = getattr(self._pool, "get_stats_availability", None)
         if callable(availability_fn):
-            result = availability_fn()
+            # Judged like collection's own pick, which keeps lookup-flooded
+            # accounts (#1879): otherwise "available" meets "no account" and the
+            # queue loops on "no active connected clients".
+            result = availability_fn(allow_families=COLLECTION_ALLOWED_FAMILIES)
             if asyncio.iscoroutine(result):
                 return await result
         return await self._fallback_collection_availability()

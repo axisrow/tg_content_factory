@@ -328,3 +328,44 @@ async def test_all_flooded_returns_none_even_when_some_free(db):
 
     pool = AccountLeasePool(db, set())  # all free, but all flooded
     assert await pool.acquire_available(set(phones)) is None
+
+
+@pytest.mark.anyio
+async def test_lookup_flood_keeps_an_account_only_where_lookups_are_allowed(db):
+    """#1879: collection may use an account flooded on username lookups only; a
+    history flood keeps the account out of every pick."""
+    for phone in ("+70041", "+70042"):
+        await db.add_account(Account(phone=phone, session_string=phone, is_active=True))
+    until = datetime.now(timezone.utc) + timedelta(hours=1)
+    await db.repos.accounts.set_family_flood("+70041", "resolve", until)
+    await db.repos.accounts.set_family_flood("+70042", "history", until)
+    pool = AccountLeasePool(db, set())
+    connected = {"+70041", "+70042"}
+    lookups_allowed = frozenset({"resolve"})
+
+    assert await pool.available_exclusive_count(connected) == 0
+    assert await pool.available_exclusive_count(connected, allow_families=lookups_allowed) == 1
+    assert await pool.acquire_available(connected) is None
+    lease = await pool.acquire_available(connected, allow_families=lookups_allowed)
+    assert lease is not None and lease.account.phone == "+70041"
+
+
+@pytest.mark.anyio
+async def test_availability_agrees_with_the_pick_under_family_floods(db):
+    """#1879: the report said 'available' while the pick skipped family-flooded
+    accounts, so collection raised 'no active connected clients' in a loop."""
+    for phone in ("+70051", "+70052"):
+        await db.add_account(Account(phone=phone, session_string=phone, is_active=True))
+    now = datetime.now(timezone.utc)
+    await db.repos.accounts.set_family_flood("+70051", "resolve", now + timedelta(hours=2))
+    await db.repos.accounts.set_family_flood("+70052", "resolve", now + timedelta(hours=1))
+    pool = AccountLeasePool(db, set())
+    connected = {"+70051", "+70052"}
+
+    state, retry_after_sec, earliest = await pool.snapshot_stats_availability(connected)
+    assert state == "all_flooded"
+    assert earliest is not None and abs((earliest - (now + timedelta(hours=1))).total_seconds()) < 5
+    assert retry_after_sec is not None and 3500 < retry_after_sec <= 3600
+
+    allowed = await pool.snapshot_stats_availability(connected, allow_families=frozenset({"resolve"}))
+    assert allowed == ("available", None, None)

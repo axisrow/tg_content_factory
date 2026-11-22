@@ -44,13 +44,41 @@ class AccountLeasePool:
             return {}
         return await repo.list_active_family_floods(now=now)
 
+    @staticmethod
+    def _blocked_until(
+        account: Account,
+        family_floods: dict[str, dict[str, datetime]],
+        now: datetime,
+        allow_families: frozenset[str],
+    ) -> datetime | None:
+        """Until when ``account`` stays out of a pick; None while it is free.
+
+        The account-wide flood plus every per-family flood (#1832) outside
+        ``allow_families``. The pick and the availability report share this
+        rule (#1879): when they disagreed, collection looped on "no active
+        connected clients" while every account sat under a family flood.
+        """
+        deadlines = [normalize_utc(account.flood_wait_until)]
+        deadlines += [
+            normalize_utc(until)
+            for family, until in family_floods.get(account.phone, {}).items()
+            if family not in allow_families
+        ]
+        return max((until for until in deadlines if until is not None and until > now), default=None)
+
     async def acquire_available(
-        self, connected_phones: set[str], *, prefer: str | None = None
+        self,
+        connected_phones: set[str],
+        *,
+        prefer: str | None = None,
+        allow_families: frozenset[str] = frozenset(),
     ) -> AccountLease | None:
         """Acquire an account with at most one exclusive reservation per phone.
 
         ``prefer`` goes first while it is free and unflooded (#1877): a username
-        channel's access hash lives on the account that resolved it.
+        channel's access hash lives on the account that resolved it. A flood in
+        one of ``allow_families`` does not take an account out of this pick
+        (#1879).
         """
         async with self._lock:
             now = datetime.now(timezone.utc)
@@ -63,43 +91,32 @@ class AccountLeasePool:
                     await self._db.update_account_flood(account.phone, None)
                     account.flood_wait_until = None
 
-            # Collection-level skip (#1832): any active per-family flood row
-            # (read or write) keeps the account out of rotation, matching the
-            # old behavior where any flood blocked selection entirely.
             family_floods = await self._family_floods(self._db, now)
-
             ordered_accounts = self._round_robin_accounts(accounts)
-            if not ordered_accounts:
-                return None
             if prefer is not None:
                 ordered_accounts = sorted(ordered_accounts, key=lambda account: account.phone != prefer)
+            free = [
+                account
+                for account in ordered_accounts
+                if account.phone in connected_phones
+                and self._blocked_until(account, family_floods, now, allow_families) is None
+            ]
 
-            for account in ordered_accounts:
-                if account.phone not in connected_phones:
-                    continue
+            for account in free:
                 if account.phone in self._in_use:
-                    continue
-                if account.phone in family_floods:
-                    continue
-                if self._is_flood_waited(account, now):
                     continue
                 self._in_use.add(account.phone)
                 self._last_phone = account.phone
                 return AccountLease(account=account, shared=False)
 
-            for account in ordered_accounts:
-                if account.phone not in connected_phones:
-                    continue
-                if account.phone in family_floods:
-                    continue
-                if self._is_flood_waited(account, now):
-                    continue
-                self._last_phone = account.phone
-                return AccountLease(account=account, shared=True)
-
+            if free:
+                self._last_phone = free[0].phone
+                return AccountLease(account=free[0], shared=True)
             return None
 
-    async def available_exclusive_count(self, connected_phones: set[str]) -> int:
+    async def available_exclusive_count(
+        self, connected_phones: set[str], *, allow_families: frozenset[str] = frozenset()
+    ) -> int:
         async with self._lock:
             now = datetime.now(timezone.utc)
             accounts = await load_live_usable_accounts(self._db, active_only=True)
@@ -110,16 +127,10 @@ class AccountLeasePool:
                 if flood_until is not None and flood_until <= now:
                     await self._db.update_account_flood(account.phone, None)
                     account.flood_wait_until = None
-                    flood_until = None
-                if account.phone not in connected_phones:
+                if account.phone not in connected_phones or account.phone in self._in_use:
                     continue
-                if account.phone in self._in_use:
-                    continue
-                if account.phone in family_floods:
-                    continue
-                if flood_until is not None and flood_until > now:
-                    continue
-                count += 1
+                if self._blocked_until(account, family_floods, now, allow_families) is None:
+                    count += 1
             return count
 
     async def acquire_by_phone(self, phone: str, connected_phones: set[str]) -> AccountLease | None:
@@ -183,23 +194,28 @@ class AccountLeasePool:
     async def snapshot_stats_availability(
         self,
         connected_phones: set[str],
+        *,
+        allow_families: frozenset[str] = frozenset(),
     ) -> tuple[str, int | None, datetime | None]:
+        """Whether some connected account is free now, else when the first frees up.
+
+        Judged by the pick's own rule (:meth:`_blocked_until`), with the same
+        ``allow_families`` the matching pick uses (#1879).
+        """
         now = datetime.now(timezone.utc)
         accounts = await self.get_connected_accounts(connected_phones)
         if not accounts:
             return "no_connected_active", None, None
 
-        earliest: datetime | None = None
+        family_floods = await self._family_floods(self._db, now)
+        deadlines: list[datetime] = []
         for account in accounts:
-            flood_until = normalize_utc(account.flood_wait_until)
-            if flood_until is None or flood_until <= now:
+            until = self._blocked_until(account, family_floods, now, allow_families)
+            if until is None:
                 return "available", None, None
-            if earliest is None or flood_until < earliest:
-                earliest = flood_until
+            deadlines.append(until)
 
-        if earliest is None:
-            return "no_connected_active", None, None
-
+        earliest = min(deadlines)
         retry_after_sec = max(1, int((earliest - now).total_seconds()))
         return "all_flooded", retry_after_sec, earliest
 

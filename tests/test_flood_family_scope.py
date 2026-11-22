@@ -3,7 +3,8 @@
 A read-side FloodWait (resolve/dialogs/history) records a per-(phone, family)
 deadline and must NOT write ``accounts.flood_wait_until``, so publishing from
 the same account stays available. Send-family floods keep blocking the account
-account-wide; collection rotation keeps skipping family-flooded accounts; the
+account-wide; collection rotation keeps skipping accounts flooded in the families
+it reads (a flood on username lookups alone is allowed, #1879); the
 per-family state survives a restart (DB rows) and shows in
 ``account flood-status`` / clears via ``account flood-clear``.
 
