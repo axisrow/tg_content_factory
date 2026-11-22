@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import random
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
@@ -138,6 +139,9 @@ class CollectionQueue:
     # same reschedule path as the flood/gate retries.
     RETRY_PASS_MAX_ATTEMPTS = 5
     RETRY_PASS_DELAY_SEC = 30.0
+    # Username-lookup deferrals take one slot each, this far apart per account:
+    # the sustained budget is 60 lookups an hour per account (#1877).
+    RESOLVE_RETRY_STEP_SEC = 60.0
     GRACEFUL_SHUTDOWN_TIMEOUT_SEC = 120.0
     FORCE_CANCEL_TIMEOUT_SEC = 10.0
     SHUTDOWN_REQUEUE_NOTE = "Остановка сервиса во время сбора; задача будет продолжена после запуска."
@@ -178,6 +182,21 @@ class CollectionQueue:
         self._resume_gate = asyncio.Event()
         self._resume_gate.set()
         self._stop_workers = False
+        self._resolve_retry_cursor: datetime | None = None
+
+    def _resolve_retry_at(self, earliest: datetime) -> datetime:
+        """The next free username-lookup retry slot at or after ``earliest`` (#1877).
+
+        Every refused task used to wake at the same moment and be refused again
+        together. Slots follow the deferral order, so the queue's oldest tasks go
+        first; a random offset inside the slot keeps them out of step.
+        """
+        step = self.RESOLVE_RETRY_STEP_SEC / self._target_worker_count()
+        slot = earliest
+        if self._resolve_retry_cursor is not None:
+            slot = max(earliest, self._resolve_retry_cursor + timedelta(seconds=step))
+        self._resolve_retry_cursor = slot
+        return slot + timedelta(seconds=random.uniform(0, step))
 
     async def enqueue(self, channel: Channel, force: bool = False, full: bool = False) -> int | None:
         payload = {"full": full}
@@ -811,8 +830,8 @@ class CollectionQueue:
             )
             return CollectionFailureOutcome(keep_known_task_id=True)
         if isinstance(exc, UsernameResolveFloodWaitDeferredError):
-            run_after = exc.next_available_at + timedelta(
-                seconds=RESOLVE_USERNAME_BACKOFF_BUFFER_SEC
+            run_after = self._resolve_retry_at(
+                exc.next_available_at + timedelta(seconds=RESOLVE_USERNAME_BACKOFF_BUFFER_SEC)
             )
             note = (
                 "Отложено: Flood Wait на resolve_username до "
@@ -829,7 +848,7 @@ class CollectionQueue:
             )
             return CollectionFailureOutcome(keep_known_task_id=True)
         if isinstance(exc, UsernameResolveRateLimitedError):
-            run_after = exc.run_after_with_buffer()
+            run_after = self._resolve_retry_at(exc.run_after_with_buffer())
             note = (
                 "Отложено: resolve_username rate-limited до "
                 f"{run_after.astimezone(timezone.utc).isoformat()}"
