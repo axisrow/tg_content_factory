@@ -9,7 +9,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from telethon_floodgate import TelegramRateLimitedError
@@ -61,7 +61,7 @@ async def test_projects_share_one_live_connection_and_every_project_sees_each_dm
     store = GatewayStore(tmp_path / "gateway")
     await store.open()
     auth = LocalAuth()
-    access = LiveTelegramAccess(store, auth)
+    access = LiveTelegramAccess(store, cast(TelegramAuth, auth))
     notified = []
 
     async def on_event(account):
@@ -153,7 +153,7 @@ async def test_cold_account_connection_respects_a_pending_flood_write(tmp_path, 
     store = GatewayStore(tmp_path / "gateway")
     await store.open()
     auth = LocalAuth()
-    access = LiveTelegramAccess(store, auth)
+    access = LiveTelegramAccess(store, cast(TelegramAuth, auth))
     project = PROJECTS[0]
     try:
         await store.register_project(project, tmp_path / project, "a" * 40)
@@ -162,7 +162,8 @@ async def test_cold_account_connection_respects_a_pending_flood_write(tmp_path, 
         await store.grant(project, ready)
         await store.grant(project, waiting)
         await access.connection(project, ready)
-        access._pool._rpc_pending_account_deadlines = {
+        # The RPC guard creates this attribute on the pool at run time (rpc_guard.py).
+        cast(Any, access._pool)._rpc_pending_account_deadlines = {
             waiting: datetime.now(timezone.utc) + timedelta(minutes=10),
         }
 
