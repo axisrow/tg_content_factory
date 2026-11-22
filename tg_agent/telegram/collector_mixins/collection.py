@@ -471,7 +471,11 @@ class CollectionMixin:
                 exclude_phones=set(attempted_resolve_phones)
             )
         else:
-            result = await self._pool.get_available_client()
+            # Any account can read a username channel; its own one, which holds
+            # its access hash (#1877), goes first while it is free and unflooded.
+            result = await self._pool.get_available_client(
+                prefer=channel.preferred_phone or self._pool.get_phone_for_channel(channel_id)
+            )
 
         if result is None:
             availability = await self.get_collection_availability()

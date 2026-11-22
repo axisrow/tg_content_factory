@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from telethon.errors import FloodWaitError
+from telethon.tl import types
 
 from tg_agent.models import Channel, ChannelStats, Message, SearchQuery
 from tg_agent.services.notification_matcher import NotificationMatcher
@@ -539,6 +540,48 @@ async def test_collect_line_carries_the_key_source(collector, caplog):
 
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Collecting channel")]
     assert len(lines) == 1 and lines[0].endswith("account=+79...1122, key=cache:id"), lines
+
+
+@pytest.mark.anyio
+async def test_username_channel_goes_to_the_account_that_holds_its_key(collector, mock_pool):
+    """#1877: a username channel is collected on its saved account, which holds its
+    access hash, not on whichever account is free — that one would look it up again."""
+    channel = Channel(id=1, channel_id=123, title="Ch", username="somech", preferred_phone="+7888")
+    mock_pool.get_available_client.return_value = (MagicMock(), "+7888")
+
+    await collector._acquire_collection_client(channel, set())
+
+    # Collection's own pick with the channel's account first: floods still count.
+    mock_pool.get_available_client.assert_awaited_once_with(prefer="+7888")
+
+
+@pytest.mark.anyio
+async def test_username_channel_skips_accounts_that_failed_its_lookup(collector, mock_pool):
+    channel = Channel(id=1, channel_id=123, title="Ch", username="somech", preferred_phone="+7888")
+    mock_pool.get_available_client.return_value = (MagicMock(), "+7999")
+
+    _session, phone, _cache_only = await collector._acquire_collection_client(channel, {"+7888"})
+
+    assert phone == "+7999"
+    mock_pool.get_client_by_phone.assert_not_awaited()
+    mock_pool.get_available_client.assert_awaited_once_with(exclude_phones={"+7888"})
+
+
+@pytest.mark.anyio
+async def test_a_username_lookup_remembers_the_account(collector, mock_pool):
+    """#1877: the account that resolved a username channel becomes its account, so
+    the next pass goes there and finds the key in that account's cache."""
+    channel = Channel(id=1, channel_id=123, title="Ch", username="somech")
+    collector._resolve_channel_input_entity = AsyncMock(
+        return_value=(types.InputPeerChannel(channel_id=123, access_hash=5), "live")
+    )
+    mock_pool.get_phone_for_channel = MagicMock(return_value=None)
+    mock_pool.remember_channel_phone = AsyncMock()
+
+    outcome = await collector._resolve_channel_entity(channel, MagicMock(), "+7999", 123, False, set())
+
+    assert outcome.source == "live"
+    mock_pool.remember_channel_phone.assert_awaited_once_with(123, "+7999", known_preferred=None, force=True)
 
 
 @pytest.mark.anyio

@@ -318,13 +318,13 @@ class ClientLifecycleMixin:
             logger.warning("Failed to fetch premium status for %s: %s", phone, e, exc_info=True)
 
     async def get_available_client(
-        self, *, exclude_phones: set[str] | frozenset[str] = frozenset()
+        self, *, exclude_phones: set[str] | frozenset[str] = frozenset(), prefer: str | None = None
     ) -> tuple[TelegramTransportSession, str] | None:
         """Get first available client not in flood wait. Returns (client, phone) or None.
 
         ``exclude_phones`` skips specific accounts — used by the collector to
         rotate a username resolve away from accounts already in resolve
-        backoff (#790).
+        backoff (#790). ``prefer`` is tried first while it is free (#1877).
         """
         if getattr(self, "_disconnecting", False):
             return None
@@ -332,7 +332,7 @@ class ClientLifecycleMixin:
             candidates = self._connected_phones() - set(exclude_phones)
             if not candidates:
                 return None
-            lease = await self._lease_pool.acquire_available(candidates)
+            lease = await self._lease_pool.acquire_available(candidates, prefer=prefer)
             if lease is None:
                 return None
             result = await self._acquire_from_lease(lease)

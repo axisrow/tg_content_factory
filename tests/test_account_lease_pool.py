@@ -111,6 +111,30 @@ async def test_acquire_available_round_robin_distributes(db, pool):
 
 
 @pytest.mark.anyio
+async def test_preferred_account_goes_first_only_while_free_and_unflooded(db):
+    """#1877: a username channel's own account — it holds the access hash — is
+    taken first; a busy or flooded one yields to the usual rotation."""
+    phones = ["+73001", "+73002", "+73003"]
+    for p in phones:
+        await db.add_account(Account(phone=p, session_string=p, is_active=True))
+    pool = AccountLeasePool(db, set())
+    connected = set(phones)
+
+    for _ in range(3):  # the round robin would have moved on after the first lease
+        lease = await pool.acquire_available(connected, prefer="+73002")
+        assert lease is not None and lease.account.phone == "+73002"
+        await pool.release("+73002")
+
+    busy = AccountLeasePool(db, {"+73002"})
+    lease = await busy.acquire_available(connected, prefer="+73002")
+    assert lease is not None and lease.account.phone != "+73002" and not lease.shared
+
+    await db.update_account_flood("+73002", datetime.now(timezone.utc) + timedelta(hours=1))
+    lease = await pool.acquire_available(connected, prefer="+73002")
+    assert lease is not None and lease.account.phone != "+73002"
+
+
+@pytest.mark.anyio
 async def test_round_robin_skips_in_use(db):
     """Phones already in_use are skipped by the round-robin walk."""
     phones = ["+72001", "+72002", "+72003"]

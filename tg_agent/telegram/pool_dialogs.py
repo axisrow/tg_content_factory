@@ -243,7 +243,7 @@ class DialogsMixin:
         def _connected_phones(self) -> set[str]: ...
 
         async def get_available_client(
-            self, *, exclude_phones: set[str] | frozenset[str] = frozenset()
+            self, *, exclude_phones: set[str] | frozenset[str] = frozenset(), prefer: str | None = None
         ) -> tuple[TelegramTransportSession, str] | None: ...
 
         async def get_client_by_phone(
