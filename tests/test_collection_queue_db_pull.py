@@ -26,7 +26,7 @@ from telethon_floodgate import TelegramRateLimitedError, TelegramRpcDeferredErro
 from tests.helpers import wait_until
 from tg_agent.collection_queue import CollectionQueue
 from tg_agent.database import Database
-from tg_agent.models import Channel
+from tg_agent.models import Channel, CollectionTaskStatus
 from tg_agent.telegram import relay
 from tg_agent.telegram.collector import (
     UsernameResolveFloodWaitDeferredError,
@@ -34,6 +34,7 @@ from tg_agent.telegram.collector import (
 )
 
 if TYPE_CHECKING:
+    from tg_agent.database.bundles import ChannelBundle
     from tg_agent.models import CollectionTask
     from tg_agent.telegram.collector import Collector
 
@@ -672,6 +673,65 @@ async def test_db_pull_does_not_double_ingest(tmp_path):
 
         # Exactly one collection call, not multiple.
         assert collector.calls.count(-1001) == 1
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_db_pull_skips_row_completed_inside_ingest_window(tmp_path):
+    """Row gone terminal between the tick's PENDING read and the put stays uncollected.
+
+    The pull tick reads PENDING rows, then ``await``s on ``get_by_channel_id``
+    before the enqueue decision. A worker can finish the task inside that
+    window (status COMPLETED, id dropped from ``_known_task_ids`` — CI PR
+    #1885: ``assert 2 == 1`` in ``test_db_pull_does_not_double_ingest``).
+    Without the decision-time re-check the stale row is enqueued and the
+    already-finished channel is collected a second time. The stub bundle
+    serves exactly that stale pre-completion snapshot — deterministically.
+    """
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await _seed_channel(db)
+        collector = _FakeCollector()
+        queue = _make_queue(collector, db)
+        task_id = await _create_pending_task(db)
+        assert task_id is not None
+
+        # Snapshot the row while it is still PENDING, then finish it in the DB.
+        stale = await queue._channels.get_collection_task(task_id)
+        assert stale is not None and stale.status == CollectionTaskStatus.PENDING
+        await queue._channels.update_collection_task(task_id, CollectionTaskStatus.COMPLETED)
+
+        class _StalePendingBundle:
+            """Delegates everywhere, but serves the stale PENDING row once."""
+
+            def __init__(self, inner):
+                self._inner = inner
+                self._served = False
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+            async def get_pending_channel_tasks(self):
+                if not self._served:
+                    self._served = True
+                    return [stale]
+                return await self._inner.get_pending_channel_tasks()
+
+        queue._channels = cast("ChannelBundle", _StalePendingBundle(queue._channels))
+
+        queue.start_db_pull(interval=0.02)
+        try:
+            await asyncio.sleep(0.3)
+        finally:
+            await queue.stop_db_pull()
+            await queue.shutdown()
+
+        # The task was already completed before the tick could decide —
+        # nothing may collect it.
+        assert collector.calls == []
     finally:
         await db.close()
 
