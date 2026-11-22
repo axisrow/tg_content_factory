@@ -349,6 +349,8 @@ class ResolveGuardMixin:
 
     async def restore_resolve_limiter_snapshot(self, db: object) -> None:
         """Replay a persisted limiter snapshot on startup. Call once during pool init."""
+        if vars(self).get("_relay") is not None:
+            return  # the owner's limiter is authoritative; a relayed pool keeps none (#1877)
         store = cast("_SettingsStore", db)
         try:
             value = await store.get_setting(RESOLVE_LIMITER_SNAPSHOT_SETTING)

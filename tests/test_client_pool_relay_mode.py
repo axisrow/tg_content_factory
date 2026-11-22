@@ -7,17 +7,18 @@ limiter state stays authoritative, and teardown closes the relay connection.
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
-from telethon import types
+from telethon import functions, types
 
 from tests.test_relay import FakeOwnerClient
 from tg_agent.models import Account
 from tg_agent.telegram import backends
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.telegram.relay import RelayConnection, RelayTelegramClient, serve_pool_relay
-from tg_agent.telegram.resolve_guard import RESOLVE_LIMITER_SNAPSHOT_SETTING
+from tg_agent.telegram.resolve_guard import RESOLVE_LIMITER_SNAPSHOT_SETTING, build_resolve_rate_limiter
 from tg_shared.auth import TelegramAuth
 
 PHONE = "+10000000001"
@@ -85,6 +86,42 @@ async def test_relayed_pool_leaves_the_shared_limiter_state_to_the_owner(relayed
     await pool.persist_resolve_username_backoff()
 
     assert await db.get_setting(RESOLVE_LIMITER_SNAPSHOT_SETTING) is None
+
+
+async def test_relayed_username_resolves_count_against_the_owner_budget_only(relayed_pool):
+    """The owner gates every relayed resolve (#1877). A relayed pool that also kept its
+    own username budget refused before the owner would — and an owner refusal never
+    refunded the slot it had already spent."""
+    pool, _connection, owner_client = relayed_pool
+    await pool.initialize()
+    me = owner_client.handler(None)
+
+    def answer(request):
+        if isinstance(request, functions.contacts.ResolveUsernameRequest):
+            return types.contacts.ResolvedPeer(peer=types.PeerChannel(channel_id=1000), chats=[], users=[])
+        return me
+
+    owner_client.handler = answer
+    raw = pool.clients[PHONE].raw_client
+    dispatched = len(owner_client.calls)
+
+    for index in range(21):  # one past the per-minute username burst
+        await raw(functions.contacts.ResolveUsernameRequest(f"channel{index}"))
+
+    assert len(owner_client.calls) - dispatched == 21
+
+
+async def test_relayed_pool_ignores_the_project_limiter_snapshot(relayed_pool, db):
+    """The owner's limiter state is authoritative: a relayed pool neither writes nor
+    replays the project's username-budget snapshot."""
+    spent = build_resolve_rate_limiter()
+    spent.record_many(PHONE, 20)
+    await db.set_setting(RESOLVE_LIMITER_SNAPSHOT_SETTING, json.dumps(spent.snapshot_state()))
+    pool, _connection, _owner = relayed_pool
+
+    await pool.initialize()
+
+    assert PHONE not in pool._get_resolve_rate_limiter().snapshot_state()
 
 
 async def test_teardown_closes_the_relay_connection(relayed_pool):

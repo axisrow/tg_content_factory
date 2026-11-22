@@ -154,7 +154,9 @@ class OwnedRpcGuard:
         budgets = [RpcDispatchBudget(self._peek_state, self._claim_probes, name="flood_backoff",
                                       prepare=self._prepare)]
         limiter = getattr(pool, "_resolve_rate_limiter", None)
-        if isinstance(limiter, ResolveRateLimiter):
+        # A relayed pool's owner gates every resolve of the same account (#1877): a
+        # second username budget here refused first and never got its slot back.
+        if isinstance(limiter, ResolveRateLimiter) and vars(pool).get("_relay") is None:
             budgets.append(RpcDispatchBudget(
                 self._peek_resolves, self._commit_resolves, name="resolve_username",
                 applies=lambda member: member.rpc == "ResolveUsernameRequest",
