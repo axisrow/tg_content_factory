@@ -44,7 +44,7 @@ dependencies = [
     # does NOT apply here: we build a throwaway client per call, so every read
     # hits Telegram. Caching happens one level up, in runtime_snapshots.
     "tg-messenger>=0.1.0",
-    "fastapi>=0.136.3,<0.163",
+    "fastapi>=0.136.3,<0.166",
     "uvicorn[standard]>=0.48.0",
     "aiosqlite>=0.22.1",
     "apscheduler>=3.11.3",
