@@ -48,11 +48,13 @@ class LiveTelegramAccess:
         try:
             await self.connection(project, account)
         except Exception as exc:
-            # Housekeeping retries every half minute: report each new failure once.
+            # Housekeeping retries every half minute: a new failure is reported once,
+            # with its text and traceback; its repeats stay one-line debug notes.
             failure = type(exc).__name__
-            log = logger.debug if self._warm_failures.get(account) == failure else logger.warning
+            first = self._warm_failures.get(account) != failure
             self._warm_failures[account] = failure
-            log("Gateway account unavailable: error=%s", failure)
+            log = logger.warning if first else logger.debug
+            log("Gateway account unavailable: account=%s error=%s: %s", account, failure, exc, exc_info=first)
         else:
             self._warm_failures.pop(account, None)
 

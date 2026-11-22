@@ -135,9 +135,14 @@ async def test_a_repeated_account_failure_is_reported_once(tmp_path, monkeypatch
     monkeypatch.setattr(access, "connection", unavailable)
     try:
         with caplog.at_level(logging.DEBUG, logger="tg_agent.gateway.telegram"):
-            await access._warm(PROJECTS[0], "account")
-            await access._warm(PROJECTS[0], "account")  # the next housekeeping round
-        assert [record.levelno for record in caplog.records] == [logging.WARNING, logging.DEBUG]
+            await access._warm(PROJECTS[0], "acc-1")
+            await access._warm(PROJECTS[0], "acc-1")  # the next housekeeping round
+        warning, repeat = caplog.records
+        assert [warning.levelno, repeat.levelno] == [logging.WARNING, logging.DEBUG]
+        # The first report names the account and the cause, with the traceback;
+        # the repeat stays a one-line debug note.
+        assert "acc-1" in warning.getMessage() and "network down" in warning.getMessage()
+        assert warning.exc_info and not repeat.exc_info
     finally:
         await access.close()
         await store.close()
