@@ -425,7 +425,8 @@ async def real_telegram_sandbox():
         StringSession(cfg.session_string),
         cfg.api_id,
         cfg.api_hash,
-        proxy=parse_proxy_url(os.environ.get("TG_PROXY", "")),
+        # Telethon annotates proxy without None, though None (no proxy) is its default.
+        proxy=parse_proxy_url(os.environ.get("TG_PROXY", "")),  # type: ignore[arg-type]
     )
     await client.connect()
     try:
@@ -446,7 +447,9 @@ async def real_telegram_sandbox():
             bot_username=cfg.bot_username,
         )
     finally:
-        await client.disconnect()
+        # Inside a running loop Telethon's disconnect() returns a Future; its
+        # sync-or-async return is not annotated, so the checker sees None.
+        await client.disconnect()  # type: ignore[misc]
 
 
 def pytest_runtest_setup(item):
@@ -456,10 +459,11 @@ def pytest_runtest_setup(item):
         fixturenames=item.fixturenames,
         environ=os.environ,
     )
+    # skip/fail verdicts always carry a reason; only (None, None) has none.
     if action == "skip":
-        pytest.skip(message)
+        pytest.skip(message or "")
     if action == "fail":
-        pytest.fail(message, pytrace=False)
+        pytest.fail(message or "", pytrace=False)
 
 
 # Served by the module __getattr__ of tg_agent.agent.tools.permissions and

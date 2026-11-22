@@ -49,11 +49,11 @@ class _FakeGate(TelegramRateLimitGate):
 class _FakeBreaker(FloodCircuitBreaker):
     def __init__(self, suspended=()):
         self.suspended = set(suspended)
-        self.floods: list[tuple[str, str]] = []
-        self.successes: list[tuple[str, str]] = []
+        self.floods: list[tuple[str, str | None]] = []
+        self.successes: list[tuple[str, str | None]] = []
 
     def check(self, operation, phone):
-        if (operation, phone) in self.suspended:
+        if phone is not None and (operation, phone) in self.suspended:
             raise TelegramOperationSuspendedError(operation, phone, 300.0)
 
     def record_flood(self, operation, phone):
@@ -255,6 +255,7 @@ async def test_flood_reported_during_the_call_keeps_the_flood():
         calls.append(dict(args))
         # Simulate the pool funnel attributing a real flood to this call.
         scope = current_tool_flood_scope()
+        assert scope is not None
         scope.flooded = True
         return {"content": [{"type": "text", "text": "Flood wait активен"}]}
 
