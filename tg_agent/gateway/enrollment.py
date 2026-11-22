@@ -148,7 +148,7 @@ async def enable_project(config_path: str, phones: list[str], *, database_path: 
         await asyncio.to_thread(configure, root, api_id=api_id, api_hash=api_hash,
                                 proxy=config.telegram_runtime.proxy)
         administrator = await GatewayAdministrator.connect(root)
-        await administrator.call("projects", {**identity, "root": str(Path.cwd())})
+        await administrator.call("projects.register", {**identity, "root": str(Path.cwd())})
         for index, phone in enumerate(dict.fromkeys(phones)):
             if phone in source and source[phone].session_string:
                 raw = source[phone].session_string
@@ -157,17 +157,11 @@ async def enable_project(config_path: str, phones: list[str], *, database_path: 
                     raise ValueError("Original SESSION_ENCRYPTION_KEY is required to import this account")
                 plaintext = SessionCipher(secret).decrypt(raw) if raw.startswith("enc:") else raw
                 await asyncio.to_thread(check_session_owner, plaintext, root)
-                await administrator.call("accounts/import", {"phone": phone,
+                await administrator.call("accounts.import", {"phone": phone,
                     "session": source[phone].session_string,
                     "source_secret": config.security.session_encryption_key or None})
             await administrator.call("grants", {"project_id": identity["project_id"], "phone": phone,
                                                  "primary": index == 0 and existing is None})
-        cursor = await db.db.execute("SELECT tg_user_id,tg_username,bot_id,bot_username,bot_token "
-                                     "FROM notification_bots WHERE bot_token!=''")
-        bots = await cursor.fetchall()
-        for bot in bots:
-            await administrator.call("notification-bots/import", {"project_id": identity["project_id"], **dict(bot)})
-        await db.execute_write("UPDATE notification_bots SET bot_token='' WHERE bot_token!=''")
         temporary_config = config.model_copy(update={"gateway": {
             "root": binding.store_root, "token_file": binding.token_file,
             "project_id": str(binding.project_id),

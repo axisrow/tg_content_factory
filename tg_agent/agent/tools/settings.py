@@ -56,10 +56,10 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "save_agent_settings",
-        "⚠️ Update agent settings. backend values: 'claude-agent-sdk' or 'deepagents'. Ask user for confirmation first.",
+        "⚠️ Update agent settings. backend values: 'auto', 'claude' or 'deepagents'. Ask user for confirmation first.",
         {
             "prompt_template": Annotated[str, "Шаблон системного промпта агента"],
-            "backend": Annotated[str, "Бэкенд агента: claude-agent-sdk или deepagents"],
+            "backend": Annotated[str, "Бэкенд агента: auto, claude или deepagents"],
             "confirm": Annotated[bool, "Установите true для подтверждения действия"],
         },
     )
@@ -73,7 +73,12 @@ def register(db, client_pool, embedding_service, **kwargs):
             if prompt_template is not None:
                 await db.set_setting("agent_prompt_template", prompt_template)
             if backend is not None:
-                await db.set_setting("agent_backend_override", backend)
+                from tg_agent.agent.models import normalize_agent_backend
+
+                canonical = normalize_agent_backend(backend)
+                if canonical is None:
+                    return _text_response(f"Неизвестный бэкенд агента: {backend}. Допустимо: auto, claude, deepagents.")
+                await db.set_setting("agent_backend_override", canonical)
             return _text_response("Настройки агента сохранены.")
         except Exception as e:
             return _text_response(f"Ошибка сохранения настроек агента: {e}")

@@ -6,22 +6,45 @@
 python -m tg_agent.main [--config CONFIG] <command> [subcommand] [options]
 ```
 
-## serve (легаси — веб-панель)
+## worker / restart / stop / daemon status
 
 ```bash
-python -m tg_agent.main serve [--web-pass PASS] [--no-worker]
+python -m tg_agent.main restart          # stop any previous daemon, then run the worker in this process
+python -m tg_agent.main worker           # same worker runtime without the stop-first step (tmux/systemd)
+python -m tg_agent.main stop [--force]   # stop the managed daemon (--force: operator provenance escape hatch)
+python -m tg_agent.main daemon status    # read-only: up/down, PID, PID file, store, executable
 ```
 
-By default, `serve` starts the web UI/API and an embedded Telegram worker in
-the same process. Use `--no-worker` when a process manager starts
-`python -m tg_agent.main worker` separately.
+The worker daemon runs scheduled collection, the queues and dispatchers under a
+managed PID file. While it runs it owns every account's Telegram connection and
+serves a local relay (127.0.0.1, random port, token in `<db>.relay.json`, 0600):
+live commands (`messages read --live`, every `dialogs` action, `account info`,
+`search --mode telegram`, `channel add|import|probe`, `pipeline run|generate|publish`, …)
+run on the daemon's connection — same output, no second login, nothing queued.
+Collection (`collect`, `channel collect`) and `ping run-due` are handed to the
+daemon's queues, and an enqueue wakes the worker at once. Without a daemon every
+live command connects the account itself. In gateway mode (`global enable`) the shared
+gateway is the session owner instead.
 
-## stop / restart
+After upgrading tg-agent, restart the daemon once (`restart`) — and the shared
+gateway (`gateway restart --shared`): an older one serves no relay and live
+commands next to it fail at once with that hint. The optional web panel (`serve`,
+tg-webui) runs an embedded worker that serves no relay: live commands next to
+it are refused at once, and `stop` / `restart` replace it with the worker. The
+panel and the `agent` group (embedded chat, TUI, threads) are deprecated optional
+surfaces; `mcp-server` was removed in #1868.
+
+## gateway
 
 ```bash
-python -m tg_agent.main stop
-python -m tg_agent.main restart [--web-pass PASS]
+python -m tg_agent.main global enable --account PHONE   # attach this project to the shared gateway
+python -m tg_agent.main gateway start | status
+python -m tg_agent.main gateway stop --shared | restart --shared
 ```
+
+The shared gateway owns the shared accounts' connections and serves the same
+kind of relay to every attached project; such a project needs no session key of
+its own.
 
 ## collect
 
@@ -210,19 +233,14 @@ python -m tg_agent.main notification dry-run
 python -m tg_agent.main notification set-account --phone PHONE
 ```
 
-## agent
+`notification setup` / `delete` run their BotFather conversation on the session
+owner (the worker daemon or the shared gateway, when one runs) — the only
+process that receives BotFather's replies.
 
-```bash
-python -m tg_agent.main agent threads
-python -m tg_agent.main agent thread-create [--title TITLE]
-python -m tg_agent.main agent thread-delete THREAD_ID
-python -m tg_agent.main agent chat [-p TEXT] [--thread-id ID] [--model MODEL]
-python -m tg_agent.main agent thread-rename THREAD_ID TITLE
-python -m tg_agent.main agent messages THREAD_ID [--limit N]
-python -m tg_agent.main agent context THREAD_ID --channel-id ID [--limit N] [--topic-id ID]
-python -m tg_agent.main agent test-escaping
-python -m tg_agent.main agent test-tools
-```
+`notification delete` exits 0 both when BotFather deletes the bot and when
+Telegram no longer has it (then only the stale local record is removed, and the
+output says so). A failed `setup` / `status` / `delete` / `test` prints one line
+on stderr and exits 1.
 
 ## photo-loader
 
@@ -295,11 +313,16 @@ python -m tg_agent.main translate message MESSAGE_ID [--target LANG]
 python -m tg_agent.main settings get [--key KEY]
 python -m tg_agent.main settings set KEY VALUE
 python -m tg_agent.main settings info
-python -m tg_agent.main settings agent [--backend BACKEND] [--prompt-template TEMPLATE]
+python -m tg_agent.main settings agent [--backend auto|claude|deepagents] [--prompt-template TEMPLATE]
 python -m tg_agent.main settings filter-criteria [--min-uniqueness N] [--min-sub-ratio N] [--max-cross-dupe N] [--min-cyrillic N]
 python -m tg_agent.main settings reactions [--min-interval SECONDS]
 python -m tg_agent.main settings semantic [--provider PROVIDER] [--model MODEL] [--api-key KEY]
 ```
+
+`settings agent` configures the content-pipeline agent (pipelines with
+`--generation-backend deep_agents`): the backend override applies only with
+developer mode on (`settings set agent_dev_mode_enabled 1`); the old spelling
+`claude-agent-sdk` is accepted as `claude`.
 
 ## debug
 

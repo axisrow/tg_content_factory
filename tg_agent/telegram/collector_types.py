@@ -90,6 +90,21 @@ def _format_channel_log_name(channel: Channel) -> str:
     return title or "no username"
 
 
+class ChannelCollectionTerminalError(Exception):
+    """The channel cannot be collected again until an operator fixes its row.
+
+    ``code`` is one of ``collection_queue.TERMINAL_USERNAME_CODES``: the queue
+    stamps the channel with it and the bulk enqueue defers the row instead of
+    spending another resolve on it every round (#1783, #1805). Deliberately not
+    a ``ValueError`` — the resolver treats that as a peer miss and would swallow
+    the verdict.
+    """
+
+    def __init__(self, code: str, detail: str = "") -> None:
+        super().__init__(f"{code}: {detail}" if detail else code)
+        self.code = code
+
+
 class NoActiveStatsClientsError(RuntimeError):
     """Raised when there are no active connected clients for stats collection."""
 

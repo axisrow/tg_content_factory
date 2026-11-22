@@ -34,6 +34,7 @@ from tg_agent.models import (
     StatsAllTaskPayload,
     TranslateBatchTaskPayload,
 )
+from tg_agent.runtime import wake
 from tg_agent.utils.datetime import parse_datetime
 from tg_agent.utils.json import safe_json_dumps, safe_json_loads_dict
 
@@ -179,6 +180,7 @@ class CollectionTasksRepository:
             ),
         )
 
+    @wake.notifies(wake.TASKS)
     async def create_collection_task(
         self,
         channel_id: int,
@@ -218,6 +220,7 @@ class CollectionTasksRepository:
         )
         return cur.lastrowid or 0
 
+    @wake.notifies(wake.TASKS)
     async def create_collection_task_if_not_active(
         self,
         channel_id: int,
@@ -266,6 +269,7 @@ class CollectionTasksRepository:
             return cur.lastrowid or 0
         return None
 
+    @wake.notifies(wake.TASKS)
     async def create_stats_task(
         self,
         payload: StatsAllTaskPayload,
@@ -297,6 +301,7 @@ class CollectionTasksRepository:
         )
         return cur.lastrowid or 0
 
+    @wake.notifies(wake.TASKS)
     async def create_filter_analyze_task(self, payload: FilterAnalyzeTaskPayload) -> int | None:
         """Atomically create a filter-analyze task unless one is already active.
 
@@ -849,6 +854,7 @@ class CollectionTasksRepository:
         )
         return cur.rowcount or 0
 
+    @wake.notifies(wake.TASKS)
     async def create_generic_task(
         self,
         task_type: CollectionTaskType | str,
@@ -909,6 +915,7 @@ class CollectionTasksRepository:
             return row["id"]
         return cur.lastrowid or 0
 
+    @wake.notifies(wake.TASKS)
     async def create_generic_task_if_inactive(
         self,
         task_type: CollectionTaskType | str,

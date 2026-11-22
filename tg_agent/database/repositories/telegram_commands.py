@@ -10,6 +10,7 @@ import aiosqlite
 
 from tg_agent.database.pool import ReadConnection
 from tg_agent.models import TelegramCommand, TelegramCommandStatus
+from tg_agent.runtime import wake
 from tg_agent.utils.datetime import parse_datetime
 from tg_agent.utils.json import safe_json_dumps
 
@@ -62,6 +63,7 @@ class TelegramCommandsRepository:
             result_payload=_parse_json(row["result_payload"]),
         )
 
+    @wake.notifies(wake.TELEGRAM_COMMANDS)
     async def create_command(self, command: TelegramCommand) -> int:
         """Поставить команду в очередь воркеру. Возвращает id новой строки."""
         assert self._database is not None, (

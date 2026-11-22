@@ -102,7 +102,7 @@ class TestSaveAgentSettingsTool:
             {"backend": "claude-agent-sdk", "confirm": True}
         )
         assert "сохранены" in _text(result)
-        mock_db.set_setting.assert_any_call("agent_backend_override", "claude-agent-sdk")
+        mock_db.set_setting.assert_any_call("agent_backend_override", "claude")
 
 
 class TestSaveFilterSettingsTool:

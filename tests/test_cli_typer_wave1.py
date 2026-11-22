@@ -1,7 +1,7 @@
 """CliRunner tests for the Wave-1 Typer commands (epic #959 — issue #1121).
 
 Wave 1 migrates the super-simple commands off the argparse dispatcher onto the
-Typer ``app``: serve · worker · stop · restart · mcp-server · collect
+Typer ``app``: serve · worker · stop · restart · collect
 (+ ``collect sample``) · search · messages read.
 
 These tests drive the production ``app`` through ``typer.testing.CliRunner`` and
@@ -86,25 +86,6 @@ def test_restart_rejects_removed_web_pass_flag():
     """--web-pass was removed from restart (serve-only option) — Typer exits 2."""
     result = runner.invoke(app, ["restart", "--web-pass", "pw"])
     assert result.exit_code != 0
-
-
-# --------------------------------------------------------------------------- #
-# mcp-server
-# --------------------------------------------------------------------------- #
-
-
-def test_mcp_server_defaults_pool_on():
-    with patch("tg_agent.cli.typer_commands.mcp_server_cmd.serve_mcp") as mock_mcp:
-        result = runner.invoke(app, ["mcp-server"])
-    assert result.exit_code == 0
-    mock_mcp.assert_called_once_with("config.yaml", no_pool=False)
-
-
-def test_mcp_server_no_pool_flag():
-    with patch("tg_agent.cli.typer_commands.mcp_server_cmd.serve_mcp") as mock_mcp:
-        result = runner.invoke(app, ["mcp-server", "--no-pool"])
-    assert result.exit_code == 0
-    mock_mcp.assert_called_once_with("config.yaml", no_pool=True)
 
 
 # --------------------------------------------------------------------------- #

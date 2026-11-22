@@ -1,10 +1,10 @@
 # Agent Tools Reference
 
-> **2026-09, легаси:** agent-tools и MCP-сервер заморожены; нативный путь для агентов кодирования — `tg-agent` CLI + скилл (`skills/tg-agent/`). Референс описывает замороженное состояние.
+> **Agent tools — реестр инструментов движка контент-пайплайнов** (`AgentManager`, бэкенды `deepagents` / `claude-agent-sdk`). Внешний контракт для агентов кодирования — `tg-agent` CLI + скилл (`skills/tg-agent/`). MCP-сервер (`mcp-server`) удалён в #1868; встроенный агент-чат и инструменты тредов агента — устаревшая опциональная поверхность.
 
-Все инструменты AI-агента, сгруппированные по модулям. Категории: **READ** (чтение), **WRITE** (запись), **DELETE** (удаление).
+Все инструменты агента, сгруппированные по модулям. Категории: **READ** (чтение), **WRITE** (запись), **DELETE** (удаление).
 
-Разрешения в настройках агента трактуются так: явный `on` разрешает выполнение, явный `off` запрещает инструмент, а отсутствующая запись для нового инструмента в интерактивной Web/TUI-сессии должна запрашивать доступ через `PermissionGate`.
+Разрешения (DB-настройка `agent_tool_permissions`) трактуются так: явный `on` разрешает выполнение, явный `off` запрещает инструмент. Отсутствующая запись (`REQUESTABLE`) запрашивает доступ через `PermissionGate` в интерактивной Web/TUI-сессии (опциональные пакеты); вне такой сессии инструмент скрыт от модели и не выполняется, пока доступ не выдан явно. Без сохранённого ACL разрешены все инструменты.
 
 Для решений по каналам и фильтрам агент передаёт `on_behalf_of_user=true` только
 по прямой просьбе владельца и вместе с `confirm=true`. Только такая комбинация
@@ -121,8 +121,8 @@
 | `export_session` | WRITE | ⚠️ Экспорт расшифрованной StringSession (SSO; полный доступ к аккаунту, требует confirm=true) |
 | `import_session` | WRITE | Импорт аккаунта по готовой StringSession (SSO; отказ без force при существующем phone) |
 | `get_flood_status` | READ | Статус flood wait |
-| `get_account_availability` | READ | Доступность аккаунта (как в Settings UI): available/flood/disconnected/inactive/session_unavailable |
-| `get_runtime_diagnostics` | READ | Диагностика рантайма: runtime_kind (live/snapshot/none), live-пул отдельно от DB-флагов, свежесть снапшота воркера |
+| `get_account_availability` | READ | Доступность аккаунта: available/flood/disconnected/inactive/session_unavailable |
+| `get_runtime_diagnostics` | READ | Диагностика рантайма: runtime_kind (live/snapshot/none; `snapshot` — у веб-контейнера опциональной панели), live-пул отдельно от DB-флагов, свежесть снапшота воркера |
 | `clear_flood_status` | WRITE | Сбросить flood wait |
 | `get_account_info` | READ | Информация об аккаунте (имя, username, premium) |
 

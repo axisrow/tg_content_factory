@@ -108,6 +108,11 @@ class ClientLifecycleMixin:
 
         async def persist_resolve_limiter_snapshot(self) -> None: ...
 
+        # FloodSnapshotMixin (flood_snapshot.py), same signatures.
+        async def restore_flood_guard_snapshot(self, db: object) -> None: ...
+
+        async def persist_flood_guard_snapshot(self) -> None: ...
+
     def _connected_phones(self) -> set[str]:
         return set(self.clients.keys())
 
@@ -143,6 +148,8 @@ class ClientLifecycleMixin:
         returns an empty difference, which is why the 30-second floor is
         enforced here (a config.yaml value bypasses the env parser's clamp).
         """
+        if vars(self).get("_relay") is not None:
+            return  # a relayed pool receives no updates; the owner catches up
         interval = 0.0
         raw = getattr(getattr(self, "_runtime_config", None), "catch_up_interval_sec", 0.0)
         try:
@@ -225,6 +232,14 @@ class ClientLifecycleMixin:
                 self.restore_resolve_limiter_snapshot(self._db)
             )
         await asyncio.shield(restore)
+        # The proactive gate, breaker and outgoing ceiling replay the same way,
+        # once per pool lifetime (their merge does not de-duplicate stamps).
+        flood_restore = getattr(self, "_flood_guard_restore_task", None)
+        if flood_restore is None:
+            flood_restore = self._flood_guard_restore_task = asyncio.create_task(
+                self.restore_flood_guard_snapshot(self._db)
+            )
+        await asyncio.shield(flood_restore)
         if phones is not None:
             allowed_phones = {str(phone) for phone in phones if str(phone)}
             accounts = [acc for acc in accounts if acc.phone in allowed_phones]
@@ -272,14 +287,16 @@ class ClientLifecycleMixin:
         # Premium flags are a cached Telegram fact (#1749): verified live with a
         # cheap fetch_me for ALL connected accounts at every pool start — new
         # and previously connected — so a stale stored flag cannot survive it.
-        await self._refresh_premium_flags(stored={acc.phone: acc.is_premium for acc in accounts})
+        if vars(self).get("_relay") is None:
+            # The owner already verified the flags at its own start.
+            await self._refresh_premium_flags(stored={acc.phone: acc.is_premium for acc in accounts})
         self._start_periodic_catch_up()
 
     async def _refresh_premium_flags(self, *, stored: dict[str, bool] | None = None) -> None:
         """Live ``is_premium`` refresh via fetch_me for every connected account (#1749).
 
-        The stored flag is a cache of a Telegram fact; the gateway-catalog mirror
-        never downgrades it, so only this live check may change it. Best-effort
+        The stored flag is a cache of a Telegram fact; a gateway project's mirror
+        takes it from the gateway, which runs this check on connect. Best-effort
         and parallel: a failed fetch keeps the previous value and logs a warning.
         """
         checks = [self._refresh_premium_flag(phone, stored.get(phone) if stored else None)
@@ -542,6 +559,7 @@ class ClientLifecycleMixin:
         # (floodgate #26). Best-effort; fires before clients disconnect so a
         # failing DB write cannot block the teardown path.
         await self.persist_resolve_limiter_snapshot()
+        await self.persist_flood_guard_snapshot()
         # Detach the watchdog handler from the global telethon.tgcf logger so
         # a torn-down pool is not kept alive by it (#817 review F1); a later
         # initialize() re-installs it. getattr: doubles built via __new__.
@@ -586,8 +604,11 @@ class ClientLifecycleMixin:
                 self.reset_dialogs_warm(phone)
             except Exception:
                 logger.debug("Error disconnecting %s", phone, exc_info=True)
+        relay = vars(self).get("_relay")
+        if relay is not None:
+            await relay.close()
         # Allow Telethon internal tasks (_send_loop, _recv_loop) to finish
-        if had_clients:
+        elif had_clients:
             await asyncio.sleep(0.25)
 
     async def _acquire_phone_lease(

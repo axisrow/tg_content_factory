@@ -92,9 +92,9 @@ def apply_startup(ctx: typer.Context) -> None:
     """Run the global startup side effects, ported 1:1 from ``main()``.
 
     Reproduces ``tg_agent/cli/main.py::main()`` lines 37–48: export the resolved
-    config path as ``TG_CONFIG_PATH`` (abspath, so subprocess-spawning backends
-    such as ``CodexSdkBackend`` inherit the right config / DB), load the ``.env``
-    next to the config, set up logging and ensure the data directories exist.
+    config path as ``TG_CONFIG_PATH`` (abspath, so spawned subprocesses such as
+    plugins inherit the right config / DB), load the ``.env`` next to the
+    config, set up logging and ensure the data directories exist.
 
     Migrated commands call this as their first line. It lives here — on the
     command execution path — rather than in ``main_callback`` so that a
@@ -109,12 +109,9 @@ def apply_startup(ctx: typer.Context) -> None:
         return
     state.started = True
 
-    # Export the resolved config path so subprocess-spawning backends inherit it.
-    # CodexSdkBackend spawns `python -m tg_agent.main --config <path> mcp-server`; it
-    # learns <path> only via TG_CONFIG_PATH (AppConfig doesn't carry its source).
-    # Without this, a non-default `--config /srv/prod.yaml` would silently spawn
-    # the MCP server against the default config.yaml / data/tg_search.db — the
-    # wrong DB for write-capable tool calls. abspath so a differing subprocess
+    # Export the resolved config path so spawned subprocesses inherit it: a
+    # child learns a non-default `--config /srv/prod.yaml` only this way
+    # (AppConfig doesn't carry its source). abspath so a differing subprocess
     # CWD still resolves it.
     os.environ["TG_CONFIG_PATH"] = os.path.abspath(state.config)
 

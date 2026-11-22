@@ -34,7 +34,6 @@ from tg_agent.cli.commands import export as export_cmd
 from tg_agent.cli.commands import filter as filter_cmd
 from tg_agent.cli.commands import global_store as global_store_cmd
 from tg_agent.cli.commands import image as image_cmd
-from tg_agent.cli.commands import mcp_server as mcp_server_cmd
 from tg_agent.cli.commands import messages as messages_cmd
 from tg_agent.cli.commands import notification as notification_cmd
 from tg_agent.cli.commands import photo_loader as photo_loader_cmd
@@ -197,25 +196,6 @@ def restart(ctx: typer.Context) -> None:
     """Restart the managed daemon: stop, then run the worker (no web panel)."""
     apply_startup(ctx)
     server_control_cmd.restart_web(ctx.obj.config)
-
-
-# --------------------------------------------------------------------------- #
-# mcp-server
-# --------------------------------------------------------------------------- #
-
-
-@app.command("mcp-server")
-def mcp_server(
-    ctx: typer.Context,
-    no_pool: bool = typer.Option(
-        False,
-        "--no-pool",
-        help="Skip Telegram client pool init; pool-dependent tools return an error message",
-    ),
-) -> None:
-    """Expose the agent tool registry as a stdio MCP server (for external agents like Codex)."""
-    apply_startup(ctx)
-    mcp_server_cmd.serve_mcp(ctx.obj.config, no_pool=no_pool)
 
 
 # --------------------------------------------------------------------------- #

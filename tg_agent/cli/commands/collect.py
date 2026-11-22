@@ -3,14 +3,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+from collections.abc import Callable
 
 import typer
 
 from tg_agent.cli import runtime, worker_handoff
-from tg_agent.cli.commands.channel import _handoff_collect_to_worker, report_pending_approval
+from tg_agent.cli.commands.channel import _handoff_collect_to_worker, report_pending_approval, stamp_terminal_verdict
 from tg_agent.cli.commands.common import (
     _NEG_ID_POSITIONAL,
     apply_startup,
+    cli_error,
     run_async,
 )
 from tg_agent.database.bundles import ChannelBundle
@@ -22,11 +24,12 @@ from tg_agent.telegram.collector import (
     UsernameResolveFloodWaitDeferredError,
     UsernameResolveRateLimitedError,
 )
+from tg_agent.telegram.collector_types import ChannelCollectionTerminalError
 
 
 def print_resolve_backoff_warning(pool) -> None:
     """Print active per-account resolve_username backoffs, if any (#790)."""
-    get_remaining = getattr(pool, "get_resolve_username_backoff_remaining_sec", None)
+    get_remaining: Callable[[str], int] | None = getattr(pool, "get_resolve_username_backoff_remaining_sec", None)
     if not callable(get_remaining):
         return
     active: dict[str, int] = {}
@@ -60,15 +63,12 @@ async def collect_impl(
     there is no local ``asyncio.run`` in the migrated path.
 
     With a live daemon both modes hand work to the worker's collection queue
-    (same DB-only PENDING-row path as ``channel collect``) — a second
-    in-process pool would race the daemon for the same flood-wait budget and
-    session files (#1569). The enqueue-all hand-off needs no pool at all: a
-    freshly built CLI pool always reports zero resolve backoff, so reading it
-    here was dead weight. ``TGCF_CLI_DIRECT=1`` forces the direct path; without
-    a daemon it is the only way to collect at all.
+    (same DB-only PENDING-row path as ``channel collect``): collection is the
+    daemon's job, sequenced by its queue (#1569). The enqueue-all hand-off needs
+    no pool at all. Without a daemon this process collects itself.
     """
     config, db = await runtime.init_db(config_path)
-    if not worker_handoff.direct_requested() and worker_handoff.serve_is_running(config):
+    if worker_handoff.serve_is_running(config):
         # Live daemon owns the sessions — queue DB-only, never open a second
         # pool (#1569). Same refusals as the direct path below.
         try:
@@ -102,7 +102,7 @@ async def collect_impl(
     _, pool = await runtime.init_pool(config, db)
     try:
         if not pool.clients:
-            logging.error("No connected accounts. Run 'serve' and add accounts via web UI.")
+            logging.error(runtime.NO_ACCOUNTS_HINT)
             return
 
         collector = Collector(pool, db, config.scheduler)
@@ -138,6 +138,9 @@ async def collect_impl(
                     f"(retry in {exc.retry_after_sec}s); try again later."
                 )
                 return
+            except ChannelCollectionTerminalError as exc:
+                await stamp_terminal_verdict(db, channel, exc)
+                cli_error(f"Channel {channel_id} cannot be collected: {exc}")
             print(f"Collected {count} messages from channel {channel_id}")
         else:
             channel_bundle = ChannelBundle.from_database(db)
@@ -152,7 +155,7 @@ async def collect_impl(
                 f"Enqueued {result.queued_count} channels "
                 f"(skipped {result.skipped_existing_count}, "
                 f"total {result.total_candidates}). "
-                f"Run 'serve' to execute tasks."
+                f"Start the worker (`tg-agent restart`) to execute them."
             )
             print_resolve_backoff_warning(pool)
     finally:
@@ -170,7 +173,7 @@ async def collect_sample_impl(config_path: str, *, channel_id: int, limit: int =
     _, pool = await runtime.init_pool(config, db)
     try:
         if not pool.clients:
-            logging.error("No connected accounts. Run 'serve' and add accounts via web UI.")
+            logging.error(runtime.NO_ACCOUNTS_HINT)
             return
 
         collector = Collector(pool, db, config.scheduler)

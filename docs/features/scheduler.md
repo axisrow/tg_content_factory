@@ -1,45 +1,38 @@
 # Планировщик
 
-Автоматический периодический сбор сообщений и проверка поисковых запросов.
+Автоматический периодический сбор сообщений и проверка поисковых запросов. Планировщик работает внутри воркер-демона (`tg-agent restart`); CLI-команды ниже меняют настройки и будят живой воркер.
 
 ## Управление
 
-=== "CLI"
-    ```bash
-    python -m tg_agent.main scheduler start          # включить автостарт (+ reconcile живого воркера)
-    python -m tg_agent.main scheduler stop           # отключить автостарт
-    python -m tg_agent.main scheduler trigger        # разовый запуск коллекции
-    python -m tg_agent.main scheduler status         # статус и конфигурация
-    python -m tg_agent.main scheduler job-toggle collection_job
-    python -m tg_agent.main scheduler set-interval collection_job 60
-    python -m tg_agent.main scheduler task-cancel 42
-    python -m tg_agent.main scheduler clear-pending
-    ```
-
-=== "Web"
-    `GET /scheduler/` · `POST /scheduler/start` · `POST /scheduler/stop`
-    `POST /scheduler/trigger` · `POST /scheduler/jobs/{job_id}/toggle`
-    `POST /scheduler/jobs/{job_id}/set-interval`
+```bash
+python -m tg_agent.main scheduler start          # включить автостарт (+ reconcile живого воркера)
+python -m tg_agent.main scheduler stop           # отключить автостарт
+python -m tg_agent.main scheduler trigger        # разовый запуск коллекции
+python -m tg_agent.main scheduler status         # статус и конфигурация
+python -m tg_agent.main scheduler job-toggle collect_all
+python -m tg_agent.main scheduler set-interval collect_all 60
+python -m tg_agent.main scheduler task-cancel 42
+python -m tg_agent.main scheduler clear-pending
+```
 
 ## Jobs
 
 | Job | Описание |
 |-----|----------|
-| `collection_job` | Инкрементальный сбор всех каналов |
-| `search_query_job` | Проверка поисковых запросов и отправка уведомлений |
+| `collect_all` | Инкрементальный сбор всех каналов |
+| `sq_<id>` | Периодический прогон сохранённого поискового запроса |
+| `content_generate_<id>` | Генерация контента пайплайна (задача `CONTENT_GENERATE`) |
+| `photo_due` | Отправка запланированных фото |
+| `warm_all_dialogs` | Прогрев кеша диалогов |
 
 ## Уведомления
 
 Тестирование:
 
-=== "CLI"
-    ```bash
-    python -m tg_agent.main notification dry-run    # превью совпадений без отправки
-    python -m tg_agent.main notification test       # тестовое уведомление
-    ```
-
-=== "Web"
-    `POST /scheduler/dry-run-notifications` · `POST /scheduler/test-notification`
+```bash
+python -m tg_agent.main notification dry-run    # превью совпадений без отправки
+python -m tg_agent.main notification test       # тестовое уведомление
+```
 
 ## Задачи коллекции
 

@@ -305,7 +305,7 @@ def test_channel_collect_full():
     ):
         result = runner.invoke(app, ["channel", "collect", "5", "--full"])
     assert result.exit_code == 0
-    mock_impl.assert_called_once_with("config.yaml", identifier="5", full=True, direct=False, wait=False)
+    mock_impl.assert_called_once_with("config.yaml", identifier="5", full=True, wait=False)
 
 
 def test_channel_stats_all():

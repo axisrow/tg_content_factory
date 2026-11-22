@@ -1,21 +1,18 @@
 """`channel refresh-card` — refresh all open channel metadata from Telegram (#1764).
 
 Integration tests over the real :memory: DB. Pool-contract coverage follows the
-#1765 review: the direct ClientPool contract is exercised through a real
-ClientPool (``real_pool_harness_factory``) proving the group→PeerChat peer
-rule, and the GatewayPool contract through a real GatewayPool with a stub HTTP
-client proving preferred-account routing and the group peer_type. CLI-level
-fakes cover the command flow over both contracts.
+#1765 review: the ClientPool contract is exercised through a real ClientPool
+(``real_pool_harness_factory``) proving the group→PeerChat peer rule; CLI-level
+fakes cover the command flow. Gateway projects run the same ClientPool over the
+gateway's relay (#1868).
 """
 
 from __future__ import annotations
 
 import asyncio
-import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-from uuid import UUID, uuid4
 
 import pytest
 import typer
@@ -25,8 +22,6 @@ from tests.helpers import FakeCliTelethonClient
 from tg_agent.cli.commands.channel import refresh_card_impl
 from tg_agent.cli.commands.messages import messages_read_impl
 from tg_agent.config import AppConfig
-from tg_agent.gateway.pool import GatewayPool
-from tg_agent.gateway.protocol import InspectPeer
 from tg_agent.models import Channel, Message
 
 
@@ -113,40 +108,6 @@ class FakeDirectPool:
 
     async def disconnect_all(self):
         pass
-
-
-class StubGatewayClient:
-    """Captures submitted InspectPeer operations; replays one fixed receipt."""
-
-    def __init__(self, receipt: dict):
-        self.receipt = receipt
-        self.submitted: list = []
-
-    async def submit(self, request, operation):
-        self.submitted.append(operation)
-
-    async def wait(self, request, timeout=None):
-        return self.receipt
-
-    async def close(self):
-        pass
-
-
-def _make_gateway_pool(db, receipt: dict) -> tuple[GatewayPool, StubGatewayClient]:
-    """Real GatewayPool over a stub HTTP client; two shared project accounts.
-
-    Account rows mirror the gateway status JSON payload (id is a string).
-    """
-    pool = GatewayPool(AppConfig(), db, client=StubGatewayClient(receipt))
-    primary = {"id": str(uuid4()), "phone": "+70000000001", "active": True,
-               "flood_until": 0.0, "is_primary": True}
-    owner = {"id": str(uuid4()), "phone": "+70000000002", "active": True,
-             "flood_until": 0.0, "is_primary": False}
-    pool.clients = {primary["phone"]: primary, owner["phone"]: owner}
-    asyncio.run(pool.outbox.initialize())
-    stub = pool.client
-    assert isinstance(stub, StubGatewayClient)
-    return pool, stub
 
 
 _GATEWAY_CARD = {
@@ -435,167 +396,6 @@ async def test_fetch_channel_meta_group_reads_about_via_full_chat(real_pool_harn
 # ---------------------------------------------------------------------------
 
 
-def test_refresh_card_gateway_path_updates_full_card(cli_env, capsys):
-    db = cli_env
-    _add_stale_channel(db, channel_id=821, title="Old GW", username="oldgw")
-    _seed_messages(db, channel_id=821)
-
-    pool, _stub = _make_gateway_pool(
-        db, {"state": "succeeded", "result": dict(_GATEWAY_CARD)}
-    )
-    _run_refresh_card(db, pool, identifier="821")
-
-    ch = _get_channel(db, 821)
-    assert ch.title == "GW Title"
-    assert ch.username == "gwname"
-    assert ch.about == "gw about"
-    assert ch.linked_chat_id == 999
-    assert ch.has_comments is True
-
-    _run_messages_read(db, "@gwname")
-    assert "post 1" in capsys.readouterr().out
-
-
-def test_refresh_card_gateway_error_is_a_failure_not_a_wipe(cli_env, capsys):
-    db = cli_env
-    _add_stale_channel(db, channel_id=822, title="GW Keep", username="gwkeep")
-
-    pool, _stub = _make_gateway_pool(
-        db, {"state": "failed", "result": {"error": "ChannelPrivateError"}}
-    )
-    _run_refresh_card(db, pool, identifier="822")
-
-    ch = _get_channel(db, 822)
-    assert ch.title == "GW Keep"
-    assert ch.username == "gwkeep"
-    assert "FAILED" in capsys.readouterr().out
-
-
-def test_refresh_card_gateway_numeric_miss_falls_back_to_username(cli_env, capsys):
-    """#1768: a numeric PeerChannel miss on every granted account (accounts are
-    not members) is not the end — the stored @username resolves without
-    membership; the card is written only after the resolved id matches."""
-    db = cli_env
-    _add_stale_channel(db, channel_id=900, title="Old GW", username="fallback900")
-
-    pool, stub = _make_gateway_pool(
-        db, {"state": "failed", "result": {"error": "ValueError"}}
-    )
-
-    async def wait(request, timeout=None):
-        peer = stub.submitted[-1].peer
-        if isinstance(peer, int):  # numeric inspect: absent from entity caches
-            return {"state": "failed", "result": {"error": "ValueError"}}
-        return {"state": "succeeded", "result": {**_GATEWAY_CARD, "channel_id": 900}}
-
-    stub.wait = wait
-    _run_refresh_card(db, pool, identifier="900")
-
-    ch = _get_channel(db, 900)
-    assert ch.title == "GW Title"
-    assert ch.username == "gwname"
-    assert ch.about == "gw about"
-    assert "OK" in capsys.readouterr().out
-    assert stub.submitted[-1].peer == "fallback900"  # fallback used the stored name
-
-
-async def test_gateway_pool_routes_owner_account_and_group_peer_type(db):
-    """Real GatewayPool contract (#1765 review points 1+2).
-
-    resolve_channel must forward the channel's preferred (owner) account —
-    a private chat visible only to that account would otherwise fail on the
-    project primary — and map a group row to peer_type "chat" so the server
-    side builds PeerChat, not PeerChannel.
-    """
-    await db.add_channel(
-        Channel(channel_id=444, title="Old", username="g444", channel_type="group")
-    )
-    await db.repos.channels.update_channel_preferred_phone(444, "+70000000002")
-
-    pool = GatewayPool(AppConfig(), db)
-    primary = {"id": str(uuid4()), "phone": "+70000000001", "active": True,
-               "flood_until": 0.0, "is_primary": True}
-    owner = {"id": str(uuid4()), "phone": "+70000000002", "active": True,
-             "flood_until": 0.0, "is_primary": False}
-    pool.clients = {primary["phone"]: primary, owner["phone"]: owner}
-    stub = StubGatewayClient({"state": "succeeded",
-                              "result": {"channel_id": 444, "title": "New Group",
-                                         "username": "g444", "channel_type": "group",
-                                         "deactivate": False}})
-    pool.client = stub
-    await pool.outbox.initialize()
-
-    info = await pool.resolve_channel("444", channel_type="group", phone="+70000000002")
-
-    assert info["title"] == "New Group"
-    assert len(stub.submitted) == 1
-    op = stub.submitted[0]
-    assert isinstance(op, InspectPeer)
-    assert op.account_id == UUID(owner["id"])  # owner account, NOT the primary
-    assert op.peer_type == "chat"  # group → PeerChat on the server side
-
-    # Non-group rows keep the channel peer type.
-    await pool.resolve_channel("444", channel_type="channel", phone=None)
-    assert stub.submitted[-1].peer_type == "channel"
-    assert stub.submitted[-1].account_id == UUID(primary["id"])
-
-
-async def test_gateway_inspect_peer_rotates_to_visible_account(db):
-    """Real GatewayPool contract (#1767 review 2): without a preferred_phone the
-    project primary is tried first; when it cannot resolve the peer, the read
-    rotates to the account that can — the update no longer fails while a
-    suitable connected account exists."""
-    pool = GatewayPool(AppConfig(), db)
-    primary = {"id": str(uuid4()), "phone": "+70000000001", "active": True,
-               "flood_until": 0.0, "is_primary": True}
-    owner = {"id": str(uuid4()), "phone": "+70000000002", "active": True,
-             "flood_until": 0.0, "is_primary": False}
-    pool.clients = {primary["phone"]: primary, owner["phone"]: owner}
-    stub = StubGatewayClient({"state": "succeeded",
-                              "result": {"channel_id": 444, "title": "Seen Elsewhere",
-                                         "channel_type": "channel", "deactivate": False}})
-    wait_calls = {"n": 0}
-
-    async def wait(request, timeout=None):
-        wait_calls["n"] += 1
-        if wait_calls["n"] == 1:  # first pick (primary) cannot resolve the peer
-            return {"state": "failed", "result": {"error": "TelegramActionEntityResolutionError"}}
-        return stub.receipt
-
-    stub.wait = wait
-    pool.client = stub
-    await pool.outbox.initialize()
-
-    info = await pool.resolve_channel("444")  # no preferred phone on purpose
-
-    assert info["title"] == "Seen Elsewhere"
-    assert [op.account_id for op in stub.submitted] == [
-        UUID(primary["id"]),  # primary tried first…
-        UUID(owner["id"]),    # …then rotated to the account that sees the channel
-    ]
-
-
-async def test_gateway_inspect_peer_preferred_phone_no_rotation_needed(db):
-    """When preferred_phone is given and usable, exactly one account is queried."""
-    pool = GatewayPool(AppConfig(), db)
-    primary = {"id": str(uuid4()), "phone": "+70000000001", "active": True,
-               "flood_until": 0.0, "is_primary": True}
-    owner = {"id": str(uuid4()), "phone": "+70000000002", "active": True,
-             "flood_until": 0.0, "is_primary": False}
-    pool.clients = {primary["phone"]: primary, owner["phone"]: owner}
-    stub = StubGatewayClient({"state": "succeeded",
-                              "result": {"channel_id": 444, "title": "Owner Sees",
-                                         "channel_type": "channel", "deactivate": False}})
-    pool.client = stub
-    await pool.outbox.initialize()
-
-    info = await pool.resolve_channel("444", phone="+70000000002")
-
-    assert info["title"] == "Owner Sees"
-    assert len(stub.submitted) == 1
-    assert stub.submitted[0].account_id == UUID(owner["id"])
-
-
 # ---------------------------------------------------------------------------
 # Confirmed absence vs inability to obtain
 # ---------------------------------------------------------------------------
@@ -782,27 +582,24 @@ def test_refresh_card_success_clears_transient_review(cli_env, capsys):
     assert _get_channel(db, 915).review_reason == "uncertain"
 
 
-def test_refresh_card_gateway_stamps_dead_username(cli_env, capsys):
-    """#1787: a dead stored username (gateway receipt UsernameInvalidError in
-    the numeric-miss fallback) is terminal — the row carries the stamp, so the
-    bulk enqueue AND the next refresh-card pass skip it."""
+def test_refresh_card_stamps_invalid_username(cli_env, capsys):
+    """#1787: a numeric miss whose stored username is invalid is terminal — the
+    row carries the stamp, so the bulk enqueue AND the next refresh-card pass skip it."""
     db = cli_env
-    _add_stale_channel(db, channel_id=908, title="Old GW", username="deadgw908")
+    _add_stale_channel(db, channel_id=908, title="Old", username="dead908")
 
-    pool, stub = _make_gateway_pool(db, {})
-
-    async def wait(request, timeout=None):
-        error = "ValueError" if isinstance(stub.submitted[-1].peer, int) else "UsernameInvalidError"
-        return {"state": "failed", "result": {"error": error}}
-
-    stub.wait = wait
+    pool = FakeDirectPool(
+        resolve_by_id={908: {"gone": True}},
+        meta_by_id={},
+        resolve_by_username={"dead908": {"gone": True, "code": "UsernameInvalidError"}},
+    )
     _run_refresh_card(db, pool, identifier="908")
 
-    out = capsys.readouterr().out
-    assert "SKIP" in out
-    assert _get_channel(db, 908).title == "Old GW"
-    assert _get_channel(db, 908).terminal_code == "UsernameInvalidError"
-    assert _get_channel(db, 908).terminal_at is not None
+    assert "SKIP" in capsys.readouterr().out
+    ch = _get_channel(db, 908)
+    assert ch.title == "Old"
+    assert ch.terminal_code == "UsernameInvalidError"
+    assert ch.terminal_at is not None
 
 
 def test_refresh_card_bulk_skips_terminal_stamped_channels(cli_env, capsys):
@@ -908,91 +705,6 @@ def test_refresh_card_username_mismatch_leaves_row_untouched(cli_env, capsys, ca
         record.message.startswith("refresh-card:") and "resolves to channel" in record.message
         for record in caplog.records
     )
-
-
-def test_refresh_card_gateway_username_miss_is_skip_not_failed(cli_env, capsys):
-    """#1769 review: on the gateway a dead stored username fails the inspect
-    (UsernameNotOccupiedError receipt) — that is nothing fresh, a SKIP with the
-    row untouched, not a FAILED counter entry like on pre-fix code."""
-    db = cli_env
-    _add_stale_channel(db, channel_id=904, title="Old GW", username="deadgw904")
-
-    pool, stub = _make_gateway_pool(db, {})
-
-    async def wait(request, timeout=None):
-        error = "ValueError" if isinstance(stub.submitted[-1].peer, int) else "UsernameNotOccupiedError"
-        return {"state": "failed", "result": {"error": error}}
-
-    stub.wait = wait
-    _run_refresh_card(db, pool, identifier="904")
-
-    out = capsys.readouterr().out
-    assert "SKIP" in out
-    assert "FAILED" not in out
-    assert _get_channel(db, 904).title == "Old GW"
-
-
-def test_refresh_card_gateway_username_owned_by_user_is_skip(cli_env, capsys):
-    """#1769 review guard: Telegram id ranges overlap, so a username reoccupied
-    by a USER can collide with the stored channel id. The gateway resolves the
-    person's card — it must never be written onto the channel row."""
-    db = cli_env
-    _add_stale_channel(db, channel_id=905, title="Old GW", username="hijacked905")
-
-    pool, stub = _make_gateway_pool(db, {})
-
-    async def wait(request, timeout=None):
-        if isinstance(stub.submitted[-1].peer, int):
-            return {"state": "failed", "result": {"error": "ValueError"}}
-        return {"state": "succeeded", "result": {
-            "channel_id": 905, "title": "Some Person", "username": "hijacked905",
-            "channel_type": "user", "deactivate": False, "about": "personal bio",
-            "linked_chat_id": None, "has_comments": False, "created_at": None,
-        }}
-
-    stub.wait = wait
-    _run_refresh_card(db, pool, identifier="905")
-
-    ch = _get_channel(db, 905)
-    assert ch.title == "Old GW"
-    # #1787: a username reoccupied by a USER is the same identity drift, so the
-    # stamp quarantines the row like the collection path's #1783 handler does.
-    assert ch.terminal_code == "UsernameChannelIdMismatch"
-    assert ch.needs_review is True
-    assert "UsernameChannelIdMismatch" in (ch.review_reason or "")
-    assert ch.username == "hijacked905"
-    assert ch.about == "old about"
-    assert "SKIP" in capsys.readouterr().out
-
-
-@pytest.mark.timeout(15)
-def test_refresh_card_stops_after_reconnect_deadline_with_counters(cli_env, capsys):
-    """#1769 review: reconnect waits are bounded — a long gateway outage stops
-    the run with the full counters + Unprocessed output instead of spinning
-    forever (pre-fix code loops indefinitely, hence the tight timeout)."""
-    from unittest.mock import AsyncMock
-
-    from tg_agent.gateway.pool import NoActiveCollectionClientsError
-
-    db = cli_env
-    _add_stale_channel(db, channel_id=906, title="Old", username=None)
-
-    pool, stub = _make_gateway_pool(db, {})
-
-    async def wait(request, timeout=None):
-        raise NoActiveCollectionClientsError("gateway down")
-
-    stub.wait = wait
-    pool.initialize = AsyncMock()
-    with patch("tg_agent.cli.commands.channel.asyncio.sleep", new_callable=AsyncMock):
-        with pytest.raises(typer.Exit) as error:
-            _run_refresh_card(db, pool, identifier="906")
-    assert error.value.exit_code == 1
-    out = capsys.readouterr().out
-    assert "STOP" in out
-    assert "Updated: 0" in out
-    assert "Unprocessed: 1" in out
-    assert "906" in out
 
 
 # ---------------------------------------------------------------------------
@@ -1407,126 +1119,3 @@ def test_refresh_card_cancellation_during_wait_keeps_rows(cli_env):
     assert db._connection.db is None
     assert _get_channel(db, 995).title == "Unchanged"
 
-
-@pytest.mark.parametrize("outage", ["cold_start", "transport"])
-def test_refresh_card_reconnects_without_losing_channels(cli_env, capsys, outage):
-    from unittest.mock import AsyncMock
-
-    import httpx
-
-    db = cli_env
-    for cid in (821, 822):
-        _add_stale_channel(db, channel_id=cid, title="Old", username=None)
-    pool, stub = _make_gateway_pool(db, {})
-    connected = dict(pool.clients)
-    if outage == "cold_start":
-        pool.clients = {}
-    failures = [outage == "transport"]
-
-    async def wait(request, timeout=None):
-        if failures.pop() if failures else False:
-            pool.clients = {}
-            raise httpx.ReadError("temporary disconnect")
-        return {"state": "succeeded", "result": {
-            **_GATEWAY_CARD, "channel_id": stub.submitted[-1].peer,
-            "title": f"Fresh {stub.submitted[-1].peer}",
-        }}
-
-    async def initialize():
-        pool.clients = dict(connected)
-
-    stub.wait = wait
-    pool.initialize = initialize
-    with patch("tg_agent.cli.commands.channel.asyncio.sleep", new_callable=AsyncMock):
-        _run_refresh_card(db, pool, all_channels=True)
-    assert _get_channel(db, 821).title == "Fresh 821"
-    assert _get_channel(db, 822).title == "Fresh 822"
-    assert "Failed: 0" in capsys.readouterr().out
-
-
-def test_refresh_card_gateway_username_timeout_propagates(cli_env, capsys):
-    """#1769 review: the username fallback's except is narrowed to the
-    username-miss codes — a TimeoutError (120s server op timeout) surfaces as
-    FAILED, never as a silent SKIP."""
-    db = cli_env
-    _add_stale_channel(db, channel_id=901, title="GW TO", username="gone901")
-
-    pool, stub = _make_gateway_pool(
-        db, {"state": "failed", "result": {"error": "ValueError"}}
-    )
-
-    async def wait(request, timeout=None):
-        peer = stub.submitted[-1].peer
-        if isinstance(peer, int):  # numeric inspect: absent from entity caches
-            return {"state": "failed", "result": {"error": "ValueError"}}
-        return {"state": "failed", "result": {"error": "TimeoutError"}}
-
-    stub.wait = wait
-    _run_refresh_card(db, pool, identifier="901")
-
-    out = capsys.readouterr().out
-    assert "FAILED" in out
-    assert "SKIP" not in out
-    ch = _get_channel(db, 901)
-    assert ch.title == "GW TO"
-    assert ch.username == "gone901"  # row untouched
-
-
-def test_refresh_card_gateway_username_miss_is_a_skip(cli_env, capsys):
-    """#1769 review: UsernameNotOccupiedError on the stored name stays a SKIP —
-    parity with the direct pool's gone sentinel."""
-    db = cli_env
-    _add_stale_channel(db, channel_id=902, title="GW Miss", username="dead902")
-
-    pool, stub = _make_gateway_pool(
-        db, {"state": "failed", "result": {"error": "ValueError"}}
-    )
-
-    async def wait(request, timeout=None):
-        peer = stub.submitted[-1].peer
-        if isinstance(peer, int):
-            return {"state": "failed", "result": {"error": "ValueError"}}
-        return {"state": "failed", "result": {"error": "UsernameNotOccupiedError"}}
-
-    stub.wait = wait
-    _run_refresh_card(db, pool, identifier="902")
-
-    out = capsys.readouterr().out
-    assert "SKIP" in out
-    assert "FAILED" not in out
-    ch = _get_channel(db, 902)
-    assert ch.title == "GW Miss"
-    assert ch.username == "dead902"
-
-
-async def test_gateway_read_request_wait_for_limits_is_capped(db, monkeypatch):
-    """#1769 review: an account persistently returning short deferred receipts
-    must not spin read_request forever — past READ_WAIT_LIMIT_ROUNDS the flood
-    error escapes so the caller's stop path bounds the loop."""
-    from tg_agent.gateway.pool import GatewayReadDeferredError
-
-    monkeypatch.setattr("tg_agent.gateway.pool.READ_WAIT_LIMIT_ROUNDS", 2)
-    sleeps: list[float] = []
-
-    async def fake_sleep(seconds):
-        sleeps.append(seconds)
-
-    monkeypatch.setattr("tg_agent.gateway.pool.asyncio.sleep", fake_sleep)
-
-    pool = GatewayPool(AppConfig(), db)
-    primary = {"id": str(uuid4()), "phone": "+70000000001", "active": True,
-               "flood_until": 0.0, "is_primary": True}
-    owner = {"id": str(uuid4()), "phone": "+70000000002", "active": True,
-             "flood_until": 0.0, "is_primary": False}
-    pool.clients = {primary["phone"]: primary, owner["phone"]: owner}
-    stub = StubGatewayClient({"state": "deferred", "result": {
-        "retry_at": time.time() + 1, "reason": "TelegramActionClientUnavailableError",
-        "wait_seconds": 1}})
-    pool.client = stub
-    await pool.outbox.initialize()
-
-    operation = InspectPeer(kind="inspect_peer", account_id=UUID(primary["id"]),
-                            peer="chan", peer_type="channel")
-    with pytest.raises(GatewayReadDeferredError):
-        await pool.read_request(operation, "cap-test", rotate=True, wait_for_limits=True)
-    assert len(sleeps) == 2  # exactly READ_WAIT_LIMIT_ROUNDS waits, then the raise

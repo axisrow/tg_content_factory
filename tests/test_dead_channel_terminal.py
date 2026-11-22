@@ -1,12 +1,12 @@
 """Terminal handling for dead channels (#1783).
 
-Terminal username failures — gateway receipt codes UsernameInvalidError /
-UsernameChannelIdMismatch / UsernameResolveMiss, plus the raw telethon pair
-on the direct path — stamp the channel row (terminal_code/terminal_at), fail
-the task WITHOUT the retry pass, and the bulk enqueue skips the channel for a
-configurable defer window (default 30 days) instead of burning one resolve
-per channel per day. UsernameChannelIdMismatch additionally lands in the
-operator review quarantine (needs_review): the stored username points at
+Terminal username failures — the collector resolver's verdicts
+(UsernameChannelIdMismatch / HistoryNumericUnresolved / a vacant username),
+plus the raw telethon pair — stamp the channel row (terminal_code/terminal_at),
+fail the task WITHOUT the retry pass, and the bulk enqueue skips the channel
+for a configurable defer window (default 30 days) instead of burning one
+resolve per channel per day. UsernameChannelIdMismatch additionally lands in
+the operator review quarantine (needs_review): the stored username points at
 someone else's channel. Verified meta writes and a successful collection
 clear the stamp; ValueError stays non-terminal.
 """
@@ -22,10 +22,10 @@ from telethon.errors import UsernameNotOccupiedError
 
 from tg_agent.collection_queue import CollectionFailureOutcome, CollectionQueue
 from tg_agent.database import Database
-from tg_agent.gateway.pool import GatewayOperationError
 from tg_agent.models import Channel
 from tg_agent.services.collection_service import CollectionService
 from tg_agent.services.task_enqueuer import TaskEnqueuer
+from tg_agent.telegram.collector_types import ChannelCollectionTerminalError
 
 _TERMINAL_AT = datetime(2026, 11, 6, 12, 0, tzinfo=timezone.utc)
 
@@ -142,17 +142,17 @@ async def _seed(tmp_path, *, username="deadname"):
 
 
 @pytest.mark.anyio
-async def test_gateway_terminal_code_stamps_and_fails_without_retry(tmp_path):
+async def test_resolver_verdict_stamps_and_fails_without_retry(tmp_path):
     db, queue, channel, task_id = await _seed(tmp_path)
     try:
-        exc = GatewayOperationError("failed", {"error": "UsernameResolveMiss"})
+        exc = ChannelCollectionTerminalError("HistoryNumericUnresolved")
         outcome = await queue._handle_collection_exception(
             exc, task_id=task_id, channel=channel, force=False, full=False
         )
         assert outcome == CollectionFailureOutcome()
         assert queue._retry_pass == {}
         row = await _row(db, channel.id)
-        assert row.terminal_code == "UsernameResolveMiss"
+        assert row.terminal_code == "HistoryNumericUnresolved"
         assert row.terminal_at is not None
         task = await db.get_collection_task(task_id)
         assert task is not None and task.status == "failed"
@@ -162,10 +162,10 @@ async def test_gateway_terminal_code_stamps_and_fails_without_retry(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_mismatch_code_also_quarantines_for_review(tmp_path):
+async def test_mismatch_verdict_also_quarantines_for_review(tmp_path):
     db, queue, channel, task_id = await _seed(tmp_path)
     try:
-        exc = GatewayOperationError("failed", {"error": "UsernameChannelIdMismatch"})
+        exc = ChannelCollectionTerminalError("UsernameChannelIdMismatch")
         await queue._handle_collection_exception(
             exc, task_id=task_id, channel=channel, force=False, full=False
         )
@@ -179,28 +179,15 @@ async def test_mismatch_code_also_quarantines_for_review(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_gateway_username_not_occupied_code_is_terminal(tmp_path):
-    """On the gateway path telethon errors arrive as receipt codes: a vacant
-    username must stamp the channel just like the direct-path exception."""
+@pytest.mark.parametrize(
+    "exc",
+    [ValueError("Could not find the input entity"), ChannelCollectionTerminalError("NotATerminalCode")],
+    ids=["peer-miss", "unknown-code"],
+)
+async def test_non_terminal_failure_is_not_stamped_and_gets_the_retry_pass(tmp_path, exc):
+    """A peer miss may still heal (#1782): no stamp, the retry pass re-enqueues."""
     db, queue, channel, task_id = await _seed(tmp_path)
     try:
-        exc = GatewayOperationError("failed", {"error": "UsernameNotOccupiedError"})
-        await queue._handle_collection_exception(
-            exc, task_id=task_id, channel=channel, force=False, full=False
-        )
-        assert (await _row(db, channel.id)).terminal_code == "UsernameNotOccupiedError"
-    finally:
-        await queue.shutdown()
-        await db.close()
-
-
-@pytest.mark.anyio
-async def test_gateway_valueerror_is_not_terminal(tmp_path):
-    """#1782's transient numeric-miss must keep today's behavior: no stamp,
-    retry pass still re-enqueues."""
-    db, queue, channel, task_id = await _seed(tmp_path)
-    try:
-        exc = GatewayOperationError("failed", {"error": "ValueError"})
         await queue._handle_collection_exception(
             exc, task_id=task_id, channel=channel, force=False, full=False
         )

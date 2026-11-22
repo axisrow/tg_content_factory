@@ -1124,7 +1124,8 @@ class DialogsMixin:
                 continue
             except (UsernameNotOccupiedError, UsernameInvalidError) as e:
                 logger.warning("resolve_channel: username not found '%s': %s", identifier, e)
-                return gone
+                # The error name tells an invalid name (terminal, #1787) from a vacant one.
+                return {**gone, "code": type(e).__name__} if gone else None
             except ChannelPrivateError as e:
                 # Access denied for THIS account, not a deletion — never deactivate
                 # (the channel may be live and collectible via another account). #858
@@ -1690,6 +1691,8 @@ class DialogsMixin:
                             "deactivate": False,
                             "is_own": False,
                             "created_at": getattr(entity, "date", None),
+                            # DM recovery reads a never-archived dialog only if it is newer.
+                            "last_message_date": getattr(dialog, "date", None),
                         }
                     )
 

@@ -1,8 +1,7 @@
 """Gate + CLI runner for the live Codex CLI smoke suite.
 
-Opt-in only: these tests drive the real Codex SDK (image generation and the
-``CodexSdkBackend`` agent path, which spawns a real ``mcp-server`` subprocess),
-so they take tens of seconds each and are skipped unless ``RUN_CODEX_CLI_LIVE``
+Opt-in only: these tests drive the real Codex SDK (image generation), so they
+take tens of seconds each and are skipped unless ``RUN_CODEX_CLI_LIVE``
 is explicitly truthy. Mirrors the gate style of ``codex_image_live`` — never
 auto-enabled, so CI stays green and silent.
 

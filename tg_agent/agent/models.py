@@ -9,35 +9,34 @@ CLAUDE_MODELS: tuple[tuple[str, str], ...] = (
 
 CLAUDE_MODEL_IDS: frozenset[str] = frozenset(m[0] for m in CLAUDE_MODELS)
 
-# Only the IDs are consumed (model-validation in manager dispatch); unlike
-# CLAUDE_MODELS, codex has no UI model picker, so no display-name table.
-CODEX_MODEL_IDS: frozenset[str] = frozenset({"gpt-5.4"})
-
-# Gemini model IDs the ADK backend accepts; like codex, no UI model picker, so
-# no display-name table. Used for model-validation in manager dispatch.
-ADK_MODEL_IDS: frozenset[str] = frozenset({"gemini-2.5-flash", "gemini-2.5-pro"})
-
 # Valid values for the ``agent_backend_override`` setting. "auto" lets
 # get_runtime_status pick; the rest force a specific backend (dev-mode only).
-VALID_AGENT_BACKENDS: frozenset[str] = frozenset({"auto", "claude", "deepagents", "codex", "adk"})
+VALID_AGENT_BACKENDS: frozenset[str] = frozenset({"auto", "claude", "deepagents"})
+# Spellings operators and the agent's own tool docs used for a backend; stored
+# verbatim they were silently ignored (the runtime only reads the names above).
+_AGENT_BACKEND_ALIASES: dict[str, str] = {"claude-agent-sdk": "claude"}
+
+
+def normalize_agent_backend(value: str) -> str | None:
+    """The canonical ``agent_backend_override`` value for ``value``, or ``None`` if unknown."""
+    name = _AGENT_BACKEND_ALIASES.get(value.strip(), value.strip())
+    return name if name in VALID_AGENT_BACKENDS else None
 
 # Per-backend allow-lists of model IDs accepted from the UI / API. deepagents is
 # absent on purpose: its model comes from saved provider settings, never from the
 # request, so it always resolves to None below.
 _BACKEND_MODEL_IDS: dict[str, frozenset[str]] = {
     "claude": CLAUDE_MODEL_IDS,
-    "codex": CODEX_MODEL_IDS,
-    "adk": ADK_MODEL_IDS,
 }
 
 
 def model_for_backend(backend_name: str | None, model: str | None) -> str | None:
     """Return ``model`` only if it is valid for ``backend_name``, else ``None``.
 
-    A model ID submitted for the wrong backend (e.g. a Claude ID left over in the
-    browser while codex/adk is selected) is silently dropped to ``None`` (= auto)
-    so the backend picks its own default. deepagents and unknown backends never
-    accept a request-supplied model and always resolve to ``None`` (#1002).
+    A model ID submitted for the wrong backend is silently dropped to ``None``
+    (= auto) so the backend picks its own default. deepagents and unknown
+    backends never accept a request-supplied model and always resolve to
+    ``None`` (#1002).
     """
     allowed = _BACKEND_MODEL_IDS.get(backend_name or "")
     return model if allowed is not None and model in allowed else None

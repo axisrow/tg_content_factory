@@ -15,7 +15,7 @@ from pathlib import Path
 
 from tg_agent.config import GLOBAL_DB_NAME, AppConfig, load_config, read_global_store_marker
 from tg_agent.telegram.session_lock import SessionLock, SessionLockError
-from tg_agent.utils.process_identity import process_executable, process_start_identity
+from tg_agent.utils.process_identity import process_executable, process_start_identity, same_start_identity
 
 
 class ProcessControlError(RuntimeError):
@@ -396,7 +396,9 @@ def stop_server(
             recorded_command = owner.get("command")
             if recorded_command and recorded_command != _process_command(pid):
                 return StopOutcome(StopResult.UNMANAGED, f"PID {pid} no longer matches its process owner record.")
-            if owner.get("start_identity") and owner["start_identity"] != process_start_identity(pid):
+            if owner.get("start_identity") and not same_start_identity(
+                owner["start_identity"], process_start_identity(pid)
+            ):
                 return StopOutcome(StopResult.UNMANAGED, f"PID {pid} has been reused; refusing to signal it.")
 
     # Snapshot the live process identity before signalling: the post-timeout

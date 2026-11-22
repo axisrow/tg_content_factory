@@ -1192,7 +1192,8 @@ async def test_resolve_channel_username_invalid_is_gone_with_signal_gone(pool):
         TelegramTransportSession(client, disconnect_on_close=False), "+7001"
     )):
         result = await pool.resolve_channel("@invalid", signal_gone=True)
-    assert result == {"gone": True}
+    # The error name lets refresh-card stamp an invalid name terminal (#1787).
+    assert result == {"gone": True, "code": "UsernameInvalidError"}
 
 
 @pytest.mark.anyio
@@ -2875,6 +2876,7 @@ async def test_collect_channel_private_group_invalidates_bad_phone():
     db.repos.channels.set_channel_review = AsyncMock()
     db.repos.channels.clear_preferred_phone_if_matches = AsyncMock()
     db.repos.channels.update_channel_preferred_phone = AsyncMock()
+    db.get_account_summaries = AsyncMock(return_value=[])
     # forget_channel_phone (the real error-recovery helper the collect path now
     # uses for the TOCTOU-safe clear) runs against pool._db.
     pool._db = db
@@ -2921,6 +2923,7 @@ async def test_collect_channel_logs_when_clearing_preferred_phone_fails(caplog):
     db.repos.channels.clear_preferred_phone_if_matches = AsyncMock(
         side_effect=RuntimeError("db locked")
     )
+    db.get_account_summaries = AsyncMock(return_value=[])
     pool._db = db  # forget_channel_phone (the TOCTOU-safe clear) runs against pool._db
 
     collector = Collector(pool, db, SchedulerConfig())

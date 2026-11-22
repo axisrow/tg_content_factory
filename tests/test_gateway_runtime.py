@@ -5,14 +5,16 @@ import logging
 import os
 import re
 import signal
+import sys
 import time
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
-import httpx
 import pytest
 
 from tg_agent.gateway.runtime import configure, endpoint, ensure_gateway, setup_gateway_logging
 from tg_agent.gateway.store import private_key
+from tg_agent.telegram.relay import RELAY_PROTOCOL, RelayEndpoint, probe_endpoint
 
 
 def test_unenrolled_gateway_root_fails_before_creating_anything(tmp_path):
@@ -88,17 +90,19 @@ def test_concurrent_autostart_reuses_gateway_from_another_directory(tmp_path, mo
     record = None
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            urls = list(executor.map(lambda _: ensure_gateway(root, timeout=30), range(2)))
-        assert urls[0] == urls[1]
+            records = list(executor.map(lambda _: ensure_gateway(root, timeout=30), range(2)))
+        assert records[0]["port"] == records[1]["port"]
         record = endpoint(root)
         assert record is not None
         assert record["role"] == "gateway"
-        with httpx.Client(trust_env=False) as client:
-            health = client.get(urls[0] + "/v1/health").json()
-            denied = client.get(urls[0] + "/v1/status")
-        assert health["instance"] == record["instance"]
-        assert denied.status_code == 401
-        assert ensure_gateway(root) == urls[0]
+        assert record["protocol"] == RELAY_PROTOCOL
+        admin = (root / "gateway-admin.token").read_text().strip()
+        relay = RelayEndpoint(port=record["port"], token=admin, pid=record["pid"], protocol=RELAY_PROTOCOL)
+        hello = probe_endpoint(relay)
+        assert hello is not None and hello["pid"] == record["pid"]
+        assert probe_endpoint(RelayEndpoint(port=record["port"], token="wrong", pid=record["pid"],
+                                            protocol=RELAY_PROTOCOL)) is None
+        assert ensure_gateway(root)["port"] == records[0]["port"]
     finally:
         record = record or endpoint(root)
         if record is not None:
@@ -107,3 +111,73 @@ def test_concurrent_autostart_reuses_gateway_from_another_directory(tmp_path, mo
             while time.monotonic() < deadline and (root / "gateway.endpoint.json").exists():
                 time.sleep(0.05)
             assert not (root / "gateway.endpoint.json").exists()
+
+
+def test_an_older_running_gateway_is_a_hard_error_asking_for_restart(tmp_path):
+    from tg_agent.gateway.runtime import GatewayProtocolError, _atomic_record
+    from tg_agent.utils.process_identity import process_start_identity
+
+    root = tmp_path / "private"
+    configure(root, api_id=12345, api_hash="offline-test-api-hash")
+    # A pre-relay discovery record: no protocol, a live process behind it.
+    _atomic_record(root / "gateway.endpoint.json", {
+        "port": 1, "instance": "old", "pid": os.getpid(), "store_root": str(root), "role": "gateway",
+        "start_identity": process_start_identity(os.getpid()),
+    })
+    with pytest.raises(GatewayProtocolError, match="gateway restart --shared"):
+        endpoint(root)
+
+
+def test_an_older_gateway_started_under_another_locale_still_asks_for_restart(tmp_path, monkeypatch):
+    """`ps` prints a start time per locale; the record and the caller may disagree.
+
+    Found on a live run: the caller's locale differed from the gateway's, the
+    identities did not match and the running gateway was reported as down.
+    """
+    from tg_agent.gateway import runtime
+    from tg_agent.gateway.runtime import GatewayProtocolError, _atomic_record
+
+    root = tmp_path / "private"
+    configure(root, api_id=12345, api_hash="offline-test-api-hash")
+    _atomic_record(root / "gateway.endpoint.json", {
+        "port": 1, "instance": "old", "pid": os.getpid(), "store_root": str(root), "role": "gateway",
+        "start_identity": "пятница, 20 ноября 2026 г. 21:58:19",
+    })
+    monkeypatch.setattr(runtime, "process_start_identity", lambda pid: "Fri Nov 20 21:58:19 2026")
+
+    with pytest.raises(GatewayProtocolError, match="gateway restart --shared"):
+        endpoint(root)
+
+
+@pytest.mark.parametrize("exits", [True, False], ids=["exits", "ignores-the-signal"])
+def test_stopping_an_older_gateway_started_under_another_locale(tmp_path, monkeypatch, exits):
+    """`gateway stop --shared` is the documented upgrade step; a locale mismatch must not refuse
+    it, nor take a gateway that is still running for a stopped one."""
+    from tg_agent.gateway import runtime
+    from tg_agent.gateway.runtime import _atomic_record, stop_gateway
+
+    root = tmp_path / "private"
+    configure(root, api_id=12345, api_hash="offline-test-api-hash")
+    _atomic_record(root / "gateway.endpoint.json", {
+        "port": 1, "instance": "old", "pid": 4242, "store_root": str(root.resolve()), "role": "gateway",
+        "python": sys.executable, "start_identity": "пятница, 20 ноября 2026 г. 21:58:19",
+    })
+    observed: dict[str, str | None] = {"identity": "Fri Nov 20 21:58:19 2026"}
+    signalled = []
+
+    def kill(pid, sig):
+        signalled.append((pid, sig))
+        if exits:
+            observed["identity"] = None
+
+    monkeypatch.setattr(runtime, "process_start_identity", lambda pid: observed["identity"])
+    monkeypatch.setattr(runtime, "process_executable", lambda pid: str(Path(sys.executable).resolve()))
+    monkeypatch.setattr(runtime.os, "kill", kill)
+
+    if exits:
+        stop_gateway(root, shared=True, timeout=1)
+    else:
+        with pytest.raises(TimeoutError, match="did not stop"):
+            stop_gateway(root, shared=True, timeout=0.2)
+
+    assert signalled == [(4242, signal.SIGTERM)]

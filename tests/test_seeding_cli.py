@@ -941,49 +941,8 @@ def test_schedule_rails_unregistered_chat_rejects_without_quiet_hours(cli_db, ca
     assert "тихие часы" not in err
 
 
-def _gateway_rows() -> list[dict]:
-    """Строки шлюза = Message.model_dump (как сериализует _read_message_page)."""
-    base = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(hours=1)
-    return [
-        Message(
-            channel_id=BARE_CHAT_ID,
-            message_id=i + 1,
-            date=base + timedelta(seconds=i * 60),
-            text=f"живое сообщение {i + 1}",
-            sender_id=200 + (i % 3),
-            sender_name=("Аня", "Боря", "Вика")[i % 3],
-            sender_kind="user",
-            message_kind="regular",
-        ).model_dump(mode="json")
-        for i in range(7)
-    ]
-
-
-def _fake_gateway_pool(rows):
-    """GatewayPool без __init__ (isinstance-проверка в загрузчике) со стабом read_messages.
-
-    Возвращает ``(pool, calls)`` — вызовы read_messages/disconnect для asserting.
-    """
-    from tg_agent.gateway.pool import GatewayPool
-
-    pool = object.__new__(GatewayPool)
-    pool.clients = {"+79990000001": {"phone": "+79990000001", "active": True}}
-    calls: list[dict] = []
-
-    async def fake_read_messages(peer, *, phone=None, limit=50, **kwargs):
-        calls.append({"peer": peer, "phone": phone, "limit": limit})
-        return {"messages": rows[:limit], "reaction_users": {}, "forward_ids": [], "urls": {}}
-
-    async def fake_disconnect_all():
-        calls.append({"disconnected": True})
-
-    pool.read_messages = fake_read_messages
-    pool.disconnect_all = fake_disconnect_all
-    return pool, calls
-
-
 class _FakeNativePool:
-    """Нешлюзовой пул: нативный клиент с iter_messages (реальный маппер telethon→Message)."""
+    """Пул с нативным клиентом с iter_messages (реальный маппер telethon→Message)."""
 
     def __init__(self, raw_msgs):
         self.clients = {"+79990000001": {"phone": "+79990000001", "active": True}}
@@ -1021,35 +980,8 @@ def _patch_live_pools(monkeypatch, db, pool):
     monkeypatch.setattr(seeding_cli.runtime, "init_pool", fake_init_pool)
 
 
-def test_samples_live_via_gateway_pool(cli_db, capsys, monkeypatch):
-    """--live читает чат через шлюз, строит окна и ничего не пишет в БД (#1800)."""
-    pool, calls = _fake_gateway_pool(_gateway_rows())
-    _patch_live_pools(monkeypatch, cli_db, pool)
-
-    samples = seeding_cli.run_async(
-        seeding_cli.samples_impl("cfg", chat=MARKED_CHAT_ID, days=1, live=True, min_messages=4, min_speakers=3)
-    )
-    captured = capsys.readouterr()
-
-    assert samples.chat_channel_id == MARKED_CHAT_ID
-    assert samples.message_count == 7
-    assert samples.windows, "живые сообщения должны дать окно разговора"
-    assert "живое сообщение 1" in captured.out
-    assert "Live read: 7 message(s)" in captured.err
-    assert calls[0]["peer"] == MARKED_CHAT_ID
-    assert calls[-1] == {"disconnected": True}
-    # Ничего не записано: таблица messages пуста (чат и не зарегистрирован).
-    _reopen(cli_db)
-
-    async def _count() -> int:
-        cur = await cli_db.db.execute("SELECT COUNT(*) AS n FROM messages")
-        return (await cur.fetchone())["n"]
-
-    assert asyncio.run(_count()) == 0
-
-
-def test_stats_live_via_gateway_pool(cli_db, capsys, monkeypatch):
-    pool, calls = _fake_gateway_pool(_gateway_rows())
+def test_stats_live_via_native_client(cli_db, capsys, monkeypatch):
+    pool = _FakeNativePool(_raw_native_msgs(7))
     _patch_live_pools(monkeypatch, cli_db, pool)
 
     stats = seeding_cli.run_async(
@@ -1059,19 +991,17 @@ def test_stats_live_via_gateway_pool(cli_db, capsys, monkeypatch):
 
     assert stats.message_count == 5  # --limit ограничивает чтение
     assert "Live read: 5 message(s)" in captured.err
-    assert calls[0]["limit"] == 5
 
 
-def test_samples_live_via_native_client(cli_db, capsys, monkeypatch):
-    """Нативный путь: iter_messages → build_message_from_telethon, id в голой форме."""
+def _raw_native_msgs(count: int, prefix: str = "нативное сообщение") -> list:
     from types import SimpleNamespace
 
     base = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(hours=1)
-    raw_msgs = [
+    return [
         SimpleNamespace(
             id=i + 1,
             date=base + timedelta(seconds=i * 60),
-            message=f"нативное сообщение {i + 1}",
+            message=f"{prefix} {i + 1}",
             sender_id=300 + (i % 3),
             sender=None,
             media=None,
@@ -1087,23 +1017,40 @@ def test_samples_live_via_native_client(cli_db, capsys, monkeypatch):
             forwards=None,
             replies=None,
         )
-        for i in range(7)
+        for i in range(count)
     ]
-    pool = _FakeNativePool(raw_msgs)
+
+
+def test_samples_live_via_native_client(cli_db, capsys, monkeypatch):
+    """Нативный путь: iter_messages → build_message_from_telethon, id в голой форме (#1800).
+
+    --live читает чат и ничего не пишет в БД. Рядом с демоном или в gateway-режиме
+    тот же путь идёт через relay владельца сессии (#1868).
+    """
+    pool = _FakeNativePool(_raw_native_msgs(7))
     _patch_live_pools(monkeypatch, cli_db, pool)
 
     samples = seeding_cli.run_async(
         seeding_cli.samples_impl("cfg", chat=MARKED_CHAT_ID, days=1, live=True, min_messages=4, min_speakers=3)
     )
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
 
     assert pool.resolved_target == MARKED_CHAT_ID
     assert samples.message_count == 7
-    assert "нативное сообщение 1" in out
+    assert samples.windows, "живые сообщения должны дать окно разговора"
+    assert "нативное сообщение 1" in captured.out
+    assert "Live read: 7 message(s)" in captured.err
+    _reopen(cli_db)
+
+    async def _count() -> int:
+        cur = await cli_db.db.execute("SELECT COUNT(*) AS n FROM messages")
+        return (await cur.fetchone())["n"]
+
+    assert asyncio.run(_count()) == 0
 
 
 def test_samples_live_no_connected_accounts(cli_db, capsys, monkeypatch):
-    pool, _ = _fake_gateway_pool([])
+    pool = _FakeNativePool([])
     pool.clients = {}
     _patch_live_pools(monkeypatch, cli_db, pool)
 

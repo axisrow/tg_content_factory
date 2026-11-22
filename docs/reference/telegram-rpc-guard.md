@@ -41,18 +41,21 @@ through the existing settings store and are restored before clients connect.
 Restore runs once per pool lifetime, so a repeated initialization does not
 replay the running pool's own snapshot and multiply already spent slots.
 
-New receipts may include `diagnostics` with `outer_operation`, `rpc`,
-`category`, `source` and `delivery_state`. Local throttling and Telegram waits
-retain `retry_at`; the CLI names the RPC and deadline. Existing receipts
-without diagnostics remain readable. Request arguments, message bodies and
-raw exception text are not exported in this metadata.
+Failures carry curated diagnostics (`outer_operation`, `rpc`, `category`,
+`source` and `delivery_state`); the CLI names the RPC and deadline. Request
+arguments, message bodies and raw exception text are not part of this
+metadata. The gateway's operation receipts that used to export it were removed
+with its HTTP protocol in #1868: a relayed request re-raises the owner's
+Telegram error or floodgate refusal (with its retry delay) in the calling
+process.
 
 `not_sent` means no mutating request reached the sender. `partial` means a
 prior mutation completed before a later failure. `uncertain` preserves the
 existing delivery precaution after a possible send or an untracked failure.
 Partial/uncertain writes keep their original intent and are never
-automatically replayed. Gateway notifications opt into structured throttle
-propagation; ordinary `Notifier.notify()` retains its bool default.
+automatically replayed. Structured throttle propagation in
+`Notifier.notify()` is opt-in (`propagate_throttle=True`); by default it keeps
+its bool result.
 
 ## Release verification
 
@@ -71,7 +74,8 @@ two built application/shared wheels together. The exact shared dependency
 prevents an older installed package from masking the pre-connect callback.
 
 The offline regressions use real Telethon parsing and sender Futures, plus
-the actual CLI, gateway HTTP API and SQLite store. They check mention fan-out,
+the actual CLI and SQLite store (the gateway HTTP API they also covered was
+removed in #1868; the gateway now serves the session-owner relay). They check mention fan-out,
 warm caches, pagination/retries, shared-account budgets, persisted family
 floods and non-replay of interrupted/partial publications. Live Telegram
 operations are not part of these checks.

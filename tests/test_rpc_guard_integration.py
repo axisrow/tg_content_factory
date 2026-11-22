@@ -3,7 +3,7 @@ import asyncio
 from collections import Counter
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from telethon import TelegramClient, errors, functions, types
@@ -17,7 +17,6 @@ from telethon_floodgate import (
     TelegramRateLimitGate,
 )
 
-from tg_agent.gateway.notifications import BotStorage, execute_notification
 from tg_agent.telegram.backends import TelegramTransportSession
 from tg_agent.telegram.outgoing_ceiling import OutgoingRateCeiling
 
@@ -139,21 +138,6 @@ async def test_nested_resolve_flood_reports_resolve_family():
     pool.report_family_flood.assert_awaited_once()
     assert pool.report_family_flood.await_args.args[:3] == (PHONE, 3600, "resolve")
     assert caught.value.info.rpc == "ResolveUsernameRequest"
-
-
-@pytest.mark.asyncio
-async def test_notification_preserves_nested_flood_cause():
-    pool = make_pool()
-    session, sent = make_session(pool, flood=3600)
-    operation = SimpleNamespace(account_id=PHONE, action="send", text="[x](@audituser)", chat_id=42,
-                                bot_name_prefix="Audit", bot_username_prefix="audit")
-    access = SimpleNamespace(store=None, connection=AsyncMock(return_value=session))
-    with patch.object(BotStorage, "get_bot", AsyncMock(return_value=None)):
-        with pytest.raises(HandledFloodWaitError) as caught:
-            await execute_notification(access, "offline", operation)
-    assert caught.value.info.rpc == "ResolveUsernameRequest"
-    assert caught.value.info.wait_seconds == 3600
-    assert not any(isinstance(r, functions.messages.SendMessageRequest) for r in sent)
 
 
 @pytest.mark.asyncio

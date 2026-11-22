@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -243,6 +244,49 @@ def test_cli_run_due_invokes_service_and_reports(cli_db, capsys):
         phone="+1234", recipient=777, text="ping", is_user=True
     )
     pool.disconnect_all.assert_awaited_once()
+
+
+def test_cli_run_due_in_a_gateway_project_respects_the_dialog_owner(cli_db, capsys):
+    """Gateway project, no daemon: automatic replies in the dialog belong to another project."""
+    def _create():
+        return ping_cli.create_impl(
+            "cfg", phone="+1234", dialog_id=777, username=None, text="ping", days=30, title=None,
+        )
+
+    _run_ping_impl(_create, cli_db, capsys)
+
+    relay = MagicMock()
+    relay.call = AsyncMock(return_value=False)
+    pool = MagicMock(relay=relay)
+    pool.disconnect_all = AsyncMock()
+    actions = MagicMock(spec=TelegramActionService)
+    actions.read_history = AsyncMock(
+        return_value=MessagesResult(
+            phone="+1234",
+            dialog_id=777,
+            messages=[DialogMessage(id=1, dialog_id=777, out=True, date=NOW - timedelta(days=40), text="...")],
+        )
+    )
+    actions.send_message = AsyncMock()
+
+    async def fake_init_db(_):
+        return SimpleNamespace(gateway={"project_id": "project-a"}), cli_db
+
+    async def fake_init_pool(_config, _db):
+        return None, pool
+
+    _reopen(cli_db)
+    with (
+        patch("tg_agent.cli.commands.ping.runtime.init_db", side_effect=fake_init_db),
+        patch("tg_agent.cli.commands.ping.runtime.init_pool", side_effect=fake_init_pool),
+        patch("tg_agent.cli.commands.ping.worker_handoff.serve_is_running", return_value=False),
+        patch("tg_agent.services.telegram_actions.TelegramActionService", return_value=actions),
+        patch("tg_agent.gateway.catalog.gateway_account_id", AsyncMock(return_value="account-p")),
+    ):
+        ping_cli.run_async(ping_cli.run_due_impl("cfg"))
+
+    actions.send_message.assert_not_awaited()
+    relay.call.assert_awaited_once_with("reply_owner.check", account_id="account-p", dialog_id=777)
 
 
 def test_cli_run_due_hands_off_to_running_worker(cli_db, capsys):

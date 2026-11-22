@@ -1,0 +1,63 @@
+{
+  "git": "725573a",
+  "python": "3.13.18",
+  "machine": "x86_64",
+  "results": {
+    "cli_startup": {
+      "help": {
+        "n": 10,
+        "p50_ms": 750.64,
+        "p95_ms": 1078.413,
+        "max_ms": 1078.413
+      },
+      "account_list": {
+        "n": 10,
+        "p50_ms": 822.633,
+        "p95_ms": 1073.32,
+        "max_ms": 1073.32
+      }
+    },
+    "cli_imports": {
+      "modules": 1082,
+      "web_stack": [
+        "httpx"
+      ],
+      "telethon": true
+    },
+    "command_queue": {
+      "n": 20,
+      "p50_ms": 6.832,
+      "p95_ms": 7.154,
+      "max_ms": 7.154
+    },
+    "gateway_op": {
+      "skipped": "old gateway protocol not present (tg_agent.gateway.protocol)"
+    },
+    "relay_invoke": {
+      "sequential": {
+        "n": 60,
+        "p50_ms": 0.061,
+        "p95_ms": 0.122,
+        "max_ms": 0.247
+      },
+      "concurrent": {
+        "concurrency": 8,
+        "ops": 60,
+        "ops_per_sec": 23368.9
+      }
+    },
+    "gateway_relay": {
+      "sequential": {
+        "n": 60,
+        "p50_ms": 0.325,
+        "p95_ms": 0.424,
+        "max_ms": 0.705
+      },
+      "concurrent": {
+        "concurrency": 8,
+        "ops": 60,
+        "ops_per_sec": 2159.6
+      }
+    }
+  }
+}

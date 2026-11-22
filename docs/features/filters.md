@@ -15,17 +15,16 @@
 
 ## Анализ и применение
 
-=== "CLI"
-    ```bash
-    python -m tg_agent.main filter analyze       # анализ без изменений
-    python -m tg_agent.main filter apply         # применить фильтры
-    python -m tg_agent.main filter reset         # сбросить все фильтры
-    python -m tg_agent.main filter precheck      # pre-фильтр по кол-ву подписчиков
-    python -m tg_agent.main filter suspects      # whitelist↔blacklist противоречия (#1490)
-    python -m tg_agent.main filter toggle --channel-id ID  # ручное переключение
-    python -m tg_agent.main filter purge         # удалить сообщения отфильтрованных
-    python -m tg_agent.main filter hard-delete   # удалить каналы из БД
-    ```
+```bash
+python -m tg_agent.main filter analyze       # анализ без изменений
+python -m tg_agent.main filter apply         # применить фильтры
+python -m tg_agent.main filter reset         # сбросить все фильтры
+python -m tg_agent.main filter precheck      # pre-фильтр по кол-ву подписчиков
+python -m tg_agent.main filter suspects      # whitelist↔blacklist противоречия (#1490)
+python -m tg_agent.main filter toggle --channel-id ID  # ручное переключение
+python -m tg_agent.main filter purge         # удалить сообщения отфильтрованных
+python -m tg_agent.main filter hard-delete   # удалить каналы из БД
+```
 
 Whitelist-подход (#1490): тег доверия «авторский контент» (через `channel tag set`) —
 метка «написан человеком, не шаблоногенератор». `filter suspects` — read-only отчёт
@@ -37,10 +36,6 @@ Whitelist-подход (#1490): тег доверия «авторский ко�
 целиком — `filter apply` возвращает ему `is_filtered=0`, а флаги (старые ∪ свежие)
 остаются метками. Для каналов, которые собираем несмотря на блокирующие флаги
 (напр. `low_subscriber_ratio` у нерусскоязычных ИИ-каналов).
-
-=== "Web"
-    `GET /channels/filter/manage` · `POST /channels/filter/analyze`
-    `POST /channels/filter/apply` · `POST /channels/filter/reset`
 
 ## Поведение при сборе
 

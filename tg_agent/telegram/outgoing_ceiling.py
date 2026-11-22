@@ -73,6 +73,14 @@ class OutgoingRateCeiling:
         self._sleep = sleep_func
         self.max_calls = spec.max_calls
 
+    def snapshot_state(self) -> dict[str, dict[str, Any]]:
+        """The shared window as wall-clock stamps, for a cross-process snapshot."""
+        return self._limiter.snapshot_state()
+
+    def restore_state(self, snapshot: dict[str, dict[str, Any]]) -> None:
+        """Replay :meth:`snapshot_state` (once per ceiling: stamps merge without de-duplication)."""
+        self._limiter.restore_state(snapshot)
+
     def peek_batch(self, members) -> float:
         """Non-spending check for the upstream dispatch transaction."""
         return self._limiter.peek_many(_PROCESS_KEY, len(members))

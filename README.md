@@ -9,8 +9,10 @@ Telegram automation for **coding agents** — Claude Code, OpenCode, Codex. Ship
 ## How it works
 
 - **Skill + Claude Code plugin** — this repo ships a [skill](skills/tg-agent/SKILL.md) (installed from the plugin marketplace, or copied manually) that teaches your agent the command catalog, the runtime model and safety rules. The skill drives the CLI — no MCP tool surface eating your context window.
-- **`tg-agent` CLI** — the product surface: ~250 commands covering the full Telegram spectrum (`channel`, `dialogs`, `messages`, `search`, `pipeline`, `photo-loader`, `analytics`, `scheduler`, `account`, …). Every command is a self-contained one-shot: it opens a Telegram connection, does the work, exits. No daemon required.
-- **`tg-agent worker`** — optional long-lived process for scheduled collection and queued sends.
+- **`tg-agent` CLI** — the product surface: ~250 commands covering the full Telegram spectrum (`channel`, `dialogs`, `messages`, `search`, `pipeline`, `photo-loader`, `analytics`, `scheduler`, `account`, …). Every command is a self-contained one-shot: it does the work and exits. No daemon required — without one, the command connects the account itself.
+- **Worker daemon** (`tg-agent restart`) — optional long-lived process for scheduled collection and queued sends. While it runs it owns every account's Telegram connection (one connection per account per machine): live commands (`messages read --live`, all `dialogs` actions, `account info`, `search --mode telegram`, `pipeline run`, …) run on the daemon's connection through a local relay (127.0.0.1, token file readable by the owner only) — same output, no second login, nothing queued. Collection hand-offs go to the daemon's queue and wake it at once. In gateway mode (`tg-agent global enable`) the shared gateway is that owner.
+
+> **Upgrading to 0.3.0:** restart a running daemon once (`tg-agent restart`), and the shared gateway if you use one (`tg-agent gateway restart --shared`) — an older daemon or gateway serves no relay, and live commands next to it fail at once with that hint. The web panel (`serve`, the optional `tg-webui` package) and the embedded agent chat (`agent …`; its interactive TUI is the optional `tg-tui` package) stay available as deprecated, optional surfaces. The stdio MCP bridge (`mcp-server`) and the Codex/ADK agent backends were removed in #1868.
 
 ## Quick Start (coding agents)
 
@@ -73,38 +75,17 @@ You will receive a Telegram login code — enter it yourself. Verify with `tg-ag
 
 ## Features
 
-- **Built for coding agents** — the CLI is the contract: new capabilities land as CLI commands first (tested there), other surfaces follow only if at all
+- **Built for coding agents** — the CLI is the contract: new capabilities land as CLI commands (tested there) and in the skill
 - **All chat types** — channels, supergroups, gigagroups, forums, public and private
-- **Multi-account** with automatic flood-wait rotation
-- **3 search modes** — local DB (FTS5), direct Telegram API, AI/LLM-powered
-- **Scheduled collection** — incremental fetching; runs in the background `tg-agent worker`
+- **Multi-account** with automatic flood-wait rotation; one Telegram connection per account per machine, shared by every CLI process through the daemon's (or gateway's) relay
+- **Search** — local DB (FTS5, semantic, hybrid) and live Telegram search (global, your chats, one channel)
+- **Scheduled collection** — incremental fetching; runs in the background worker daemon
 - **Keyword monitoring** — plain text and regex, with Telegram bot notifications
 - **Content factory** — LLM pipelines: generate → moderate → publish, image generation included
 - **Built-in anti-spam filters** — deduplication, low-uniqueness detection, cross-channel spam, subscriber-ratio and non-Cyrillic filters
 - **Analytics** — top posts, trends, activity heatmaps, trending topics and emojis
-- **Security** — session encryption (Fernet + PBKDF2), HMAC-signed web session cookies
+- **Security** — session encryption (Fernet + PBKDF2); the daemon's relay listens on 127.0.0.1 only, behind a random token in a file readable by the owner only
 - **Docker-ready**
-
-## Legacy surfaces
-
-These still work but are **frozen**: development is paused indefinitely, and new capabilities must not be built on them. The CLI + skill is the only actively developed interface.
-
-- **Web dashboard** (FastAPI + Bootstrap 5) — `python -m tg_agent.main serve`, then http://localhost:8080 (password from `WEB_PASS`). It is the optional `tg-webui` package ([github.com/axisrow/tg_webui](https://github.com/axisrow/tg_webui), PyPI: `pip install tg-webui`; requires `tg-shared`, currently not on PyPI); `pip install tg-agent` alone has no web panel
-- **TUI** and the **embedded agent chat** (`tg-agent agent chat`; `claude-agent-sdk` / `deepagents` backends). The interactive TUI is the optional `tg-tui` package ([github.com/axisrow/tg_tui](https://github.com/axisrow/tg_tui), PyPI: `pip install tg-tui`); one-shot `agent chat -p "..."` works without it
-- **MCP server** (`python -m tg_agent.main mcp-server`)
-
-### Legacy: split deployment (Docker / k8s)
-
-`serve` spawns an embedded Telegram worker inside the same process by default.
-For split deployments pass `--no-worker` and run a dedicated worker service:
-
-```bash
-# container 1 — web UI + API only
-python -m tg_agent.main serve --no-worker
-
-# container 2 — Telegram worker (shared SQLite volume)
-python -m tg_agent.main worker
-```
 
 ## Docker
 
@@ -114,11 +95,9 @@ cp .env.example .env
 docker-compose up -d
 ```
 
-The image is **worker-only** (automation-first): it runs the Telegram worker
-runtime — collection, scheduler, queues — with the managed PID file and no web
-surface. The legacy web panel is not part of the image; it is the separate
-[tg-webui](https://github.com/axisrow/tg_webui) package (`pip install tg-webui`,
-needs `tg-shared` on PyPI).
+The image runs the Telegram worker runtime (automation-first) — collection,
+scheduler, queues — with the managed PID file. The image has no web surface (the
+optional web panel is not part of it), hence no published port and no HTTP healthcheck.
 
 ## Semantic Search Roadmap Note
 
@@ -148,17 +127,14 @@ note, migration story, and rationale for de-emphasizing mandatory `sqlite-vec`.
 | `TG_API_ID` | Yes | Telegram API ID |
 | `TG_API_HASH` | Yes | Telegram API Hash |
 | `SESSION_ENCRYPTION_KEY` | Yes* | Key for encrypting Telegram session strings in DB; may instead live in the OS secret store (`tg-agent key set`) |
-| `WEB_PASS` | —† | Web panel password (legacy web dashboard only) |
-| `LLM_API_KEY` | No | API key for AI-powered search |
-| `ANTHROPIC_API_KEY` | —† | `claude-agent-sdk` only (legacy embedded agent chat) |
-| `CLAUDE_CODE_OAUTH_TOKEN` | —† | Claude Code auth token for `claude-agent-sdk` (legacy) |
-| `AGENT_MODEL` | —† | Claude SDK model override (legacy embedded agent chat) |
-| `AGENT_FALLBACK_MODEL` | —† | `provider:model` for `deepagents` fallback (legacy) |
-| `AGENT_FALLBACK_API_KEY` | —† | Explicit API key for the legacy fallback provider |
+| `LLM_API_KEY` | No | Fallback API key (`llm` section) for semantic-search embeddings when `settings semantic --api-key` is not set |
+| `ANTHROPIC_API_KEY` | No | `claude-agent-sdk` backend of the content-pipeline agent |
+| `CLAUDE_CODE_OAUTH_TOKEN` | No | Claude Code auth token for the `claude-agent-sdk` backend (content-pipeline agent) |
+| `AGENT_MODEL` | No | Model override for the `claude-agent-sdk` backend (content-pipeline agent) |
+| `AGENT_FALLBACK_MODEL` | No | `provider:model` for the `deepagents` backend of the content-pipeline agent |
+| `AGENT_FALLBACK_API_KEY` | No | Explicit API key for the `deepagents` fallback provider |
 
-\* Required to add or import accounts and decrypt stored sessions. New sessions are always encrypted (`enc:v2:`); plaintext writes are refused. Generate a secret with `python -c "import secrets; print(secrets.token_urlsafe(32))"`, keep it private, and retain it to read existing sessions. No `config.yaml` is needed: the key is read directly from `.env`.
-
-\† Legacy-only: needed solely by the legacy web panel and embedded agent chat (see Legacy surfaces).
+\* Required to add or import accounts and decrypt stored sessions. New sessions are always encrypted (`enc:v2:`); plaintext writes are refused. Generate a secret with `python -c "import secrets; print(secrets.token_urlsafe(32))"`, keep it private, and retain it to read existing sessions. No `config.yaml` is needed: the key is read directly from `.env`. A gateway-bound project (`tg-agent global enable`) needs no key of its own: the shared gateway owns the sessions.
 
 ### config.yaml
 
@@ -167,32 +143,32 @@ Supports `${ENV_VAR}` substitution. Empty env vars are dropped (defaults apply).
 | Section | Description |
 |---|---|
 | `telegram` | API credentials (`api_id`, `api_hash`) |
-| `web` | Host, port, password (default: `127.0.0.1:8080`; non-loopback host requires a strong `WEB_PASS`) — legacy web panel |
 | `scheduler` | Collection interval, delays, limits, max flood wait |
 | `notifications` | `admin_chat_id` for keyword match alerts |
-| `database` | SQLite path (default: `data/tg_search.db`) |
-| `llm` | LLM provider, model, API key for AI search and content pipelines |
-| `agent` | Legacy embedded agent chat settings |
+| `database` | SQLite path (default: `data/tg_search.db`); the daemon's relay endpoint file sits next to it (`<db>.relay.json`, 0600) |
+| `llm` | LLM provider, model, API key — the fallback provider/key for semantic-search embeddings |
+| `agent` | Content-pipeline agent: model, `deepagents` fallback model/key, stream timeouts |
 | `security` | Session encryption settings |
 
-### Legacy: embedded agent backend rules
+### Content-pipeline agent backend rules
 
-- `/agent` uses `claude-agent-sdk` when `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` is configured.
-- If Claude SDK is not configured, `/agent` falls back to `deepagents` when `AGENT_FALLBACK_MODEL` is set.
+Pipelines with `--generation-backend deep_agents` run on the agent engine (`AgentManager`):
+
+- Auto-selection prefers `deepagents` when usable provider configs exist in the DB (`tg-agent provider add`), then `claude-agent-sdk` when `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` is configured, then `deepagents` with `AGENT_FALLBACK_MODEL`.
 - `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are never reused by `deepagents`.
-- Developer override for forcing `claude-agent-sdk` or `deepagents` lives on the Settings page and applies only when developer mode is enabled.
+- `tg-agent settings agent --backend auto|claude|deepagents` forces a backend; the override applies only when developer mode is enabled (`tg-agent settings set agent_dev_mode_enabled 1`).
 
 ## CLI reference (selected)
 
 ```bash
-tg-agent restart                                 # managed daemon: worker runtime, no web panel
+tg-agent restart                                 # managed daemon: stop the previous one, run the worker
 tg-agent worker                                  # same runtime without the stop-first step
-tg-agent channel collect --channel-id ID         # one-off incremental collection (no daemon)
+tg-agent daemon status                           # read-only: is a daemon up, PID, store
+tg-agent channel collect ID                      # one channel (handed to the daemon's queue while it runs)
 tg-agent search "query" --limit 20               # search collected history
 tg-agent messages read @channel --format json    # read message history
 tg-agent dialogs send                            # real actions in real chats
 tg-agent pipeline generate                       # LLM content factory
-tg-agent serve                                   # legacy web panel (deprecated)
 ```
 
 Full catalog for agents — [`skills/tg-agent/reference.md`](skills/tg-agent/reference.md); every
@@ -215,21 +191,6 @@ Legacy `TELETHON_*` environment variable names are still accepted by
 telethon-cli login
 telethon-cli users get-me --output json
 ```
-
-## Web Interface (legacy)
-
-| Page | Path | Description |
-|---|---|---|
-| Web login | `/login` | Sign in to the web panel with `WEB_PASS` |
-| Dashboard | `/` | Stats, scheduler status, connected accounts |
-| Telegram auth | `/auth/login` | Add Telegram accounts (phone + code + 2FA) |
-| Accounts | `/accounts` | Manage connected accounts |
-| Channels | `/channels` | Add/remove channels, keywords, import |
-| Search | `/search` | Search messages (local / Telegram / AI) |
-| Analytics | `/analytics` | Top posts leaderboard, engagement by content type, hourly patterns |
-| Filters | `/filter` | Anti-spam filter report and controls |
-| Scheduler | `/scheduler` | Start/stop/trigger collection and keyword search |
-| Agent | `/agent` | Legacy embedded AI chat |
 
 ## Roadmap
 

@@ -765,14 +765,13 @@ def test_pipeline_run_with_preview(tmp_path, cli_init_patch, capsys):
     assert "Preview content here" in out
 
 
-def test_pipeline_run_next_to_live_daemon_generates_without_a_pool(
+def test_pipeline_run_next_to_live_daemon_runs_on_its_relay(
     tmp_path, cli_init_patch, capsys, monkeypatch
 ):
-    """With a live daemon, ``pipeline run`` generates pool-less instead of competing (#1521).
+    """With a live daemon, ``pipeline run`` gets a pool on the daemon's relay (#1868).
 
-    The daemon owns the Telegram sessions; generation itself needs no pool
-    (Telegram-side nodes would fail without one — this pipeline has none), so
-    no ``ClientPool`` may be built and the run must still complete.
+    Telegram-side nodes therefore work next to the daemon too; the pool never
+    opens a connection of its own.
     """
     db_path = str(tmp_path / "cli_pipeline_run_daemon.db")
     db = Database(db_path, session_encryption_secret="test-session-encryption-key")
@@ -804,8 +803,11 @@ def test_pipeline_run_next_to_live_daemon_generates_without_a_pool(
             "result_count": 1,
         }
 
-    monkeypatch.setattr("tg_agent.cli.worker_handoff.serve_is_running", lambda _config: True)
-    monkeypatch.delenv("TGCF_CLI_DIRECT", raising=False)
+    relay = object()
+    monkeypatch.setattr("tg_agent.cli.runtime._daemon_relay", AsyncMock(return_value=relay))
+    pool = MagicMock()
+    pool.initialize = AsyncMock()
+    pool.disconnect_all = AsyncMock()
     with (
         cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS),
         patch(
@@ -813,7 +815,7 @@ def test_pipeline_run_next_to_live_daemon_generates_without_a_pool(
             fake_run_generation,
         ),
         patch("tg_agent.services.provider_service.RuntimeProviderRegistry.has_providers", return_value=True),
-        patch("tg_agent.cli.runtime.ClientPool") as pool_cls,
+        patch("tg_agent.cli.runtime.ClientPool", return_value=pool) as pool_cls,
     ):
         from tg_agent.cli.commands.pipeline import run
 
@@ -829,11 +831,10 @@ def test_pipeline_run_next_to_live_daemon_generates_without_a_pool(
             )
         )
 
-    pool_cls.assert_not_called()
-    assert seen_pools == [None]
+    assert pool_cls.call_args.kwargs["relay"] is relay
+    assert seen_pools == [pool]
     captured = capsys.readouterr()
     assert "Generation completed" in captured.out
-    assert "owns the Telegram sessions" in captured.err
 
 
 def test_pipeline_run_not_found(tmp_path, cli_init_patch, capsys):

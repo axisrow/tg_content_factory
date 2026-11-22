@@ -19,7 +19,9 @@ pip install tg-agent
 - **Claude Code**: `/plugin marketplace add https://github.com/axisrow/tg_content_factory` → `/plugin install tg-agent@tg-agent-marketplace` (короткая форма `axisrow/tg_content_factory` клонирует по SSH и падает без ключей), либо скопировать каталог: `cp -r skills/tg-agent ~/.claude/skills/tg-agent`
 - **OpenCode / Codex / другие**: отдайте [`skills/tg-agent/SKILL.md`](https://github.com/axisrow/tg_content_factory/blob/main/skills/tg-agent/SKILL.md) как инструкцию
 
-Пакет `tg-agent` — это ядро (CLI + воркер). Устаревшие поверхности — веб-панель (`serve`) и интерактивный TUI (`agent chat` без промпта) — вынесены в опциональные PyPI-пакеты `tg-webui` ([github.com/axisrow/tg_webui](https://github.com/axisrow/tg_webui)) и `tg-tui` ([github.com/axisrow/tg_tui](https://github.com/axisrow/tg_tui)): `pip install tg-webui` / `pip install tg-tui`.
+Пакет `tg-agent` — это CLI и воркер-демон. Веб-панель (`serve`) и интерактивный агент-чат (TUI) — опциональные пакеты `tg-webui` и `tg-tui`, они ставятся дополнительно (`pip install tg-webui`, `pip install tg-tui`). Обе — устаревшие поверхности: работают, но не развиваются. Stdio-мост MCP (`mcp-server`) и агентные бэкенды Codex/ADK удалены в #1868.
+
+При обновлении с прежней версии перезапустите работающий демон один раз (`tg-agent restart`) и общий gateway, если он используется (`tg-agent gateway restart --shared`): старый демон/gateway не обслуживает relay, и живые команды рядом с ним сразу падают с этой подсказкой.
 
 Или из исходников:
 

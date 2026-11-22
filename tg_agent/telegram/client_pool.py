@@ -51,6 +51,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 # Re-exported for backwards-compatible ``from tg_agent.telegram.client_pool import …``
 # and ``patch("tg_agent.telegram.client_pool.<name>")`` call sites that predate the
@@ -72,9 +73,11 @@ from tg_agent.telegram.backends import (
     BackendClientLease,
     BackendRouter,
     NativeTelethonBackend,
+    RelayBackend,
     TelethonCliBackend,
     adapt_transport_session,  # noqa: F401
 )
+from tg_agent.telegram.flood_snapshot import FloodSnapshotMixin
 from tg_agent.telegram.mtproto_watchdog import MTProtoSecurityWatchdog
 from tg_agent.telegram.outgoing_ceiling import OutgoingRateCeiling
 from tg_agent.telegram.pool_dialogs import (
@@ -135,6 +138,7 @@ class ClientPool(
     ClientLifecycleMixin,
     FloodRotationMixin,
     ResolveGuardMixin,
+    FloodSnapshotMixin,
 ):
     """Pool of Telegram clients with fallback rotation on flood waits.
 
@@ -149,13 +153,23 @@ class ClientPool(
         db: Database,
         max_flood_wait_sec: int = 300,
         runtime_config: TelegramRuntimeConfig | None = None,
+        *,
+        relay: Any = None,
     ):
         from tg_agent.config import global_marker_path
         from tg_agent.gateway.project import read_binding
 
-        if not getattr(type(db), "_gateway_owner", False) and read_binding(global_marker_path()) is not None:
+        if (
+            relay is None
+            and not getattr(type(db), "_gateway_owner", False)
+            and read_binding(global_marker_path()) is not None
+        ):
             raise RuntimeError("This project uses a shared gateway; opening a local Telegram ClientPool is forbidden")
         self._auth = auth
+        # A relayed pool (#1868) runs every request on the session owner's
+        # connection; the owner keeps the auth key and the shared limiter state.
+        self.relay = relay
+        self._relay = relay
         self._require_rpc_guard = True
         self._db = db
         self._max_flood_wait_sec = max_flood_wait_sec
@@ -188,6 +202,16 @@ class ClientPool(
             mode=self._runtime_config.backend_mode,
             primary=self._primary_backend,
             native=self._native_backend,
+            relay=(
+                RelayBackend(
+                    relay,
+                    api_id=getattr(auth, "api_id", 0),
+                    api_hash=getattr(auth, "api_hash", ""),
+                    client_preparer=self._prepare_rpc_client,
+                )
+                if relay is not None
+                else None
+            ),
         )
         self._dialogs_fetched: set[str] = set()
         # phone → monotonic timestamp of its last warm; gives the warm flag a

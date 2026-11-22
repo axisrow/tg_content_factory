@@ -640,15 +640,16 @@ def _catalog_row(phone: str, account_id: str, *, is_premium: bool) -> dict:
             "flood_until": None, "is_premium": is_premium}
 
 
-async def test_sync_gateway_catalog_never_downgrades_premium(accounts_repo):
-    """A stale gateway catalog (is_premium=0) must not clear a live-verified
-    factory flag: the mirror may only raise the premium flag (#1749)."""
+async def test_sync_gateway_catalog_mirrors_a_lapsed_premium(accounts_repo):
+    """The gateway re-verifies Premium live on every connect (#1868), and a
+    relayed pool runs no check of its own: a lapsed Premium must reach the mirror,
+    or ``acquire_premium`` keeps picking the account."""
     await accounts_repo.add_account(make_account("+1000", is_premium=True))
 
     await accounts_repo.sync_gateway_catalog([_catalog_row("+1000", "uuid-a", is_premium=False)])
 
     accounts = await accounts_repo.get_accounts()
-    assert accounts[0].is_premium is True
+    assert accounts[0].is_premium is False
 
 
 async def test_sync_gateway_catalog_upgrades_premium(accounts_repo):

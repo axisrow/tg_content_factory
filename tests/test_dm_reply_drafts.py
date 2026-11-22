@@ -13,15 +13,19 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import typer
+from telethon_floodgate import TelegramRateLimitedError
 
 from tg_agent.cli.commands import dm as dm_cli
 from tg_agent.config import AppConfig
-from tg_agent.models import IncomingDm, TelegramCommandStatus
+from tg_agent.models import Account, IncomingDm, TelegramCommandStatus
 from tg_agent.services.dispatcher._errors import TelegramCommandRetryLaterError
+from tg_agent.services.telegram_actions import TelegramActionClientUnavailableError
 from tg_agent.services.telegram_command_dispatcher import TelegramCommandDispatcher
 
 
@@ -324,15 +328,53 @@ async def test_reset_sending_on_startup_releases_abandoned_claim(db):
     assert (await drafts.get(delivered)).status == "sent"
 
 
-async def test_handler_send_failure_releases_claim(db):
+@pytest.mark.parametrize("error", [ConnectionError, TelegramActionClientUnavailableError])
+async def test_handler_send_failure_releases_claim(db, error):
     """Неудачная отправка возвращает черновик в approved, клейм не течёт."""
     draft_id = await _make_draft(db, status="approved")
-    send_message = AsyncMock(side_effect=RuntimeError("network down"))
+    send_message = AsyncMock(side_effect=error("network down"))
     dispatcher = TelegramCommandDispatcher(db, _mock_pool())
 
-    with _patched_action(send_message), pytest.raises(RuntimeError, match="network down"):
+    with _patched_action(send_message), pytest.raises(error, match="network down"):
         await dispatcher._dispatch("dm.send_reply", {"draft_id": draft_id})
 
+    assert (await db.repos.dm_reply_drafts.get(draft_id)).status == "approved"
+
+
+@pytest.mark.parametrize("catalog_available", [True, False], ids=["gateway", "local-mirror"])
+async def test_handler_uses_active_flood_deadline(db, catalog_available):
+    draft_id = await _make_draft(db, status="approved")
+    phone = "+10000000001"
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=600)
+    if catalog_available:
+        accounts = AsyncMock(return_value=[{"phone": phone, "active": True, "flood_until": deadline.timestamp()}])
+    else:
+        await db.add_account(Account(phone=phone, session_string=""))
+        await db.update_account_flood(phone, deadline)
+        accounts = AsyncMock(side_effect=ConnectionError("gateway unavailable"))
+    gateway = SimpleNamespace(accounts=accounts)
+    dispatcher = TelegramCommandDispatcher(db, _mock_pool(), gateway=gateway)
+    send_message = AsyncMock(side_effect=TelegramActionClientUnavailableError("client unavailable"))
+
+    with _patched_action(send_message), pytest.raises(TelegramCommandRetryLaterError) as caught:
+        await dispatcher._dispatch("dm.send_reply", {"draft_id": draft_id})
+
+    assert caught.value.run_after == deadline + timedelta(seconds=1)
+    assert (await db.repos.dm_reply_drafts.get(draft_id)).status == "approved"
+
+
+async def test_handler_defers_a_send_refused_before_dispatch(db):
+    draft_id = await _make_draft(db, status="approved")
+    dispatcher = TelegramCommandDispatcher(db, _mock_pool())
+    send_message = AsyncMock(side_effect=TelegramRateLimitedError("+10000000001", "send", 60))
+    before = datetime.now(timezone.utc)
+
+    with _patched_action(send_message), pytest.raises(TelegramCommandRetryLaterError) as caught:
+        await dispatcher._dispatch("dm.send_reply", {"draft_id": draft_id})
+
+    assert before + timedelta(seconds=61) <= caught.value.run_after <= (
+        datetime.now(timezone.utc) + timedelta(seconds=61)
+    )
     assert (await db.repos.dm_reply_drafts.get(draft_id)).status == "approved"
 
 

@@ -21,6 +21,7 @@ import typer
 from tg_agent.cli import runtime
 from tg_agent.cli.commands.common import (
     apply_startup,
+    cli_error,
     run_async,
 )
 from tg_agent.services.notification_service import NotificationService
@@ -54,6 +55,11 @@ def _print_target_status(status) -> None:
         print(f"Diagnostic: {message}")
 
 
+def _reason(exc: Exception) -> str:
+    """The exception's own words for a one-line CLI error, or its type if it has none."""
+    return str(exc) or type(exc).__name__
+
+
 async def _build(config_path: str):
     """Build (config, db, pool, target_svc, svc) for a notification command."""
     config, db = await runtime.init_db(config_path)
@@ -73,7 +79,10 @@ async def setup_impl(config_path: str) -> None:
     _config, db, pool, _target_svc, svc = await _build(config_path)
     try:
         print("Creating notification bot via BotFather...")
-        bot = await svc.setup_bot()
+        try:
+            bot = await svc.setup_bot()
+        except Exception as exc:
+            cli_error(f"Error creating notification bot: {_reason(exc)}")
         print(f"Bot created: @{bot.bot_username}")
         print("[!] Сохраните токен — он больше не будет показан:")
         print(f"    Token: {bot.bot_token}")
@@ -91,7 +100,10 @@ async def status_impl(config_path: str) -> None:
         if target_status is not None and getattr(target_status, "state", None) != "available":
             _print_target_status(target_status)
             return
-        bot = await svc.get_status()
+        try:
+            bot = await svc.get_status()
+        except Exception as exc:
+            cli_error(f"Error reading notification bot status: {_reason(exc)}")
         if bot is None:
             print("No notification bot configured.")
         else:
@@ -108,8 +120,16 @@ async def delete_impl(config_path: str) -> None:
     _config, db, pool, _target_svc, svc = await _build(config_path)
     try:
         print("Deleting notification bot via BotFather...")
-        await svc.teardown_bot()
-        print("Notification bot deleted.")
+        try:
+            deleted_now = await svc.teardown_bot()
+        except Exception as exc:
+            cli_error(f"Error deleting notification bot: {_reason(exc)}")
+        if deleted_now:
+            print("Notification bot deleted.")
+        else:
+            # A bot Telegram no longer has (deleted by hand, or left behind by a
+            # test) leaves only its record, which teardown removed.
+            print("Notification bot no longer existed in Telegram; local record removed.")
     finally:
         await pool.disconnect_all()
         await db.close()
@@ -119,7 +139,10 @@ async def test_impl(config_path: str, *, message: str = "Тестовое уве
     """Send a test notification message."""
     _config, db, pool, _target_svc, svc = await _build(config_path)
     try:
-        await svc.send_notification(message)
+        try:
+            await svc.send_notification(message)
+        except Exception as exc:
+            cli_error(f"Error sending test notification: {_reason(exc)}")
         print("Test notification sent.")
     finally:
         await pool.disconnect_all()

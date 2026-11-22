@@ -1,9 +1,13 @@
 import asyncio
+from datetime import datetime, timezone
 
 import pytest
+from telethon import functions, types
 
+from tests.test_relay import PHONE, FakeOwnerClient, _client, running
 from tg_agent.models import ContentPipeline, GenerationRun, PipelinePublishMode, PipelineTarget
 from tg_agent.services.publish_service import PublishService
+from tg_agent.telegram.relay import RelayDeliveryUnconfirmedError
 
 
 class FakeDB:
@@ -152,6 +156,86 @@ def make_pipeline(**overrides):
     }
     defaults.update(overrides)
     return ContentPipeline(**defaults)
+
+
+@pytest.mark.aiosqlite_serial
+@pytest.mark.parametrize("reply_lost", [True, False], ids=["after-send", "before-send"])
+async def test_publish_retry_preserves_delivery_state_when_relay_disconnects(db, reply_lost):
+    class RelayPool(FakeClientPool):
+        async def resolve_dialog_entity(self, session, phone, dialog_id, dialog_type):
+            return types.InputPeerUser(dialog_id, 1)
+
+    first_send = asyncio.Event()
+
+    async def answer(request):
+        assert isinstance(request, functions.messages.SendMessageRequest)
+        if reply_lost and not first_send.is_set():
+            first_send.set()
+            await asyncio.Future()
+        return types.UpdateShortSentMessage(id=88, pts=1, pts_count=1, date=datetime.now(timezone.utc), out=True)
+
+    owner = FakeOwnerClient(answer)
+    pool = RelayPool()
+    service = PublishService(db, pool)
+    pipeline = make_pipeline()
+    pipeline.id = await db.repos.content_pipelines.add(
+        pipeline, [], [PipelineTarget(pipeline_id=0, phone=PHONE, dialog_id=42, dialog_type="user")]
+    )
+    runs = db.repos.generation_runs
+    run_id = await runs.create_run(pipeline.id, "offline prompt")
+    await db.execute_write(
+        "UPDATE generation_runs SET status='completed', moderation_status='approved', generated_text=? WHERE id=?",
+        ("offline publication", run_id),
+    )
+    run = await runs.get(run_id)
+    assert run is not None
+
+    async with running({PHONE: owner}) as (server, connection):
+        pool._clients[PHONE] = await _client(connection)
+        if reply_lost:
+            pending = asyncio.create_task(service.publish_run(run, pipeline))
+            try:
+                async with asyncio.timeout(5):
+                    await first_send.wait()
+                await server.stop()
+                first = await asyncio.wait_for(pending, timeout=5)
+            finally:
+                if not pending.done():
+                    pending.cancel()
+                    await asyncio.gather(pending, return_exceptions=True)
+        else:
+            await connection.close()
+            first = await service.publish_run(run, pipeline)
+    saved = await runs.get(run_id)
+    assert saved is not None
+
+    async with running({PHONE: owner}) as (_, connection):
+        pool._clients[PHONE] = await _client(connection)
+        retry = await service.publish_run(run, pipeline)
+
+    assert len(owner.calls) == 1
+    assert first[0].uncertain is reply_lost
+    assert (saved.metadata or {}).get("unconfirmed_targets", []) == ([f"{PHONE}:42"] if reply_lost else [])
+    assert retry[0].success is not reply_lost
+
+
+@pytest.mark.anyio
+async def test_publish_keeps_claim_when_lost_reply_cannot_be_recorded(monkeypatch):
+    from tg_agent.services.publish_service import _PublishUncertaintyPersistenceError
+
+    async def lost_reply(*args, **kwargs):
+        raise RelayDeliveryUnconfirmedError("offline relay disconnected")
+
+    monkeypatch.setattr(FakeClient, "send_message", lost_reply)
+    db = FakeDB(fail_set_metadata_after=0)
+    db.repos.content_pipelines.set_targets([PipelineTarget(pipeline_id=1, phone=PHONE, dialog_id=42)])
+    run = GenerationRun(id=1, pipeline_id=1, generated_text="offline", moderation_status="approved",
+                        status="completed")
+
+    with pytest.raises(_PublishUncertaintyPersistenceError, match="Could not persist uncertain send"):
+        await PublishService(db, FakeClientPool()).publish_run(run, make_pipeline())
+
+    assert db.repos.generation_runs.release_calls == []
 
 
 @pytest.mark.anyio

@@ -4,6 +4,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+import typer
+
 from tests.helpers import cli_ns, fake_asyncio_run, make_cli_db
 from tg_agent.cli.commands.notification import run
 
@@ -165,6 +168,72 @@ def test_delete(capsys):
          patch("asyncio.run", fake_asyncio_run):
         run(_args(notification_action="delete"))
     assert "deleted" in capsys.readouterr().out.lower()
+
+
+def _run_with(mock_svc, **args):
+    """Run one notification command against *mock_svc*; returns the pool it closed."""
+    pool = _make_pool()
+    with patch("tg_agent.cli.commands.notification.runtime.init_db",
+               AsyncMock(return_value=(make_notification_config(), make_cli_db()))), \
+         patch("tg_agent.cli.commands.notification.runtime.init_pool", AsyncMock(return_value=(MagicMock(), pool))), \
+         patch("tg_agent.cli.commands.notification.NotificationService", return_value=mock_svc), \
+         patch("tg_agent.cli.commands.notification.NotificationTargetService", return_value=MagicMock()), \
+         patch("asyncio.run", fake_asyncio_run):
+        try:
+            run(_args(**args))
+        finally:
+            assert pool.disconnect_all.await_count == 1
+    return pool
+
+
+@pytest.mark.parametrize(
+    ("deleted_now", "line"),
+    [
+        (True, "Notification bot deleted."),
+        (False, "Notification bot no longer existed in Telegram; local record removed."),
+    ],
+    ids=["deleted-now", "already-gone"],
+)
+def test_delete_says_whether_botfather_deleted_the_bot(deleted_now, line, capsys):
+    """A bot Telegram no longer had is not reported as deleted: only its record went."""
+    mock_svc = MagicMock()
+    mock_svc.teardown_bot = AsyncMock(return_value=deleted_now)
+
+    _run_with(mock_svc, notification_action="delete")
+
+    out = capsys.readouterr().out.splitlines()
+    assert out[-1] == line
+
+
+@pytest.mark.parametrize(
+    ("action", "method", "label"),
+    [
+        ("setup", "setup_bot", "Error creating notification bot"),
+        ("status", "get_status", "Error reading notification bot status"),
+        ("delete", "teardown_bot", "Error deleting notification bot"),
+        ("test", "send_notification", "Error sending test notification"),
+    ],
+)
+def test_a_failed_command_prints_one_line_and_exits_1(action, method, label, capsys):
+    """Errors are one line on stderr with exit 1, not a Python traceback (#1486)."""
+    mock_svc = MagicMock()
+    setattr(mock_svc, method, AsyncMock(side_effect=RuntimeError("BotFather did not answer")))
+
+    with pytest.raises(typer.Exit) as exc_info:
+        _run_with(mock_svc, notification_action=action, message="hi")
+
+    assert exc_info.value.exit_code == 1
+    assert capsys.readouterr().err == f"{label}: BotFather did not answer\n"
+
+
+def test_a_failure_without_a_message_is_named_by_its_type(capsys):
+    mock_svc = MagicMock()
+    mock_svc.teardown_bot = AsyncMock(side_effect=TimeoutError())
+
+    with pytest.raises(typer.Exit):
+        _run_with(mock_svc, notification_action="delete")
+
+    assert capsys.readouterr().err == "Error deleting notification bot: TimeoutError\n"
 
 
 # ---------------------------------------------------------------------------

@@ -149,10 +149,7 @@ jobs:
         uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: moderate
-          # The former GHSA-xcq7-p3pf-p88h waiver (otel tracestate parsing) is
-          # gone: google-adk 2.14.0 lifted its opentelemetry-api/sdk cap from
-          # <=1.44 to <=1.45.2, the lock took 1.45.2 (>= first_patched 1.45.1),
-          # and the gate is back to full blocking with no allow-list.
+          # No advisory waivers: the gate is fully blocking with no allow-list.
 
   # Lint is its own job (#1097 §5) so a style slip reds CI in seconds, in
   # parallel with the slower static-checks and tests jobs — no waiting on pytest

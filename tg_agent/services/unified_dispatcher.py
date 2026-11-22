@@ -10,6 +10,7 @@ from tg_agent.database.bundles import ChannelBundle, PipelineBundle, SearchQuery
 from tg_agent.database.repositories.collection_tasks import CollectionTasksRepository
 from tg_agent.live_runtime_pause import LiveRuntimePauseGate
 from tg_agent.models import CollectionTask, CollectionTaskStatus, CollectionTaskType
+from tg_agent.runtime import wake
 from tg_agent.services.task_handlers import (
     ContentTaskHandler,
     ExportTaskHandler,
@@ -189,6 +190,15 @@ class UnifiedDispatcher:
     async def _run_loop(self) -> None:
         idle_interval = self._poll_interval_sec
         active_interval = max(1.0, self._poll_interval_sec / 5)
+        woken = wake.subscribe(wake.TASKS)
+        try:
+            await self._run_loop_until_stopped(woken, idle_interval, active_interval)
+        finally:
+            wake.unsubscribe(wake.TASKS, woken)
+
+    async def _run_loop_until_stopped(
+        self, woken: asyncio.Event, idle_interval: float, active_interval: float
+    ) -> None:
         current_interval = idle_interval
 
         while not self._stop_event.is_set():
@@ -200,12 +210,13 @@ class UnifiedDispatcher:
                     )
                     if not resumed:
                         break
+                woken.clear()  # a notify from here on wakes the idle wait below
                 task = await self._tasks.claim_next_due_generic_task(
                     datetime.now(timezone.utc), HANDLED_TYPES
                 )
                 if task is None:
                     current_interval = idle_interval
-                    await asyncio.sleep(current_interval)
+                    await wake.wait(woken, current_interval)
                     continue
 
                 current_interval = active_interval
