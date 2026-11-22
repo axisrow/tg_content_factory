@@ -20,7 +20,7 @@ from tg_agent.telegram.collector_types import (
 from tg_agent.telegram.flood_scope import COLLECTION_ALLOWED_FAMILIES
 
 if TYPE_CHECKING:
-    from typing import Any, Protocol, TypeAlias
+    from typing import Any, Protocol, TypeAlias, cast
 
     from tg_agent.telegram.collector import Collector as _RuntimeCollector
 
@@ -97,7 +97,7 @@ class CancellationMixin:
             result = getter()
             if isawaitable(result):
                 result = await result
-            return result
+            return cast("datetime | None", result)
         return self._pool.get_resolve_username_backoff_until()
 
     async def get_collection_availability(self: "Collector"):
