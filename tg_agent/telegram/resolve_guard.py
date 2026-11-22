@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
+from telethon import utils
+from telethon.errors import FloodWaitError
 from telethon_floodgate import (
     GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC,
     HandledFloodWaitError,
@@ -14,6 +17,8 @@ from telethon_floodgate import (
     UsernameResolveRateLimitedError,
     run_with_flood_wait,
 )
+
+from tg_agent.utils.safe_logging import elapsed_ms, mask_phone
 
 if TYPE_CHECKING:
     from typing import Protocol
@@ -86,6 +91,25 @@ def parse_resolve_backoff_setting(
         if until > now:
             result[str(phone)] = until
     return result
+
+
+def lookup_peer(answer: object) -> str:
+    """A username lookup's answer as the log names it: ``peer <id>`` (#1877)."""
+    try:  # an InputPeer, an entity or a contacts.ResolvedPeer
+        return f"peer {utils.get_peer_id(cast(Any, answer), add_mark=False)}"
+    except Exception:  # an answer of another shape, e.g. a test double
+        return f"peer {type(answer).__name__}"
+
+
+def lookup_failure(exc: BaseException) -> str:
+    """A failed username lookup as the log names it (#1877)."""
+    if isinstance(exc, TelegramRateLimitedError):
+        return f"refused by {getattr(exc, 'budget', None) or exc.category}, retry {exc.retry_after_sec:.0f}s"
+    if isinstance(exc, HandledFloodWaitError):
+        return f"FloodWait {exc.info.wait_seconds}s"
+    if isinstance(exc, FloodWaitError):
+        return f"FloodWait {exc.seconds}s"
+    return f"error {type(exc).__name__}"
 
 
 class ResolveGuardMixin:
@@ -443,8 +467,41 @@ class ResolveGuardMixin:
         operation: str,
         logger_: logging.Logger | None = None,
         timeout: float | None = 30.0,
+        channel_id: int | None = None,
     ) -> object:
-        """Run a live username resolve behind the shared FloodWait guard."""
+        """Run a live username resolve behind the shared FloodWait guard.
+
+        Every attempt leaves one INFO line — username, channel, account, outcome
+        and duration (#1877); a successful lookup used to leave none.
+        """
+        started = time.monotonic()
+        outcome = "cancelled"
+        try:
+            answer = await self._guarded_username_resolve(
+                awaitable_factory, phone=phone, username=username, operation=operation,
+                logger_=logger_, timeout=timeout,
+            )
+            outcome = lookup_peer(answer)
+            return answer
+        except Exception as exc:
+            outcome = lookup_failure(exc)
+            raise
+        finally:
+            (logger_ or logger).info(
+                "%s @%s channel=%s account=%s: %s in %dms",
+                operation, username, channel_id or "-", mask_phone(phone), outcome, elapsed_ms(started),
+            )
+
+    async def _guarded_username_resolve(
+        self,
+        awaitable_factory: Callable[[], Awaitable[object]],
+        *,
+        phone: str,
+        username: str,
+        operation: str,
+        logger_: logging.Logger | None,
+        timeout: float | None,
+    ) -> object:
         guarded = getattr(self, "_rpc_guard_enabled", False) is True
         retry_after = 0.0 if guarded else self.reserve_resolve_username_call(phone)
         if retry_after > 0:

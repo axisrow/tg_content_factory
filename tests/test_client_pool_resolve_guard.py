@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
+import re
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodWaitError, UsernameNotOccupiedError
+from telethon.tl import types
 from telethon_floodgate import (
     HandledFloodWaitError,
     ResolveRateLimiter,
@@ -142,6 +146,44 @@ async def test_other_deferrals_pass_through_the_username_resolve():
             refused, phone="+7001", username="busy", operation="test_live_username_resolve"
         )
     assert pool.get_resolve_username_backoff_remaining_sec("+7001") == 0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [
+        (types.InputPeerChannel(channel_id=1000, access_hash=5), "peer 1000"),
+        (TelegramRpcDeferredError("gw", "rpc_resolve", 42.0, "ResolveUsernameRequest",
+                                  category="resolve", budget="resolve_username"),
+         "refused by resolve_username, retry 42s"),
+        (FloodWaitError(request=None, capture=30), "FloodWait 30s"),
+        (UsernameNotOccupiedError(request=None), "error UsernameNotOccupiedError"),
+    ],
+)
+async def test_every_live_username_resolve_leaves_one_log_line(caplog, outcome, expected):
+    """#1877: a lookup used to leave no trace when it succeeded. Each one now writes
+    a single INFO line with the username, channel, account, outcome and duration."""
+    phone = "+79990001122"
+    pool = _make_pool(clients={phone: object()})
+    pool._rpc_guard_enabled = True
+
+    async def lookup():
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    caplog.set_level(logging.INFO, logger="tg_agent.telegram.resolve_guard")
+    with contextlib.suppress(Exception):
+        await pool.run_live_username_resolve(
+            lookup, phone=phone, username="somechan", operation="resolve_username", channel_id=1000
+        )
+
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("resolve_username @")]
+    assert len(lines) == 1, lines
+    assert re.fullmatch(
+        rf"resolve_username @somechan channel=1000 account=\+79\.\.\.1122: {re.escape(expected)} in \d+ms",
+        lines[0],
+    ), lines[0]
 
 
 @pytest.mark.anyio

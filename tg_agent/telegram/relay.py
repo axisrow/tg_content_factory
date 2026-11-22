@@ -28,6 +28,7 @@ import os
 import secrets
 import socket
 import sys
+import time
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,8 @@ from telethon.tl.alltlobjects import LAYER
 from telethon.tl.tlobject import TLRequest
 from telethon_floodgate import TelegramRateLimitedError, TelegramRpcDeferredError
 
+from tg_agent.telegram.resolve_guard import lookup_failure, lookup_peer
+from tg_agent.utils.safe_logging import elapsed_ms, mask_phone
 from tg_shared.sessions import FreshEntityStringSession
 
 logger = logging.getLogger(__name__)
@@ -312,17 +315,21 @@ def _read_raw(reader: BinaryReader) -> bytes:
     return reader.read()
 
 
-async def _remember_entities(client: Any, read_result: Callable[[BinaryReader], Any], raw: bytes) -> None:
+async def _remember_entities(client: Any, read_result: Callable[[BinaryReader], Any], raw: bytes) -> Any:
     """Cache the answer's users and chats on the owner, as Telethon does after a local call.
 
     The owner's client saw only raw bytes, and every relayed lease seeds its cache
     from the owner's: without this each lease resolves the same peers again.
+    Returns the parsed answer, or None when it does not parse.
     """
+    answer = None
     try:
         with BinaryReader(raw) as reader:
-            await utils.maybe_async(client.session.process_entities(read_result(reader)))
+            answer = read_result(reader)
+        await utils.maybe_async(client.session.process_entities(answer))
     except Exception:  # the client parses the same bytes and reports a failure itself
         logger.debug("relay: the owner could not cache an answer's entities", exc_info=True)
+    return answer
 
 
 def decode_request(body: str) -> TLRequest:
@@ -333,8 +340,11 @@ def decode_request(body: str) -> TLRequest:
     return request
 
 
-def check_allowed(request: TLRequest) -> None:
-    """Refuse what must not run on the owner's authorization, wrapped or not."""
+def check_allowed(request: TLRequest) -> TLRequest:
+    """Refuse what must not run on the owner's authorization, wrapped or not.
+
+    Returns the innermost request, the one Telegram actually runs.
+    """
     current = request
     depth = 0
     while isinstance(query := getattr(current, "query", None), TLRequest):
@@ -350,6 +360,7 @@ def check_allowed(request: TLRequest) -> None:
         raise RelayForbiddenError(
             f"{type(current).__name__} is refused through the session owner relay"
         )
+    return current
 
 
 def entity_rows(session: Any) -> list[list]:
@@ -518,11 +529,33 @@ class RelayServer:
 
     async def _invoke(self, grant: Any, message: dict) -> str:
         request = decode_request(str(message.get("body") or ""))
-        check_allowed(request)
-        client = await self._owner.client(grant, str(message.get("phone") or ""))
+        leaf = check_allowed(request)
+        phone = str(message.get("phone") or "")
+        client = await self._owner.client(grant, phone)
+        if not isinstance(leaf, functions.contacts.ResolveUsernameRequest):
+            return (await self._call_owner(client, request, message.get("dc")))[0]
+        # One line per username lookup the owner runs (#1877); the relayed client
+        # writes its own, so the two logs match one to one.
+        started = time.monotonic()
+        outcome = "cancelled"
+        try:
+            encoded, answer = await self._call_owner(client, request, message.get("dc"))
+            outcome = lookup_peer(answer)
+            return encoded
+        except Exception as exc:
+            outcome = lookup_failure(exc)
+            raise
+        finally:
+            logger.info(
+                "relay: ResolveUsername @%s account=%s: %s in %dms",
+                leaf.username, mask_phone(phone), outcome, elapsed_ms(started),
+            )
+
+    @staticmethod
+    async def _call_owner(client: Any, request: TLRequest, dc_id: Any) -> tuple[str, Any]:
+        """Run ``request`` on the owner's connection: the answer in base64, and parsed."""
         read_result = request.read_result
         request.read_result = _read_raw  # the client parses the answer itself
-        dc_id = message.get("dc")
         home = getattr(getattr(client, "session", None), "dc_id", None)
         if dc_id and dc_id != home:
             sender = await client._borrow_exported_sender(int(dc_id))
@@ -534,8 +567,8 @@ class RelayServer:
             raw = await client(request)
         if not isinstance(raw, (bytes, bytearray)):
             raise RelayError(f"the owner returned a parsed {type(raw).__name__}, not raw bytes")
-        await _remember_entities(client, read_result, bytes(raw))
-        return base64.b64encode(bytes(raw)).decode("ascii")
+        answer = await _remember_entities(client, read_result, bytes(raw))
+        return base64.b64encode(bytes(raw)).decode("ascii"), answer
 
     # BotFather setup is a conversation: it waits for replies, which Telegram
     # pushes as updates to the session owner only. The owner runs the flow on its

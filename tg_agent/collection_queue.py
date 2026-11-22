@@ -552,7 +552,9 @@ class CollectionQueue:
                 if not failure.keep_known_task_id:
                     self._known_task_ids.discard(task_id)
                 self._queue.task_done()
-                await self._log_progress()
+                if not failure.keep_known_task_id:
+                    # A kept task is still pending: the count did not move (#1877).
+                    await self._log_progress()
                 if failure.stop_after_no_clients:
                     self._stop_workers = True
                     should_stop_workers = True

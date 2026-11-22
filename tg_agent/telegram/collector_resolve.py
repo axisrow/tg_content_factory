@@ -151,7 +151,7 @@ class ResolveOutcome:
     outer handler from streaming — exactly as in the pre-extraction code.
     """
 
-    __slots__ = ("entity", "action", "channel", "flood_wait_sec", "flood_wait_operation")
+    __slots__ = ("entity", "action", "channel", "flood_wait_sec", "flood_wait_operation", "source")
 
     def __init__(
         self,
@@ -161,12 +161,15 @@ class ResolveOutcome:
         channel: "Channel | None" = None,
         flood_wait_sec: int | None = None,
         flood_wait_operation: str | None = None,
+        source: str | None = None,
     ) -> None:
         self.entity = entity
         self.action = action
         self.channel = channel
         self.flood_wait_sec = flood_wait_sec
         self.flood_wait_operation = flood_wait_operation
+        # Where a username channel's key came from: cache:id / cache:username / live (#1877).
+        self.source = source
 
 
 async def _fall_back_to_the_id(
@@ -235,7 +238,7 @@ async def _resolve_by_username(
     """
     assert channel.username is not None
     try:
-        entity = await collector._resolve_channel_input_entity(
+        entity, source = await collector._resolve_channel_input_entity(
             session,
             channel_id=channel_id,
             username=channel.username,
@@ -259,7 +262,8 @@ async def _resolve_by_username(
         # account is blocked (#790). The outer finally releases the client.
         attempted_resolve_phones.add(phone)
         if await collector._can_rotate_resolve(attempted_resolve_phones):
-            logger.warning(
+            # INFO (#1877): rotating past a spent budget is the designed path.
+            logger.info(
                 "Channel %d (%s): live resolve unavailable on %s; "
                 "rotating to another account",
                 channel_id,
@@ -318,7 +322,7 @@ async def _resolve_by_username(
         )
     if channel.id and channel.review_reason in TRANSIENT_REVIEW_REASONS:
         await collector._db.repos.channels.clear_channel_review(channel.id)
-    return ResolveOutcome(entity=entity)
+    return ResolveOutcome(entity=entity, source=source)
 
 
 async def _resolve_by_numeric(

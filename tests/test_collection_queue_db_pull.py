@@ -12,6 +12,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, cast
+from unittest.mock import AsyncMock
 
 import pytest
 from telethon.errors import (
@@ -557,6 +558,30 @@ async def test_relayed_username_budget_refusal_names_the_username_limit(tmp_path
         assert "gate" not in (task.note or "")
         assert "resolve_username rate-limited on" in caplog.text
         assert "gate resolve" not in caplog.text
+    finally:
+        if queue is not None:
+            await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_a_deferred_task_writes_no_progress_line(tmp_path, monkeypatch):
+    """#1877: a deferred task is still pending, so the count did not move; the
+    progress line after every deferral only repeated the same number."""
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await _seed_channel(db)
+        queue = _make_queue(_UsernameResolveRateLimitedCollector(), db)
+        progress = AsyncMock()
+        monkeypatch.setattr(queue, "_log_progress", progress)
+        channel = (await db.get_channels(active_only=True))[0]
+        await queue.enqueue(channel)
+
+        await asyncio.wait_for(queue._queue.join(), timeout=2.0)
+
+        progress.assert_not_awaited()
     finally:
         if queue is not None:
             await queue.shutdown()

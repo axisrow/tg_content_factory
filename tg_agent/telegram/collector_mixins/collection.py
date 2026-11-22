@@ -255,9 +255,11 @@ class CollectionMixin:
         username: str,
         phone: str,
         cache_only: bool = False,
-    ):
+    ) -> tuple[object, str]:
+        """The channel's InputPeer and where its key came from (#1877):
+        ``cache:id``, ``cache:username`` or ``live``."""
         try:
-            return await session.resolve_cached_input_entity(PeerChannel(channel_id))
+            return await session.resolve_cached_input_entity(PeerChannel(channel_id)), "cache:id"
         except (AttributeError, ValueError, TypeError):
             pass
 
@@ -266,7 +268,7 @@ class CollectionMixin:
         except (AttributeError, ValueError, TypeError):
             cached = None
         if cached is not None and getattr(cached, "channel_id", None) == channel_id:
-            return cached
+            return cached, "cache:username"
 
         if cache_only:
             # Resolve backoff on this account (#552/#790): the cache missed and
@@ -297,14 +299,16 @@ class CollectionMixin:
         # enforces the per-account budget and the global FloodWait backoff, so
         # a burned window defers the channel instead of firing the call that
         # would trigger a multi-hour flood wait.
-        return await self._pool.run_live_username_resolve(
+        entity = await self._pool.run_live_username_resolve(
             lambda: live_input_resolver(username),
             phone=phone,
             username=username,
             operation=RESOLVE_USERNAME_OPERATION,
             logger_=logger,
             timeout=30.0,
+            channel_id=channel_id,
         )
+        return entity, "live"
 
     async def collect_single_channel(
         self: "Collector",
@@ -491,7 +495,9 @@ class CollectionMixin:
             )
             if backoff_remaining_sec > 0:
                 resolve_cache_only = True
-                logger.warning(
+                # DEBUG (#1877): most channels collect from a cached key; the
+                # ones that cannot are logged where they rotate or defer.
+                logger.debug(
                     "Channel %d (%s): %s backoff active on %s for %ss — "
                     "cache-only resolve",
                     channel_id,
@@ -837,10 +843,6 @@ class CollectionMixin:
             )
             flush_batch = partial(self._flush_collection_batch, state)
             limit = None
-            logger.info(
-                "Collecting channel %d (%s), first_run=%s, min_id=%d, limit=%s, account=%s",
-                channel_id, state.channel_log_name, is_first_run, min_id, limit, mask_phone(phone),
-            )
 
             try:
                 outcome = await self._resolve_channel_entity(
@@ -864,6 +866,13 @@ class CollectionMixin:
                     state.flood_wait_operation = outcome.flood_wait_operation
                 else:
                     entity = outcome.entity
+                    # After the resolve, once per collected channel: key= tells a
+                    # cached access hash from a live lookup (#1877).
+                    logger.info(
+                        "Collecting channel %d (%s), first_run=%s, min_id=%d, limit=%s, account=%s, key=%s",
+                        channel_id, state.channel_log_name, is_first_run, min_id, limit, mask_phone(phone),
+                        outcome.source or "numeric",
+                    )
                     if not await self._apply_pre_collection_filters(
                         channel,
                         channel_id,

@@ -483,6 +483,64 @@ async def test_resolve_channel_entity_rate_limit_rotates(collector):
     assert "+7999" in attempted
 
 
+class _CacheSession:
+    """A session whose cache knows the channel by id, by username, or not at all."""
+
+    def __init__(self, by_id=None, by_username=None):
+        self.by_id, self.by_username = by_id, by_username
+
+    async def resolve_cached_input_entity(self, peer):
+        found = self.by_username if isinstance(peer, str) else self.by_id
+        if found is None:
+            raise ValueError("not cached")
+        return found
+
+    async def get_input_entity(self, peer):  # the live lookup; the pool's guard runs it
+        raise AssertionError("the pool's guard is mocked out")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("by_id", "by_username", "expected"),
+    [
+        ("id-hit", None, "cache:id"),
+        (None, MagicMock(channel_id=123), "cache:username"),
+        (None, None, "live"),
+    ],
+)
+async def test_channel_key_reports_where_it_came_from(collector, mock_pool, by_id, by_username, expected):
+    """#1877: the collect line names the key's source, so a restart that lost the
+    cached keys shows up as live lookups instead of passing unnoticed."""
+    mock_pool.run_live_username_resolve = AsyncMock(return_value="live-hit")
+    session = _CacheSession(by_id, by_username)
+
+    _entity, source = await collector._resolve_channel_input_entity(
+        session, channel_id=123, username="somech", phone="+7999"
+    )
+
+    assert source == expected
+    if expected == "live":
+        call = mock_pool.run_live_username_resolve.await_args
+        assert call is not None and call.kwargs["channel_id"] == 123
+
+
+@pytest.mark.anyio
+async def test_collect_line_carries_the_key_source(collector, caplog):
+    from tg_agent.telegram.collector_resolve import ResolveOutcome
+
+    channel = Channel(id=1, channel_id=123, title="Ch", username="somech")
+    collector._acquire_collection_client = AsyncMock(return_value=(MagicMock(), "+79990001122", False))
+    collector._resolve_channel_entity = AsyncMock(return_value=ResolveOutcome(entity="peer", source="cache:id"))
+    collector._apply_pre_collection_filters = AsyncMock(return_value=False)
+    collector._release_collection_client = AsyncMock()
+    caplog.set_level("INFO", logger="tg_agent.telegram.collector")
+
+    await collector._collect_channel(channel)
+
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Collecting channel")]
+    assert len(lines) == 1 and lines[0].endswith("account=+79...1122, key=cache:id"), lines
+
+
 @pytest.mark.anyio
 async def test_resolve_channel_entity_numeric_rediscover_retry(collector, mock_pool, mock_db):
     """Numeric resolve ValueError → preferred_phone cleared, rediscovered on
