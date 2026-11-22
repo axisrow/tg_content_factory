@@ -26,8 +26,9 @@ classifiers = [
 ]
 dependencies = [
     "telethon>=1.43.2",
-    # Shared two-phase RPC budgets and single-owner flood reporting (#1824/#1828).
-    "telethon-floodgate>=0.1.10,<0.2",
+    # Shared two-phase RPC budgets and single-owner flood reporting (#1824/#1828);
+    # 0.1.11: a restored tightened resolve budget counts the downtime (floodgate #38).
+    "telethon-floodgate>=0.1.11,<0.2",
     # Native client preparation must run before connect/authentication RPCs.
     "tg-shared==0.2.1",
     "telethon-cli>=0.1.1",

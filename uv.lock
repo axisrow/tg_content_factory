@@ -3648,7 +3648,7 @@ resolution-markers = [
     "python_full_version < '3.11.5'",
 ]
 dependencies = [
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8b/04/e7c1fe4dc78a6fdbfd6c337b1c3732ff543b8a397683ab38378447baa331/pyee-13.0.1.tar.gz", hash = "sha256:0b931f7c14535667ed4c7e0d531716368715e860b988770fc7eb8578d1f67fc8", size = 31655, upload-time = "2026-02-14T21:12:28.044Z" }
 wheels = [
@@ -3665,7 +3665,7 @@ resolution-markers = [
     "python_full_version == '3.12.*'",
 ]
 dependencies = [
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "python_full_version >= '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1d/f1/fdedc2c75c3e31a330659c85e5793bb18b3397981fbf0844c6dee5b18926/pyee-14.0.0.tar.gz", hash = "sha256:76dd0f4314ecd27f02dc73589dea7fd3853f9b6176d8ef9b122860657e3602de", size = 98760, upload-time = "2026-08-13T04:26:11.021Z" }
 wheels = [
@@ -4407,7 +4407,7 @@ resolution-markers = [
     "python_full_version < '3.11.5'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" } },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7a/97/5a3609c4f8d58b039179648e62dd220f89864f56f7357f5d4f45c29eb2cc/scipy-1.17.1.tar.gz", hash = "sha256:95d8e012d8cb8816c226aef832200b1d45109ed4464303e997c5b13122b297c0", size = 30573822, upload-time = "2026-02-23T00:26:24.851Z" }
 wheels = [
@@ -4483,7 +4483,7 @@ resolution-markers = [
     "python_full_version == '3.12.*'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" } },
+    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7e/74/66de6258867beb2ef08f35f9f2ac017a52cacd5081714d239ff1a442d458/scipy-1.18.1.tar.gz", hash = "sha256:52c4b7422442aba924d03ad4019852b08a92e64ea187b933135687bfe2747307", size = 30781235, upload-time = "2026-08-21T23:28:50.599Z" }
 wheels = [
@@ -4787,15 +4787,15 @@ wheels = [
 
 [[package]]
 name = "telethon-floodgate"
-version = "0.1.10"
+version = "0.1.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "telethon" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e6/f5/36876d633012d4cdd47b3c7c8d492d681f26c9da85239bb34f4cebc0ce70/telethon_floodgate-0.1.10.tar.gz", hash = "sha256:61244122ded55f0a479f930e15f3f4dadc3eeb9af1880a82c9ab874b2173ad07", size = 105510, upload-time = "2026-11-17T04:05:01.382Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/33/4c/a365fef1d6be20929ef7cc5373f7a7514a56adc22d15b0ecf7508238f4da/telethon_floodgate-0.1.11.tar.gz", hash = "sha256:68fe41d68c1f68337a9616395df42d283f4000eaee70f6347ee17f84c4b6f939", size = 106855, upload-time = "2026-11-22T03:55:42.935Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/db/63/5a427d20d0ce8264a8bdd7a63c8886d9acd2ae7dd7695799b3b75ef3f178/telethon_floodgate-0.1.10-py3-none-any.whl", hash = "sha256:de554256f5913cd65d18c7dc095b2f875946361ca390519a40d01aff0ea2df12", size = 46787, upload-time = "2026-11-17T04:04:59.782Z" },
+    { url = "https://files.pythonhosted.org/packages/62/f7/92ea63c44242b5fca7831154b2dfa9a3f259113deee4e8dc492d187757b7/telethon_floodgate-0.1.11-py3-none-any.whl", hash = "sha256:c6979f9e8b89f3c77b35c7badd596ccf71ba896c2c5ad9ef25e0f6a2e7a7addd", size = 46958, upload-time = "2026-11-22T03:55:39.768Z" },
 ]
 
 [[package]]
@@ -4963,7 +4963,7 @@ requires-dist = [
     { name = "setuptools", marker = "extra == 'dev'", specifier = ">=77.0" },
     { name = "telethon", specifier = ">=1.43.2" },
     { name = "telethon-cli", specifier = ">=0.1.1" },
-    { name = "telethon-floodgate", specifier = ">=0.1.10,<0.2" },
+    { name = "telethon-floodgate", specifier = ">=0.1.11,<0.2" },
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "tg-messenger", specifier = ">=0.1.0" },
     { name = "tg-shared", editable = "packages/tg_shared" },
