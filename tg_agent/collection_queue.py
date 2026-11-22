@@ -1189,6 +1189,14 @@ class CollectionQueue:
                     task.channel_id,
                 )
                 continue
+            # The known-id check above ran before this await; a worker may have
+            # finished the task inside the window (terminal status + dropped
+            # from ``_known_task_ids``). Re-verify at decision time or a
+            # completed run gets collected a second time (CI PR #1885,
+            # test_db_pull_does_not_double_ingest: assert 2 == 1).
+            task_now = await self._channels.get_collection_task(task.id)
+            if task_now is None or task_now.status != CollectionTaskStatus.PENDING:
+                continue
             payload = cast(dict[str, Any], task.payload or {})
             force = bool(payload.get("force", False))
             full = bool(payload.get("full", False))
