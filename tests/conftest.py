@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -459,6 +460,37 @@ def pytest_runtest_setup(item):
         pytest.skip(message)
     if action == "fail":
         pytest.fail(message, pytrace=False)
+
+
+# Served by the module __getattr__ of tg_agent.agent.tools.permissions and
+# rebuilt on every plugin register/close. A real module attribute of the same
+# name shadows __getattr__ for the rest of the process — and monkeypatch.setattr
+# leaves exactly that behind: its undo setattr()s back the getattr() snapshot.
+_LAZY_PERMISSION_ATTRS = ("TOOL_CATEGORIES", "MODULE_GROUPS", "PHONE_BINDED_TOOLS", "TOOL_FLOOD_CATEGORIES")
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item, nextitem):
+    """Fail the test that leaves a lazy permission attribute pinned.
+
+    Runs after every fixture finalizer, monkeypatch undo included. Unchecked, a
+    pinned snapshot hides plugin tools from whichever later test shares the
+    xdist worker — an order-dependent failure far from its cause. Patch these
+    names with unittest.mock.patch: its undo deletes the attribute again.
+    """
+    yield
+    permissions = sys.modules.get("tg_agent.agent.tools.permissions")
+    if permissions is None:
+        return
+    pinned = [name for name in _LAZY_PERMISSION_ATTRS if name in vars(permissions)]
+    for name in pinned:
+        delattr(permissions, name)  # keep later tests clean; this one still fails
+    if pinned:
+        pytest.fail(
+            f"left {pinned} pinned on tg_agent.agent.tools.permissions — patch them with "
+            "unittest.mock.patch, not monkeypatch.setattr",
+            pytrace=False,
+        )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

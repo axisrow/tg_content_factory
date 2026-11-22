@@ -10,7 +10,7 @@ pool's flood reporters.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from claude_agent_sdk import SdkMcpTool
@@ -103,12 +103,18 @@ def _wrapped(calls, *, name="send_message", pool=None, db=None, **tool_kwargs):
 
 
 @pytest.fixture(autouse=True)
-def _phone_bound_tools(monkeypatch):
-    """Treat the spec's tool names as phone-bound regardless of the real registry."""
-    monkeypatch.setattr(
+def _phone_bound_tools():
+    """Treat the spec's tool names as phone-bound regardless of the real registry.
+
+    mock.patch, not monkeypatch.setattr: PHONE_BINDED_TOOLS is served by the
+    permissions module __getattr__, and monkeypatch's undo would pin the
+    current snapshot as a real attribute for every later test in the worker.
+    """
+    with patch(
         "tg_agent.agent.tools.permissions.PHONE_BINDED_TOOLS",
         frozenset({"send_message", "create_telegram_channel", "mark_read"}),
-    )
+    ):
+        yield
 
 
 async def test_gate_allow_runs_the_tool():
@@ -294,13 +300,9 @@ async def test_result_quoting_flood_text_does_not_wedge_the_trial():
     assert len(calls) == 2
 
 
-async def test_non_phone_bound_tool_skips_the_boundary(monkeypatch):
+async def test_non_phone_bound_tool_skips_the_boundary():
     calls = []
     gate = _FakeGate()
-    monkeypatch.setattr(
-        "tg_agent.agent.tools.permissions.PHONE_BINDED_TOOLS",
-        frozenset({"send_message"}),
-    )
     wrapped = _wrapped(calls, name="list_pipelines", pool=_pool(gate=gate))
     await wrapped.handler({})
 
