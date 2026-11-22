@@ -327,7 +327,39 @@ async def test_pending_task_without_payload_defaults_to_incremental(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_resolve_backoff_delayed_requeue_preserves_payload_flags(tmp_path, monkeypatch):
+async def test_username_task_is_taken_in_during_a_resolve_backoff(tmp_path, monkeypatch):
+    """#1877: a resolve backoff no longer holds username tasks at the door. Most of them
+    collect from cached access hashes; one that needs a live lookup is deferred by the
+    collector's own refusal, not by a blanket gate that never tried the cache."""
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await db.add_channel(
+            Channel(channel_id=-1001, title="t", username="named_channel", is_active=True)
+        )
+        task_id = await db.repos.tasks.create_collection_task_if_not_active(
+            -1001, "t", channel_username="named_channel", payload=None
+        )
+        collector = _FakeCollector()
+        collector._pool = _ResolveBackoffPool(remaining_sec=60)
+        queue = _make_queue(collector, db)
+        queue._ensure_worker = lambda: None
+        scheduled: list[dict] = []
+        monkeypatch.setattr(queue, "_schedule_requeue_after_delay", lambda **kwargs: scheduled.append(kwargs))
+
+        assert await queue._ingest_pending_tasks() == 1
+
+        assert scheduled == []
+        assert queue._queue.get_nowait()[0] == task_id
+    finally:
+        if queue is not None:
+            await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_delayed_requeue_preserves_payload_flags(tmp_path, monkeypatch):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
     queue: CollectionQueue | None = None
@@ -341,8 +373,10 @@ async def test_resolve_backoff_delayed_requeue_preserves_payload_flags(tmp_path,
             channel_username="named_channel",
             payload={"force": True, "full": True},
         )
+        assert task_id is not None
+        run_after = datetime.now(timezone.utc) + timedelta(minutes=5)
+        await db.repos.tasks.reschedule_collection_task(task_id, run_after=run_after)
         collector = _FakeCollector()
-        collector._pool = _ResolveBackoffPool(remaining_sec=60)
         queue = _make_queue(collector, db)
         queue._ensure_worker = lambda: None
 

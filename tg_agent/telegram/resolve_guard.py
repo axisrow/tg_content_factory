@@ -10,6 +10,7 @@ from telethon_floodgate import (
     GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC,
     HandledFloodWaitError,
     ResolveRateLimiter,
+    TelegramRateLimitedError,
     UsernameResolveRateLimitedError,
     run_with_flood_wait,
 )
@@ -146,6 +147,28 @@ class ResolveGuardMixin:
             del backoff[phone]
         return backoff
 
+    def note_resolve_refusal(self, phone: str, retry_after_sec: float) -> None:
+        """Keep ``phone`` off live resolves until a budget refusal expires (#1877).
+
+        Memory only, unlike a flood backoff: a refusal is the limiter doing its
+        job, so it earns no ramp-up, no warning and no persisted deadline.
+        """
+        until = datetime.now(timezone.utc) + timedelta(seconds=max(0.0, retry_after_sec))
+        refused = self._resolve_guard_dict("_resolve_username_refused_until_utc")
+        refused[str(phone)] = max(refused.get(str(phone), until), until)
+
+    def _effective_resolve_backoff(self) -> dict[str, datetime]:
+        """Flood backoff merged with live budget refusals: the later deadline wins."""
+        merged = dict(self._prune_resolve_backoff())
+        now = datetime.now(timezone.utc)
+        refused = self._resolve_guard_dict("_resolve_username_refused_until_utc")
+        for phone, until in list(refused.items()):
+            if until <= now:
+                del refused[phone]
+            elif phone not in merged or until > merged[phone]:
+                merged[phone] = until
+        return merged
+
     def get_resolve_username_backoff_remaining_sec(self, phone: str | None = None) -> int:
         """Remaining live-resolve backoff seconds.
 
@@ -154,7 +177,7 @@ class ResolveGuardMixin:
         free, otherwise the smallest remaining window (the moment the first
         account becomes usable again).
         """
-        backoff = self._prune_resolve_backoff()
+        backoff = self._effective_resolve_backoff()
         now = datetime.now(timezone.utc)
         if phone is not None:
             until = backoff.get(str(phone))
@@ -174,7 +197,7 @@ class ResolveGuardMixin:
 
     def get_resolve_username_backoff_until(self, phone: str | None = None) -> datetime | None:
         """Backoff deadline — per-phone, or the aggregate min across the pool."""
-        backoff = self._prune_resolve_backoff()
+        backoff = self._effective_resolve_backoff()
         if phone is not None:
             return backoff.get(str(phone))
         if not backoff:
@@ -474,3 +497,11 @@ class ResolveGuardMixin:
                     tightened,
                 )
             raise
+        except TelegramRateLimitedError as exc:
+            # A username-budget refusal — this client's own guard or the session
+            # owner's, which names its own account key (#1877) — keeps this phone
+            # cache-only until it expires and lets the collector rotate.
+            if exc.category != "resolve":
+                raise
+            self.note_resolve_refusal(phone, exc.retry_after_sec)
+            raise UsernameResolveRateLimitedError(phone, exc.retry_after_sec) from exc
