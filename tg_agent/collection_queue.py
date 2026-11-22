@@ -842,7 +842,9 @@ class CollectionQueue:
             await self._defer_collection_task(
                 task_id, channel, force=force, full=full, run_after=run_after, note=note
             )
-            logger.warning(
+            # Designed quiet waiting (#1879): one INFO line per task, not a
+            # warning mass — only "no active connected clients" stays loud.
+            logger.info(
                 "Rescheduled collection task %d for channel %d until %s: all clients flooded",
                 task_id,
                 channel.channel_id,
@@ -860,7 +862,7 @@ class CollectionQueue:
             await self._defer_collection_task(
                 task_id, channel, force=force, full=full, run_after=run_after, note=note
             )
-            logger.warning(
+            logger.info(
                 "Rescheduled collection task %d for channel %d until %s: username resolve flood wait",
                 task_id,
                 channel.channel_id,
@@ -876,7 +878,7 @@ class CollectionQueue:
             await self._defer_collection_task(
                 task_id, channel, force=force, full=full, run_after=run_after, note=note
             )
-            logger.warning(
+            logger.info(
                 "Rescheduled collection task %d for channel %d until %s: "
                 "username resolve rate-limited on %s",
                 task_id,
@@ -901,7 +903,7 @@ class CollectionQueue:
             await self._defer_collection_task(
                 task_id, channel, force=force, full=full, run_after=run_after, note=note
             )
-            logger.warning(
+            logger.info(
                 "Rescheduled collection task %d for channel %d until %s: %s rate-limited on %s",
                 task_id,
                 channel.channel_id,

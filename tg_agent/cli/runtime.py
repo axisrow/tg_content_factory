@@ -67,7 +67,10 @@ def setup_logging(log_path: Path | None = None, *, rotate: bool = False) -> None
     for h in root.handlers:
         install_log_redaction(h)
     for h in root.handlers:
-        if isinstance(h, (RotatingFileHandler, WatchedFileHandler)) and getattr(h, "baseFilename", None) == str(log_path):
+        if (
+            isinstance(h, (RotatingFileHandler, WatchedFileHandler))
+            and getattr(h, "baseFilename", None) == str(log_path)
+        ):
             return
     log_path.parent.mkdir(parents=True, exist_ok=True)
     if rotate:

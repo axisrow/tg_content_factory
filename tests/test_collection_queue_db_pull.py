@@ -540,7 +540,8 @@ async def test_relayed_username_budget_refusal_names_the_username_limit(tmp_path
     queue: CollectionQueue | None = None
     try:
         await _seed_channel(db)
-        caplog.set_level(logging.WARNING, logger="tg_agent.collection_queue")
+        # The deferral line is INFO now (#1879): designed quiet waiting.
+        caplog.set_level(logging.INFO, logger="tg_agent.collection_queue")
         queue = _make_queue(_RelayedUsernameBudgetCollector(), db)
         channel = (await db.get_channels(active_only=True))[0]
         task_id = await queue.enqueue(channel)

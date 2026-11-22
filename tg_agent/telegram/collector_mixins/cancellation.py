@@ -200,7 +200,10 @@ class CancellationMixin:
             return
         self._last_unavailability_log = signature
         if state == "all_flooded" and retry_after_sec is not None and next_available_at is not None:
-            logger.error(
+            # Designed quiet waiting (#1879): the pool floods over, the deferral
+            # is the plan. "No active connected clients" below stays loud — it
+            # is the loop signal.
+            logger.info(
                 "No available clients for collection: all active clients are flood-waited until %s "
                 "(retry in %ss)",
                 next_available_at.isoformat(),
