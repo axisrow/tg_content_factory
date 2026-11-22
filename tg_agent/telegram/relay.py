@@ -31,7 +31,7 @@ import sys
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from telethon import TelegramClient, errors, utils
 from telethon.errors import RPCError
@@ -236,7 +236,7 @@ def error_payload(exc: BaseException) -> dict:
         return exc.payload
     if isinstance(exc, (ConnectionError, TimeoutError)):
         return {"kind": "connection", "message": str(exc) or type(exc).__name__}
-    payload = {"kind": "error", "name": type(exc).__name__, "message": str(exc)}
+    payload: dict[str, Any] = {"kind": "error", "name": type(exc).__name__, "message": str(exc)}
     status = getattr(exc, "status", None)
     if isinstance(status, int):
         payload["status"] = status
@@ -337,7 +337,7 @@ def check_allowed(request: TLRequest) -> None:
     """Refuse what must not run on the owner's authorization, wrapped or not."""
     current = request
     depth = 0
-    while isinstance(getattr(current, "query", None), TLRequest):
+    while isinstance(query := getattr(current, "query", None), TLRequest):
         if not isinstance(current, _PASS_THROUGH_WRAPPERS):
             raise RelayForbiddenError(
                 f"{type(current).__name__} would re-initialize the session owner's connection; refused"
@@ -345,7 +345,7 @@ def check_allowed(request: TLRequest) -> None:
         depth += 1
         if depth > _MAX_WRAPPER_DEPTH:
             raise RelayForbiddenError("request wrappers nest too deeply; refused")
-        current = current.query
+        current = query
     if isinstance(current, _FORBIDDEN_REQUESTS) or type(current).__module__.endswith(_FORBIDDEN_MODULE_SUFFIX):
         raise RelayForbiddenError(
             f"{type(current).__name__} is refused through the session owner relay"
@@ -928,7 +928,8 @@ class RelayTelegramClient(TelegramClient):
     async def _return_exported_sender(self, sender: Any) -> None:
         return None
 
-    async def _get_cdn_client(self, _cdn_redirect: Any) -> Any:
+    async def _get_cdn_client(self, cdn_redirect: Any) -> Any:
+        del cdn_redirect  # Telethon's parameter name; the relay serves no CDN
         raise RelayError("CDN file downloads are not available through the session owner relay")
 
     def conversation(self, *args: Any, **kwargs: Any) -> Any:
@@ -956,5 +957,6 @@ class RelayTelegramClient(TelegramClient):
     async def load_owner_entities(self) -> int:
         """Seed the entity cache from the owner's, so cached lookups stay offline."""
         rows = await self._owner_call("entities")
-        self.session.add_entity_rows(rows)
+        # __init__ always installs a FreshEntityStringSession.
+        cast(FreshEntityStringSession, self.session).add_entity_rows(rows)
         return len(rows)
