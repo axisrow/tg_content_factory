@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -93,6 +94,9 @@ PUBLIC_CONTRACT: frozenset[str] = frozenset(
         "resolve_channel",
         "resolve_any_entity",
         "fetch_channel_meta",
+        # channel access keys (EntityStoreMixin, #1877)
+        "persist_session_entities",
+        "restore_session_entities",
     }
 )
 
@@ -251,7 +255,7 @@ async def test_primary_account_sorts_first_in_users_info(real_pool_harness_facto
 # ------------------------------------------------------------------
 
 
-def _lease_stub(phone: str = "+1", shared: bool = False):
+def _lease_stub(phone: str = "+1", shared: bool = False) -> Any:
     return SimpleNamespace(account=SimpleNamespace(phone=phone), shared=shared)
 
 

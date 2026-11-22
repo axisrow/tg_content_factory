@@ -8,9 +8,11 @@ ignored until the next worker restart.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, cast
+from unittest.mock import AsyncMock
 
 import pytest
 from telethon.errors import (
@@ -19,12 +21,13 @@ from telethon.errors import (
     TypeNotFoundError,
     UsernameNotOccupiedError,
 )
-from telethon_floodgate import TelegramRateLimitedError
+from telethon_floodgate import TelegramRateLimitedError, TelegramRpcDeferredError
 
 from tests.helpers import wait_until
 from tg_agent.collection_queue import CollectionQueue
 from tg_agent.database import Database
 from tg_agent.models import Channel
+from tg_agent.telegram import relay
 from tg_agent.telegram.collector import (
     UsernameResolveFloodWaitDeferredError,
     UsernameResolveRateLimitedError,
@@ -116,6 +119,21 @@ class _GateRateLimitedCollector(_FakeCollector):
         self.calls.append(channel.channel_id)
         self.full_calls.append(full)
         raise TelegramRateLimitedError("+7001", "history", 17.0)
+
+
+class _RelayedUsernameBudgetCollector(_FakeCollector):
+    """The owner's RPC boundary refused ResolveUsername on the username budget, over the relay."""
+
+    async def collect_single_channel(
+        self, channel, *, full=False, progress_callback=None, force=False, cancel_event=None
+    ):
+        self.calls.append(channel.channel_id)
+        self.full_calls.append(full)
+        refusal = TelegramRpcDeferredError(
+            "+7001", "rpc_resolve", 17.0, "ResolveUsernameRequest",
+            category="resolve", budget="resolve_username",
+        )
+        raise relay.rebuild_error(json.loads(json.dumps(relay.error_payload(refusal))))
 
 
 class _BlockingCollector:
@@ -310,7 +328,39 @@ async def test_pending_task_without_payload_defaults_to_incremental(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_resolve_backoff_delayed_requeue_preserves_payload_flags(tmp_path, monkeypatch):
+async def test_username_task_is_taken_in_during_a_resolve_backoff(tmp_path, monkeypatch):
+    """#1877: a resolve backoff no longer holds username tasks at the door. Most of them
+    collect from cached access hashes; one that needs a live lookup is deferred by the
+    collector's own refusal, not by a blanket gate that never tried the cache."""
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await db.add_channel(
+            Channel(channel_id=-1001, title="t", username="named_channel", is_active=True)
+        )
+        task_id = await db.repos.tasks.create_collection_task_if_not_active(
+            -1001, "t", channel_username="named_channel", payload=None
+        )
+        collector = _FakeCollector()
+        collector._pool = _ResolveBackoffPool(remaining_sec=60)
+        queue = _make_queue(collector, db)
+        queue._ensure_worker = lambda: None
+        scheduled: list[dict] = []
+        monkeypatch.setattr(queue, "_schedule_requeue_after_delay", lambda **kwargs: scheduled.append(kwargs))
+
+        assert await queue._ingest_pending_tasks() == 1
+
+        assert scheduled == []
+        assert queue._queue.get_nowait()[0] == task_id
+    finally:
+        if queue is not None:
+            await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_delayed_requeue_preserves_payload_flags(tmp_path, monkeypatch):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
     queue: CollectionQueue | None = None
@@ -324,8 +374,10 @@ async def test_resolve_backoff_delayed_requeue_preserves_payload_flags(tmp_path,
             channel_username="named_channel",
             payload={"force": True, "full": True},
         )
+        assert task_id is not None
+        run_after = datetime.now(timezone.utc) + timedelta(minutes=5)
+        await db.repos.tasks.reschedule_collection_task(task_id, run_after=run_after)
         collector = _FakeCollector()
-        collector._pool = _ResolveBackoffPool(remaining_sec=60)
         queue = _make_queue(collector, db)
         queue._ensure_worker = lambda: None
 
@@ -469,6 +521,95 @@ async def test_gate_rate_limit_keeps_task_pending(tmp_path):
 
         assert task_id in queue._known_task_ids
         assert len(queue._delayed_requeues) == 1
+    finally:
+        if queue is not None:
+            await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_relayed_username_budget_refusal_names_the_username_limit(tmp_path, caplog):
+    """A username-budget refusal reads as one in the note and the log, not as the gate.
+
+    The owner's RPC boundary refuses ResolveUsername with budget
+    ``resolve_username``; the relay dropped that name and the queue wrote
+    ``gate resolve rate-limited`` — a limiter that never refuses resolves.
+    """
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await _seed_channel(db)
+        caplog.set_level(logging.WARNING, logger="tg_agent.collection_queue")
+        queue = _make_queue(_RelayedUsernameBudgetCollector(), db)
+        channel = (await db.get_channels(active_only=True))[0]
+        task_id = await queue.enqueue(channel)
+
+        deadline = asyncio.get_event_loop().time() + 2.0
+        while asyncio.get_event_loop().time() < deadline:
+            task = await _get_task(db, task_id)
+            if task.status == "pending" and task.run_after is not None:
+                break
+            await asyncio.sleep(0.05)
+
+        task = await _get_task(db, task_id)
+        assert task.status == "pending"
+        assert "resolve_username rate-limited" in (task.note or "")
+        assert "gate" not in (task.note or "")
+        assert "resolve_username rate-limited on" in caplog.text
+        assert "gate resolve" not in caplog.text
+    finally:
+        if queue is not None:
+            await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_resolve_deferrals_are_spread_one_budget_step_apart(tmp_path):
+    """#1877: refused lookups all woke at the same moment and were refused together.
+    Each deferral now takes the next slot — a minute of one account's budget over
+    the accounts — so the first-deferred task, the oldest in queue order, goes first."""
+    class TwoAccounts(_UsernameResolveRateLimitedCollector):
+        def collection_worker_count(self) -> int:
+            return 2  # a slot every 30 s
+
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        queue = _make_queue(TwoAccounts(), db)
+        earliest = datetime.now(timezone.utc) + timedelta(seconds=40)
+
+        slots = [queue._resolve_retry_at(earliest) for _ in range(3)]
+
+        for index, slot in enumerate(slots):
+            assert earliest + timedelta(seconds=30 * index) <= slot < earliest + timedelta(seconds=30 * (index + 1))
+        # A later refusal that frees up sooner still queues behind the slots taken.
+        assert queue._resolve_retry_at(earliest - timedelta(seconds=30)) >= earliest + timedelta(seconds=90)
+    finally:
+        if queue is not None:
+            await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_a_deferred_task_writes_no_progress_line(tmp_path, monkeypatch):
+    """#1877: a deferred task is still pending, so the count did not move; the
+    progress line after every deferral only repeated the same number."""
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await _seed_channel(db)
+        queue = _make_queue(_UsernameResolveRateLimitedCollector(), db)
+        progress = AsyncMock()
+        monkeypatch.setattr(queue, "_log_progress", progress)
+        channel = (await db.get_channels(active_only=True))[0]
+        await queue.enqueue(channel)
+
+        await asyncio.wait_for(queue._queue.join(), timeout=2.0)
+
+        progress.assert_not_awaited()
     finally:
         if queue is not None:
             await queue.shutdown()

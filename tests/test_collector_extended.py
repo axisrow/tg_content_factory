@@ -1,9 +1,11 @@
 import asyncio
 from datetime import datetime, timezone
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from telethon.errors import FloodWaitError
+from telethon.tl import types
 
 from tg_agent.models import Channel, ChannelStats, Message, SearchQuery
 from tg_agent.services.notification_matcher import NotificationMatcher
@@ -74,7 +76,7 @@ async def test_collect_channel_flood_wait_retry(collector, mock_pool, mock_db):
     # First call to iter_messages raises FloodWait, second succeeds
     async def mock_iter(*args, **kwargs):
         if not hasattr(mock_iter, "called"):
-            mock_iter.called = True
+            cast(Any, mock_iter).called = True
             raise FloodWaitError(5)
         m = MagicMock(id=11, text="msg", date=datetime.now(timezone.utc))
         m.sender.first_name = "First"
@@ -149,7 +151,7 @@ async def test_notification_queries_logic(collector, mock_db):
     notifier = AsyncMock()
     collector._notifier = notifier
     collector._notification_matcher = NotificationMatcher(notifier)
-    sq = SearchQuery(id=1, query="test", is_regex=False, is_fts=False)
+    sq = cast(Any, SearchQuery)(id=1, query="test", is_regex=False, is_fts=False)
     mock_db.get_notification_queries.return_value = [sq]
 
     # Need messages with actual text and channel_username for link
@@ -171,7 +173,7 @@ async def test_notification_queries_private_channel_link(collector, mock_db):
     notifier = AsyncMock()
     collector._notifier = notifier
     collector._notification_matcher = NotificationMatcher(notifier)
-    sq = SearchQuery(id=1, query="hello", is_regex=False, is_fts=False)
+    sq = cast(Any, SearchQuery)(id=1, query="hello", is_regex=False, is_fts=False)
     mock_db.get_notification_queries.return_value = [sq]
 
     msgs = [
@@ -210,7 +212,7 @@ async def test_empty_ledger_does_not_replay_backlog(collector, mock_db):
     collected messages are matched; the backlog rescan is skipped entirely."""
     notifier = AsyncMock()
     collector._notifier = notifier
-    sq = SearchQuery(id=1, query="hit", is_regex=False, is_fts=False)
+    sq = cast(Any, SearchQuery)(id=1, query="hit", is_regex=False, is_fts=False)
     mock_db.get_notification_queries.return_value = [sq]
 
     store = _LedgerStore()  # empty ledger -> has_any() is False
@@ -243,7 +245,7 @@ async def test_seeded_ledger_replays_backlog_for_retry(collector, mock_db):
     failed send is retried (dedup keeps it from duplicating already-sent ones)."""
     notifier = AsyncMock()
     collector._notifier = notifier
-    sq = SearchQuery(id=1, query="hit", is_regex=False, is_fts=False)
+    sq = cast(Any, SearchQuery)(id=1, query="hit", is_regex=False, is_fts=False)
     mock_db.get_notification_queries.return_value = [sq]
 
     store = _LedgerStore(seeded_channels={1})  # ledger already has rows for channel 1
@@ -481,6 +483,106 @@ async def test_resolve_channel_entity_rate_limit_rotates(collector):
     )
     assert outcome.action == "retry"
     assert "+7999" in attempted
+
+
+class _CacheSession:
+    """A session whose cache knows the channel by id, by username, or not at all."""
+
+    def __init__(self, by_id=None, by_username=None):
+        self.by_id, self.by_username = by_id, by_username
+
+    async def resolve_cached_input_entity(self, peer):
+        found = self.by_username if isinstance(peer, str) else self.by_id
+        if found is None:
+            raise ValueError("not cached")
+        return found
+
+    async def get_input_entity(self, peer):  # the live lookup; the pool's guard runs it
+        raise AssertionError("the pool's guard is mocked out")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("by_id", "by_username", "expected"),
+    [
+        ("id-hit", None, "cache:id"),
+        (None, MagicMock(channel_id=123), "cache:username"),
+        (None, None, "live"),
+    ],
+)
+async def test_channel_key_reports_where_it_came_from(collector, mock_pool, by_id, by_username, expected):
+    """#1877: the collect line names the key's source, so a restart that lost the
+    cached keys shows up as live lookups instead of passing unnoticed."""
+    mock_pool.run_live_username_resolve = AsyncMock(return_value="live-hit")
+    session = _CacheSession(by_id, by_username)
+
+    _entity, source = await collector._resolve_channel_input_entity(
+        session, channel_id=123, username="somech", phone="+7999"
+    )
+
+    assert source == expected
+    if expected == "live":
+        call = mock_pool.run_live_username_resolve.await_args
+        assert call is not None and call.kwargs["channel_id"] == 123
+
+
+@pytest.mark.anyio
+async def test_collect_line_carries_the_key_source(collector, caplog):
+    from tg_agent.telegram.collector_resolve import ResolveOutcome
+
+    channel = Channel(id=1, channel_id=123, title="Ch", username="somech")
+    collector._acquire_collection_client = AsyncMock(return_value=(MagicMock(), "+79990001122", False))
+    collector._resolve_channel_entity = AsyncMock(return_value=ResolveOutcome(entity="peer", source="cache:id"))
+    collector._apply_pre_collection_filters = AsyncMock(return_value=False)
+    collector._release_collection_client = AsyncMock()
+    caplog.set_level("INFO", logger="tg_agent.telegram.collector")
+
+    await collector._collect_channel(channel)
+
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Collecting channel")]
+    assert len(lines) == 1 and lines[0].endswith("account=+79...1122, key=cache:id"), lines
+
+
+@pytest.mark.anyio
+async def test_username_channel_goes_to_the_account_that_holds_its_key(collector, mock_pool):
+    """#1877: a username channel is collected on its saved account, which holds its
+    access hash, not on whichever account is free — that one would look it up again."""
+    channel = Channel(id=1, channel_id=123, title="Ch", username="somech", preferred_phone="+7888")
+    mock_pool.get_available_client.return_value = (MagicMock(), "+7888")
+
+    await collector._acquire_collection_client(channel, set())
+
+    # Collection's own pick with the channel's account first: floods still count.
+    mock_pool.get_available_client.assert_awaited_once_with(prefer="+7888")
+
+
+@pytest.mark.anyio
+async def test_username_channel_skips_accounts_that_failed_its_lookup(collector, mock_pool):
+    channel = Channel(id=1, channel_id=123, title="Ch", username="somech", preferred_phone="+7888")
+    mock_pool.get_available_client.return_value = (MagicMock(), "+7999")
+
+    _session, phone, _cache_only = await collector._acquire_collection_client(channel, {"+7888"})
+
+    assert phone == "+7999"
+    mock_pool.get_client_by_phone.assert_not_awaited()
+    mock_pool.get_available_client.assert_awaited_once_with(exclude_phones={"+7888"})
+
+
+@pytest.mark.anyio
+async def test_a_username_lookup_remembers_the_account(collector, mock_pool):
+    """#1877: the account that resolved a username channel becomes its account, so
+    the next pass goes there and finds the key in that account's cache."""
+    channel = Channel(id=1, channel_id=123, title="Ch", username="somech")
+    collector._resolve_channel_input_entity = AsyncMock(
+        return_value=(types.InputPeerChannel(channel_id=123, access_hash=5), "live")
+    )
+    mock_pool.get_phone_for_channel = MagicMock(return_value=None)
+    mock_pool.remember_channel_phone = AsyncMock()
+
+    outcome = await collector._resolve_channel_entity(channel, MagicMock(), "+7999", 123, False, set())
+
+    assert outcome.source == "live"
+    mock_pool.remember_channel_phone.assert_awaited_once_with(123, "+7999", known_preferred=None, force=True)
 
 
 @pytest.mark.anyio

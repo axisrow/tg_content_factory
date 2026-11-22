@@ -11,7 +11,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
+import re
 import stat
 import struct
 import sys
@@ -22,7 +24,7 @@ import pytest
 from telethon import errors, functions, types
 from telethon.extensions import BinaryReader
 from telethon.sessions import MemorySession, SQLiteSession
-from telethon_floodgate import TelegramRateLimitedError
+from telethon_floodgate import TelegramRateLimitedError, TelegramRpcDeferredError, UsernameResolveRateLimitedError
 
 from tg_agent.telegram import relay
 from tg_agent.telegram.relay import (
@@ -41,6 +43,7 @@ from tg_agent.telegram.relay import (
     read_endpoint,
     serve_pool_relay,
 )
+from tg_agent.telegram.resolve_guard import ResolveGuardMixin
 
 PHONE = "+10000000001"
 VECTOR = 0x1CB5C415
@@ -50,9 +53,9 @@ def _tl_bytes(result) -> bytes:
     if isinstance(result, list):
         return struct.pack("<Ii", VECTOR, len(result)) + b"".join(bytes(item) for item in result)
     if result is True:
-        return bytes(types.BoolTrue())
+        return bytes(cast(Any, types).BoolTrue())
     if result is False:
-        return bytes(types.BoolFalse())
+        return bytes(cast(Any, types).BoolFalse())
     return bytes(result)
 
 
@@ -142,7 +145,7 @@ async def test_request_round_trips_through_the_owner_connection():
         assert isinstance(state, types.updates.State)
         assert state.pts == 77
         assert client.is_connected()
-        await client.disconnect()
+        await cast(Any, client).disconnect()
     assert isinstance(owner.calls[0][1], functions.updates.GetStateRequest)
 
 
@@ -152,7 +155,7 @@ async def test_vector_result_is_parsed_by_the_client_reader():
     async with running({PHONE: owner}) as (_, connection):
         client = await _client(connection)
         user = await client.get_me()
-        assert user.id == 4242
+        assert cast(Any, user).id == 4242
 
 
 async def test_telegram_errors_keep_their_type_and_capture():
@@ -350,7 +353,7 @@ async def test_owner_entity_cache_preloads_the_client_session():
     async with running({PHONE: owner}) as (_, connection):
         client = await _client(connection)
         assert await client.load_owner_entities() == 1
-        peer = client.session.get_input_entity(123)
+        peer = cast(Any, client.session).get_input_entity(123)
     assert peer == types.InputPeerUser(user_id=123, access_hash=456)
 
 
@@ -364,6 +367,60 @@ async def test_peers_resolved_through_the_relay_join_the_owner_cache():
         client = await _client(connection)
         await client(functions.contacts.ResolveUsernameRequest(username="friend"))
     assert session.get_input_entity(77) == types.InputPeerUser(user_id=77, access_hash=88)
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        (types.contacts.ResolvedPeer(peer=types.PeerChannel(1000), chats=[], users=[]), "peer 1000"),
+        (TelegramRpcDeferredError(PHONE, "rpc_resolve", 42.0, "ResolveUsernameRequest",
+                                  category="resolve", budget="resolve_username"),
+         "refused by resolve_username, retry 42s"),
+        (errors.FloodWaitError(None, capture=42), "FloodWait 42s"),
+        (errors.UsernameNotOccupiedError(None), "error UsernameNotOccupiedError"),
+    ],
+)
+async def test_the_owner_logs_every_username_lookup_it_runs(caplog, answer, expected):
+    """#1877: the owner writes one line per ResolveUsername it runs for a relayed
+    client — the account, the name, the outcome and the time."""
+    def handler(request):
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    caplog.set_level(logging.INFO, logger="tg_agent.telegram.relay")
+    async with running({PHONE: FakeOwnerClient(handler)}) as (_, connection):
+        client = await _client(connection)
+        with contextlib.suppress(Exception):
+            await client(functions.contacts.ResolveUsernameRequest(username="somechan"))
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("relay: ResolveUsername")]
+    assert len(lines) == 1, lines
+    assert re.fullmatch(
+        rf"relay: ResolveUsername @somechan account=\+10\.\.\.0001: {re.escape(expected)} in \d+ms", lines[0]
+    ), lines[0]
+
+
+async def test_an_owner_username_refusal_rotates_the_relayed_collector():
+    """#1877, the whole chain: the owner's username budget refuses, and the relayed
+    pool gets a rotatable refusal for its own phone, which stays cache-only meanwhile."""
+    def refuse(request):
+        raise TelegramRpcDeferredError("owner-key", "rpc_resolve", 42.0, "ResolveUsernameRequest",
+                                       category="resolve", budget="resolve_username")
+
+    class Pool(ResolveGuardMixin):
+        _rpc_guard_enabled = True
+        clients = {PHONE: object()}
+
+    pool = Pool()
+    async with running({PHONE: FakeOwnerClient(refuse)}) as (_, connection):
+        client = await _client(connection)
+        with pytest.raises(UsernameResolveRateLimitedError) as raised:
+            await pool.run_live_username_resolve(
+                lambda: client(functions.contacts.ResolveUsernameRequest(username="somechan")),
+                phone=PHONE, username="somechan", operation="resolve_username",
+            )
+    assert raised.value.phone == PHONE
+    assert 40 <= pool.get_resolve_username_backoff_remaining_sec(PHONE) <= 42
 
 
 def test_entity_rows_read_sqlite_sessions_with_text_phones(tmp_path):

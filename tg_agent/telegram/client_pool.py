@@ -77,6 +77,7 @@ from tg_agent.telegram.backends import (
     TelethonCliBackend,
     adapt_transport_session,  # noqa: F401
 )
+from tg_agent.telegram.entity_store import EntityStoreMixin
 from tg_agent.telegram.flood_snapshot import FloodSnapshotMixin
 from tg_agent.telegram.mtproto_watchdog import MTProtoSecurityWatchdog
 from tg_agent.telegram.outgoing_ceiling import OutgoingRateCeiling
@@ -139,6 +140,7 @@ class ClientPool(
     FloodRotationMixin,
     ResolveGuardMixin,
     FloodSnapshotMixin,
+    EntityStoreMixin,
 ):
     """Pool of Telegram clients with fallback rotation on flood waits.
 

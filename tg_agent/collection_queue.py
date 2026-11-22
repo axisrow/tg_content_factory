@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import random
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
@@ -138,6 +139,9 @@ class CollectionQueue:
     # same reschedule path as the flood/gate retries.
     RETRY_PASS_MAX_ATTEMPTS = 5
     RETRY_PASS_DELAY_SEC = 30.0
+    # Username-lookup deferrals take one slot each, this far apart per account:
+    # the sustained budget is 60 lookups an hour per account (#1877).
+    RESOLVE_RETRY_STEP_SEC = 60.0
     GRACEFUL_SHUTDOWN_TIMEOUT_SEC = 120.0
     FORCE_CANCEL_TIMEOUT_SEC = 10.0
     SHUTDOWN_REQUEUE_NOTE = "Остановка сервиса во время сбора; задача будет продолжена после запуска."
@@ -178,6 +182,21 @@ class CollectionQueue:
         self._resume_gate = asyncio.Event()
         self._resume_gate.set()
         self._stop_workers = False
+        self._resolve_retry_cursor: datetime | None = None
+
+    def _resolve_retry_at(self, earliest: datetime) -> datetime:
+        """The next free username-lookup retry slot at or after ``earliest`` (#1877).
+
+        Every refused task used to wake at the same moment and be refused again
+        together. Slots follow the deferral order, so the queue's oldest tasks go
+        first; a random offset inside the slot keeps them out of step.
+        """
+        step = self.RESOLVE_RETRY_STEP_SEC / self._target_worker_count()
+        slot = earliest
+        if self._resolve_retry_cursor is not None:
+            slot = max(earliest, self._resolve_retry_cursor + timedelta(seconds=step))
+        self._resolve_retry_cursor = slot
+        return slot + timedelta(seconds=random.uniform(0, step))
 
     async def enqueue(self, channel: Channel, force: bool = False, full: bool = False) -> int | None:
         payload = {"full": full}
@@ -552,7 +571,9 @@ class CollectionQueue:
                 if not failure.keep_known_task_id:
                     self._known_task_ids.discard(task_id)
                 self._queue.task_done()
-                await self._log_progress()
+                if not failure.keep_known_task_id:
+                    # A kept task is still pending: the count did not move (#1877).
+                    await self._log_progress()
                 if failure.stop_after_no_clients:
                     self._stop_workers = True
                     should_stop_workers = True
@@ -809,8 +830,8 @@ class CollectionQueue:
             )
             return CollectionFailureOutcome(keep_known_task_id=True)
         if isinstance(exc, UsernameResolveFloodWaitDeferredError):
-            run_after = exc.next_available_at + timedelta(
-                seconds=RESOLVE_USERNAME_BACKOFF_BUFFER_SEC
+            run_after = self._resolve_retry_at(
+                exc.next_available_at + timedelta(seconds=RESOLVE_USERNAME_BACKOFF_BUFFER_SEC)
             )
             note = (
                 "Отложено: Flood Wait на resolve_username до "
@@ -827,7 +848,7 @@ class CollectionQueue:
             )
             return CollectionFailureOutcome(keep_known_task_id=True)
         if isinstance(exc, UsernameResolveRateLimitedError):
-            run_after = exc.run_after_with_buffer()
+            run_after = self._resolve_retry_at(exc.run_after_with_buffer())
             note = (
                 "Отложено: resolve_username rate-limited до "
                 f"{run_after.astimezone(timezone.utc).isoformat()}"
@@ -852,20 +873,20 @@ class CollectionQueue:
             run_after = datetime.now(timezone.utc) + timedelta(
                 seconds=exc.retry_after_sec + GATE_RATE_LIMIT_RETRY_BUFFER_SEC
             )
-            note = (
-                "Отложено: gate "
-                f"{exc.category} rate-limited до {run_after.astimezone(timezone.utc).isoformat()}"
-            )
+            # Name the limiter that refused: the RPC boundary reports it as the
+            # budget (resolve_username, flood_backoff, …); without one it is the gate.
+            source = getattr(exc, "budget", None) or "gate"
+            limit = "resolve_username" if source == "resolve_username" else f"{source} {exc.category}"
+            note = f"Отложено: {limit} rate-limited до {run_after.astimezone(timezone.utc).isoformat()}"
             await self._defer_collection_task(
                 task_id, channel, force=force, full=full, run_after=run_after, note=note
             )
             logger.warning(
-                "Rescheduled collection task %d for channel %d until %s: "
-                "gate %s rate-limited on %s",
+                "Rescheduled collection task %d for channel %d until %s: %s rate-limited on %s",
                 task_id,
                 channel.channel_id,
                 run_after.isoformat(),
-                exc.category,
+                limit,
                 exc.phone,
             )
             return CollectionFailureOutcome(keep_known_task_id=True)
@@ -1127,11 +1148,6 @@ class CollectionQueue:
                 )
                 return 0
 
-        resolve_backoff_remaining = 0
-        pool = getattr(self._collector, "_pool", None)
-        if pool is not None:
-            resolve_backoff_remaining = pool.get_resolve_username_backoff_remaining_sec()
-
         pending = await self._channels.get_pending_channel_tasks()
         count = 0
         for task in pending:
@@ -1154,19 +1170,9 @@ class CollectionQueue:
             payload = cast(dict[str, Any], task.payload or {})
             force = bool(payload.get("force", False))
             full = bool(payload.get("full", False))
-            if resolve_backoff_remaining > 0 and channel.username:
-                run_after = datetime.now(timezone.utc) + timedelta(
-                    seconds=resolve_backoff_remaining + RESOLVE_USERNAME_BACKOFF_BUFFER_SEC
-                )
-                self._schedule_requeue_after_delay(
-                    task_id=task.id,
-                    channel=channel,
-                    force=force,
-                    full=full,
-                    run_after=run_after,
-                )
-                count += 1
-                continue
+            # No blanket hold for username channels during a resolve backoff
+            # (#1877): most of them collect from cached access hashes, and one
+            # that needs a live lookup is deferred by the collector's refusal.
             if task.run_after is not None and task.run_after.timestamp() > time.time():
                 self._schedule_requeue_after_delay(
                     task_id=task.id,

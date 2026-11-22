@@ -113,6 +113,11 @@ class ClientLifecycleMixin:
 
         async def persist_flood_guard_snapshot(self) -> None: ...
 
+        # EntityStoreMixin (entity_store.py), same signatures.
+        async def restore_session_entities(self, phone: str, raw_client: object) -> None: ...
+
+        async def persist_session_entities(self, phone: str | None = None) -> None: ...
+
     def _connected_phones(self) -> set[str]:
         return set(self.clients.keys())
 
@@ -318,13 +323,13 @@ class ClientLifecycleMixin:
             logger.warning("Failed to fetch premium status for %s: %s", phone, e, exc_info=True)
 
     async def get_available_client(
-        self, *, exclude_phones: set[str] | frozenset[str] = frozenset()
+        self, *, exclude_phones: set[str] | frozenset[str] = frozenset(), prefer: str | None = None
     ) -> tuple[TelegramTransportSession, str] | None:
         """Get first available client not in flood wait. Returns (client, phone) or None.
 
         ``exclude_phones`` skips specific accounts — used by the collector to
         rotate a username resolve away from accounts already in resolve
-        backoff (#790).
+        backoff (#790). ``prefer`` is tried first while it is free (#1877).
         """
         if getattr(self, "_disconnecting", False):
             return None
@@ -332,7 +337,7 @@ class ClientLifecycleMixin:
             candidates = self._connected_phones() - set(exclude_phones)
             if not candidates:
                 return None
-            lease = await self._lease_pool.acquire_available(candidates)
+            lease = await self._lease_pool.acquire_available(candidates, prefer=prefer)
             if lease is None:
                 return None
             result = await self._acquire_from_lease(lease)
@@ -518,6 +523,7 @@ class ClientLifecycleMixin:
         return self._mtproto_watchdog.get_stats()
 
     async def remove_client(self, phone: str) -> None:
+        await self.persist_session_entities(phone)  # its channel keys outlive the client (#1877)
         # getattr: test doubles build the pool via __new__ without __init__.
         watchdog = getattr(self, "_mtproto_watchdog", None)
         if watchdog is not None:
@@ -560,6 +566,7 @@ class ClientLifecycleMixin:
         # failing DB write cannot block the teardown path.
         await self.persist_resolve_limiter_snapshot()
         await self.persist_flood_guard_snapshot()
+        await self.persist_session_entities()
         # Detach the watchdog handler from the global telethon.tgcf logger so
         # a torn-down pool is not kept alive by it (#817 review F1); a later
         # initialize() re-installs it. getattr: doubles built via __new__.
@@ -706,6 +713,7 @@ class ClientLifecycleMixin:
                     # collection re-warms instead of skipping against the empty
                     # cache (#1043) — same hazard as add_client's re-auth.
                     self.reset_dialogs_warm(phone)
+                    await self.restore_session_entities(phone, lease.session.raw_client)
                     self.clients[phone] = TelegramTransportSession(
                         lease.session.raw_client,
                         disconnect_on_close=False,
@@ -768,6 +776,8 @@ class ClientLifecycleMixin:
             pool=self,
             logger_=logger,
         )
+        # Its stored channel keys first: a collector may take the client the moment it is published (#1877).
+        await self.restore_session_entities(account.phone, lease.session.raw_client)
         # Store persistent transport session so _direct_session() can reuse the connection
         self.clients[account.phone] = TelegramTransportSession(
             lease.session.raw_client,

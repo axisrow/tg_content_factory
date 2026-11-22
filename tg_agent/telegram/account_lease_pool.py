@@ -44,8 +44,14 @@ class AccountLeasePool:
             return {}
         return await repo.list_active_family_floods(now=now)
 
-    async def acquire_available(self, connected_phones: set[str]) -> AccountLease | None:
-        """Acquire an account with at most one exclusive reservation per phone."""
+    async def acquire_available(
+        self, connected_phones: set[str], *, prefer: str | None = None
+    ) -> AccountLease | None:
+        """Acquire an account with at most one exclusive reservation per phone.
+
+        ``prefer`` goes first while it is free and unflooded (#1877): a username
+        channel's access hash lives on the account that resolved it.
+        """
         async with self._lock:
             now = datetime.now(timezone.utc)
             accounts = await load_live_usable_accounts(self._db, active_only=True)
@@ -65,6 +71,8 @@ class AccountLeasePool:
             ordered_accounts = self._round_robin_accounts(accounts)
             if not ordered_accounts:
                 return None
+            if prefer is not None:
+                ordered_accounts = sorted(ordered_accounts, key=lambda account: account.phone != prefer)
 
             for account in ordered_accounts:
                 if account.phone not in connected_phones:

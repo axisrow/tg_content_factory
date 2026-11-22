@@ -6,7 +6,7 @@ import signal
 from dataclasses import asdict
 from datetime import datetime, timezone
 from inspect import isawaitable
-from typing import Any
+from typing import Any, cast
 
 from tg_agent.config import AppConfig
 from tg_agent.database import DatabaseBusyError
@@ -220,7 +220,7 @@ async def _publish_scheduler_jobs_snapshot(container) -> None:
     if hasattr(container.scheduler, "get_potential_jobs"):
         jobs = await container.scheduler.get_potential_jobs()
     getter = getattr(container.scheduler, "get_all_jobs_next_run", None)
-    next_runs = getter() if callable(getter) else {}
+    next_runs = cast(dict[str, Any], getter()) if callable(getter) else {}
     for job in jobs:
         next_run = next_runs.get(job.get("job_id"))
         job["next_run"] = next_run.isoformat() if next_run else None
@@ -435,10 +435,11 @@ async def _run_worker_async(config: AppConfig) -> None:
 
 
 async def _persist_flood_guards(container) -> None:
-    """Save the pool's flood-guard state, so a restart keeps the spent budget."""
-    persist = getattr(container.pool, "persist_flood_guard_snapshot", None)
-    if callable(persist):
-        await persist()  # best-effort by contract: it never raises
+    """Save the pool's flood-guard state and channel keys, so a restart keeps both (#1877)."""
+    for name in ("persist_flood_guard_snapshot", "persist_session_entities"):
+        persist = getattr(container.pool, name, None)
+        if callable(persist):
+            await cast(Any, persist)()  # best-effort by contract: it never raises
 
 
 async def _start_owner_relay(container, config: AppConfig):

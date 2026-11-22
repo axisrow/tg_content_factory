@@ -151,7 +151,7 @@ class ResolveOutcome:
     outer handler from streaming — exactly as in the pre-extraction code.
     """
 
-    __slots__ = ("entity", "action", "channel", "flood_wait_sec", "flood_wait_operation")
+    __slots__ = ("entity", "action", "channel", "flood_wait_sec", "flood_wait_operation", "source")
 
     def __init__(
         self,
@@ -161,12 +161,15 @@ class ResolveOutcome:
         channel: "Channel | None" = None,
         flood_wait_sec: int | None = None,
         flood_wait_operation: str | None = None,
+        source: str | None = None,
     ) -> None:
         self.entity = entity
         self.action = action
         self.channel = channel
         self.flood_wait_sec = flood_wait_sec
         self.flood_wait_operation = flood_wait_operation
+        # Where a username channel's key came from: cache:id / cache:username / live (#1877).
+        self.source = source
 
 
 async def _fall_back_to_the_id(
@@ -235,7 +238,7 @@ async def _resolve_by_username(
     """
     assert channel.username is not None
     try:
-        entity = await collector._resolve_channel_input_entity(
+        entity, source = await collector._resolve_channel_input_entity(
             session,
             channel_id=channel_id,
             username=channel.username,
@@ -259,7 +262,8 @@ async def _resolve_by_username(
         # account is blocked (#790). The outer finally releases the client.
         attempted_resolve_phones.add(phone)
         if await collector._can_rotate_resolve(attempted_resolve_phones):
-            logger.warning(
+            # INFO (#1877): rotating past a spent budget is the designed path.
+            logger.info(
                 "Channel %d (%s): live resolve unavailable on %s; "
                 "rotating to another account",
                 channel_id,
@@ -318,7 +322,8 @@ async def _resolve_by_username(
         )
     if channel.id and channel.review_reason in TRANSIENT_REVIEW_REASONS:
         await collector._db.repos.channels.clear_channel_review(channel.id)
-    return ResolveOutcome(entity=entity)
+    await _remember_resolver(collector, channel, phone, channel_id)
+    return ResolveOutcome(entity=entity, source=source)
 
 
 async def _resolve_by_numeric(
@@ -466,25 +471,30 @@ async def _resolve_by_numeric(
                 "HistoryNumericUnresolved", "no connected account knows this id and the row has no username"
             ) from miss
         return ResolveOutcome(action="stop", channel=channel)
-    # Self-heal on success (#1327): remember which account resolved this channel
-    # so the NEXT pass routes there directly instead of rolling the dice on
-    # get_available_client() again. Mirrors fetch_channel_meta's same pattern
-    # (pool_dialogs.py, #808) — write only if preferred_phone is unset, or force
-    # an overwrite when the resolve happened on a DIFFERENT account than the
-    # stored preferred (that stored value was stale/unavailable and this account
-    # just confirmably worked).
-    own_preferred = channel.preferred_phone or collector._pool.get_phone_for_channel(
-        channel_id
-    )
     if channel.id and channel.review_reason in TRANSIENT_REVIEW_REASONS:
         await collector._db.repos.channels.clear_channel_review(channel.id)
+    await _remember_resolver(collector, channel, phone, channel_id)
+    return ResolveOutcome(entity=entity)
+
+
+async def _remember_resolver(collector: "Collector", channel: Channel, phone: str, channel_id: int) -> None:
+    """Self-heal on success (#1327): remember which account resolved this channel
+    so the NEXT pass routes there directly instead of rolling the dice on
+    get_available_client() again. For a username channel that account also holds
+    the access hash, so the next pass needs no new lookup (#1877).
+
+    Mirrors fetch_channel_meta's same pattern (pool_dialogs.py, #808) — write only
+    if preferred_phone is unset, or force an overwrite when the resolve happened
+    on a DIFFERENT account than the stored preferred (that stored value was
+    stale/unavailable and this account just confirmably worked).
+    """
+    own_preferred = channel.preferred_phone or collector._pool.get_phone_for_channel(channel_id)
     await collector._pool.remember_channel_phone(
         channel_id,
         phone,
         known_preferred=own_preferred,
         force=phone != own_preferred,
     )
-    return ResolveOutcome(entity=entity)
 
 
 async def resolve_channel_entity(

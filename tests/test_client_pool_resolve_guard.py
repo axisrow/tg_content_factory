@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
+import re
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from telethon.errors import FloodWaitError
-from telethon_floodgate import HandledFloodWaitError, ResolveRateLimiter, UsernameResolveRateLimitedError
+from telethon.errors import FloodWaitError, UsernameNotOccupiedError
+from telethon.tl import types
+from telethon_floodgate import (
+    HandledFloodWaitError,
+    ResolveRateLimiter,
+    TelegramRpcDeferredError,
+    UsernameResolveRateLimitedError,
+)
 
 from tests.helpers import make_resolve_limiter
 from tg_agent.telegram.client_pool import ClientPool
@@ -94,6 +103,87 @@ async def test_live_username_resolve_records_per_phone_long_flood_backoff():
     assert datetime.fromisoformat(stored["+7001"]) == pool.get_resolve_username_backoff_until(
         "+7001"
     )
+
+
+@pytest.mark.anyio
+async def test_owner_username_budget_refusal_rotates_instead_of_deferring():
+    """#1877: the session owner refuses a relayed resolve with a deferral naming its
+    own account key. The collector must get a rotatable refusal for *its* phone, and
+    that phone stays cache-only until the refusal expires — a refusal is not a flood."""
+    pool = _make_pool(clients={"+7001": object(), "+7002": object()})
+    db = SimpleNamespace(set_setting=AsyncMock())
+    pool._db = db
+    pool._rpc_guard_enabled = True
+
+    async def refused():
+        raise TelegramRpcDeferredError("gateway-account", "rpc_resolve", 42.0, "ResolveUsernameRequest",
+                                       category="resolve", budget="resolve_username")
+
+    with pytest.raises(UsernameResolveRateLimitedError) as exc_info:
+        await pool.run_live_username_resolve(
+            refused, phone="+7001", username="busy", operation="test_live_username_resolve"
+        )
+
+    assert exc_info.value.phone == "+7001"
+    assert 40 <= exc_info.value.retry_after_sec <= 42
+    assert 40 <= pool.get_resolve_username_backoff_remaining_sec("+7001") <= 42
+    assert pool.get_resolve_username_backoff_remaining_sec("+7002") == 0
+    assert not pool.is_resolve_ramp_up_active("+7001")
+    db.set_setting.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_other_deferrals_pass_through_the_username_resolve():
+    pool = _make_pool(clients={"+7001": object()})
+    pool._rpc_guard_enabled = True
+
+    async def refused():
+        raise TelegramRpcDeferredError("+7001", "rpc_history", 5.0, "GetHistoryRequest",
+                                       category="history", budget="gate")
+
+    with pytest.raises(TelegramRpcDeferredError):
+        await pool.run_live_username_resolve(
+            refused, phone="+7001", username="busy", operation="test_live_username_resolve"
+        )
+    assert pool.get_resolve_username_backoff_remaining_sec("+7001") == 0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [
+        (types.InputPeerChannel(channel_id=1000, access_hash=5), "peer 1000"),
+        (TelegramRpcDeferredError("gw", "rpc_resolve", 42.0, "ResolveUsernameRequest",
+                                  category="resolve", budget="resolve_username"),
+         "refused by resolve_username, retry 42s"),
+        (FloodWaitError(request=None, capture=30), "FloodWait 30s"),
+        (UsernameNotOccupiedError(request=None), "error UsernameNotOccupiedError"),
+    ],
+)
+async def test_every_live_username_resolve_leaves_one_log_line(caplog, outcome, expected):
+    """#1877: a lookup used to leave no trace when it succeeded. Each one now writes
+    a single INFO line with the username, channel, account, outcome and duration."""
+    phone = "+79990001122"
+    pool = _make_pool(clients={phone: object()})
+    pool._rpc_guard_enabled = True
+
+    async def lookup():
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    caplog.set_level(logging.INFO, logger="tg_agent.telegram.resolve_guard")
+    with contextlib.suppress(Exception):
+        await pool.run_live_username_resolve(
+            lookup, phone=phone, username="somechan", operation="resolve_username", channel_id=1000
+        )
+
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("resolve_username @")]
+    assert len(lines) == 1, lines
+    assert re.fullmatch(
+        rf"resolve_username @somechan channel=1000 account=\+79\.\.\.1122: {re.escape(expected)} in \d+ms",
+        lines[0],
+    ), lines[0]
 
 
 @pytest.mark.anyio
@@ -198,6 +288,7 @@ def _make_pool(clients: dict | None = None):
             self._resolve_ramp_up_until_utc = {}
             self._resolve_ramp_up_last_call_utc = {}
             self._resolve_ramp_up_min_interval_sec = 5.0
+            self._rpc_guard_enabled = False
             self.clients = clients or {}
 
     return FakePool()
