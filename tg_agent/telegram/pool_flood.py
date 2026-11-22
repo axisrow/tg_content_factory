@@ -173,6 +173,42 @@ class FloodRotationMixin:
                 earliest = ready
         return earliest
 
+    async def lookup_capable_phone_count(self) -> int:
+        """How many connected accounts can run a live username lookup now (#1879).
+
+        The denominator of the deferral spacing: retry slots spread the
+        sustained lookup budget (#1877) over the accounts that can actually
+        spend it, not over every worker slot. An account counts when its
+        in-memory resolve backoff, its generic flood wait and its per-family
+        resolve flood (#1832) are all inactive — other read families do not
+        refuse a lookup.
+        """
+        connected = self._connected_phones()
+        if not connected:
+            return 0
+        now = datetime.now(timezone.utc)
+        accounts = await load_live_usable_accounts(self._db, active_only=True)
+        generic_flooded: set[str] = set()
+        for account in accounts:
+            until = normalize_utc(getattr(account, "flood_wait_until", None))
+            if until is not None and until > now:
+                generic_flooded.add(account.phone)
+        family_floods: dict[str, dict[str, datetime]] = {}
+        repo = family_floods_repo(self._db)
+        if repo is not None:
+            family_floods = await repo.list_active_family_floods()
+        capable = 0
+        for phone in connected:
+            if self.get_resolve_username_backoff_remaining_sec(phone) > 0:
+                continue
+            if phone in generic_flooded:
+                continue
+            # list_active_family_floods returns only still-active deadlines.
+            if family_floods.get(phone, {}).get("resolve") is not None:
+                continue
+            capable += 1
+        return capable
+
     async def available_stats_client_count(self) -> int:
         return await self._lease_pool.available_exclusive_count(self._connected_phones())
 

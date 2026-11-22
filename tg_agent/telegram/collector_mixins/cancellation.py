@@ -100,6 +100,21 @@ class CancellationMixin:
             return cast("datetime | None", result)
         return self._pool.get_resolve_username_backoff_until()
 
+    async def lookup_capable_phone_count(self: "Collector") -> int:
+        """Connected accounts that can run a live username lookup now (#1879).
+
+        The deferral spacing spends one sustained-budget minute per capable
+        account; doubles without the pool method fall back to the worker
+        count, the spacing used before.
+        """
+        counter = getattr(self._pool, "lookup_capable_phone_count", None)
+        if callable(counter):
+            result = counter()
+            if isawaitable(result):
+                result = await result
+            return max(1, int(cast("Any", result)))
+        return self.collection_worker_count()
+
     async def get_collection_availability(
         self: "Collector", allow_families: frozenset[str] | None = None
     ):

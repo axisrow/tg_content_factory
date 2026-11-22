@@ -236,6 +236,26 @@ async def test_next_resolve_capable_at_honors_family_row(real_pool_harness_facto
     assert capable_at > datetime.now(timezone.utc)
 
 
+@pytest.mark.anyio
+async def test_lookup_capable_phone_counts_only_unflooded_lookups(real_pool_harness_factory):
+    """#1879: the deferral spacing denominator — accounts that can look up now.
+
+    A resolve-family flood or a generic flood takes an account out; other
+    read families do not refuse a lookup, so they keep counting."""
+    harness = real_pool_harness_factory()
+    await _connect(harness, PHONE_A, primary=True)
+    await _connect(harness, PHONE_B)
+
+    assert await harness.pool.lookup_capable_phone_count() == 2
+
+    await harness.pool.report_family_flood(PHONE_A, 3600, "resolve")
+    assert await harness.pool.lookup_capable_phone_count() == 1
+
+    # A generic (account-wide) flood removes the last capable account.
+    await harness.db.update_account_flood(PHONE_B, datetime.now(timezone.utc) + timedelta(hours=1))
+    assert await harness.pool.lookup_capable_phone_count() == 0
+
+
 def _account(phone: str):
     from tg_agent.models import Account
 
