@@ -852,20 +852,20 @@ class CollectionQueue:
             run_after = datetime.now(timezone.utc) + timedelta(
                 seconds=exc.retry_after_sec + GATE_RATE_LIMIT_RETRY_BUFFER_SEC
             )
-            note = (
-                "Отложено: gate "
-                f"{exc.category} rate-limited до {run_after.astimezone(timezone.utc).isoformat()}"
-            )
+            # Name the limiter that refused: the RPC boundary reports it as the
+            # budget (resolve_username, flood_backoff, …); without one it is the gate.
+            source = getattr(exc, "budget", None) or "gate"
+            limit = "resolve_username" if source == "resolve_username" else f"{source} {exc.category}"
+            note = f"Отложено: {limit} rate-limited до {run_after.astimezone(timezone.utc).isoformat()}"
             await self._defer_collection_task(
                 task_id, channel, force=force, full=full, run_after=run_after, note=note
             )
             logger.warning(
-                "Rescheduled collection task %d for channel %d until %s: "
-                "gate %s rate-limited on %s",
+                "Rescheduled collection task %d for channel %d until %s: %s rate-limited on %s",
                 task_id,
                 channel.channel_id,
                 run_after.isoformat(),
-                exc.category,
+                limit,
                 exc.phone,
             )
             return CollectionFailureOutcome(keep_known_task_id=True)

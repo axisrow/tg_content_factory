@@ -8,6 +8,7 @@ ignored until the next worker restart.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, cast
@@ -19,12 +20,13 @@ from telethon.errors import (
     TypeNotFoundError,
     UsernameNotOccupiedError,
 )
-from telethon_floodgate import TelegramRateLimitedError
+from telethon_floodgate import TelegramRateLimitedError, TelegramRpcDeferredError
 
 from tests.helpers import wait_until
 from tg_agent.collection_queue import CollectionQueue
 from tg_agent.database import Database
 from tg_agent.models import Channel
+from tg_agent.telegram import relay
 from tg_agent.telegram.collector import (
     UsernameResolveFloodWaitDeferredError,
     UsernameResolveRateLimitedError,
@@ -116,6 +118,21 @@ class _GateRateLimitedCollector(_FakeCollector):
         self.calls.append(channel.channel_id)
         self.full_calls.append(full)
         raise TelegramRateLimitedError("+7001", "history", 17.0)
+
+
+class _RelayedUsernameBudgetCollector(_FakeCollector):
+    """The owner's RPC boundary refused ResolveUsername on the username budget, over the relay."""
+
+    async def collect_single_channel(
+        self, channel, *, full=False, progress_callback=None, force=False, cancel_event=None
+    ):
+        self.calls.append(channel.channel_id)
+        self.full_calls.append(full)
+        refusal = TelegramRpcDeferredError(
+            "+7001", "rpc_resolve", 17.0, "ResolveUsernameRequest",
+            category="resolve", budget="resolve_username",
+        )
+        raise relay.rebuild_error(json.loads(json.dumps(relay.error_payload(refusal))))
 
 
 class _BlockingCollector:
@@ -469,6 +486,43 @@ async def test_gate_rate_limit_keeps_task_pending(tmp_path):
 
         assert task_id in queue._known_task_ids
         assert len(queue._delayed_requeues) == 1
+    finally:
+        if queue is not None:
+            await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_relayed_username_budget_refusal_names_the_username_limit(tmp_path, caplog):
+    """A username-budget refusal reads as one in the note and the log, not as the gate.
+
+    The owner's RPC boundary refuses ResolveUsername with budget
+    ``resolve_username``; the relay dropped that name and the queue wrote
+    ``gate resolve rate-limited`` — a limiter that never refuses resolves.
+    """
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await _seed_channel(db)
+        caplog.set_level(logging.WARNING, logger="tg_agent.collection_queue")
+        queue = _make_queue(_RelayedUsernameBudgetCollector(), db)
+        channel = (await db.get_channels(active_only=True))[0]
+        task_id = await queue.enqueue(channel)
+
+        deadline = asyncio.get_event_loop().time() + 2.0
+        while asyncio.get_event_loop().time() < deadline:
+            task = await _get_task(db, task_id)
+            if task.status == "pending" and task.run_after is not None:
+                break
+            await asyncio.sleep(0.05)
+
+        task = await _get_task(db, task_id)
+        assert task.status == "pending"
+        assert "resolve_username rate-limited" in (task.note or "")
+        assert "gate" not in (task.note or "")
+        assert "resolve_username rate-limited on" in caplog.text
+        assert "gate resolve" not in caplog.text
     finally:
         if queue is not None:
             await queue.shutdown()

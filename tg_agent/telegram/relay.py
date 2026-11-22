@@ -39,7 +39,7 @@ from telethon.extensions import BinaryReader
 from telethon.tl import functions
 from telethon.tl.alltlobjects import LAYER
 from telethon.tl.tlobject import TLRequest
-from telethon_floodgate import TelegramRateLimitedError
+from telethon_floodgate import TelegramRateLimitedError, TelegramRpcDeferredError
 
 from tg_shared.sessions import FreshEntityStringSession
 
@@ -216,8 +216,12 @@ def error_payload(exc: BaseException) -> dict:
         return {"kind": "rpc", "name": "RPCError", "args": [str(exc), getattr(exc, "code", None)],
                 "message": str(exc)}
     if isinstance(exc, TelegramRateLimitedError):
+        # Which of the owner's limiters refused (gate, resolve_username, flood_backoff, …):
+        # the client names it, a username-budget refusal is not a gate one.
+        refused_by = ({"rpc": exc.rpc, "operation": exc.operation, "budget": exc.budget}
+                      if isinstance(exc, TelegramRpcDeferredError) else {})
         return {"kind": "rate_limited", "phone": exc.phone, "category": exc.category,
-                "retry_after_sec": float(exc.retry_after_sec), "message": str(exc)}
+                "retry_after_sec": float(exc.retry_after_sec), "message": str(exc), **refused_by}
     if isinstance(exc, RelayAccountUnavailableError):
         return {"kind": "unavailable", "message": str(exc)}
     if isinstance(exc, RelayForbiddenError):
@@ -250,10 +254,16 @@ def rebuild_error(payload: dict, request: Any = None) -> BaseException:
                 return cls(request, *(payload.get("args") or []))
         return RPCError(request, message or "RPC error")
     if kind == "rate_limited":
-        return TelegramRateLimitedError(
-            str(payload.get("phone") or ""), str(payload.get("category") or "relay"),
-            float(payload.get("retry_after_sec") or 0.0), message=message or None,
-        )
+        phone = str(payload.get("phone") or "")
+        category = str(payload.get("category") or "relay")
+        retry_after = float(payload.get("retry_after_sec") or 0.0)
+        budget = payload.get("budget")
+        if isinstance(budget, str):
+            return TelegramRpcDeferredError(
+                phone, str(payload.get("operation") or category), retry_after,
+                str(payload.get("rpc") or ""), category=category, budget=budget,
+            )
+        return TelegramRateLimitedError(phone, category, retry_after, message=message or None)
     if kind == "unavailable":
         return RelayAccountUnavailableError(message)
     if kind == "forbidden":
