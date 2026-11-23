@@ -34,7 +34,12 @@ from telethon_floodgate import (
 
 from tg_agent.database.live_accounts import load_live_usable_accounts
 from tg_agent.telegram.backends import TelegramTransportSession
-from tg_agent.telegram.flood_scope import COLLECTION_ALLOWED_FAMILIES, family_floods_repo, is_read_family
+from tg_agent.telegram.flood_scope import (
+    COLLECTION_ALLOWED_FAMILIES,
+    LOOKUP_FAMILIES,
+    family_floods_repo,
+    is_read_family,
+)
 from tg_agent.telegram.tool_flood_scope import current_tool_flood_scope
 from tg_agent.telegram.utils import normalize_utc
 
@@ -129,7 +134,11 @@ class FloodRotationMixin:
         }
         if not candidates:
             return False
-        return await self._lease_pool.available_exclusive_count(candidates) > 0
+        # The lookup ruler (#1889): a flood on an unrelated read family does not
+        # refuse a resolve, so it must not veto the rotate.
+        return await self._lease_pool.available_exclusive_count(
+            candidates, block_families=LOOKUP_FAMILIES
+        ) > 0
 
     async def next_resolve_capable_at(self) -> datetime | None:
         """Earliest UTC moment any connected account can run a live username
@@ -162,7 +171,7 @@ class FloodRotationMixin:
                 for until in (
                     self.get_resolve_username_backoff_until(phone),
                     generic.get(phone),
-                    family_floods.get(phone, {}).get("resolve"),
+                    *(family_floods.get(phone, {}).get(family) for family in LOOKUP_FAMILIES),
                 )
                 if until is not None and until > now
             ]
@@ -181,7 +190,8 @@ class FloodRotationMixin:
         spend it, not over every worker slot. An account counts when its
         in-memory resolve backoff, its generic flood wait and its per-family
         resolve flood (#1832) are all inactive — other read families do not
-        refuse a lookup.
+        refuse a lookup. The family set is LOOKUP_FAMILIES, the same ruler the
+        retry pick blocks on (#1889).
         """
         connected = self._connected_phones()
         if not connected:
@@ -204,7 +214,7 @@ class FloodRotationMixin:
             if phone in generic_flooded:
                 continue
             # list_active_family_floods returns only still-active deadlines.
-            if family_floods.get(phone, {}).get("resolve") is not None:
+            if any(family_floods.get(phone, {}).get(family) is not None for family in LOOKUP_FAMILIES):
                 continue
             capable += 1
         return capable
@@ -295,10 +305,17 @@ class FloodRotationMixin:
             return "Premium-аккаунты временно недоступны из-за Flood Wait."
         return "Premium-аккаунт недоступен."
 
-    async def get_stats_availability(self, *, allow_families: frozenset[str] = frozenset()):
+    async def get_stats_availability(
+        self,
+        *,
+        allow_families: frozenset[str] = frozenset(),
+        block_families: frozenset[str] | None = None,
+    ):
         """Describe client availability for batch scheduling decisions.
 
-        Pass the ``allow_families`` of the pick it stands for (#1879).
+        Pass the ``allow_families`` of the pick it stands for (#1879) — or the
+        ``block_families`` of the lookup-retry pick (#1889). ``block_families``
+        wins when both are given.
         """
         # Imported lazily-by-name from the host module to avoid a circular import
         # of the StatsClientAvailability dataclass at module load time.
@@ -306,7 +323,7 @@ class FloodRotationMixin:
 
         state, retry_after_sec, next_available_at_utc = (
             await self._lease_pool.snapshot_stats_availability(
-                self._connected_phones(), allow_families=allow_families
+                self._connected_phones(), allow_families=allow_families, block_families=block_families
             )
         )
         return StatsClientAvailability(

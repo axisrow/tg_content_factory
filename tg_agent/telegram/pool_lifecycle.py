@@ -328,13 +328,16 @@ class ClientLifecycleMixin:
         exclude_phones: set[str] | frozenset[str] = frozenset(),
         prefer: str | None = None,
         allow_families: frozenset[str] = frozenset(),
+        block_families: frozenset[str] | None = None,
     ) -> tuple[TelegramTransportSession, str] | None:
         """Get first available client not in flood wait. Returns (client, phone) or None.
 
         ``exclude_phones`` skips specific accounts — used by the collector to
         rotate a username resolve away from accounts already in resolve
         backoff (#790). ``prefer`` is tried first while it is free (#1877).
-        A flood in one of ``allow_families`` does not skip an account (#1879).
+        A flood in one of ``allow_families`` does not skip an account (#1879);
+        ``block_families`` narrows the ruler to those families only (#1889) and
+        wins when both are given.
         """
         if getattr(self, "_disconnecting", False):
             return None
@@ -343,7 +346,7 @@ class ClientLifecycleMixin:
             if not candidates:
                 return None
             lease = await self._lease_pool.acquire_available(
-                candidates, prefer=prefer, allow_families=allow_families
+                candidates, prefer=prefer, allow_families=allow_families, block_families=block_families
             )
             if lease is None:
                 return None

@@ -60,7 +60,7 @@ from tg_agent.telegram.collector_types import (
     _format_channel_log_name,
     unknown_tl_type_note,
 )
-from tg_agent.telegram.flood_scope import COLLECTION_ALLOWED_FAMILIES
+from tg_agent.telegram.flood_scope import COLLECTION_ALLOWED_FAMILIES, LOOKUP_FAMILIES
 from tg_agent.utils.safe_logging import mask_phone
 
 if TYPE_CHECKING:
@@ -472,11 +472,13 @@ class CollectionMixin:
                 result = await self._pool.get_available_client(allow_families=allowed)
         elif attempted_resolve_phones:
             # A retry after a failed lookup must land on an account that can
-            # look up: every family flood — resolve included (#1879) — blocks
-            # here. With the collection allowance this pick bounced between
-            # accounts that cannot resolve either.
+            # look up (#1879): the lookup's own families and account-wide
+            # floods block. An unrelated read family does not refuse a lookup
+            # (#1889), so it must not veto the pick — the ruler
+            # lookup_capable_phone_count already applies.
             result = await self._pool.get_available_client(
-                exclude_phones=set(attempted_resolve_phones)
+                exclude_phones=set(attempted_resolve_phones),
+                block_families=LOOKUP_FAMILIES,
             )
         else:
             # Any account can read a username channel; its own one, which holds
@@ -487,11 +489,11 @@ class CollectionMixin:
             )
 
         if result is None:
-            # Judged by the rule the pick used: the strict retry pick reports
-            # strictly, so "no pick" cannot meet an "available" report — that
-            # mismatch is what looped the queue (#1879).
+            # Judged by the rule the pick used: the retry pick reports by the
+            # same lookup ruler (#1889), so "no pick" cannot meet an "available"
+            # report — that mismatch is what looped the queue (#1879).
             availability = await self.get_collection_availability(
-                allow_families=frozenset() if attempted_resolve_phones else None
+                block_families=LOOKUP_FAMILIES if attempted_resolve_phones else None
             )
             if await self._wait_for_transient_collection_flood(availability):
                 return _ACQUIRE_RETRY

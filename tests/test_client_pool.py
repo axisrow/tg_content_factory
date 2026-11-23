@@ -11,6 +11,7 @@ from tests.helpers import FakeCliTelethonClient, make_channel_entity
 from tg_agent.database.repositories.accounts import AccountSessionDecryptError
 from tg_agent.models import Account
 from tg_agent.telegram.client_pool import ClientPool
+from tg_agent.telegram.flood_scope import LOOKUP_FAMILIES
 
 
 def _channel_entity(
@@ -211,6 +212,36 @@ async def test_pool_skips_flooded_returns_next(real_pool_harness_factory):
     result = await harness.pool.get_available_client()
     assert result is not None
     assert result[1] == "+70002222222"
+
+
+@pytest.mark.anyio
+async def test_lookup_retry_ruler_reaches_the_pool_proxies(real_pool_harness_factory):
+    """#1889: ``block_families`` must reach the lease pool through both pool
+    proxies, ``get_available_client`` and ``get_stats_availability``. A kwarg
+    dropped in either turns the pick strict again while its report keeps the
+    lookup ruler: "no pick" then meets an "available" report — the mismatch
+    that looped the queue (#1879)."""
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(phone="+70001111111", client=FakeCliTelethonClient())
+    harness.queue_cli_client(phone="+70002222222", client=FakeCliTelethonClient())
+    await harness.add_account("+70001111111", session_string="s1", is_primary=True)
+    await harness.add_account("+70002222222", session_string="s2")
+    await harness.initialize_connected_accounts()
+    pool = harness.pool
+    await pool.report_family_flood("+70001111111", 3600, "resolve")
+    await pool.report_family_flood("+70002222222", 3600, "dialogs_page")
+
+    # A dialogs_page flood does not refuse a lookup: the retry pick away from
+    # the resolve-flooded account lands on the other one — which the resolve
+    # family still blocks.
+    result = await pool.get_available_client(exclude_phones={"+70001111111"}, block_families=LOOKUP_FAMILIES)
+    assert result is not None and result[1] == "+70002222222"
+    assert await pool.get_available_client(exclude_phones={"+70002222222"}, block_families=LOOKUP_FAMILIES) is None
+
+    # One ruler for the pick and its report. The strict default still refuses
+    # the account, so "available" below is the lookup ruler at work.
+    assert (await pool.get_stats_availability()).state == "all_flooded"
+    assert (await pool.get_stats_availability(block_families=LOOKUP_FAMILIES)).state == "available"
 
 
 @pytest.mark.anyio

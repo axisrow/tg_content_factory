@@ -6,6 +6,7 @@ import pytest
 
 from tg_agent.models import Account
 from tg_agent.telegram.account_lease_pool import AccountLeasePool
+from tg_agent.telegram.flood_scope import LOOKUP_FAMILIES
 
 
 @pytest.fixture
@@ -333,7 +334,8 @@ async def test_all_flooded_returns_none_even_when_some_free(db):
 @pytest.mark.anyio
 async def test_lookup_flood_keeps_an_account_only_where_lookups_are_allowed(db):
     """#1879: collection may use an account flooded on username lookups only; a
-    history flood keeps the account out of every pick."""
+    history flood keeps the account out of every pick made by this rule (the
+    lookup-retry pick judges by the lookup families alone, #1889)."""
     for phone in ("+70041", "+70042"):
         await db.add_account(Account(phone=phone, session_string=phone, is_active=True))
     until = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -369,3 +371,57 @@ async def test_availability_agrees_with_the_pick_under_family_floods(db):
 
     allowed = await pool.snapshot_stats_availability(connected, allow_families=frozenset({"resolve"}))
     assert allowed == ("available", None, None)
+
+
+@pytest.mark.anyio
+async def test_lookup_retry_pick_blocks_only_its_own_family(db):
+    """#1889: the retry pick asks "can this account look up now" — a flood on an
+    unrelated read family must not take an account out of that pick. Only the
+    account-wide flood and the resolve family block; that is the ruler
+    ``lookup_capable_phone_count`` already applies."""
+    for phone in ("+70061", "+70062", "+70063"):
+        await db.add_account(Account(phone=phone, session_string=phone, is_active=True))
+    now = datetime.now(timezone.utc)
+    await db.repos.accounts.set_family_flood("+70061", "dialogs_page", now + timedelta(hours=3))
+    await db.repos.accounts.set_family_flood("+70062", "resolve", now + timedelta(hours=2))
+    pool = AccountLeasePool(db, set())
+    connected = {"+70061", "+70062", "+70063"}
+
+    assert await pool.available_exclusive_count(connected, block_families=LOOKUP_FAMILIES) == 2
+    lease = await pool.acquire_available(connected, block_families=LOOKUP_FAMILIES)
+    assert lease is not None and lease.account.phone in {"+70061", "+70063"}
+    await pool.release(lease.account.phone)
+
+    # The account-wide flood still blocks under the same ruler.
+    await db.update_account_flood("+70061", now + timedelta(minutes=30))
+    assert await pool.available_exclusive_count(connected, block_families=LOOKUP_FAMILIES) == 1
+    lease = await pool.acquire_available(connected, block_families=LOOKUP_FAMILIES)
+    assert lease is not None and lease.account.phone == "+70063"
+
+
+@pytest.mark.anyio
+async def test_availability_agrees_with_the_pick_under_mixed_family_floods(db):
+    """#1889: one ruler for the retry pick and its report — the report judges by
+    the lookup ruler, so an unrelated family flood cannot turn "an account can
+    look up" into "all flooded until that family's deadline"."""
+    for phone in ("+70071", "+70072"):
+        await db.add_account(Account(phone=phone, session_string=phone, is_active=True))
+    now = datetime.now(timezone.utc)
+    await db.repos.accounts.set_family_flood("+70071", "resolve", now + timedelta(hours=2))
+    await db.repos.accounts.set_family_flood("+70072", "dialogs_page", now + timedelta(hours=1))
+    pool = AccountLeasePool(db, set())
+    connected = {"+70071", "+70072"}
+
+    state, retry_after_sec, earliest = await pool.snapshot_stats_availability(
+        connected, block_families=LOOKUP_FAMILIES
+    )
+    assert (state, retry_after_sec, earliest) == ("available", None, None)
+
+    # Every account genuinely unable to look up: the report stays all_flooded,
+    # and the unrelated family's deadline must not enter the estimate.
+    await db.repos.accounts.set_family_flood("+70072", "resolve", now + timedelta(minutes=30))
+    state, retry_after_sec, earliest = await pool.snapshot_stats_availability(
+        connected, block_families=LOOKUP_FAMILIES
+    )
+    assert state == "all_flooded"
+    assert earliest is not None and abs((earliest - (now + timedelta(minutes=30))).total_seconds()) < 5

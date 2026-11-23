@@ -10,7 +10,7 @@ from telethon.tl import types
 from tg_agent.models import Channel, ChannelStats, Message, SearchQuery
 from tg_agent.services.notification_matcher import NotificationMatcher
 from tg_agent.telegram.collector import AllStatsClientsFloodedError, Collector, NoActiveStatsClientsError
-from tg_agent.telegram.flood_scope import COLLECTION_ALLOWED_FAMILIES
+from tg_agent.telegram.flood_scope import COLLECTION_ALLOWED_FAMILIES, LOOKUP_FAMILIES
 
 
 @pytest.fixture
@@ -569,22 +569,33 @@ async def test_username_channel_skips_accounts_that_failed_its_lookup(collector,
 
     assert phone == "+7999"
     mock_pool.get_client_by_phone.assert_not_awaited()
-    # The retry pick is strict (#1879): it must land on an account that can
-    # look up, so every family flood blocks — no collection allowance here.
-    mock_pool.get_available_client.assert_awaited_once_with(exclude_phones={"+7888"})
+    # The retry pick asks "can this account look up now" (#1889): only the
+    # resolve family and account-wide floods block — unrelated read families do
+    # not refuse a lookup, so they must not veto the pick.
+    mock_pool.get_available_client.assert_awaited_once_with(
+        exclude_phones={"+7888"}, block_families=LOOKUP_FAMILIES
+    )
 
 
+@pytest.mark.parametrize(
+    ("attempted_resolve_phones", "block_families"),
+    [({"+7888"}, LOOKUP_FAMILIES), (set(), None)],
+    ids=["lookup-retry-pick", "first-pick"],
+)
 @pytest.mark.anyio
-async def test_a_refused_retry_pick_defers_and_reports_strictly(collector, mock_pool):
-    """#1879: no retry pick = every account is blocked for lookups — the report
-    must say the same thing (all_flooded), so the queue defers instead of
-    looping on "no active connected clients"."""
+async def test_a_refused_pick_defers_and_reports_by_its_own_rule(
+    collector, mock_pool, attempted_resolve_phones, block_families
+):
+    """#1879/#1889: a refused pick = every account is blocked under that pick's
+    rule, so the report must judge by the SAME rule and say all_flooded too —
+    the queue defers instead of looping on "no active connected clients". The
+    retry pick reports by the lookup ruler, the first pick by the collection
+    rule: either report on the other's rule is the #1879 loop."""
+    from tg_agent.telegram.client_pool import StatsClientAvailability
     from tg_agent.telegram.collector_types import AllCollectionClientsFloodedError
 
     channel = Channel(id=1, channel_id=123, title="Ch", username="somech")
     mock_pool.get_available_client.return_value = None
-    from tg_agent.telegram.client_pool import StatsClientAvailability
-
     mock_pool.get_stats_availability = AsyncMock(
         return_value=StatsClientAvailability(
             state="all_flooded",
@@ -594,9 +605,11 @@ async def test_a_refused_retry_pick_defers_and_reports_strictly(collector, mock_
     )
 
     with pytest.raises(AllCollectionClientsFloodedError):
-        await collector._acquire_collection_client(channel, {"+7888"})
+        await collector._acquire_collection_client(channel, attempted_resolve_phones)
 
-    mock_pool.get_stats_availability.assert_awaited_once_with(allow_families=frozenset())
+    mock_pool.get_stats_availability.assert_awaited_once_with(
+        allow_families=COLLECTION_ALLOWED_FAMILIES, block_families=block_families
+    )
 
 
 @pytest.mark.anyio
