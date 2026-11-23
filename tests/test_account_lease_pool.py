@@ -334,7 +334,8 @@ async def test_all_flooded_returns_none_even_when_some_free(db):
 @pytest.mark.anyio
 async def test_lookup_flood_keeps_an_account_only_where_lookups_are_allowed(db):
     """#1879: collection may use an account flooded on username lookups only; a
-    history flood keeps the account out of every pick."""
+    history flood keeps the account out of every pick made by this rule (the
+    lookup-retry pick judges by the lookup families alone, #1889)."""
     for phone in ("+70041", "+70042"):
         await db.add_account(Account(phone=phone, session_string=phone, is_active=True))
     until = datetime.now(timezone.utc) + timedelta(hours=1)

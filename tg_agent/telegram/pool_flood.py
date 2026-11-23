@@ -315,7 +315,7 @@ class FloodRotationMixin:
 
         Pass the ``allow_families`` of the pick it stands for (#1879) — or the
         ``block_families`` of the lookup-retry pick (#1889). ``block_families``
-        wins when both are given (no caller combines them).
+        wins when both are given.
         """
         # Imported lazily-by-name from the host module to avoid a circular import
         # of the StatsClientAvailability dataclass at module load time.

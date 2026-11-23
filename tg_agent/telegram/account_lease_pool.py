@@ -64,7 +64,7 @@ class AccountLeasePool:
         lookup-retry pick passes the lookup's own families (a flood on an
         unrelated read family does not refuse a lookup), mirroring
         ``lookup_capable_phone_count``. ``block_families`` wins when both are
-        given (no caller combines them).
+        given.
         """
         deadlines = [normalize_utc(account.flood_wait_until)]
         floods = family_floods.get(account.phone, {})

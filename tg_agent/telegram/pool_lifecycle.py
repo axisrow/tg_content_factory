@@ -337,7 +337,7 @@ class ClientLifecycleMixin:
         backoff (#790). ``prefer`` is tried first while it is free (#1877).
         A flood in one of ``allow_families`` does not skip an account (#1879);
         ``block_families`` narrows the ruler to those families only (#1889) and
-        wins when both are given (no caller combines them).
+        wins when both are given.
         """
         if getattr(self, "_disconnecting", False):
             return None
