@@ -74,6 +74,20 @@ class LiveTelegramAccess:
         if self.on_event is not None:
             await self.on_event(account)
 
+    async def _deleted(self, account: str, event) -> None:
+        """Journal a Telegram deletion update (deletion capture).
+
+        The update carries bare message ids; ``chat_id`` names the chat only for
+        channels/supergroups (elsewhere the ids are account-global). Projects
+        that granted the account pull it like any other journaled event.
+        """
+        ids = sorted(event.deleted_ids)
+        payload = {"kind": "deleted", "chat_id": event.chat_id, "message_ids": ids}
+        identity = f"deleted:{event.chat_id}:{','.join(map(str, ids))}"
+        await self.store.record_event(account, identity, payload, now=time.time())
+        if self.on_event is not None:
+            await self.on_event(account)
+
     async def report_flood(self, phone: str, wait_seconds: int) -> None:
         # The adapter's phone key is the stable gateway account UUID.
         assert self._pool is not None, "flood report before the gateway pool exists"
@@ -136,6 +150,11 @@ class LiveTelegramAccess:
                     await self._incoming(account, event)
 
                 raw.add_event_handler(incoming, events.NewMessage(func=lambda event: event.is_private))
+
+                async def deleted(event):
+                    await self._deleted(account, event)
+
+                raw.add_event_handler(deleted, events.MessageDeleted())
             return self.sessions[account]
 
     async def close(self) -> None:

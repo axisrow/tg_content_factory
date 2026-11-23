@@ -396,9 +396,9 @@ async def build_runtime_container(
         # `worker` must never both listen on the same accounts, so web mode
         # gets no listener at all.
         if isinstance(config.gateway, dict) and config.gateway:
-            from tg_agent.gateway.dm_consumer import GatewayDmConsumer
+            from tg_agent.gateway.event_consumer import GatewayEventConsumer
 
-            dm_listener = GatewayDmConsumer(live_pool, db, gateway_client)
+            dm_listener = GatewayEventConsumer(live_pool, db, gateway_client)
         else:
             dm_catchup = DmCatchupService(live_pool, db)
             dm_listener = DmListener(

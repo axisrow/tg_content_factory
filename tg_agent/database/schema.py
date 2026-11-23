@@ -775,4 +775,19 @@ CREATE TABLE IF NOT EXISTS account_family_floods (
     updated_at TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (phone, family)
 );
+
+-- Message deletions observed by the session owner (gateway events, deletion
+-- capture): one row per deleted message id. chat_id is NULL for private/small
+-- group chats, where Telegram names no chat and ids are account-global; the
+-- unique index normalizes that to 0 so a replayed event inserts nothing.
+CREATE TABLE IF NOT EXISTS observed_deletions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone TEXT NOT NULL,
+    chat_id INTEGER,
+    message_id INTEGER NOT NULL,
+    deleted_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS observed_deletions_unique
+    ON observed_deletions(phone, IFNULL(chat_id, 0), message_id);
+CREATE INDEX IF NOT EXISTS observed_deletions_age ON observed_deletions(deleted_at);
 """ + SESSION_ENTITIES_SQL + ";\n"

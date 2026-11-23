@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
 from tg_agent.agent.manager import AgentManager
 from tg_agent.collection_queue import CollectionQueue
@@ -46,6 +46,9 @@ from tg_agent.telegram.dm_catchup import DmCatchupService
 from tg_agent.telegram.dm_listener import DmListener
 from tg_agent.telegram.notifier import Notifier
 from tg_shared.auth import TelegramAuth
+
+if TYPE_CHECKING:
+    from tg_agent.gateway.event_consumer import GatewayEventConsumer
 
 RuntimeClientPool: TypeAlias = ClientPool | SnapshotClientPool
 RuntimeCollector: TypeAlias = Collector | SnapshotCollector
@@ -91,7 +94,7 @@ class RuntimeContainer:
     llm_provider_service: RuntimeProviderRegistry | None = None
     # Real-time incoming-DM listener (#1426): built only in worker mode, so a
     # split deployment can never double-listen on the same accounts.
-    dm_listener: DmListener | None = None
+    dm_listener: DmListener | GatewayEventConsumer | None = None
     dm_catchup: DmCatchupService | None = None
     # Dormant-DM ping monitors (#1415): needs the live pool for history reads
     # and sends — worker-only, like the listener.

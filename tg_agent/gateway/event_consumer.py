@@ -1,6 +1,7 @@
-"""Deliver gateway DM events into the project's existing DM storage atomically.
+"""Deliver gateway events into the project's stores atomically.
 
-The gateway journals every private message of the shared accounts; this
+The gateway journals the shared accounts' events (private messages under
+``kind: "dm"``, observed message deletions under ``kind: "deleted"``); this
 consumer pulls the project's events by cursor. Since #1868 the gateway pushes a
 notice over the relay the moment it journals one, so the pull happens at once
 (the 30 s timeout is only a safety net), and history recovery reads natively
@@ -18,6 +19,7 @@ from tg_agent.database import Database
 from tg_agent.database.repositories.dm_messages import DmMessagesRepository
 from tg_agent.database.repositories.incoming_dms import IncomingDmsRepository
 from tg_agent.database.repositories.messages import _TransactionWrites
+from tg_agent.database.repositories.observed_deletions import ObservedDeletionsRepository
 from tg_agent.gateway.catalog import ProjectAccountCatalog
 from tg_agent.gateway.client import GatewayRequestError
 from tg_agent.models import DmMessage, IncomingDm
@@ -34,7 +36,7 @@ _CATALOG_REFRESH_SEC = 60.0
 _RECOVERY_RETRY_SEC = 900.0
 
 
-class GatewayDmConsumer:
+class GatewayEventConsumer:
     def __init__(self, pool, db, client):
         self.pool = pool
         self.db = db
@@ -46,7 +48,7 @@ class GatewayDmConsumer:
 
     async def start(self):
         if self._task is None:
-            self._task = asyncio.create_task(self._run(), name="project-gateway-dm-consumer")
+            self._task = asyncio.create_task(self._run(), name="project-gateway-event-consumer")
 
     async def stop(self):
         if self._task is not None:
@@ -118,16 +120,38 @@ class GatewayDmConsumer:
         if not events:
             return
         accounts = {row["id"]: row["phone"] for row in await self.client.accounts()}
+        deletions_seen = False
         for event in events:
             payload = event["payload"]
             phone = accounts.get(event["account_id"])
             if phone is None:
                 raise ValueError("Gateway event references an unavailable account")
             async with self.db.transaction() as conn:
-                await self._save(conn, phone, payload)
+                kind = payload.get("kind")
+                if kind == "deleted":
+                    if await self._save_deletion(conn, phone, payload):
+                        deletions_seen = True
+                elif kind == "dm":
+                    await self._save(conn, phone, payload)
+                else:
+                    # Unknown kinds must not wedge the shared cursor; note and move on.
+                    logger.debug("Gateway event kind %r has no consumer; skipping", kind)
                 await conn.execute("INSERT INTO settings(key,value) VALUES ('gateway_event_cursor',?) "
                                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(event["id"]),))
             await self.client.acknowledge(event["id"])
+        if deletions_seen:
+            await self.db.repos.observed_deletions.prune()
+
+    async def _save_deletion(self, conn, phone, payload) -> int:
+        """Fan a ``kind: "deleted"`` payload out to one row per message id."""
+        chat_id = payload.get("chat_id")
+        message_ids = [int(mid) for mid in payload.get("message_ids") or []]
+        writer = cast("Database", _TransactionWrites(conn))
+        inserted = await ObservedDeletionsRepository(conn, database=writer).record_many(
+            phone, chat_id, message_ids)
+        if inserted:
+            logger.info("gateway events: %d deletion(s) phone=%s chat=%s", inserted, phone, chat_id)
+        return inserted
 
     async def _save(self, conn, phone, payload, *, processed=False):
         date = datetime.fromisoformat(payload["date"]) if payload.get("date") else None

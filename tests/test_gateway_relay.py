@@ -21,12 +21,13 @@ import pytest
 from telethon import functions, types
 
 from tests.test_relay import FakeOwnerClient
-from tg_agent.gateway import dm_consumer
+from tg_agent.gateway import event_consumer
 from tg_agent.gateway.catalog import GatewayAdministrator
 from tg_agent.gateway.client import GatewayRequestError, TelegramGatewayClient
-from tg_agent.gateway.dm_consumer import GatewayDmConsumer
+from tg_agent.gateway.event_consumer import GatewayEventConsumer
 from tg_agent.gateway.server import GatewayHub
 from tg_agent.gateway.store import GatewayStore, private_key
+from tg_agent.gateway.telegram import LiveTelegramAccess
 from tg_agent.models import Account, DmMessage
 from tg_agent.telegram import backends
 from tg_agent.telegram.client_pool import ClientPool
@@ -208,6 +209,40 @@ async def test_dm_pushes_skip_projects_without_a_grant_on_the_account(gateway):
         await pushed.wait()
 
 
+async def test_a_message_deletion_is_journaled_for_the_project(gateway):
+    # The real journaling side; the fixture's Access double has no Telegram events.
+    access = LiveTelegramAccess(gateway.store, cast("TelegramAuth", None))
+    project = TelegramGatewayClient(await gateway.connect(TOKEN_A))
+
+    class Deletion:
+        chat_id = -100123
+        deleted_ids = [9, 8]
+
+    await access._deleted(gateway.account, Deletion())
+
+    events = await project.events(0)
+    assert [(event["payload"]["kind"], event["payload"]["chat_id"],
+             event["payload"]["message_ids"]) for event in events] == [("deleted", -100123, [8, 9])]
+    # A replayed Telegram update dedupes on the event identity.
+    await access._deleted(gateway.account, Deletion())
+    assert len(await project.events(0)) == 1
+
+
+async def test_a_private_chat_deletion_journals_no_chat(gateway):
+    access = LiveTelegramAccess(gateway.store, cast("TelegramAuth", None))
+    project = TelegramGatewayClient(await gateway.connect(TOKEN_A))
+
+    class Deletion:
+        chat_id = None
+        deleted_ids = [7]
+
+    await access._deleted(gateway.account, Deletion())
+
+    events = await project.events(0)
+    assert [(event["payload"]["kind"], event["payload"]["chat_id"],
+             event["payload"]["message_ids"]) for event in events] == [("deleted", None, [7])]
+
+
 async def test_a_stuck_subscriber_does_not_delay_dm_pushes_to_the_others(gateway):
     class Subscriber:
         closed = False
@@ -313,10 +348,10 @@ async def _acknowledged(store, project):
     return row[0] if row else None
 
 
-async def test_the_project_dm_consumer_stores_pushed_events_at_once(gateway, db, monkeypatch):
+async def test_the_project_event_consumer_stores_pushed_events_at_once(gateway, db, monkeypatch):
     # Only the push can deliver within the test: the safety-net poll is a minute away.
-    monkeypatch.setattr(dm_consumer, "_EVENT_POLL_SEC", 60.0)
-    consumer = GatewayDmConsumer(None, db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
+    monkeypatch.setattr(event_consumer, "_EVENT_POLL_SEC", 60.0)
+    consumer = GatewayEventConsumer(None, db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
     idle = asyncio.Event()
     consume = consumer.consume
 
@@ -346,6 +381,22 @@ async def test_the_project_dm_consumer_stores_pushed_events_at_once(gateway, db,
     assert await _acknowledged(gateway.store, PROJECT_A) == 1
 
 
+async def test_the_event_consumer_stores_deletions_alongside_dms(gateway, db):
+    dm = {"kind": "dm", "dialog_id": 5, "message_id": 9, "text": "hi", "out": False, "date": None}
+    await gateway.store.record_event(gateway.account, "5:9:0", dm, now=time.time())
+    deletion = {"kind": "deleted", "chat_id": -100123, "message_ids": [41, 42]}
+    await gateway.store.record_event(gateway.account, "deleted:-100123:41,42", deletion, now=time.time())
+    consumer = GatewayEventConsumer(None, db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
+
+    await consumer.consume()
+
+    assert await _rows(db, "SELECT phone,chat_id,message_id FROM observed_deletions ORDER BY message_id") == [
+        (PHONE, -100123, 41), (PHONE, -100123, 42)]
+    assert await _rows(db, "SELECT phone,chat_id,message_id,text,out FROM dm_messages") == [(PHONE, 5, 9, "hi", 0)]
+    assert await db.get_setting("gateway_event_cursor") == "2"
+    assert await _acknowledged(gateway.store, PROJECT_A) == 2
+
+
 async def test_an_expired_event_cursor_recovers_dm_history_on_the_relay(gateway, db, monkeypatch):
     old = {"kind": "dm", "dialog_id": 5, "message_id": 1, "text": "expired", "out": False, "date": None}
     await gateway.store.record_event(gateway.account, "5:1:0", old, now=time.time() - 8 * 86400)
@@ -371,9 +422,9 @@ async def test_an_expired_event_cursor_recovers_dm_history_on_the_relay(gateway,
         async def release_client(self, phone):
             self.released.append(phone)
 
-    monkeypatch.setattr(dm_consumer, "read_dialog_history_since", history)
+    monkeypatch.setattr(event_consumer, "read_dialog_history_since", history)
     pool = Pool()
-    consumer = GatewayDmConsumer(pool, db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
+    consumer = GatewayEventConsumer(pool, db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
 
     await consumer.consume()
 
@@ -401,7 +452,7 @@ async def test_the_worker_pool_picks_up_accounts_the_gateway_serves_later(gatewa
             initialized.set()
 
     pool = Pool()
-    consumer = GatewayDmConsumer(pool, db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
+    consumer = GatewayEventConsumer(pool, db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
     await consumer.start()
     try:
         async with asyncio.timeout(5):
@@ -475,8 +526,8 @@ async def test_dm_recovery_reads_on_from_the_archive_and_never_backfills(gateway
             return [{"channel_type": "dm", "dialog_id": 5, "channel_id": 5},
                     {"channel_type": "bot", "dialog_id": 7, "channel_id": 7}]
 
-    monkeypatch.setattr(dm_consumer, "read_dialog_history_since", history)
-    consumer = GatewayDmConsumer(Pool("relayed-client"), db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
+    monkeypatch.setattr(event_consumer, "read_dialog_history_since", history)
+    consumer = GatewayEventConsumer(Pool("relayed-client"), db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
 
     await consumer.consume()
 
@@ -507,8 +558,8 @@ async def test_dm_recovery_reads_conversations_started_while_the_project_was_beh
                     {"channel_type": "dm", "dialog_id": 9, "channel_id": 9,
                      "last_message_date": seen - timedelta(days=30)}]
 
-    monkeypatch.setattr(dm_consumer, "read_dialog_history_since", history)
-    consumer = GatewayDmConsumer(Pool("relayed-client"), db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
+    monkeypatch.setattr(event_consumer, "read_dialog_history_since", history)
+    consumer = GatewayEventConsumer(Pool("relayed-client"), db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
 
     await consumer.consume()
 
@@ -528,7 +579,7 @@ async def test_dm_recovery_reads_history_without_project_credentials(gateway, db
     missed = SimpleNamespace(id=3, sender_id=5, out=False, date=datetime.now(timezone.utc) - timedelta(minutes=5),
                              text="missed", media=None, reply_to=None, forward=None, sender=None)
     pool = _RecoveryPool(_RelayedDmClient([missed]))
-    consumer = GatewayDmConsumer(pool, db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
+    consumer = GatewayEventConsumer(pool, db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
 
     await consumer.consume()
 
@@ -546,10 +597,10 @@ async def test_a_failed_dm_recovery_is_not_repeated_on_every_poll(gateway, db, m
     async def unavailable(*_args, **_kwargs):
         raise RuntimeError("history unavailable")
 
-    monkeypatch.setattr(dm_consumer, "read_dialog_history_since", unavailable)
-    monkeypatch.setattr(dm_consumer, "_RECOVERY_RETRY_SEC", pause, raising=False)
+    monkeypatch.setattr(event_consumer, "read_dialog_history_since", unavailable)
+    monkeypatch.setattr(event_consumer, "_RECOVERY_RETRY_SEC", pause, raising=False)
     pool = _RecoveryPool(raw_client="relayed-client")
-    consumer = GatewayDmConsumer(pool, db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
+    consumer = GatewayEventConsumer(pool, db, TelegramGatewayClient(await gateway.connect(TOKEN_A)))
 
     with pytest.raises(RuntimeError):
         await consumer.consume()

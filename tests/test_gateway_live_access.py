@@ -78,15 +78,17 @@ async def test_projects_share_one_live_connection_and_every_project_sees_each_dm
 
         assert sessions[0].raw_client is sessions[1].raw_client
         assert len(auth.connections) == 1
-        assert len(auth.connections[0].handlers) == 1
+        assert len(auth.connections[0].handlers) == 2  # NewMessage + MessageDeleted
         event = SimpleNamespace(chat_id=123, message=SimpleNamespace(
             id=7, raw_text="incoming DM", out=False, date=datetime.now(timezone.utc),
         ))
         await auth.connections[0].handlers[0](event)
+        await auth.connections[0].handlers[1](SimpleNamespace(chat_id=123, deleted_ids=[7]))
         delivered = [await store.events(project, 0) for project in PROJECTS]
         assert delivered[0] == delivered[1]
         assert delivered[0][0]["payload"]["text"] == "incoming DM"
-        assert notified == [account]
+        assert delivered[0][1]["payload"]["kind"] == "deleted"
+        assert notified == [account, account]
         assert (await access.connection(PROJECTS[0], account)).raw_client is sessions[0].raw_client
         assert len(auth.connections) == 1
 
