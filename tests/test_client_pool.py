@@ -469,6 +469,30 @@ async def _setup_warm_harness(harness, phones_and_clients):
 
 
 @pytest.mark.anyio
+async def test_warm_logs_a_surfaced_flood_wait_without_a_traceback(
+    real_pool_harness_factory, monkeypatch, caplog
+):
+    """#1887: a FloodWait that surfaces as an exception (a relayed flood is rebuilt
+    on the client, relay.py:928) is a designed pace signal — the flood-family line
+    above already logged it; one WARNING line, no traceback."""
+    import logging
+
+    monkeypatch.setattr("tg_agent.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
+    harness = real_pool_harness_factory()
+    flood_client = FakeCliTelethonClient(dialogs=FloodWaitError(21))
+
+    await _setup_warm_harness(harness, {"+70000000001": flood_client})
+
+    with caplog.at_level(logging.INFO, logger="tg_agent.telegram.pool_dialogs"):
+        await harness.pool.warm_all_dialogs()
+
+    warnings = [r for r in caplog.records if "warm_all_dialogs: Flood wait" in r.getMessage()]
+    assert warnings, "the surfaced flood wait must keep its one WARNING line"
+    assert warnings[0].exc_info is None, "a routine flood must not render a traceback"
+    flood_client.get_dialogs.assert_awaited()
+
+
+@pytest.mark.anyio
 async def test_warm_flood_wait_fail_fast(real_pool_harness_factory, monkeypatch, caplog):
     """FloodWait on one phone should NOT sleep+retry — fail fast, move to next."""
     import time
