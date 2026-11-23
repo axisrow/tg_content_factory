@@ -36,6 +36,7 @@ from telethon.errors import (
     ChannelInvalidError,
     ChannelPrivateError,
     ChatAdminRequiredError,
+    FloodWaitError,
     UsernameInvalidError,
     UsernameNotOccupiedError,
 )
@@ -589,6 +590,17 @@ class DialogsMixin:
                     exc.category,
                     p,
                     exc.retry_after_sec,
+                )
+            except (HandledFloodWaitError, FloodWaitError) as exc:
+                # A flood that surfaces as an exception — a relayed flood is
+                # rebuilt on the client (relay.py:928) — is a designed pace
+                # signal, not a failure: the flood-family line above already
+                # logged it. One line, no traceback (#1887).
+                logger.warning(
+                    "warm_all_dialogs: Flood wait %ss on %s; moving to next phone",
+                    getattr(exc, "seconds", None)
+                    or getattr(getattr(exc, "info", None), "wait_seconds", "?"),
+                    p,
                 )
             except Exception as e:
                 logger.warning("warm_all_dialogs: failed for %s: %s", p, e, exc_info=True)

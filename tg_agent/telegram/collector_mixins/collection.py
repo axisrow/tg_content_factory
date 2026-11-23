@@ -543,6 +543,17 @@ class CollectionMixin:
                 logger.warning("Failed to prefetch dialogs for %s: %s", phone, exc.info.detail)
                 await self._pool.release_client(phone)
                 return _ACQUIRE_RETRY
+            except FloodWaitError as exc:
+                # A relayed flood surfaces as a raw exception (#1887): same
+                # handling as its direct sibling above — the flood family is
+                # already reported, so no traceback in the generic handler.
+                logger.warning(
+                    "Failed to prefetch dialogs for %s: Flood wait %ss",
+                    phone,
+                    getattr(exc, "seconds", "?"),
+                )
+                await self._pool.release_client(phone)
+                return _ACQUIRE_RETRY
             except TelegramRateLimitedError as exc:
                 logger.info(
                     "Proactive %s rate limit prefetching dialogs for %s; retry in %.1fs",
