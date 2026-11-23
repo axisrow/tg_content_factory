@@ -34,6 +34,7 @@ from tg_agent.database.repositories.incoming_dms import IncomingDmsRepository
 from tg_agent.database.repositories.messages import MessageSearchPage, MessagesRepository
 from tg_agent.database.repositories.notification_bots import NotificationBotsRepository
 from tg_agent.database.repositories.notified_messages import NotifiedMessagesRepository
+from tg_agent.database.repositories.observed_deletions import ObservedDeletionsRepository
 from tg_agent.database.repositories.photo_loader import PhotoLoaderRepository
 from tg_agent.database.repositories.ping_monitors import PingMonitorRepository
 from tg_agent.database.repositories.pipeline_action_log import PipelineActionLogRepository
@@ -109,6 +110,7 @@ class DatabaseRepositories:
     decisions: DecisionsRepository
     ping_monitors: PingMonitorRepository
     seeding: SeedingRepository
+    observed_deletions: ObservedDeletionsRepository
 
 
 # ---------------------------------------------------------------------------

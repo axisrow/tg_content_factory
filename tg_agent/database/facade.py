@@ -36,6 +36,7 @@ from tg_agent.database.repositories.incoming_dms import IncomingDmsRepository
 from tg_agent.database.repositories.messages import MessageSearchPage, MessagesRepository
 from tg_agent.database.repositories.notification_bots import NotificationBotsRepository
 from tg_agent.database.repositories.notified_messages import NotifiedMessagesRepository
+from tg_agent.database.repositories.observed_deletions import ObservedDeletionsRepository
 from tg_agent.database.repositories.photo_loader import PhotoLoaderRepository
 from tg_agent.database.repositories.ping_monitors import PingMonitorRepository
 from tg_agent.database.repositories.pipeline_action_log import PipelineActionLogRepository
@@ -160,6 +161,7 @@ class Database:
         self._runtime_snapshots: RuntimeSnapshotsRepository | None = None
         self._pipeline_action_log: PipelineActionLogRepository | None = None
         self._seeding: SeedingRepository | None = None
+        self._observed_deletions: ObservedDeletionsRepository | None = None
         self._repos: DatabaseRepositories | None = None
 
     async def initialize(self) -> None:
@@ -225,6 +227,7 @@ class Database:
         self._dm_reply_drafts = DmReplyDraftsRepository(read_db, database=self)
         self._ping_monitors = PingMonitorRepository(read_db, database=self)
         self._seeding = SeedingRepository(read_db, database=self)
+        self._observed_deletions = ObservedDeletionsRepository(read_db, database=self)
         self._repos = DatabaseRepositories(
             accounts=self._accounts,
             channels=self._channels,
@@ -254,6 +257,7 @@ class Database:
             ping_monitors=self._ping_monitors,
             decisions=self._decisions,
             seeding=self._seeding,
+            observed_deletions=self._observed_deletions,
         )
 
         await self._accounts.migrate_sessions()
