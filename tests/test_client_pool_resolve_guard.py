@@ -403,7 +403,7 @@ class TestHasRotatableResolvePhone:
         # reports zero available (it is generically flooded) → not rotatable.
         seen = {}
 
-        async def _count(candidates):
+        async def _count(candidates, *, block_families=None):
             seen["candidates"] = set(candidates)
             return 0
 
@@ -415,7 +415,7 @@ class TestHasRotatableResolvePhone:
 
     @pytest.mark.anyio
     async def test_true_when_free_phone_is_available(self):
-        pool = self._pool({"+7001": object(), "+7002": object()}, lambda c: 1)
+        pool = self._pool({"+7001": object(), "+7002": object()}, lambda c, *, block_families=None: 1)
         pool.set_resolve_username_backoff(600, phone="+7001")
         assert await pool.has_rotatable_resolve_phone(exclude={"+7001"}) is True
 
@@ -428,6 +428,27 @@ class TestHasRotatableResolvePhone:
         pool.set_resolve_username_backoff(600, phone="+7002")
         assert await pool.has_rotatable_resolve_phone() is False
         count.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_counts_a_candidate_with_an_unrelated_family_flood(self, real_pool_harness_factory):
+        """#1889: rotation targets accounts that can look up NOW — a flood on an
+        unrelated read family must not veto the rotate (the incident: every
+        capable account carried some other family flood, and the rotate was
+        refused, parking the channel for hours)."""
+        from tests.helpers import FakeCliTelethonClient
+
+        harness = real_pool_harness_factory()
+        harness.queue_cli_client(phone="+7001", client=FakeCliTelethonClient())
+        await harness.add_account("+7001", session_string="s_7001", is_primary=True)
+        harness.queue_cli_client(phone="+7002", client=FakeCliTelethonClient())
+        await harness.add_account("+7002", session_string="s_7002")
+        await harness.initialize_connected_accounts()
+        pool = harness.pool
+
+        pool.set_resolve_username_backoff(7200, phone="+7001")
+        await pool.report_family_flood("+7002", 3600, "dialogs_page")
+
+        assert await pool.has_rotatable_resolve_phone(exclude={"+7001"}) is True
 
 
 class TestNextResolveCapableAt:

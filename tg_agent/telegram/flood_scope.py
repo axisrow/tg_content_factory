@@ -31,10 +31,17 @@ WRITE_FAMILY_CATEGORIES = {"send", "channel_lifecycle", "admin_action"}
 # can never be scoped narrower than the account.
 UNSCOPED_OPERATIONS = {"telegram_invoke_request"}
 
+# Families a username lookup touches (#1889): the pre-dispatch check refuses a
+# lookup on its own family only, so these — and only these — block a pick made
+# for lookups; every other read family does not refuse a lookup.
+LOOKUP_FAMILIES = frozenset({"resolve"})
+
 # Families whose flood still lets an account collect (#1879): a channel with a
 # cached access key needs no username lookup, and the collector keeps such an
-# account in cache-only mode, so no lookup is sent on it.
-COLLECTION_ALLOWED_FAMILIES = frozenset({"resolve"})
+# account in cache-only mode, so no lookup is sent on it. Derived from
+# LOOKUP_FAMILIES on purpose: cache-only mode keys off the same set, so the
+# collection allowance and the lookup ruler cannot drift apart.
+COLLECTION_ALLOWED_FAMILIES = LOOKUP_FAMILIES
 
 
 def resolve_operation_family(

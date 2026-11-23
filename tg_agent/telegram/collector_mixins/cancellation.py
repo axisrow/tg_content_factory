@@ -17,7 +17,7 @@ from tg_agent.telegram.collector_types import (
     AllCollectionClientsFloodedError,
     NoActiveCollectionClientsError,
 )
-from tg_agent.telegram.flood_scope import COLLECTION_ALLOWED_FAMILIES
+from tg_agent.telegram.flood_scope import COLLECTION_ALLOWED_FAMILIES, LOOKUP_FAMILIES
 
 if TYPE_CHECKING:
     from typing import Any, Protocol, TypeAlias
@@ -51,16 +51,20 @@ class CancellationMixin:
         Such an account still collects channels whose key is cached (#1879), but
         must not send a lookup: touching the flooded family again can earn a
         longer wait. The per-family row (#1832) lives in the DB, so the resolve
-        backoff map above does not know it. Doubles without the pool method
-        read as not flooded.
+        backoff map above does not know it. Judges by the lookup families
+        (#1889), the same set the retry pick blocks on. Doubles without the
+        pool method read as not flooded.
         """
         getter = getattr(self._pool, "family_flood_deadline", None)
         if not callable(getter):
             return False
-        deadline = getter(phone, "resolve")
-        if isawaitable(deadline):
-            deadline = await deadline
-        return isinstance(deadline, datetime) and deadline > datetime.now(timezone.utc)
+        for family in LOOKUP_FAMILIES:
+            deadline = getter(phone, family)
+            if isawaitable(deadline):
+                deadline = await deadline
+            if isinstance(deadline, datetime) and deadline > datetime.now(timezone.utc):
+                return True
+        return False
 
     async def _can_rotate_resolve(self: "Collector", attempted_phones: set[str]) -> bool:
         """True if another connected account outside ``attempted_phones`` can
@@ -116,17 +120,21 @@ class CancellationMixin:
         return self.collection_worker_count()
 
     async def get_collection_availability(
-        self: "Collector", allow_families: frozenset[str] | None = None
+        self: "Collector",
+        allow_families: frozenset[str] | None = None,
+        *,
+        block_families: frozenset[str] | None = None,
     ):
         availability_fn = getattr(self._pool, "get_stats_availability", None)
         if callable(availability_fn):
             # Judged like collection's own pick, which keeps lookup-flooded
             # accounts (#1879): otherwise "available" meets "no account" and the
             # queue loops on "no active connected clients". The lookup-retry
-            # pick passes frozenset() — it must find an account that can
-            # actually look up, so its report judges strictly too.
+            # pick passes block_families=LOOKUP_FAMILIES — its report judges by
+            # the same lookup ruler, one ruler for both (#1889).
             result = availability_fn(
-                allow_families=COLLECTION_ALLOWED_FAMILIES if allow_families is None else allow_families
+                allow_families=COLLECTION_ALLOWED_FAMILIES if allow_families is None else allow_families,
+                block_families=block_families,
             )
             if asyncio.iscoroutine(result):
                 return await result

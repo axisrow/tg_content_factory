@@ -50,6 +50,7 @@ class AccountLeasePool:
         family_floods: dict[str, dict[str, datetime]],
         now: datetime,
         allow_families: frozenset[str],
+        block_families: frozenset[str] | None = None,
     ) -> datetime | None:
         """Until when ``account`` stays out of a pick; None while it is free.
 
@@ -57,12 +58,23 @@ class AccountLeasePool:
         ``allow_families``. The pick and the availability report share this
         rule (#1879): when they disagreed, collection looped on "no active
         connected clients" while every account sat under a family flood.
+
+        With ``block_families`` the ruler narrows to what the pick needs
+        (#1889): only the account-wide flood and those families block — the
+        lookup-retry pick passes the lookup's own families (a flood on an
+        unrelated read family does not refuse a lookup), mirroring
+        ``lookup_capable_phone_count``. ``block_families`` wins when both are
+        given (no caller combines them).
         """
         deadlines = [normalize_utc(account.flood_wait_until)]
+        floods = family_floods.get(account.phone, {})
+        if block_families is None:
+            # The default ruler: every family outside ``allow_families`` blocks.
+            block_families = frozenset(floods) - allow_families
         deadlines += [
             normalize_utc(until)
-            for family, until in family_floods.get(account.phone, {}).items()
-            if family not in allow_families
+            for family, until in floods.items()
+            if family in block_families
         ]
         return max((until for until in deadlines if until is not None and until > now), default=None)
 
@@ -72,13 +84,15 @@ class AccountLeasePool:
         *,
         prefer: str | None = None,
         allow_families: frozenset[str] = frozenset(),
+        block_families: frozenset[str] | None = None,
     ) -> AccountLease | None:
         """Acquire an account with at most one exclusive reservation per phone.
 
         ``prefer`` goes first while it is free and unflooded (#1877): a username
         channel's access hash lives on the account that resolved it. A flood in
         one of ``allow_families`` does not take an account out of this pick
-        (#1879).
+        (#1879). ``block_families`` narrows the ruler to those families only
+        (the lookup-retry pick, #1889).
         """
         async with self._lock:
             now = datetime.now(timezone.utc)
@@ -99,7 +113,7 @@ class AccountLeasePool:
                 account
                 for account in ordered_accounts
                 if account.phone in connected_phones
-                and self._blocked_until(account, family_floods, now, allow_families) is None
+                and self._blocked_until(account, family_floods, now, allow_families, block_families) is None
             ]
 
             for account in free:
@@ -115,7 +129,11 @@ class AccountLeasePool:
             return None
 
     async def available_exclusive_count(
-        self, connected_phones: set[str], *, allow_families: frozenset[str] = frozenset()
+        self,
+        connected_phones: set[str],
+        *,
+        allow_families: frozenset[str] = frozenset(),
+        block_families: frozenset[str] | None = None,
     ) -> int:
         async with self._lock:
             now = datetime.now(timezone.utc)
@@ -129,7 +147,7 @@ class AccountLeasePool:
                     account.flood_wait_until = None
                 if account.phone not in connected_phones or account.phone in self._in_use:
                     continue
-                if self._blocked_until(account, family_floods, now, allow_families) is None:
+                if self._blocked_until(account, family_floods, now, allow_families, block_families) is None:
                     count += 1
             return count
 
@@ -196,11 +214,13 @@ class AccountLeasePool:
         connected_phones: set[str],
         *,
         allow_families: frozenset[str] = frozenset(),
+        block_families: frozenset[str] | None = None,
     ) -> tuple[str, int | None, datetime | None]:
         """Whether some connected account is free now, else when the first frees up.
 
         Judged by the pick's own rule (:meth:`_blocked_until`), with the same
-        ``allow_families`` the matching pick uses (#1879).
+        ``allow_families`` the matching pick uses (#1879) — or the same
+        ``block_families`` for the lookup-retry pick and its report (#1889).
         """
         now = datetime.now(timezone.utc)
         accounts = await self.get_connected_accounts(connected_phones)
@@ -210,7 +230,7 @@ class AccountLeasePool:
         family_floods = await self._family_floods(self._db, now)
         deadlines: list[datetime] = []
         for account in accounts:
-            until = self._blocked_until(account, family_floods, now, allow_families)
+            until = self._blocked_until(account, family_floods, now, allow_families, block_families)
             if until is None:
                 return "available", None, None
             deadlines.append(until)

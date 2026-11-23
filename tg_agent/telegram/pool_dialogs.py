@@ -253,6 +253,7 @@ class DialogsMixin:
             exclude_phones: set[str] | frozenset[str] = frozenset(),
             prefer: str | None = None,
             allow_families: frozenset[str] = frozenset(),
+            block_families: frozenset[str] | None = None,
         ) -> tuple[TelegramTransportSession, str] | None: ...
 
         async def get_client_by_phone(
@@ -264,7 +265,10 @@ class DialogsMixin:
         async def run_live_username_resolve(self, *args: object, **kwargs: object) -> object: ...
 
         async def get_stats_availability(
-            self, *, allow_families: frozenset[str] = frozenset()
+            self,
+            *,
+            allow_families: frozenset[str] = frozenset(),
+            block_families: frozenset[str] | None = None,
         ) -> StatsClientAvailability: ...
 
         @staticmethod
