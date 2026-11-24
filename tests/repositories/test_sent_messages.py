@@ -105,6 +105,22 @@ async def test_multiple_observers_dedupe_into_one_status(db):
 
 
 @pytest.mark.anyio
+async def test_null_chat_deletion_by_other_account_does_not_mark_deleted(db):
+    """NULL-chat rows (dm/small-group) carry per-account message ids: the same
+    id deleted in another account's DM world is a different message — there,
+    unlike channels, the phone must match."""
+    sm = db.repos.sent_messages
+    od = db.repos.observed_deletions
+
+    await sm.record_many("+7001", None, [23], chat_type="dm", source="dialogs_send")
+    await od.record_many("+7002", None, [23])
+
+    rows = await sm.list(phone="+7001")
+    assert len(rows) == 1
+    assert rows[0]["deleted_at"] is None
+
+
+@pytest.mark.anyio
 async def test_list_filters_by_phone_source_chat_and_period(db):
     sm = db.repos.sent_messages
     old = datetime.now(timezone.utc) - timedelta(days=3)

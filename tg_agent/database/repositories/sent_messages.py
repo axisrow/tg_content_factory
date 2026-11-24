@@ -86,10 +86,12 @@ class SentMessagesRepository:
         The join mirrors how the deletion pipeline names chats: a registry row
         matches a deletion only when message id AND chat shape agree — a
         channel deletion of the same id never lands on a DM row and vice
-        versa. The observer's phone deliberately does NOT participate: the
+        versa. The observer's phone does not participate for channels: the
         account that sees a channel deletion is usually a peer pool account,
         not the sender (#1898), and "any account saw it deleted" is deleted —
-        the same semantics as ``messages wait``. The correlated scalar
+        the same semantics as ``messages wait``. NULL-chat rows (dm/
+        small-group) are the exception — their message ids are per-account
+        sequences, so there the phone must match. The correlated scalar
         subquery rides the ``observed_deletions_message`` index per emitted
         row (a GROUP BY over the whole table would run per report forever —
         both stores are unpruned); MIN collapses multiple observers to the
@@ -99,7 +101,8 @@ class SentMessagesRepository:
             "SELECT sm.phone, sm.chat_id, sm.message_id, sm.chat_type, sm.recipient,"
             " sm.text, sm.source, sm.ref, sm.sent_at,"
             " (SELECT MIN(od.deleted_at) FROM observed_deletions od"
-            "  WHERE od.message_id = sm.message_id AND od.chat_id IS sm.chat_id) AS deleted_at"
+            "  WHERE od.message_id = sm.message_id AND od.chat_id IS sm.chat_id"
+            "  AND (od.chat_id IS NOT NULL OR od.phone = sm.phone)) AS deleted_at"
             " FROM sent_messages sm"
             " WHERE 1=1"
         )
