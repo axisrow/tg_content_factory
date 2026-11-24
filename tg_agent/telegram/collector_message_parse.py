@@ -24,6 +24,7 @@ from tg_agent.models import Message
 from tg_agent.services.translation_service import TranslationService
 from tg_agent.telegram.reactions import extract_message_reactions_json
 from tg_agent.telegram.rich_text import webpage_page_text
+from tg_agent.utils.json import safe_json_dumps
 from tg_shared.identity import extract_message_sender_identity
 from tg_shared.media import get_media_type
 
@@ -94,7 +95,11 @@ def extract_message_entities_json(msg) -> str | None:
         }
         for entity in entities
     ]
-    return json.dumps(serialized, ensure_ascii=False, sort_keys=True) if serialized else None
+    # safe_json_dumps, not bare json.dumps: telethon's generated to_dict()
+    # passes raw datetime through (only to_json() converts), and a date-bearing
+    # entity (#1895, MessageEntityFormattedDate) must not crash the whole
+    # channel collection.
+    return safe_json_dumps(serialized, sort_keys=True) if serialized else None
 
 
 def plain_text_and_entities_json(msg) -> tuple[str | None, str | None]:

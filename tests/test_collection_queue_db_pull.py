@@ -1203,7 +1203,7 @@ async def test_unknown_tl_type_is_skipped_with_warning_not_traceback(tmp_path, c
         assert not [r for r in records if r.levelno >= logging.ERROR or r.exc_info]
         task = await _get_task(db, task_id)
         assert task.status == "pending"  # FAILED → rescheduled for the retry pass
-        assert "Retry pass 2/5" in (task.note or "")
+        assert "Retry pass 2/3" in (task.note or "")
     finally:
         if queue is not None:
             await queue._cancel_delayed_requeues()
@@ -1235,7 +1235,7 @@ async def test_other_collection_errors_still_log_error_with_traceback(tmp_path, 
         assert len(errors) == 1 and errors[0].exc_info
         task = await _get_task(db, task_id)
         assert task.status == "pending"  # retryable: rescheduled, not terminal FAILED
-        assert "Retry pass 2/5" in (task.note or "")
+        assert "Retry pass 2/3" in (task.note or "")
     finally:
         if queue is not None:
             await queue._cancel_delayed_requeues()
@@ -1376,7 +1376,7 @@ async def test_retry_pass_flaky_then_success_completes(tmp_path, monkeypatch):
         assert collector.calls.count(channel.channel_id) == 2
         assert task_id not in queue._retry_pass
         task = await _get_task(db, task_id)
-        assert "Retry pass 2/5" in (task.note or "")
+        assert "Retry pass 2/3" in (task.note or "")
     finally:
         if queue is not None:
             await queue.shutdown()
@@ -1399,15 +1399,79 @@ async def test_retry_pass_caps_at_max_attempts(tmp_path, monkeypatch):
 
         await _wait_for_status(db, task_id, "failed")
         deadline = asyncio.get_event_loop().time() + 6.0
-        while asyncio.get_event_loop().time() < deadline and len(collector.calls) < 5:
+        while asyncio.get_event_loop().time() < deadline and len(collector.calls) < 3:
             await asyncio.sleep(0.05)
 
-        assert len(collector.calls) == 5
+        assert len(collector.calls) == 3
         await asyncio.sleep(0.25)  # settle: final flush ran, no 6th attempt may appear
-        assert len(collector.calls) == 5
+        assert len(collector.calls) == 3
         assert not queue._retry_pass
         task = await _get_task(db, task_id)
         assert task.status == "failed"
+    finally:
+        if queue is not None:
+            await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_failed_passes_gate_blocks_enqueue_after_threshold(tmp_path, monkeypatch):
+    """Three consecutive exhausted passes → enqueue refuses the channel (#1895):
+    the scheduled re-enqueue must not loop a permanently crashing channel
+    forever. A fresh queue (daemon restart) admits it again."""
+    monkeypatch.setattr(CollectionQueue, "RETRY_PASS_DELAY_SEC", 0)
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await _seed_channel(db)
+        collector = _RaisingCollector(TypeNotFoundError(0x1C32B11C, b"\x1c\xb12\x1c"))
+        queue = _make_queue(collector, db)
+        channel = (await db.get_channels(active_only=True))[0]
+        assert channel.id is not None
+        for _ in range(CollectionQueue.FAILED_PASS_SKIP_THRESHOLD):
+            task_id = await queue.enqueue(channel)
+            await _wait_for_status(db, task_id, "failed")
+
+        assert queue._channel_failed_pass_counts[channel.id] == CollectionQueue.FAILED_PASS_SKIP_THRESHOLD
+        assert await queue.enqueue(channel) is None
+        await asyncio.sleep(0.25)  # settle: a leaked task would surface as a new call
+        expected_calls = CollectionQueue.FAILED_PASS_SKIP_THRESHOLD * CollectionQueue.RETRY_PASS_MAX_ATTEMPTS
+        assert collector.calls.count(channel.channel_id) == expected_calls
+
+        # Restart path: a fresh queue over the same DB collects again; the
+        # outer finally shuts this fresh queue down with the test.
+        await queue.shutdown()
+        queue = _make_queue(collector, db)
+        assert await queue.enqueue(channel) is not None
+    finally:
+        if queue is not None:
+            await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_failed_pass_streak_resets_on_success(tmp_path, monkeypatch):
+    """A completed pass clears the failed-pass streak — a channel that failed
+    once and recovered is not punished by the gate (#1895)."""
+    monkeypatch.setattr(CollectionQueue, "RETRY_PASS_DELAY_SEC", 0)
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    queue: CollectionQueue | None = None
+    try:
+        await _seed_channel(db)
+        collector = _RaisingCollector(TypeNotFoundError(0x1C32B11C, b"\x1c\xb12\x1c"), fail_times=3)
+        queue = _make_queue(collector, db)
+        channel = (await db.get_channels(active_only=True))[0]
+        assert channel.id is not None
+
+        task_id = await queue.enqueue(channel)
+        await _wait_for_status(db, task_id, "failed")
+        assert queue._channel_failed_pass_counts[channel.id] == 1
+
+        task_id = await queue.enqueue(channel)
+        await _wait_for_status(db, task_id, "completed")
+        assert channel.id not in queue._channel_failed_pass_counts
     finally:
         if queue is not None:
             await queue.shutdown()
@@ -1430,12 +1494,12 @@ async def test_retry_pass_channel_invalid_is_retryable_to_cap(tmp_path, monkeypa
 
         await _wait_for_status(db, task_id, "failed")
         deadline = asyncio.get_event_loop().time() + 6.0
-        while asyncio.get_event_loop().time() < deadline and len(collector.calls) < 5:
+        while asyncio.get_event_loop().time() < deadline and len(collector.calls) < 3:
             await asyncio.sleep(0.05)
 
-        assert len(collector.calls) == 5
+        assert len(collector.calls) == 3
         await asyncio.sleep(0.25)
-        assert len(collector.calls) == 5
+        assert len(collector.calls) == 3
         assert not queue._retry_pass
         task = await _get_task(db, task_id)
         assert task.status == "failed"

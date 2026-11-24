@@ -261,6 +261,33 @@ def test_extract_entities_custom_emoji_keeps_document_id():
     ]
 
 
+def test_extract_entities_serializes_formatted_date_datetime():
+    """``MessageEntityFormattedDate`` carries a real ``datetime`` field — the
+    serializer must ISO-format it (telethon's ``to_dict()`` passes the raw
+    object through) instead of crashing ``json.dumps`` and killing the whole
+    channel collection (#1895)."""
+    from telethon.tl.types import MessageEntityFormattedDate
+
+    msg = _msg(
+        text="meet at noon",
+        entities=[
+            MessageEntityFormattedDate(
+                offset=8,
+                length=4,
+                date=datetime(2026, 11, 24, 12, 0, tzinfo=timezone.utc),
+            )
+        ],
+    )
+    assert _json(extract_message_entities_json(msg)) == [
+        {
+            "date": "2026-11-24T12:00:00+00:00",
+            "length": 4,
+            "offset": 8,
+            "type": "formatted_date",
+        }
+    ]
+
+
 def test_extract_entities_keeps_masked_link_url():
     """MessageEntityTextUrl.url is serialized (#1492) — masked-hyperlink targets
     must survive collection instead of leaving only the visible label."""

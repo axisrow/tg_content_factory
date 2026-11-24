@@ -164,7 +164,9 @@ def test_convert_telethon_message_carries_entities_and_webpage_fallback():
     res = TelegramMessageTransformer.convert_telethon_message(msg)
 
     assert res.text == "IV body"
-    assert res.entities_json == '[{"length": 1, "offset": 0, "type": "bold"}]'
+    # Compact separators: entities_json serializes through safe_json_dumps
+    # (orjson) since #1895 — datetime-bearing entities must not crash collection.
+    assert res.entities_json == '[{"length":1,"offset":0,"type":"bold"}]'
 
 
 def test_convert_telethon_message_entities_none_without_entities():

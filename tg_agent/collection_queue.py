@@ -137,8 +137,14 @@ class CollectionQueue:
     # Retry pass: total collection attempts a task gets (including the original)
     # and the delay before a retry attempt starts — the delayed requeue rides the
     # same reschedule path as the flood/gate retries.
-    RETRY_PASS_MAX_ATTEMPTS = 5
+    RETRY_PASS_MAX_ATTEMPTS = 3
     RETRY_PASS_DELAY_SEC = 30.0
+    # #1895: a channel whose tasks keep exhausting the retry pass is permanently
+    # crashing (e.g. a message the parser cannot serialize) — the hourly
+    # scheduled enqueue would retry it forever, one traceback burst per pass.
+    # After this many consecutive exhausted passes, enqueue() refuses the
+    # channel until a pass completes or the daemon restarts (which ships fixes).
+    FAILED_PASS_SKIP_THRESHOLD = 3
     # Username-lookup deferrals take one slot each, this far apart per account:
     # the sustained budget is 60 lookups an hour per account (#1877).
     RESOLVE_RETRY_STEP_SEC = 60.0
@@ -170,6 +176,11 @@ class CollectionQueue:
         # restart. Kept strictly separate from _channel_private_error_counts.
         self._retry_pass: dict[int, int] = {}
         self._channel_private_error_counts: dict[int, int] = {}
+        # #1895: channel pk -> consecutive passes whose task exhausted the
+        # retry pass and ended FAILED. In-memory like _retry_pass: the skip is
+        # an operational pause for this daemon lifetime, not a durable
+        # quarantine — restart (or a completed pass) clears it.
+        self._channel_failed_pass_counts: dict[int, int] = {}
         self._last_cancel_sweep = 0.0
         self._delayed_requeues: set[asyncio.Task] = set()
         self._known_task_ids: set[int] = set()
@@ -219,6 +230,13 @@ class CollectionQueue:
         return self._target_worker_count()
 
     async def enqueue(self, channel: Channel, force: bool = False, full: bool = False) -> int | None:
+        if channel.id is not None and (
+            self._channel_failed_pass_counts.get(channel.id, 0) >= self.FAILED_PASS_SKIP_THRESHOLD
+        ):
+            # #1895: the channel keeps exhausting every pass; creating another
+            # task only burns attempts and floods the log. Recovery: a
+            # completed pass (impossible while gated) or a daemon restart.
+            return None
         payload = {"full": full}
         if force:
             payload["force"] = True
@@ -794,6 +812,7 @@ class CollectionQueue:
             await self._channels.clear_channel_terminal(channel.id)
         if channel.id is not None:
             self._channel_private_error_counts.pop(channel.id, None)
+            self._channel_failed_pass_counts.pop(channel.id, None)  # #1895
         logger.info("Collected %d messages from channel %d", count, channel.channel_id)
 
     async def _defer_collection_task(
@@ -982,6 +1001,17 @@ class CollectionQueue:
         attempts = self._retry_pass.get(task_id, 0) + 1
         if attempts >= self.RETRY_PASS_MAX_ATTEMPTS:
             self._retry_pass.pop(task_id, None)  # exhausted: terminal FAILED
+            if channel.id is not None:
+                failed_passes = self._channel_failed_pass_counts.get(channel.id, 0) + 1
+                self._channel_failed_pass_counts[channel.id] = failed_passes
+                if failed_passes >= self.FAILED_PASS_SKIP_THRESHOLD:
+                    logger.warning(
+                        "Channel %d (pk=%d) failed %d consecutive passes; pausing its "
+                        "enqueues until a pass completes or the daemon restarts (#1895)",
+                        channel.channel_id,
+                        channel.id,
+                        failed_passes,
+                    )
             return CollectionFailureOutcome()
         self._retry_pass[task_id] = attempts
         # Same delayed-requeue path as the flood/gate branches: the delay keeps the
