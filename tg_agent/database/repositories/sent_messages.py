@@ -83,19 +83,24 @@ class SentMessagesRepository:
     ) -> list[dict]:
         """Registry rows, newest first, each with its observed deletion status.
 
-        The join mirrors how the deletion pipeline names chats: a registry
-        row matches an ``observed_deletions`` row only when phone, message
-        id AND chat shape agree — a channel deletion of the same id never
-        lands on a DM row and vice versa. ``deleted_at`` stays NULL while
-        the message is alive or the deletion fell out of the 7-day window.
+        The join mirrors how the deletion pipeline names chats: a registry row
+        matches a deletion only when message id AND chat shape agree — a
+        channel deletion of the same id never lands on a DM row and vice
+        versa. The observer's phone deliberately does NOT participate: the
+        account that sees a channel deletion is usually a peer pool account,
+        not the sender (#1898), and "any account saw it deleted" is deleted —
+        the same semantics as ``messages wait``. The correlated scalar
+        subquery rides the ``observed_deletions_message`` index per emitted
+        row (a GROUP BY over the whole table would run per report forever —
+        both stores are unpruned); MIN collapses multiple observers to the
+        earliest ``deleted_at``.
         """
         sql = (
             "SELECT sm.phone, sm.chat_id, sm.message_id, sm.chat_type, sm.recipient,"
-            " sm.text, sm.source, sm.ref, sm.sent_at, od.deleted_at"
+            " sm.text, sm.source, sm.ref, sm.sent_at,"
+            " (SELECT MIN(od.deleted_at) FROM observed_deletions od"
+            "  WHERE od.message_id = sm.message_id AND od.chat_id IS sm.chat_id) AS deleted_at"
             " FROM sent_messages sm"
-            " LEFT JOIN observed_deletions od"
-            " ON od.phone = sm.phone AND od.message_id = sm.message_id"
-            " AND od.chat_id IS sm.chat_id"
             " WHERE 1=1"
         )
         params: list[object] = []

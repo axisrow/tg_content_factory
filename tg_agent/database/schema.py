@@ -798,7 +798,9 @@ CREATE INDEX IF NOT EXISTS observed_deletions_age ON observed_deletions(deleted_
 -- by the send layer itself (telegram_actions / publish / photo publish). chat_id
 -- mirrors observed_deletions' shape — marked -100… for channels/supergroups,
 -- NULL for DM/small-group — so the deletion status join is a plain LEFT JOIN on
--- (phone, message_id, chat shape). Accounting table: kept forever, no prune.
+-- (message_id, chat shape); the observer's phone deliberately does NOT match —
+-- the account that sees a channel deletion is a peer pool account, not the
+-- sender (#1898). Accounting table: kept forever, no prune.
 -- Not recorded on purpose: notifier/setup_bot service alerts to the owner's own
 -- bot — infrastructure, not client content.
 CREATE TABLE IF NOT EXISTS sent_messages (
