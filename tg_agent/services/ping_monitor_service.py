@@ -143,6 +143,8 @@ class PingMonitorService:
             recipient=monitor.dialog_id,
             text=monitor.nudge_text,
             is_user=True,  # DM-диалог: не пробовать канал первым (#1830)
+            source="ping",
+            ref=str(monitor_id),
         )
         await self._repo.update(
             monitor_id, cycle_count=monitor.cycle_count + 1, last_nudge_sent_at=now

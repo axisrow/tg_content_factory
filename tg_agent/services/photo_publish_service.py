@@ -5,19 +5,27 @@ import logging
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from telethon_floodgate import run_with_flood_wait
 
 from tg_agent.models import PhotoSendMode
+from tg_agent.services.sent_registry import record_send
 from tg_agent.telegram.backends import adapt_transport_session
 from tg_agent.telegram.client_pool import ClientPool
+
+if TYPE_CHECKING:
+    from tg_agent.database.facade import Database
 
 logger = logging.getLogger(__name__)
 
 
 class PhotoPublishService:
-    def __init__(self, pool: ClientPool):
+    def __init__(self, pool: ClientPool, db: "Database | None" = None):
         self._pool = pool
+        # Sent-messages registry (#1893): with a db, every delivered photo
+        # lands one row; None keeps bare constructions legal.
+        self._db = db
 
     @asynccontextmanager
     async def _acquire_client_and_resolve(
@@ -58,6 +66,7 @@ class PhotoPublishService:
         caption: str | None = None,
         schedule_at: datetime | None = None,
         on_file_sent: Callable[[str, list[int]], Awaitable[None]] | None = None,
+        ref: str | None = None,
     ) -> list[int]:
         async with self._acquire_client_and_resolve(
             phone, target_dialog_id, target_type
@@ -76,6 +85,16 @@ class PhotoPublishService:
                     logger_=logger,
                 )
                 album_ids = [int(msg.id) for msg in sent]
+                await record_send(
+                    self._db,
+                    phone=acquired_phone,
+                    entity=entity,
+                    recipient=target_dialog_id,
+                    message_ids=album_ids,
+                    text=caption,
+                    source="photo_publish",
+                    ref=ref,
+                )
                 if on_file_sent is not None:
                     # Atomic album send — record all files only after it succeeds.
                     for path in file_paths:
@@ -98,6 +117,16 @@ class PhotoPublishService:
                 )
                 msg_id = int(sent.id)
                 message_ids.append(msg_id)
+                await record_send(
+                    self._db,
+                    phone=acquired_phone,
+                    entity=entity,
+                    recipient=target_dialog_id,
+                    message_ids=[msg_id],
+                    text=caption,
+                    source="photo_publish",
+                    ref=ref,
+                )
                 # Record progress per file so a mid-batch failure doesn't cause the
                 # already-sent files to be re-sent next cycle (audit #835/4).
                 if on_file_sent is not None:

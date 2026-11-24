@@ -146,6 +146,7 @@ class PhotoTaskService:
                 send_mode=send_mode,
                 caption=caption,
                 on_file_sent=_record_sent,
+                ref=f"photo_item:{item_id}",
             )
             now = datetime.now(timezone.utc)
             await self._bundle.update_item(

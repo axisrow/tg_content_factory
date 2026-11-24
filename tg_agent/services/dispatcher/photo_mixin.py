@@ -27,13 +27,19 @@ class PhotoCommandsMixin(_Base):
         from tg_agent.database.bundles import PhotoLoaderBundle
         from tg_agent.services.photo_publish_service import PhotoPublishService
 
-        return PhotoTaskService(PhotoLoaderBundle.from_database(self._db), PhotoPublishService(self._pool))
+        return PhotoTaskService(
+            PhotoLoaderBundle.from_database(self._db),
+            PhotoPublishService(self._pool, db=self._db),
+        )
 
     def _photo_auto_upload_service(self) -> PhotoAutoUploadService:
         from tg_agent.database.bundles import PhotoLoaderBundle
         from tg_agent.services.photo_publish_service import PhotoPublishService
 
-        return PhotoAutoUploadService(PhotoLoaderBundle.from_database(self._db), PhotoPublishService(self._pool))
+        return PhotoAutoUploadService(
+            PhotoLoaderBundle.from_database(self._db),
+            PhotoPublishService(self._pool, db=self._db),
+        )
 
     async def _handle_photo_send_now(self, payload: dict[str, Any]) -> dict[str, Any]:
         item = await self._photo_task_service().send_now(

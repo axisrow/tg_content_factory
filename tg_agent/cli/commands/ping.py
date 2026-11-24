@@ -169,7 +169,7 @@ async def run_due_impl(config_path: str) -> None:
             guard = auto_reply_guard(db, TelegramGatewayClient(pool.relay))
         service = PingMonitorService(
             db.repos.ping_monitors,
-            TelegramActionService(pool),
+            TelegramActionService(pool, db=db),
             auto_reply_guard=guard,
         )
         checked = await service.run_due()

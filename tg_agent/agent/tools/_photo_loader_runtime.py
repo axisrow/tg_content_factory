@@ -12,16 +12,16 @@ def photo_bundle(db: Any) -> Any:
     return database_bundles.PhotoLoaderBundle.from_database(db)
 
 
-def photo_publish_service(client_pool: Any) -> Any:
-    return photo_publish_module.PhotoPublishService(client_pool)
+def photo_publish_service(client_pool: Any, db: Any = None) -> Any:
+    return photo_publish_module.PhotoPublishService(client_pool, db=db)
 
 
 def photo_task_service(db: Any, client_pool: Any) -> Any:
-    return photo_task_module.PhotoTaskService(photo_bundle(db), photo_publish_service(client_pool))
+    return photo_task_module.PhotoTaskService(photo_bundle(db), photo_publish_service(client_pool, db))
 
 
 def photo_auto_upload_service(db: Any, client_pool: Any) -> Any:
-    return photo_auto_upload_module.PhotoAutoUploadService(photo_bundle(db), photo_publish_service(client_pool))
+    return photo_auto_upload_module.PhotoAutoUploadService(photo_bundle(db), photo_publish_service(client_pool, db))
 
 
 def split_file_paths(raw: str) -> list[str]:

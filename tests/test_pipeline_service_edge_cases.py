@@ -1806,7 +1806,7 @@ async def test_mixed_dag_target_edit_preserves_actual_forward_recipient(svc, db)
     )
     actions.forward_messages.assert_awaited_once_with(
         phone="+100", from_chat=1001, to_chat=77, message_ids=[42], native=False,
-        resolve_entities=False, collapse_single_message_id=True,
+        resolve_entities=False, collapse_single_message_id=True, source="pipeline_forward",
     )
 
 

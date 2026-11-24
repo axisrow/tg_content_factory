@@ -183,6 +183,8 @@ messages read <identifier> [--limit N] [--live] [--phone PHONE] [--query TEXT]
               [--date-from DATE] [--date-to DATE] [--topic-id ID] [--offset-id ID]
               [--format text|json|csv]
 messages wait --message-id N [--phone PHONE] [--chat CHAT_ID] [--timeout S]
+messages sent [--phone PHONE] [--chat CHAT_ID] [--source SRC] [--date-from DATE]
+              [--date-to DATE] [--limit N] [--format text|json|csv]
 search "query" ["query2" ...] [--limit N] [--mode MODE] [--date-from DATE]
        [--date-to DATE] [--format text|json|csv]
 search-query list | get | add | edit | delete | toggle | run | stats
@@ -199,6 +201,14 @@ search-query list | get | add | edit | delete | toggle | run | stats
   within the timeout. Matching: `--chat` (the id as Telegram reports it, e.g.
   `-100…`) matches that chat strictly; with only `--phone` the chat-less DM
   shape is demanded; with neither, any row for the id counts.
+- `messages sent` lists every outgoing send we made — what, when, from which
+  account, through which feature (`--source`: `dialogs_send`, `dialogs_queue`,
+  `dialogs_forward`, `dialogs_queue_forward`, `dm_draft`, `seeding`, `ping`,
+  `agent`, `agent_forward`, `pipeline_publish`, `pipeline_forward`,
+  `photo_publish`) — with the deletion status joined from the same local store
+  (`status=deleted=…` / `alive`).
+  Client reports = one call: filter by `--phone`/`--chat`/`--date-from`/
+  `--date-to`, `--format csv` for spreadsheets. No Telegram requests.
 - **Exit-code contract (#1486):** a failed command prints its error to **stderr**
   and exits 1 (parser usage errors exit 2); **stdout stays for results**.
   Empty-but-valid results ("No messages found.") are not failures — they print

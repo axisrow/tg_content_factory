@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from tg_agent.database import Database
 from tg_agent.models import ContentPipeline, GenerationRun, PipelinePublishMode, PipelineTarget
+from tg_agent.services.sent_registry import record_send
 from tg_agent.telegram.backends import adapt_transport_session
 from tg_agent.telegram.relay import RelayDeliveryUnconfirmedError
 
@@ -301,6 +302,35 @@ class PublishService:
                     run.id, previous_moderation_status
                 )
 
+    async def _record_publish(
+        self,
+        *,
+        acquired_phone: str | None,
+        entity: Any,
+        recipient: Any,
+        msg: Any,
+        text: str | None,
+        ref: int | None,
+    ) -> None:
+        """Sent-messages registry rows for a confirmed publish (#1893).
+
+        Accounting only: a failed write logs and moves on — the publish
+        result stays the primary fact. ``publish_files`` may deliver one
+        message or an album list; each id gets its own row.
+        """
+        messages = msg if isinstance(msg, (list, tuple)) else [msg]
+        message_ids = [item.id for item in messages if getattr(item, "id", None) is not None]
+        await record_send(
+            self._db,
+            phone=acquired_phone or "",
+            entity=entity,
+            recipient=recipient,
+            message_ids=message_ids,
+            text=text,
+            source="pipeline_publish",
+            ref=str(ref) if ref is not None else None,
+        )
+
     async def _publish_to_target(
         self,
         run: GenerationRun,
@@ -459,6 +489,17 @@ class PublishService:
                 raise
 
             delivery_confirmed = True
+            # Sent-messages registry (#1893): one row per delivered id.
+            # The uncertain/timeout paths above record nothing — no
+            # confirmed id to dedupe or join the deletion store by.
+            await self._record_publish(
+                acquired_phone=acquired_phone,
+                entity=entity,
+                recipient=target.dialog_id,
+                msg=msg,
+                text=run.generated_text,
+                ref=run.id,
+            )
             return PublishResult(
                 success=True,
                 message_id=msg.id if hasattr(msg, "id") else None,

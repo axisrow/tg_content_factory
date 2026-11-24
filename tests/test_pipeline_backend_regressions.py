@@ -74,7 +74,10 @@ async def test_generation_dry_run_does_not_delete_or_generate_images(db, source_
         db, ContentPipeline(name="Dry-run safety", account_phone="+111", pipeline_json=graph), sources=[100]
     )
     actions = AsyncMock(spec=TelegramActionService)
-    monkeypatch.setattr("tg_agent.services.pipeline_nodes.handlers.TelegramActionService", lambda pool: actions)
+    monkeypatch.setattr(
+        "tg_agent.services.pipeline_nodes.handlers.TelegramActionService",
+        lambda pool, db=None: actions,
+    )
     images = SimpleNamespace(generate=AsyncMock(return_value="https://image.invalid/generated.png"))
     service = ContentGenerationService(
         db,
@@ -237,7 +240,10 @@ async def test_builtin_forward_template_forwards_stored_messages(db, source_mess
         db, ContentPipeline(name="Builtin forwarding", pipeline_json=graph), sources=[100]
     )
     actions = AsyncMock(spec=TelegramActionService)
-    monkeypatch.setattr("tg_agent.services.pipeline_nodes.handlers.TelegramActionService", lambda pool: actions)
+    monkeypatch.setattr(
+        "tg_agent.services.pipeline_nodes.handlers.TelegramActionService",
+        lambda pool, db=None: actions,
+    )
     service = ContentGenerationService(
         db, SearchEngine(db), client_pool=object(), provider_service=RuntimeProviderRegistry(env={})
     )

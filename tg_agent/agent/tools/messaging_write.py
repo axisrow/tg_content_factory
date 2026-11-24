@@ -123,11 +123,12 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if gate:
             return gate
         try:
-            await TelegramActionService(client_pool).send_message(
+            await TelegramActionService(client_pool, db=ctx.db).send_message(
                 phone=phone,
                 recipient=recipient,
                 text=text,
                 silent=bool(args.get("silent", False)),
+                source="agent",
             )
             return _text_response(f"Сообщение отправлено: {recipient}")
         except TelegramActionClientUnavailableError:
@@ -376,11 +377,12 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if gate:
             return gate
         try:
-            await TelegramActionService(client_pool).forward_messages(
+            await TelegramActionService(client_pool, db=ctx.db).forward_messages(
                 phone=phone,
                 from_chat=from_chat,
                 to_chat=to_chat,
                 message_ids=ids,
+                source="agent_forward",
             )
             return _text_response(f"Переслано {len(ids)} сообщений из {from_chat} в {to_chat}.")
         except TelegramActionClientUnavailableError:

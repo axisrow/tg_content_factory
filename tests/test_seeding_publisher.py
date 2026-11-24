@@ -41,7 +41,9 @@ class FakeActions:
         self.fail_phones = fail_phones
         self._next_id = 500
 
-    async def send_message(self, *, phone, recipient, text, link_preview=False, reply_to=None):
+    async def send_message(
+        self, *, phone, recipient, text, link_preview=False, reply_to=None, source="unknown", ref=None
+    ):
         if phone in self.fail_phones:
             raise RuntimeError("FloodWait 30s")
         self.calls.append(

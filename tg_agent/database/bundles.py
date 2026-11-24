@@ -43,6 +43,7 @@ from tg_agent.database.repositories.runtime_snapshots import RuntimeSnapshotsRep
 from tg_agent.database.repositories.search_log import SearchLogRepository
 from tg_agent.database.repositories.search_queries import SearchQueriesRepository
 from tg_agent.database.repositories.seeding import SeedingRepository
+from tg_agent.database.repositories.sent_messages import SentMessagesRepository
 from tg_agent.database.repositories.settings import SettingsRepository
 from tg_agent.database.repositories.telegram_commands import TelegramCommandsRepository
 from tg_agent.models import (
@@ -111,6 +112,7 @@ class DatabaseRepositories:
     ping_monitors: PingMonitorRepository
     seeding: SeedingRepository
     observed_deletions: ObservedDeletionsRepository
+    sent_messages: SentMessagesRepository
 
 
 # ---------------------------------------------------------------------------

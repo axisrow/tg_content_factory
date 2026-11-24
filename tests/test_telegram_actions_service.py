@@ -444,3 +444,118 @@ async def test_edit_message_media_missing_message_raises(tmp_path):
         )
 
     client.edit_message.assert_not_awaited()
+
+
+# --------------------------------------------------------------------------- #
+# sent-messages registry (#1893)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_send_message_records_a_registry_row(db):
+    from telethon import types
+
+    peer = types.PeerChannel(channel_id=555)
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value=peer)
+    client.get_input_entity = AsyncMock(return_value=peer)
+    client.send_message = AsyncMock(return_value=SimpleNamespace(id=777))
+    pool = _pool_with_client(client)
+
+    result = await TelegramActionService(pool, db=db).send_message(
+        phone="+1", recipient="@chat", text="привет", source="dialogs_send", ref="run:42"
+    )
+
+    assert result.phone == "+1"
+    rows = await db.execute_fetchall(
+        "SELECT phone, chat_id, message_id, chat_type, recipient, text, source, ref"
+        " FROM sent_messages"
+    )
+    assert [tuple(row) for row in rows] == [
+        ("+1", -1000000000555, 777, "channel", "@chat", "привет", "dialogs_send", "run:42"),
+    ]
+
+
+@pytest.mark.anyio
+async def test_send_message_dm_shape_records_null_chat(db):
+    from telethon import types
+
+    peer = types.PeerUser(user_id=888)
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value=peer)
+    client.get_input_entity = AsyncMock(return_value=peer)
+    client.send_message = AsyncMock(return_value=SimpleNamespace(id=9))
+    pool = _pool_with_client(client)
+
+    await TelegramActionService(pool, db=db).send_message(
+        phone="+1", recipient="+888", text="hi", is_user=True, source="dm_draft"
+    )
+
+    rows = await db.execute_fetchall(
+        "SELECT chat_id, chat_type, source FROM sent_messages"
+    )
+    assert [tuple(row) for row in rows] == [(None, "dm", "dm_draft")]
+
+
+@pytest.mark.anyio
+async def test_send_message_without_db_skips_registry_and_does_not_crash():
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
+    client.send_message = AsyncMock(return_value=SimpleNamespace(id=7))
+    pool = _pool_with_client(client)
+
+    result = await TelegramActionService(pool).send_message(phone="+1", recipient="@u", text="hi")
+
+    assert result.message_id == 7
+
+
+@pytest.mark.anyio
+async def test_send_message_registry_failure_never_breaks_the_send():
+    from telethon import types
+
+    peer = types.PeerChannel(channel_id=555)
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value=peer)
+    client.get_input_entity = AsyncMock(return_value=peer)
+    client.send_message = AsyncMock(return_value=SimpleNamespace(id=777))
+
+    class _BrokenDb:
+        repos = SimpleNamespace(
+            sent_messages=SimpleNamespace(record_many=AsyncMock(side_effect=RuntimeError("db down")))
+        )
+
+    pool = _pool_with_client(client)
+
+    result = await TelegramActionService(pool, db=_BrokenDb()).send_message(
+        phone="+1", recipient="@chat", text="hi", source="dialogs_send"
+    )
+
+    assert result.message_id == 777
+
+
+@pytest.mark.anyio
+async def test_forward_messages_records_one_row_per_forwarded_id(db):
+    from telethon import types
+
+    peer = types.PeerChannel(channel_id=556)
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value=peer)
+    client.get_input_entity = AsyncMock(return_value=peer)
+    client.forward_messages = AsyncMock(
+        return_value=[SimpleNamespace(id=1), SimpleNamespace(id=2)]
+    )
+    pool = _pool_with_client(client)
+
+    result = await TelegramActionService(pool, db=db).forward_messages(
+        phone="+1", from_chat="@src", to_chat="@dst", message_ids=[10, 20], source="dialogs_forward"
+    )
+
+    assert result.message_ids == (1, 2)
+    rows = await db.execute_fetchall(
+        "SELECT phone, chat_id, message_id, chat_type, text, source FROM sent_messages ORDER BY message_id"
+    )
+    assert [tuple(row) for row in rows] == [
+        ("+1", -1000000000556, 1, "channel", None, "dialogs_forward"),
+        ("+1", -1000000000556, 2, "channel", None, "dialogs_forward"),
+    ]

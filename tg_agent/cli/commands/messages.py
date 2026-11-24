@@ -348,6 +348,80 @@ async def messages_wait_impl(
         await db.close()
 
 
+_SENT_CSV_COLUMNS = [
+    "message_id", "phone", "chat_id", "chat_type", "recipient",
+    "source", "ref", "sent_at", "deleted_at", "text",
+]
+
+
+def _print_sent(rows: list[dict], fmt: str) -> None:
+    """Render the sent-messages registry (#1893) in text/json/csv."""
+    if fmt == "json":
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return
+    if fmt == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(_SENT_CSV_COLUMNS)
+        for row in rows:
+            writer.writerow(
+                [csv_safe_cell(str(row.get(col) or "")) for col in _SENT_CSV_COLUMNS]
+            )
+        print(buf.getvalue(), end="")
+        return
+    if not rows:
+        print("No sent messages.")
+        return
+    for row in rows:
+        deleted_at = row.get("deleted_at")
+        status = f"deleted={deleted_at}" if deleted_at else "alive"
+        print(
+            f"message_id={row['message_id']} chat={row['chat_id'] if row['chat_id'] is not None else '—'}"
+            f" type={row['chat_type']} via={row['phone']} source={row['source']}"
+            f" at={row['sent_at']} status={status}"
+        )
+        detail = ""
+        if row.get("recipient"):
+            detail += f" to={row['recipient']}"
+        text = (row.get("text") or "").strip()
+        if text:
+            detail += f"  {text[:200].replace(chr(10), ' ')}{'...' if len(text) > 200 else ''}"
+        if detail:
+            print(f"  {detail}")
+
+
+async def messages_sent_impl(
+    config_path: str,
+    *,
+    phone: str | None = None,
+    chat: int | None = None,
+    source: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 200,
+    output_format: str = "text",
+) -> None:
+    """Report the outgoing-send registry (#1893) with deletion status.
+
+    Local store only — zero Telegram requests. ``status=deleted`` appears
+    once the deletion-capture pipeline records the message; NULL means the
+    message is alive or the deletion fell out of the 7-day window.
+    """
+    _, db = await runtime.init_db(config_path)
+    try:
+        rows = await db.repos.sent_messages.list(
+            phone=phone,
+            chat_id=chat,
+            source=source,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+        )
+    finally:
+        await db.close()
+    _print_sent(rows, output_format)
+
+
 def run(args: argparse.Namespace) -> None:
     if getattr(args, "messages_action", None) != "read":
         return
@@ -451,5 +525,43 @@ def messages_wait(
             phone=phone,
             chat=chat,
             timeout=timeout,
+        )
+    )
+
+
+@messages_app.command("sent")
+def messages_sent(
+    ctx: typer.Context,
+    phone: str | None = typer.Option(None, "--phone", help="Filter by sending account"),
+    chat: int | None = typer.Option(
+        None, "--chat", help="Chat id as Telegram reports it (e.g. -100…)"
+    ),
+    source: str | None = typer.Option(
+        None,
+        "--source",
+        help="Sending feature: dialogs_send, dialogs_queue, dialogs_forward,"
+        " dialogs_queue_forward, dm_draft, seeding, ping, agent, agent_forward,"
+        " pipeline_publish, pipeline_forward, photo_publish",
+    ),
+    date_from: str | None = typer.Option(None, "--date-from", help="Start date YYYY-MM-DD"),
+    date_to: str | None = typer.Option(None, "--date-to", help="End date YYYY-MM-DD"),
+    limit: int = typer.Option(200, "--limit", help="Max rows (newest first)"),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--format", help="Output format (default: text)"
+    ),
+) -> None:
+    """List outgoing sends (registry) with deletion status — local store only."""
+    apply_startup(ctx)
+    date_from_bound, date_to_bound = resolve_date_bounds(date_from, date_to)
+    run_async(
+        messages_sent_impl(
+            ctx.obj.config,
+            phone=phone,
+            chat=chat,
+            source=source,
+            date_from=date_from_bound,
+            date_to=date_to_bound,
+            limit=limit,
+            output_format=output_format.value,
         )
     )

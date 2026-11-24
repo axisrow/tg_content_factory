@@ -190,6 +190,10 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
         "deletion verdict over the local observed_deletions store — DB-only "
         "poll, no Telegram requests (deletion capture)"
     ),
+    ("messages", "sent"): (
+        "sent-messages registry report over the local store (send rows + "
+        "observed_deletions join) — DB-only read, no Telegram requests (#1893)"
+    ),
     ("dm", "drafts", "approve"): "local dm_reply_drafts decision — DB-only mutation (#1429)",
     ("dm", "drafts", "create"): "local dm_reply_drafts upsert — DB-only mutation (#1429)",
     ("dm", "drafts", "list"): "list-only local dm_reply_drafts view (#1429)",

@@ -66,6 +66,41 @@ async def test_photo_task_send_now_uses_send_file(db, tmp_path, real_pool_harnes
 
 
 @pytest.mark.anyio
+async def test_photo_send_now_records_registry_rows(db, tmp_path, real_pool_harness_factory):
+    from telethon import types
+
+    image = tmp_path / "one.jpg"
+    image.write_bytes(b"x")
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+7000",
+        client=FakeCliTelethonClient(
+            input_entity_resolver=lambda peer: types.PeerChannel(channel_id=1001),
+            send_file_side_effect=lambda *args, **kwargs: SimpleNamespace(id=303),
+        ),
+    )
+    await harness.connect_account("+7000", session_string="s", is_primary=True)
+
+    service = PhotoPublishService(harness.pool, db=db)
+    ids = await service.send_now(
+        phone="+7000",
+        target_dialog_id=-1001,
+        file_paths=[str(image)],
+        send_mode=PhotoSendMode.ALBUM,
+        caption="cap",
+        ref="batch:7",
+    )
+
+    assert ids == [303]
+    rows = await db.execute_fetchall(
+        "SELECT phone, chat_id, message_id, chat_type, source, ref, text FROM sent_messages"
+    )
+    assert [tuple(row) for row in rows] == [
+        ("+7000", -1000000001001, 303, "channel", "photo_publish", "batch:7", "cap"),
+    ]
+
+
+@pytest.mark.anyio
 async def test_photo_task_schedule_send_passes_schedule(db, tmp_path, real_pool_harness_factory):
     image = tmp_path / "one.jpg"
     image.write_bytes(b"x")
