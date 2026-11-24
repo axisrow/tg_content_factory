@@ -120,6 +120,7 @@ python -m tg_agent.main [--config CONFIG] collect [--channel-id ID] | collect sa
 python -m tg_agent.main [--config CONFIG] search "query" [--limit N] [--mode MODE]
 
 python -m tg_agent.main messages read <identifier> [--limit N] [--live] [--phone PHONE] [--query TEXT] [--date-from DATE] [--date-to DATE] [--topic-id ID] [--offset-id ID] [--format text|json|csv]
+python -m tg_agent.main messages wait --message-id N [--phone PHONE] [--chat CHAT_ID] [--timeout S]   # was my sent message deleted? local store only, exit 0 deleted / 1 alive (deletion capture)
 python -m tg_agent.main channel list|add|delete|toggle|collect|stats|refresh-types|refresh-meta|refresh-card|import|add-bulk|list-for-import|tag (tag list|add|delete|set|get)
 python -m tg_agent.main filter analyze|apply|reset|precheck|toggle|purge|purge-messages|hard-delete
 python -m tg_agent.main account list|info|toggle|set-primary|delete|send-code|verify-code|add|flood-status|flood-clear

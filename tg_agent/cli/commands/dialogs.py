@@ -327,7 +327,7 @@ async def _dialogs_send(args, db, pool) -> None:
             silent=bool(getattr(args, "silent", False)),
         )
         message_id = f" message_id={result.message_id}" if result.message_id is not None else ""
-        print(f"Message sent to {recipient}.{message_id}")
+        print(f"Message sent to {recipient}.{message_id} via {result.phone}")
     except TelegramActionClientUnavailableError:
         cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")
     except Exception as exc:
@@ -1705,11 +1705,12 @@ def dialogs_edit_permissions(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Restrict or unrestrict a user in a group."""
-    send_messages = _parse_permission_bool(send_messages, "--send-messages")
-    send_media = _parse_permission_bool(send_media, "--send-media")
     _run_dialogs(
         ctx, "edit-permissions", chat_id=chat_id, user_id=user_id, phone=phone,
-        until_date=until_date, send_messages=send_messages, send_media=send_media, yes=yes,
+        until_date=until_date,
+        send_messages=_parse_permission_bool(send_messages, "--send-messages"),
+        send_media=_parse_permission_bool(send_media, "--send-media"),
+        yes=yes,
     )
 
 

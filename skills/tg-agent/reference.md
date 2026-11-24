@@ -182,6 +182,7 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
 messages read <identifier> [--limit N] [--live] [--phone PHONE] [--query TEXT]
               [--date-from DATE] [--date-to DATE] [--topic-id ID] [--offset-id ID]
               [--format text|json|csv]
+messages wait --message-id N [--phone PHONE] [--chat CHAT_ID] [--timeout S]
 search "query" ["query2" ...] [--limit N] [--mode MODE] [--date-from DATE]
        [--date-to DATE] [--format text|json|csv]
 search-query list | get | add | edit | delete | toggle | run | stats
@@ -189,6 +190,15 @@ search-query list | get | add | edit | delete | toggle | run | stats
 
 - `messages read` accepts t.me links, @usernames or internal ids as `<identifier>`;
   `--live` reads directly from Telegram instead of the local DB.
+- `messages wait` answers "did a bot delete my sent message?" from the local
+  deletion store (the gateway records Telegram deletion updates as they arrive)
+  — it makes **no Telegram requests**. Pair it with `dialogs send`, which now
+  ends `… message_id=N via PHONE`: pass both to `--phone`/`--message-id` and
+  wait up to `--timeout` seconds (default 30, `0` = single check). Exit code:
+  **0 = deleted** (stdout prints who saw it, which chat, when), **1 = alive**
+  within the timeout. Matching: `--chat` (the id as Telegram reports it, e.g.
+  `-100…`) matches that chat strictly; with only `--phone` the chat-less DM
+  shape is demanded; with neither, any row for the id counts.
 - **Exit-code contract (#1486):** a failed command prints its error to **stderr**
   and exits 1 (parser usage errors exit 2); **stdout stays for results**.
   Empty-but-valid results ("No messages found.") are not failures — they print

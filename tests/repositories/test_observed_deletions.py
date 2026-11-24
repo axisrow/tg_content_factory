@@ -37,23 +37,32 @@ async def test_private_chat_deletions_dedupe_with_null_chat(db):
 
 
 @pytest.mark.anyio
-async def test_was_deleted_reads_by_phone_id_and_window(db):
+async def test_lookup_deletion_reports_phone_chat_and_time(db):
     repo = db.repos.observed_deletions
 
-    assert await repo.was_deleted("+7001", 41) is None
+    assert await repo.lookup_deletion(41) is None
 
     await repo.record_many("+7001", None, [41])
-    deleted = await repo.was_deleted("+7001", 41)
-    assert deleted is not None
-    assert abs((normalize_utc(deleted) - datetime.now(timezone.utc)).total_seconds()) < 5
+    await repo.record_many("+7002", -100200, [5])
 
-    old = datetime.now(timezone.utc) - timedelta(hours=2)
-    await repo.record_many("+7002", -100200, [5], deleted_at=old)
-    since = datetime.now(timezone.utc) - timedelta(minutes=30)
-    assert await repo.was_deleted("+7002", 5, since=since) is None
-    assert await repo.was_deleted("+7002", 5) is not None
-    # Another phone's deletion of the same id does not leak.
-    assert await repo.was_deleted("+7003", 5) is None
+    found = await repo.lookup_deletion(41)
+    assert found is not None
+    assert found[0] == "+7001"
+    assert found[1] is None
+    assert abs((normalize_utc(found[2]) - datetime.now(timezone.utc)).total_seconds()) < 5
+
+    # A chat filter narrows strictly to that chat.
+    assert await repo.lookup_deletion(5, chat_id=-100200) is not None
+    assert await repo.lookup_deletion(5, chat_id=-100201) is None
+    # A phone without a chat demands the DM shape: channel rows never match it.
+    assert await repo.lookup_deletion(5, phone="+7002", chat_id=None) is None
+    assert await repo.lookup_deletion(41, phone="+7001", chat_id=None) is not None
+    # Without a chat the free search spans every chat shape.
+    assert await repo.lookup_deletion(5) is not None
+    # A phone filter excludes another account's deletion of the same id.
+    await repo.record_many("+7003", None, [5])
+    assert await repo.lookup_deletion(5, phone="+7003", chat_id=None) is not None
+    assert await repo.lookup_deletion(5, phone="+7001", chat_id=None) is None
 
 
 @pytest.mark.anyio
@@ -65,8 +74,8 @@ async def test_prune_drops_only_old_rows(db):
     await repo.record_many("+7001", None, [2])
 
     assert await repo.prune(days=7) == 1
-    assert await repo.was_deleted("+7001", 1) is None
-    assert await repo.was_deleted("+7001", 2) is not None
+    assert await repo.lookup_deletion(1) is None
+    assert await repo.lookup_deletion(2) is not None
 
 
 @pytest.mark.anyio
@@ -83,4 +92,4 @@ async def test_record_many_joins_the_callers_transaction_wrapper(db):
         cur = await conn.execute("SELECT COUNT(*) FROM observed_deletions")
         assert (await cur.fetchone())[0] == 1
 
-    assert await db.repos.observed_deletions.was_deleted("+7001", 9) is not None
+    assert await db.repos.observed_deletions.lookup_deletion(9) is not None

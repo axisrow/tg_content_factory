@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from tg_agent.database.pool import ReadConnection
-from tg_agent.utils.datetime import normalize_utc, utc_isoformat
+from tg_agent.utils.datetime import parse_utc_datetime, utc_isoformat
 
 if TYPE_CHECKING:
     from tg_agent.database.facade import Database
@@ -58,29 +58,41 @@ class ObservedDeletionsRepository:
         cur = await self._database.executemany_write(sql, seq)
         return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
 
-    async def was_deleted(
+    async def lookup_deletion(
         self,
-        phone: str,
         message_id: int,
         *,
-        since: datetime | None = None,
-    ) -> datetime | None:
-        """When ``phone`` saw ``message_id`` deleted, or None while it lives.
+        phone: str | None = None,
+        chat_id: int | None = None,
+    ) -> tuple[str, int | None, datetime] | None:
+        """Find a recorded deletion of ``message_id``; None while it lives.
 
-        ``since`` narrows the window (a deletion older than the caller cares
-        about reads as "not deleted"); both stamps render on one UTC timescale,
-        so the TEXT comparison stays honest (#1666).
+        The matching policy lives here, next to the rows it describes. A
+        ``chat_id`` matches that chat strictly (channel ids are per-channel, so
+        an id collision across chats must not leak). Without one, ``phone``
+        demands the DM shape — Telegram names no chat for private/small-group
+        deletions, and DM ids are account-global, so a channel row for the same
+        id is a different message — while no phone at all means a free search
+        over every row for the id. Message ids are never reused, and the table
+        prunes after seven days, so no time window is needed.
         """
-        sql = "SELECT deleted_at FROM observed_deletions WHERE phone=? AND message_id=?"
-        params: list[object] = [phone, message_id]
-        if since is not None:
-            sql += " AND deleted_at >= ?"
-            params.append(utc_isoformat(since))
+        sql = "SELECT phone, chat_id, deleted_at FROM observed_deletions WHERE message_id=?"
+        params: list[object] = [message_id]
+        if chat_id is not None:
+            sql += " AND chat_id=?"
+            params.append(chat_id)
+        elif phone is not None:
+            sql += " AND chat_id IS NULL"
+        if phone is not None:
+            sql += " AND phone=?"
+            params.append(phone)
         cur = await self._db.execute(sql + " ORDER BY id DESC LIMIT 1", tuple(params))
         row = await cur.fetchone()
         if row is None:
             return None
-        return normalize_utc(datetime.fromisoformat(str(row["deleted_at"]).replace("Z", "+00:00")))
+        deleted_at = parse_utc_datetime(str(row["deleted_at"]))
+        assert deleted_at is not None, "observed_deletions.deleted_at is NOT NULL"
+        return row["phone"], row["chat_id"], deleted_at
 
     async def prune(self, *, days: int = _RETENTION_DAYS) -> int:
         """Drop rows older than ``days``; mirror the gateway's event retention."""
