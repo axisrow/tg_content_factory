@@ -254,7 +254,10 @@ class TestCliSend:
         client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=123))
         client.send_message = AsyncMock(return_value=SimpleNamespace(id=42))
         _run_cli("send", pool, cli_db, {"phone": _PHONE, "recipient": "@user", "text": "hello", "yes": True})
-        assert "Message sent to @user. message_id=42" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "Message sent to @user. message_id=42" in out
+        # The sending account rides along: `messages wait --phone` keys on it (deletion capture).
+        assert f"via {_PHONE}" in out
 
     def test_send_abort(self, cli_db, capsys):
         pool, client = _mock_pool()

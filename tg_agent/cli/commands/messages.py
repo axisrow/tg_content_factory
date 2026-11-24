@@ -6,6 +6,7 @@ import csv
 import io
 import json
 import sys
+import time
 
 import typer
 from telethon_floodgate import (
@@ -308,6 +309,45 @@ async def messages_read_impl(
         await db.close()
 
 
+_WAIT_POLL_SEC = 1.0
+
+
+async def messages_wait_impl(
+    config_path: str,
+    *,
+    message_id: int,
+    phone: str | None = None,
+    chat: int | None = None,
+    timeout: int = 30,
+) -> None:
+    """Wait until a sent message is observed deleted — local store only.
+
+    The gateway records Telegram deletion updates as they arrive (deletion
+    capture), so the verdict is read from ``observed_deletions`` with zero
+    Telegram requests: exit 0 once the id shows up, exit 1 when ``--timeout``
+    passes without one. Chat matching is ``ObservedDeletionsRepository.
+    lookup_deletion``'s policy — this command only forwards the flags.
+    """
+    _, db = await runtime.init_db(config_path)
+    try:
+        deadline = time.monotonic() + timeout
+        repo = db.repos.observed_deletions
+        while True:
+            found = await repo.lookup_deletion(message_id, phone=phone, chat_id=chat)
+            if found is not None:
+                observed_phone, observed_chat, deleted_at = found
+                print(
+                    f"Deleted: message_id={message_id} chat={observed_chat} "
+                    f"via={observed_phone} at={deleted_at.isoformat()}"
+                )
+                return
+            if time.monotonic() >= deadline:
+                cli_error(f"Alive: no deletion recorded for message_id={message_id} within {timeout}s")
+            await asyncio.sleep(_WAIT_POLL_SEC)
+    finally:
+        await db.close()
+
+
 def run(args: argparse.Namespace) -> None:
     if getattr(args, "messages_action", None) != "read":
         return
@@ -383,5 +423,33 @@ def messages_read(
             include_reaction_users=include_reaction_users,
             reaction_users_limit=reaction_users_limit,
             output_format=output_format.value,
+        )
+    )
+
+
+@messages_app.command("wait")
+def messages_wait(
+    ctx: typer.Context,
+    message_id: int = typer.Option(..., "--message-id", help="Sent message id to watch"),
+    phone: str | None = typer.Option(
+        None, "--phone", help="Account the message was sent from; omit to match any account"
+    ),
+    chat: int | None = typer.Option(
+        None,
+        "--chat",
+        help="Chat id as Telegram reports it (e.g. -100…); without it, "
+        "only chat-less (DM-shaped) deletions match",
+    ),
+    timeout: int = typer.Option(30, "--timeout", help="Seconds to wait; 0 = single check"),
+) -> None:
+    """Wait until a sent message is observed deleted (local store, no Telegram calls)."""
+    apply_startup(ctx)
+    run_async(
+        messages_wait_impl(
+            ctx.obj.config,
+            message_id=message_id,
+            phone=phone,
+            chat=chat,
+            timeout=timeout,
         )
     )

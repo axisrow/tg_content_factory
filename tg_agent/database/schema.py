@@ -789,5 +789,8 @@ CREATE TABLE IF NOT EXISTS observed_deletions (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS observed_deletions_unique
     ON observed_deletions(phone, IFNULL(chat_id, 0), message_id);
+-- The lookup always leads on message_id (`messages wait`); the unique index
+-- above only serves phone-prefixed lookups.
+CREATE INDEX IF NOT EXISTS observed_deletions_message ON observed_deletions(message_id);
 CREATE INDEX IF NOT EXISTS observed_deletions_age ON observed_deletions(deleted_at);
 """ + SESSION_ENTITIES_SQL + ";\n"

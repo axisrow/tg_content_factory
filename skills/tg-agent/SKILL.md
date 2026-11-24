@@ -59,6 +59,7 @@ Task → group (details in [reference.md](reference.md)):
 | Publish an article as a telegra.ph page (long-form behind a TG post) | `telegraph login --short-name N` once (stores the account token in settings), then `telegraph create --title "..." --file article.md [--format json]` — prints the page URL to pair with `dialogs send` |
 | Channel discovery by keywords (premium search) | [discovery.md](discovery.md) — keyword sweep → candidates short-list → toggle on explicit approval |
 | Read message history | `messages read <id> [--query TEXT --date-from D --date-to D --topic-id ID --limit N --format json]` |
+| Check whether a sent message was deleted (bot cleaners) | `messages wait --message-id N [--phone P] [--chat ID] [--timeout S]` — local store, no Telegram calls; exit 0 = deleted, 1 = alive |
 | Search collected history | `search "query" ["query2" ...] [--limit N --mode local|semantic|hybrid|telegram|my_chats|channel]` — 2+ queries = batch JSON; `--date-from D --date-to D` window works on DB modes and `telegram` (client-side filter there — see [reference.md](reference.md) #1750 note) |
 | Search-discovered channel candidates (premium search cache) | `channel candidates [--json]`, full queue `channel pending-list`; decide per candidate: `channel toggle` (approve) / `channel reject` |
 | Channels: list, add, collect, stats, import | `channel`, `filter` |
@@ -77,7 +78,7 @@ Task → group (details in [reference.md](reference.md)):
 Sending a wrong message or kicking a wrong member is not reversible by you.
 
 - **Read-only** (`dialogs list/read/topics/participants`, `dialogs draft-list`, `channel *`,
-  `search`, `messages read`, `analytics`): run freely. Exception: `analytics channel-rate` runs
+  `search`, `messages read`, `messages wait`, `analytics`): run freely. Exception: `analytics channel-rate` runs
   an LLM judge — provider spend + DB write, calibration tool for `analytics usefulness`
   (content rating «полезное vs вода», deterministic and free); don't batch channel-rate
   without the user asking for it.
