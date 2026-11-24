@@ -187,14 +187,51 @@ def test_serial_job_keeps_per_file_parallel_lane(ci_config: dict) -> None:
     """The serial lane keeps `-m aiosqlite_serial -n auto --dist=loadfile`.
 
     Independent files run on separate workers while each file stays on one
-    worker (the old single-process command left all 986 tests serialized).
+    worker (the old single-process command left all 986 tests serialized). The
+    lane stays a single runner: the ×2 file-atomic split was trialed and
+    reverted on the runner-minutes metric (2026-11-24) — it duplicated the
+    job overhead for a lane already under the shards' wall. --durations=25 is
+    pinned so the lane keeps reporting its slowest tests like the shard legs.
     """
     run = _steps_by_name(ci_config["jobs"]["tests-serial"])["Pytest (aiosqlite serial, per-file parallel)"]["run"]
     assert "-m aiosqlite_serial" in run
     assert "-n auto" in run and "--dist=loadfile" in run, (
         "aiosqlite_serial files must run in parallel while each file stays on one worker"
     )
+    assert "--durations=25" in run, "the serial lane must keep reporting its slowest tests (parity with shards)"
     assert "--cov" not in run, "coverage was removed from CI — no --cov in the serial lane"
+
+
+def test_build_job_matrix_stays_pinned(ci_config: dict) -> None:
+    """The build matrix keeps ubuntu + windows, no macos (owner decisions).
+
+    macos-15 was removed on the runner-minutes decision (2026-11-24): no
+    platform-specific catch in 100 runs of history, and its runner queue made
+    multi-minute wall tails (p90 152s, max 603s measured). windows-latest
+    stays by explicit owner call (2026-11-24) as the last non-Linux wheel
+    signal (~2.4 runner-minutes per run, bounded). Re-adding macos — or any
+    third OS — is a deliberate owner decision, not a matrix slip; this pin
+    makes it one.
+    """
+    matrix = ci_config["jobs"]["build"]["strategy"]["matrix"]["os"]
+    assert matrix == ["ubuntu-latest", "windows-latest"], (
+        f"build matrix must stay ubuntu+windows (macos removed by owner decision); got {matrix!r}"
+    )
+
+
+def test_lint_job_installs_ruff_only(ci_config: dict) -> None:
+    """The lint job needs only ruff — it must not install the full [dev] extra.
+
+    Installing the whole dev dependency set (langchain, playwright, …) to run
+    a single static binary burned ~35s of every run (2026-11-24 runner-minutes
+    directive). The floor must stay in sync with the [dev] ruff pin.
+    """
+    steps = _steps_by_name(ci_config["jobs"]["lint"])
+    install = next(s["run"] for name, s in steps.items() if name.startswith("Install ruff"))
+    assert "-e" not in install and ".[dev]" not in install, (
+        "lint must not install the editable project or the [dev] extra"
+    )
+    assert "ruff>=" in install, "lint must pin its ruff floor explicitly"
 
 
 def test_no_coverage_machinery_anywhere_in_ci(ci_config: dict) -> None:
