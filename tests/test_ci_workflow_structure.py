@@ -202,19 +202,20 @@ def test_serial_job_keeps_per_file_parallel_lane(ci_config: dict) -> None:
     assert "--cov" not in run, "coverage was removed from CI — no --cov in the serial lane"
 
 
-def test_build_job_is_single_os(ci_config: dict) -> None:
-    """The build matrix stays single-OS (runner-minutes, owner directive 2026-11-24).
+def test_build_job_matrix_stays_pinned(ci_config: dict) -> None:
+    """The build matrix keeps ubuntu + windows, no macos (owner decisions).
 
-    macos-15 and windows-latest legs were removed on measured data: neither
-    caught a platform-specific failure in 100 runs of history, the wheel is
-    ``py3-none-any``, and the ``dist-*`` artifacts are consumed by nothing
-    (release.yml builds its own). The legs cost ~1.1-2.6 runner-minutes per
-    run each. Re-adding a non-Linux leg is a deliberate owner decision, not a
-    matrix slip — this pin makes it one.
+    macos-15 was removed on the runner-minutes decision (2026-11-24): no
+    platform-specific catch in 100 runs of history, and its runner queue made
+    multi-minute wall tails (p90 152s, max 603s measured). windows-latest
+    stays by explicit owner call (2026-11-24) as the last non-Linux wheel
+    signal (~2.4 runner-minutes per run, bounded). Re-adding macos — or any
+    third OS — is a deliberate owner decision, not a matrix slip; this pin
+    makes it one.
     """
     matrix = ci_config["jobs"]["build"]["strategy"]["matrix"]["os"]
-    assert matrix == ["ubuntu-latest"], (
-        f"build matrix must stay ubuntu-only (runner-minutes decision); got {matrix!r}"
+    assert matrix == ["ubuntu-latest", "windows-latest"], (
+        f"build matrix must stay ubuntu+windows (macos removed by owner decision); got {matrix!r}"
     )
 
 

@@ -56,15 +56,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Runner-minutes decision (owner directive, 2026-11-24): the
-        # windows-only build leg is removed. It cost 139-164s per run (the #2
-        # single job after the macos-15 removal), the dist-* artifacts are
-        # consumed by nothing (release.yml builds its own distributions), and
-        # the wheel is py3-none-any — per-OS builds verified nothing
-        # platform-specific in 100 runs of history (the only all-jobs failure
-        # was an infra outage). Re-add a non-Linux leg deliberately if a
-        # platform signal is ever needed.
-        os: [ubuntu-latest]
+        # macos-15 was removed on the runner-minutes decision (2026-11-24):
+        # it never caught a platform-specific failure and its runner queue
+        # produced multi-minute wall tails (p90 152s, max 603s). windows-latest
+        # stays by owner call (2026-11-24): it is the last non-Linux wheel
+        # signal and costs a bounded ~2.4 runner-minutes per run.
+        os: [ubuntu-latest, windows-latest]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
