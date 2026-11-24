@@ -1354,6 +1354,27 @@ async def _wait_for_status(db: Database, task_id: int | None, status: str, timeo
     return task
 
 
+async def _wait_for_failed_pass_streak(
+    queue: CollectionQueue, channel_pk: int, expected: int, timeout: float = 6.0
+):
+    """Wait until the in-memory failed-pass streak reaches ``expected`` (#1895).
+
+    Waiting on the DB status races the bookkeeping: the status flips to FAILED
+    on every retry pass while the streak is recorded only when a pass exhausts
+    RETRY_PASS_MAX_ATTEMPTS, and the clear-on-success pop trails the COMPLETED
+    status write by an await — the status-visible-then-assert order flaked with
+    a KeyError on CI. The streak itself is the observable under test.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout
+    streak = queue._channel_failed_pass_counts.get(channel_pk, 0)
+    while asyncio.get_event_loop().time() < deadline and streak != expected:
+        await asyncio.sleep(0.05)
+        streak = queue._channel_failed_pass_counts.get(channel_pk, 0)
+    assert streak == expected, (
+        f"channel pk {channel_pk}: failed-pass streak {streak}, expected {expected}"
+    )
+
+
 @pytest.mark.anyio
 async def test_retry_pass_flaky_then_success_completes(tmp_path, monkeypatch):
     """TypeNotFoundError once → FAILED → retry pass requeues → completed."""
@@ -1433,7 +1454,7 @@ async def test_failed_passes_gate_blocks_enqueue_after_threshold(tmp_path, monke
             task_id = await queue.enqueue(channel)
             await _wait_for_status(db, task_id, "failed")
 
-        assert queue._channel_failed_pass_counts[channel.id] == CollectionQueue.FAILED_PASS_SKIP_THRESHOLD
+        await _wait_for_failed_pass_streak(queue, channel.id, CollectionQueue.FAILED_PASS_SKIP_THRESHOLD)
         assert await queue.enqueue(channel) is None
         await asyncio.sleep(0.25)  # settle: a leaked task would surface as a new call
         expected_calls = CollectionQueue.FAILED_PASS_SKIP_THRESHOLD * CollectionQueue.RETRY_PASS_MAX_ATTEMPTS
@@ -1466,12 +1487,11 @@ async def test_failed_pass_streak_resets_on_success(tmp_path, monkeypatch):
         assert channel.id is not None
 
         task_id = await queue.enqueue(channel)
-        await _wait_for_status(db, task_id, "failed")
-        assert queue._channel_failed_pass_counts[channel.id] == 1
+        await _wait_for_failed_pass_streak(queue, channel.id, 1)
 
         task_id = await queue.enqueue(channel)
         await _wait_for_status(db, task_id, "completed")
-        assert channel.id not in queue._channel_failed_pass_counts
+        await _wait_for_failed_pass_streak(queue, channel.id, 0)
     finally:
         if queue is not None:
             await queue.shutdown()
