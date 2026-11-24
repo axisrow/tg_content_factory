@@ -158,24 +158,24 @@ def test_smoke_job_runs_preflight(ci_config: dict) -> None:
 
 
 def test_shard_jobs_run_half_the_parallel_suite(ci_config: dict) -> None:
-    """The shards split the parallel-safe suite file-atomically, ×4.
+    """The shards split the parallel-safe suite file-atomically, ×3.
 
     Guards the shard mechanics: the same ``-m`` filter as the serial lane,
     ``-n auto`` fan-out, the shard script in the command, the matrix set — and,
     critically, NO positional ``tests`` arg: the file list from
     scripts/shard_tests.py is the whole selection, a positional arg would make
-    each shard run the full-suite union (a silent 4× duplicate run).
+    each shard run the full-suite union (a silent 3× duplicate run).
     """
     job = ci_config["jobs"]["tests-shards"]
     matrix = job["strategy"]["matrix"]["shard-id"]
-    assert matrix == [0, 1, 2, 3], "sharding must be a 4-way matrix"
+    assert matrix == [0, 1, 2], "sharding must be a 3-way matrix"
     assert job["strategy"]["fail-fast"] is False, "one red shard must not kill the others"
 
     run = _steps_by_name(job)["Pytest (parallel-safe)"]["run"]
     assert "-m" in run and "not aiosqlite_serial" in run, "shards must exclude the serial lane"
     assert "-n auto" in run, "shards must fan out across the runner cores"
     assert "scripts/shard_tests.py" in run, "shard selection must come from scripts/shard_tests.py"
-    assert "--num-shards 4" in run and "--shard-id" in run, "shard id must come from the matrix"
+    assert "--num-shards 3" in run and "--shard-id" in run, "shard id must come from the matrix"
     assert not run.startswith("pytest tests"), (
         "shard legs must NOT pass a positional `tests` arg — the file list is the selection"
     )
@@ -184,35 +184,53 @@ def test_shard_jobs_run_half_the_parallel_suite(ci_config: dict) -> None:
 
 
 def test_serial_job_keeps_per_file_parallel_lane(ci_config: dict) -> None:
-    """The serial lane keeps `-m aiosqlite_serial -n auto --dist=loadfile`,
-    FILE-atomically split ×2 across a runner matrix.
+    """The serial lane keeps `-m aiosqlite_serial -n auto --dist=loadfile`.
 
     Independent files run on separate workers while each file stays on one
     worker (the old single-process command left all 986 tests serialized). The
-    ×2 split mirrors the shards: whole files per matrix leg via the same
-    shard_tests.py mechanism (measured: the serial lane was the most frequent
-    wall straggler, 13/27 runs), with the serial marker passed explicitly so
-    the selection stays the serial files only. NO positional ``tests`` arg —
-    the file list is the selection, same invariant as the shard legs.
+    lane stays a single runner: the ×2 file-atomic split was trialed and
+    reverted on the runner-minutes metric (2026-11-24) — it duplicated the
+    job overhead for a lane already under the shards' wall. --durations=25 is
+    pinned so the lane keeps reporting its slowest tests like the shard legs.
     """
-    job = ci_config["jobs"]["tests-serial"]
-    matrix = job["strategy"]["matrix"]["serial-shard-id"]
-    assert matrix == [0, 1], "the serial lane must be a 2-way matrix"
-    assert job["strategy"]["fail-fast"] is False, "one red serial shard must not kill the other"
-
-    run = _steps_by_name(job)["Pytest (aiosqlite serial, per-file parallel)"]["run"]
+    run = _steps_by_name(ci_config["jobs"]["tests-serial"])["Pytest (aiosqlite serial, per-file parallel)"]["run"]
     assert "-m aiosqlite_serial" in run
-    assert "--marker aiosqlite_serial" in run, "serial shard selection must use the serial marker"
     assert "-n auto" in run and "--dist=loadfile" in run, (
         "aiosqlite_serial files must run in parallel while each file stays on one worker"
     )
-    assert "scripts/shard_tests.py" in run and "--num-shards 2" in run, (
-        "the serial lane's file list must come from shard_tests.py, split ×2"
-    )
-    assert not run.startswith("pytest tests"), (
-        "the serial leg must NOT pass a positional `tests` arg — the file list is the selection"
-    )
+    assert "--durations=25" in run, "the serial lane must keep reporting its slowest tests (parity with shards)"
     assert "--cov" not in run, "coverage was removed from CI — no --cov in the serial lane"
+
+
+def test_build_job_is_single_os(ci_config: dict) -> None:
+    """The build matrix stays single-OS (runner-minutes, owner directive 2026-11-24).
+
+    macos-15 and windows-latest legs were removed on measured data: neither
+    caught a platform-specific failure in 100 runs of history, the wheel is
+    ``py3-none-any``, and the ``dist-*`` artifacts are consumed by nothing
+    (release.yml builds its own). The legs cost ~1.1-2.6 runner-minutes per
+    run each. Re-adding a non-Linux leg is a deliberate owner decision, not a
+    matrix slip — this pin makes it one.
+    """
+    matrix = ci_config["jobs"]["build"]["strategy"]["matrix"]["os"]
+    assert matrix == ["ubuntu-latest"], (
+        f"build matrix must stay ubuntu-only (runner-minutes decision); got {matrix!r}"
+    )
+
+
+def test_lint_job_installs_ruff_only(ci_config: dict) -> None:
+    """The lint job needs only ruff — it must not install the full [dev] extra.
+
+    Installing the whole dev dependency set (langchain, playwright, …) to run
+    a single static binary burned ~35s of every run (2026-11-24 runner-minutes
+    directive). The floor must stay in sync with the [dev] ruff pin.
+    """
+    steps = _steps_by_name(ci_config["jobs"]["lint"])
+    install = next(s["run"] for name, s in steps.items() if name.startswith("Install ruff"))
+    assert "-e" not in install and ".[dev]" not in install, (
+        "lint must not install the editable project or the [dev] extra"
+    )
+    assert "ruff>=" in install, "lint must pin its ruff floor explicitly"
 
 
 def test_no_coverage_machinery_anywhere_in_ci(ci_config: dict) -> None:

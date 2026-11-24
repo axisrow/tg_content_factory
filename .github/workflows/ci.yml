@@ -7,8 +7,8 @@ name: CI
 # Both run the same full test suite; the CI speedup is the parallel job split
 # (lint | static-checks | tests-smoke | tests-shards | tests-serial), not test
 # selection (#1097 §5), and — on top of that split — sharding the parallel-safe
-# suite across a 4-runner matrix and the serial lane across a 2-runner matrix
-# so the wall is the slowest leg, not the whole suite.
+# suite across a 3-runner matrix so the wall is the slowest shard, not the
+# whole suite.
 # Code coverage measurement was REMOVED by owner decision (2026-10-08): no
 # --cov anywhere, no fail_under ratchet (#1052 retired), no PR/push leg split
 # (#1456 retired) — every event runs the same bare commands, and the test jobs
@@ -56,7 +56,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Runner-minutes decision (owner directive, 2026-11-24): the
+        # windows-only build leg is removed. It cost 139-164s per run (the #2
+        # single job after the macos-15 removal), the dist-* artifacts are
+        # consumed by nothing (release.yml builds its own distributions), and
+        # the wheel is py3-none-any — per-OS builds verified nothing
+        # platform-specific in 100 runs of history (the only all-jobs failure
+        # was an infra outage). Re-add a non-Linux leg deliberately if a
+        # platform signal is ever needed.
+        os: [ubuntu-latest]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -171,8 +179,13 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Install dependencies
-        run: pip install -e packages/tg_shared -e ".[dev]"
+      # Runner-minutes (owner directive, 2026-11-24): this job only runs ruff,
+      # so it installs ruff alone instead of the full [dev] extra — the
+      # >=0.15.14 floor is the same one [dev] pins, so ruff floats exactly as
+      # before. Cuts ~35s of pip install from every run (ruff checks source
+      # files; nothing here needs the packages importable).
+      - name: Install ruff
+        run: pip install "ruff>=0.15.14"
 
       - name: Ruff
         run: ruff check tg_agent tests packages/tg_shared conftest.py
@@ -311,24 +324,21 @@ jobs:
       - name: Pytest (smoke preflight)
         run: pytest tests -q -m smoke
 
-  # The parallel-safe suite, sharded ×4 across a runner matrix — the wall is
+  # The parallel-safe suite, sharded ×3 across a runner matrix — the wall is
   # the slowest shard instead of the whole suite. Sharding is FILE-atomic so
   # the `--dist=loadfile` invariant survives (tests in one file stay on one
   # worker): scripts/shard_tests.py re-collects the same tree in every matrix
   # job and greedily balances whole files by test count, deterministically.
   # Deliberately NO positional `tests` arg: the file list IS the selection —
   # adding one would make every shard run the full-suite union instead of its
-  # quarter.
+  # third.
   # NOTE (#1090): selective runs (pytest-testmon) remain dropped — see the
   # module guard in tests/test_ci_workflow_structure.py; the speedup is more
   # runners, not fewer tests; the full suite stays the gate.
-  #
-  # ×4 (was ×3, 2026-11-24): measured CI steps put the parallel-safe pytest
-  # work at ~266s of shard wall (runs 45362706827/45357359108) with the slowest
-  # shard at 108s pytest while the fastest ran 76s — the count-based LPT leaves
-  # a ~30% duration spread, and a 4th runner pays ~55s of per-job overhead to
-  # cut the slowest shard's share. Full suite unchanged; +1 runner per run is
-  # the accepted cost (CI speed = owner priority).
+  # Kept ×3 (2026-11-24): a 4th shard was trialed and reverted on the
+  # owner's metric pivot to runner-minutes — same pytest work, +1 full job of
+  # duplicated install/startup per run (~+2.3 runner-min), measured in
+  # PR #1900 runs 45372074698/45372952893.
   #
   # timeout-minutes is a BUDGET (owner decision, 2026-10-08): a shard that
   # exceeds it reds CI instead of quietly growing the wall. Raised from five
@@ -341,7 +351,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard-id: [0, 1, 2, 3]
+        shard-id: [0, 1, 2]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -360,24 +370,22 @@ jobs:
       # dev-only), so `-n auto` fans out across all vCPUs. --durations surfaces
       # the slowest tests each run for ongoing tuning (#944).
       - name: Pytest (parallel-safe)
-        run: pytest -q -m "not aiosqlite_serial" -n auto --durations=25 $(python scripts/shard_tests.py --num-shards 4 --shard-id ${{ matrix.shard-id }})
+        run: pytest -q -m "not aiosqlite_serial" -n auto --durations=25 $(python scripts/shard_tests.py --num-shards 3 --shard-id ${{ matrix.shard-id }})
 
-  # aiosqlite_serial lane as its own job, FILE-atomically split ×2 across a
-  # runner matrix via the same shard_tests.py mechanism (whole files per
-  # matrix leg, `--dist=loadfile` inside each leg): independent files run on
-  # separate workers while each file stays whole. The split exists because the
-  # serial lane is the most frequent wall straggler (13/27 measured runs,
-  # margins up to +44s): its pytest wall scales with the lane's total file
-  # work (~71s on a 4-vCPU runner), not with one slow file.
+  # aiosqlite_serial lane as its own job — hidden under the shards' wall, and
+  # per-file parallelism (`--dist=loadfile`) preserved: independent files run
+  # on separate workers while each file stays whole.
+  # Single runner (2026-11-24): the ×2 file-atomic split was trialed in
+  # PR #1900 and reverted on the runner-minutes metric — it duplicated the
+  # job's install/startup overhead for a lane that already fits under the
+  # shards' wall most runs. --durations=25 stays: the lane's per-file weights
+  # were measurable only locally so far, this collects them per CI run for
+  # free.
   # timeout-minutes is a BUDGET (owner decision, 2026-10-08), like the other
   # test jobs.
   tests-serial:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    strategy:
-      fail-fast: false
-      matrix:
-        serial-shard-id: [0, 1]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -392,7 +400,5 @@ jobs:
       - name: Install dependencies
         run: pip install -e packages/tg_shared -e ".[dev]"
 
-      # Same --durations parity as the shard legs: the serial lane's slowest
-      # files were measurable only locally so far.
       - name: Pytest (aiosqlite serial, per-file parallel)
-        run: pytest -q -m aiosqlite_serial -n auto --dist=loadfile --durations=25 $(python scripts/shard_tests.py --marker aiosqlite_serial --num-shards 2 --shard-id ${{ matrix.serial-shard-id }})
+        run: pytest tests -q -m aiosqlite_serial -n auto --dist=loadfile --durations=25
