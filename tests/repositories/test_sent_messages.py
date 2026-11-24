@@ -74,6 +74,53 @@ async def test_chat_shape_never_leaks_between_rows(db):
 
 
 @pytest.mark.anyio
+async def test_deletion_observed_by_another_account_still_marks_deleted(db):
+    """The observer of a channel deletion is usually a different pool account
+    than the sender (#1898): the report join must not require phone equality —
+    "any account saw it deleted" is deleted, same semantics as `messages wait`."""
+    sm = db.repos.sent_messages
+    od = db.repos.observed_deletions
+
+    await sm.record_many("+7001", -100200, [21], chat_type="channel", source="dialogs_send")
+    await od.record_many("+7002", -100200, [21])
+
+    rows = await sm.list(phone="+7001")
+    assert len(rows) == 1
+    assert rows[0]["deleted_at"] is not None
+
+
+@pytest.mark.anyio
+async def test_multiple_observers_dedupe_into_one_status(db):
+    """Two accounts observing the same deletion must not duplicate the row."""
+    sm = db.repos.sent_messages
+    od = db.repos.observed_deletions
+
+    await sm.record_many("+7001", -100200, [22], chat_type="channel", source="dialogs_send")
+    await od.record_many("+7002", -100200, [22])
+    await od.record_many("+7003", -100200, [22])
+
+    rows = await sm.list(phone="+7001")
+    assert len(rows) == 1
+    assert rows[0]["deleted_at"] is not None
+
+
+@pytest.mark.anyio
+async def test_null_chat_deletion_by_other_account_does_not_mark_deleted(db):
+    """NULL-chat rows (dm/small-group) carry per-account message ids: the same
+    id deleted in another account's DM world is a different message — there,
+    unlike channels, the phone must match."""
+    sm = db.repos.sent_messages
+    od = db.repos.observed_deletions
+
+    await sm.record_many("+7001", None, [23], chat_type="dm", source="dialogs_send")
+    await od.record_many("+7002", None, [23])
+
+    rows = await sm.list(phone="+7001")
+    assert len(rows) == 1
+    assert rows[0]["deleted_at"] is None
+
+
+@pytest.mark.anyio
 async def test_list_filters_by_phone_source_chat_and_period(db):
     sm = db.repos.sent_messages
     old = datetime.now(timezone.utc) - timedelta(days=3)
