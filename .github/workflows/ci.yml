@@ -311,17 +311,24 @@ jobs:
       - name: Pytest (smoke preflight)
         run: pytest tests -q -m smoke
 
-  # The parallel-safe suite, sharded ×3 across a runner matrix — the wall is
+  # The parallel-safe suite, sharded ×4 across a runner matrix — the wall is
   # the slowest shard instead of the whole suite. Sharding is FILE-atomic so
   # the `--dist=loadfile` invariant survives (tests in one file stay on one
   # worker): scripts/shard_tests.py re-collects the same tree in every matrix
   # job and greedily balances whole files by test count, deterministically.
   # Deliberately NO positional `tests` arg: the file list IS the selection —
   # adding one would make every shard run the full-suite union instead of its
-  # third.
+  # quarter.
   # NOTE (#1090): selective runs (pytest-testmon) remain dropped — see the
   # module guard in tests/test_ci_workflow_structure.py; the speedup is more
   # runners, not fewer tests; the full suite stays the gate.
+  #
+  # ×4 (was ×3, 2026-11-24): measured CI steps put the parallel-safe pytest
+  # work at ~266s of shard wall (runs 45362706827/45357359108) with the slowest
+  # shard at 108s pytest while the fastest ran 76s — the count-based LPT leaves
+  # a ~30% duration spread, and a 4th runner pays ~55s of per-job overhead to
+  # cut the slowest shard's share. Full suite unchanged; +1 runner per run is
+  # the accepted cost (CI speed = owner priority).
   #
   # timeout-minutes is a BUDGET (owner decision, 2026-10-08): a shard that
   # exceeds it reds CI instead of quietly growing the wall. Raised from five
@@ -334,7 +341,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard-id: [0, 1, 2]
+        shard-id: [0, 1, 2, 3]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -353,16 +360,24 @@ jobs:
       # dev-only), so `-n auto` fans out across all vCPUs. --durations surfaces
       # the slowest tests each run for ongoing tuning (#944).
       - name: Pytest (parallel-safe)
-        run: pytest -q -m "not aiosqlite_serial" -n auto --durations=25 $(python scripts/shard_tests.py --num-shards 3 --shard-id ${{ matrix.shard-id }})
+        run: pytest -q -m "not aiosqlite_serial" -n auto --durations=25 $(python scripts/shard_tests.py --num-shards 4 --shard-id ${{ matrix.shard-id }})
 
-  # aiosqlite_serial lane as its own job — hidden under the shards' wall, and
-  # per-file parallelism (`--dist=loadfile`) preserved: independent files run
-  # on separate workers while each file stays whole.
+  # aiosqlite_serial lane as its own job, FILE-atomically split ×2 across a
+  # runner matrix via the same shard_tests.py mechanism (whole files per
+  # matrix leg, `--dist=loadfile` inside each leg): independent files run on
+  # separate workers while each file stays whole. The split exists because the
+  # serial lane is the most frequent wall straggler (13/27 measured runs,
+  # margins up to +44s): its pytest wall scales with the lane's total file
+  # work (~71s on a 4-vCPU runner), not with one slow file.
   # timeout-minutes is a BUDGET (owner decision, 2026-10-08), like the other
   # test jobs.
   tests-serial:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        serial-shard-id: [0, 1]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -377,5 +392,7 @@ jobs:
       - name: Install dependencies
         run: pip install -e packages/tg_shared -e ".[dev]"
 
+      # Same --durations parity as the shard legs: the serial lane's slowest
+      # files were measurable only locally so far.
       - name: Pytest (aiosqlite serial, per-file parallel)
-        run: pytest tests -q -m aiosqlite_serial -n auto --dist=loadfile
+        run: pytest -q -m aiosqlite_serial -n auto --dist=loadfile --durations=25 $(python scripts/shard_tests.py --marker aiosqlite_serial --num-shards 2 --shard-id ${{ matrix.serial-shard-id }})

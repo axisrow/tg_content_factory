@@ -158,24 +158,24 @@ def test_smoke_job_runs_preflight(ci_config: dict) -> None:
 
 
 def test_shard_jobs_run_half_the_parallel_suite(ci_config: dict) -> None:
-    """The shards split the parallel-safe suite file-atomically, ×3.
+    """The shards split the parallel-safe suite file-atomically, ×4.
 
     Guards the shard mechanics: the same ``-m`` filter as the serial lane,
     ``-n auto`` fan-out, the shard script in the command, the matrix set — and,
     critically, NO positional ``tests`` arg: the file list from
     scripts/shard_tests.py is the whole selection, a positional arg would make
-    each shard run the full-suite union (a silent 3× duplicate run).
+    each shard run the full-suite union (a silent 4× duplicate run).
     """
     job = ci_config["jobs"]["tests-shards"]
     matrix = job["strategy"]["matrix"]["shard-id"]
-    assert matrix == [0, 1, 2], "sharding must be a 3-way matrix"
+    assert matrix == [0, 1, 2, 3], "sharding must be a 4-way matrix"
     assert job["strategy"]["fail-fast"] is False, "one red shard must not kill the others"
 
     run = _steps_by_name(job)["Pytest (parallel-safe)"]["run"]
     assert "-m" in run and "not aiosqlite_serial" in run, "shards must exclude the serial lane"
     assert "-n auto" in run, "shards must fan out across the runner cores"
     assert "scripts/shard_tests.py" in run, "shard selection must come from scripts/shard_tests.py"
-    assert "--num-shards 3" in run and "--shard-id" in run, "shard id must come from the matrix"
+    assert "--num-shards 4" in run and "--shard-id" in run, "shard id must come from the matrix"
     assert not run.startswith("pytest tests"), (
         "shard legs must NOT pass a positional `tests` arg — the file list is the selection"
     )
@@ -184,15 +184,33 @@ def test_shard_jobs_run_half_the_parallel_suite(ci_config: dict) -> None:
 
 
 def test_serial_job_keeps_per_file_parallel_lane(ci_config: dict) -> None:
-    """The serial lane keeps `-m aiosqlite_serial -n auto --dist=loadfile`.
+    """The serial lane keeps `-m aiosqlite_serial -n auto --dist=loadfile`,
+    FILE-atomically split ×2 across a runner matrix.
 
     Independent files run on separate workers while each file stays on one
-    worker (the old single-process command left all 986 tests serialized).
+    worker (the old single-process command left all 986 tests serialized). The
+    ×2 split mirrors the shards: whole files per matrix leg via the same
+    shard_tests.py mechanism (measured: the serial lane was the most frequent
+    wall straggler, 13/27 runs), with the serial marker passed explicitly so
+    the selection stays the serial files only. NO positional ``tests`` arg —
+    the file list is the selection, same invariant as the shard legs.
     """
-    run = _steps_by_name(ci_config["jobs"]["tests-serial"])["Pytest (aiosqlite serial, per-file parallel)"]["run"]
+    job = ci_config["jobs"]["tests-serial"]
+    matrix = job["strategy"]["matrix"]["serial-shard-id"]
+    assert matrix == [0, 1], "the serial lane must be a 2-way matrix"
+    assert job["strategy"]["fail-fast"] is False, "one red serial shard must not kill the other"
+
+    run = _steps_by_name(job)["Pytest (aiosqlite serial, per-file parallel)"]["run"]
     assert "-m aiosqlite_serial" in run
+    assert "--marker aiosqlite_serial" in run, "serial shard selection must use the serial marker"
     assert "-n auto" in run and "--dist=loadfile" in run, (
         "aiosqlite_serial files must run in parallel while each file stays on one worker"
+    )
+    assert "scripts/shard_tests.py" in run and "--num-shards 2" in run, (
+        "the serial lane's file list must come from shard_tests.py, split ×2"
+    )
+    assert not run.startswith("pytest tests"), (
+        "the serial leg must NOT pass a positional `tests` arg — the file list is the selection"
     )
     assert "--cov" not in run, "coverage was removed from CI — no --cov in the serial lane"
 
