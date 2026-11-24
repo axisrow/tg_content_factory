@@ -56,11 +56,13 @@ class DmCommandsMixin(_Base):
                 result_payload={"draft_id": draft_id, "state": "claim_conflict"},
             )
         try:
-            result = await TelegramActionService(self._pool).send_message(
+            result = await TelegramActionService(self._pool, db=self._db).send_message(
                 phone=draft.phone,
                 recipient=draft.chat_id,
                 text=draft.reply_text,
                 is_user=True,  # DM-диалог: не пробовать канал первым (#1830)
+                source="dm_draft",
+                ref=str(draft_id),
             )
         except BaseException as exc:
             await drafts.release_claim(draft_id)

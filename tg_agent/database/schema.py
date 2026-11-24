@@ -793,4 +793,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS observed_deletions_unique
 -- above only serves phone-prefixed lookups.
 CREATE INDEX IF NOT EXISTS observed_deletions_message ON observed_deletions(message_id);
 CREATE INDEX IF NOT EXISTS observed_deletions_age ON observed_deletions(deleted_at);
+
+-- Sent-messages registry (#1893): one row per outgoing message we sent, written
+-- by the send layer itself (telegram_actions / publish / photo publish). chat_id
+-- mirrors observed_deletions' shape — marked -100… for channels/supergroups,
+-- NULL for DM/small-group — so the deletion status join is a plain LEFT JOIN on
+-- (phone, message_id, chat shape). Accounting table: kept forever, no prune.
+-- Not recorded on purpose: notifier/setup_bot service alerts to the owner's own
+-- bot — infrastructure, not client content.
+CREATE TABLE IF NOT EXISTS sent_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone TEXT NOT NULL,
+    chat_id INTEGER,
+    message_id INTEGER NOT NULL,
+    chat_type TEXT NOT NULL,
+    recipient TEXT,
+    text TEXT,
+    source TEXT NOT NULL,
+    ref TEXT,
+    sent_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sent_messages_unique
+    ON sent_messages(phone, IFNULL(chat_id, 0), message_id);
+CREATE INDEX IF NOT EXISTS sent_messages_sent_at ON sent_messages(sent_at);
 """ + SESSION_ENTITIES_SQL + ";\n"

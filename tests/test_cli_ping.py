@@ -241,7 +241,7 @@ def test_cli_run_due_invokes_service_and_reports(cli_db, capsys):
     out = capsys.readouterr().out
     assert "Checked 1 ping monitor(s)." in out
     actions.send_message.assert_awaited_once_with(
-        phone="+1234", recipient=777, text="ping", is_user=True
+        phone="+1234", recipient=777, text="ping", is_user=True, source="ping", ref="1"
     )
     pool.disconnect_all.assert_awaited_once()
 

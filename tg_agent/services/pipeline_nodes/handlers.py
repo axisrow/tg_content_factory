@@ -615,7 +615,9 @@ class ForwardHandler(BaseNodeHandler):
 
         messages = context.get_global("context_messages", [])
         targets = node_config.get("targets", [])
-        action_service = services.get("telegram_actions") or TelegramActionService(client_pool)
+        action_service = services.get("telegram_actions") or TelegramActionService(
+            client_pool, db=services.get("db")
+        )
         pipeline_id = services.get("pipeline_id")
 
         for target in targets:
@@ -647,6 +649,7 @@ class ForwardHandler(BaseNodeHandler):
                         native=False,
                         resolve_entities=False,
                         collapse_single_message_id=True,
+                        source="pipeline_forward",
                     )
                     increment_action_count(context, "forward")
                     if dedup_repo is not None:

@@ -14,6 +14,7 @@ from telethon_floodgate import HandledFloodWaitError, run_with_flood_wait
 
 from tg_agent.database import Database
 from tg_agent.models import MessagesResult
+from tg_agent.services.sent_registry import record_send
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.telegram.dm_history import read_dialog_history
 from tg_agent.telegram.outgoing_text import parse_outgoing_text, unparse_outgoing_html
@@ -283,8 +284,12 @@ class TelegramActionService:
     here instead of directly assembling raw Telethon requests.
     """
 
-    def __init__(self, pool: ClientPool):
+    def __init__(self, pool: ClientPool, db: Database | None = None):
         self._pool = pool
+        # When present, every successful send/forward lands one row in the
+        # sent-messages registry (#1893); None keeps bare constructions
+        # (tests, ad-hoc use) legal without an account.
+        self._db = db
 
     @staticmethod
     def _require_explicit_operation(client: Any, name: str) -> Any:
@@ -546,6 +551,8 @@ class TelegramActionService:
         reply_to: int | None = None,
         is_user: bool = False,
         silent: bool = False,
+        source: str = "unknown",
+        ref: str | None = None,
     ) -> SendMessageResult:
         # Operator channels never render web previews on links (#1584-adjacent
         # digest flow: a bare URL silently produced one); opt in explicitly.
@@ -565,7 +572,18 @@ class TelegramActionService:
             if silent:
                 options["silent"] = True
             message = await client.send_message(entity, text, **options)
-            return SendMessageResult(phone=acquired_phone, message_id=getattr(message, "id", None))
+            message_id = getattr(message, "id", None)
+            await record_send(
+                self._db,
+                phone=acquired_phone,
+                entity=entity,
+                recipient=recipient,
+                message_ids=[message_id] if message_id is not None else [],
+                text=text,
+                source=source,
+                ref=ref,
+            )
+            return SendMessageResult(phone=acquired_phone, message_id=message_id)
 
     async def edit_message(
         self,
@@ -695,6 +713,8 @@ class TelegramActionService:
         native: bool = True,
         resolve_entities: bool = True,
         collapse_single_message_id: bool = False,
+        source: str = "unknown",
+        ref: str | None = None,
     ) -> ForwardMessagesResult:
         async with self._client(phone=phone, native=native) as (client, acquired_phone):
             from_entity = (
@@ -713,6 +733,16 @@ class TelegramActionService:
             if not isinstance(forwarded, (list, tuple)):
                 forwarded = [forwarded] if forwarded is not None else []
             forwarded_ids = tuple(int(m.id) for m in forwarded if m is not None and hasattr(m, "id"))
+            await record_send(
+                self._db,
+                phone=acquired_phone,
+                entity=to_entity,
+                recipient=to_chat,
+                message_ids=list(forwarded_ids),
+                text=None,
+                source=source,
+                ref=ref,
+            )
             return ForwardMessagesResult(phone=acquired_phone, count=len(ids), message_ids=forwarded_ids)
 
     async def pin_message(

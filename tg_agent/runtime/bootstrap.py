@@ -281,7 +281,7 @@ async def build_runtime_container(
         await pool.refresh()
     pool_for_live_typed_services = cast(ClientPool, pool)
     notification_target_service = NotificationTargetService(notification_bundle, pool_for_live_typed_services)
-    photo_publish_service = PhotoPublishService(pool_for_live_typed_services)
+    photo_publish_service = PhotoPublishService(pool_for_live_typed_services, db=db)
     photo_task_service = PhotoTaskService(photo_loader_bundle, photo_publish_service)
     photo_auto_upload_service = PhotoAutoUploadService(photo_loader_bundle, photo_publish_service)
     notifier = None
@@ -300,7 +300,7 @@ async def build_runtime_container(
         # Dormant-DM pings (#1415): live history reads + sends through the same
         # TelegramActionService path as `dialogs read/send` — worker-only,
         # web snapshots never open Telegram connections.
-        live_actions = TelegramActionService(live_pool)
+        live_actions = TelegramActionService(live_pool, db=db)
         ping_monitor_service = PingMonitorService(
             db.repos.ping_monitors,
             live_actions,

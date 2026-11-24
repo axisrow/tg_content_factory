@@ -278,6 +278,8 @@ class SeedingPublisherService:
             recipient=thread.chat_channel_id,
             text=msg.text,
             reply_to=reply_to,
+            source="seeding",
+            ref=str(msg.id),
         )
         if result.message_id is None:
             raise RuntimeError("send_message вернул сообщение без id")

@@ -62,7 +62,7 @@ async def _run_with_services(config_path: str, body: Callable[[_Services], Await
     config, db = await runtime.init_db(config_path)
     _, pool = await runtime.init_pool(config, db)
     bundle = PhotoLoaderBundle.from_database(db)
-    publish = PhotoPublishService(pool)
+    publish = PhotoPublishService(pool, db=db)
     tasks = PhotoTaskService(bundle, publish)
     auto = PhotoAutoUploadService(bundle, publish)
     channel_service = ChannelService(db, pool, None)  # type: ignore[arg-type]

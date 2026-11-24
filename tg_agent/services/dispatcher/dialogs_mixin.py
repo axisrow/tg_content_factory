@@ -113,11 +113,12 @@ class DialogsCommandsMixin(_Base):
         return {"deleted": result.success_count, "failed": result.failed_count}
 
     async def _handle_dialogs_send(self, payload: dict[str, Any]) -> dict[str, Any]:
-        result = await TelegramActionService(self._pool).send_message(
+        result = await TelegramActionService(self._pool, db=self._db).send_message(
             phone=str(payload["phone"]),
             recipient=payload["recipient"],
             text=payload["text"],
             silent=bool(payload.get("silent", False)),
+            source="dialogs_queue",
         )
         return {"phone": result.phone, "message_id": result.message_id}
 
@@ -163,11 +164,12 @@ class DialogsCommandsMixin(_Base):
         return {"phone": result.phone, "deleted": result.count}
 
     async def _handle_dialogs_forward_messages(self, payload: dict[str, Any]) -> dict[str, Any]:
-        result = await TelegramActionService(self._pool).forward_messages(
+        result = await TelegramActionService(self._pool, db=self._db).forward_messages(
             phone=str(payload["phone"]),
             from_chat=payload["from_chat"],
             to_chat=payload["to_chat"],
             message_ids=[int(value) for value in payload["message_ids"]],
+            source="dialogs_queue_forward",
         )
         return {"phone": result.phone, "forwarded": result.count}
 

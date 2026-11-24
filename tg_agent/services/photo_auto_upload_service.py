@@ -146,6 +146,7 @@ class PhotoAutoUploadService:
                 send_mode=send_mode,
                 caption=job.caption,
                 on_file_sent=_mark_sent,
+                ref=f"photo_auto:{job.id or 0}",
             )
             await self._bundle.update_auto_job(
                 job.id or 0,

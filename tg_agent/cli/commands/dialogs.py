@@ -320,11 +320,12 @@ async def _dialogs_send(args, db, pool) -> None:
         return
 
     try:
-        result = await TelegramActionService(pool).send_message(
+        result = await TelegramActionService(pool, db=db).send_message(
             phone=phone,
             recipient=recipient,
             text=text,
             silent=bool(getattr(args, "silent", False)),
+            source="dialogs_send",
         )
         message_id = f" message_id={result.message_id}" if result.message_id is not None else ""
         print(f"Message sent to {recipient}.{message_id} via {result.phone}")
@@ -347,11 +348,12 @@ async def _dialogs_forward(args, db, pool) -> None:
     ):
         return
     try:
-        fwd_result = await TelegramActionService(pool).forward_messages(
+        fwd_result = await TelegramActionService(pool, db=db).forward_messages(
             phone=phone,
             from_chat=args.from_chat,
             to_chat=args.to_chat,
             message_ids=ids,
+            source="dialogs_forward",
         )
         id_suffix = ""
         if fwd_result.message_ids:
