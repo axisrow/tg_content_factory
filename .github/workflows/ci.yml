@@ -7,8 +7,8 @@ name: CI
 # Both run the same full test suite; the CI speedup is the parallel job split
 # (lint | static-checks | tests-smoke | tests-shards | tests-serial), not test
 # selection (#1097 §5), and — on top of that split — sharding the parallel-safe
-# suite across a 3-runner matrix so the wall is the slowest shard, not the
-# whole suite.
+# suite across a 4-runner matrix and the serial lane across a 2-runner matrix
+# so the wall is the slowest leg, not the whole suite.
 # Code coverage measurement was REMOVED by owner decision (2026-10-08): no
 # --cov anywhere, no fail_under ratchet (#1052 retired), no PR/push leg split
 # (#1456 retired) — every event runs the same bare commands, and the test jobs
