@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 import typer
@@ -76,3 +77,348 @@ def test_without_phone_or_chat_any_row_matches(cli_env, cli_db, capsys):
     out = capsys.readouterr().out
     assert "Deleted: message_id=7" in out
     assert "via=+7002" in out
+
+
+# --------------------------------------------------------------------------- #
+# incoming long-poll mode (#1871): settle debounce, chat filter, both producers
+# --------------------------------------------------------------------------- #
+
+from datetime import datetime, timezone  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
+
+from tg_agent.telegram.incoming_wait import (  # noqa: E402
+    IncomingBurst,
+    WaitTimeoutError,
+    build_burst,
+    normalize_incoming,
+    wait_burst,
+)
+
+PHONE = "+10000000001"
+CHAT_ID = -1001525693788
+NOW = datetime(2026, 11, 25, 12, 0, 0, tzinfo=timezone.utc)
+
+
+class FakeWaitClient:
+    """Native-path stand-in: records handler attach/detach."""
+
+    def __init__(self):
+        self.handlers: list = []
+        self.detached: list = []
+
+    def add_event_handler(self, callback, event=None):
+        self.handlers.append(callback)
+
+    def remove_event_handler(self, callback, event=None):
+        if callback in self.handlers:
+            self.handlers.remove(callback)
+        self.detached.append(callback)
+
+
+class FakeRelayConnection:
+    """Relay-path stand-in: records the wait.messages op, exposes on_push."""
+
+    def __init__(self):
+        self.push_handler = None
+        self.calls: list[tuple[str, dict]] = []
+
+    def on_push(self, handler):
+        self.push_handler = handler
+
+    async def call(self, op, **fields):
+        self.calls.append((op, fields))
+        await asyncio.sleep(30)
+
+
+def _event(chat_id, message_id, text, *, out=False, title="Тестовый чат", sender_name=None):
+    sender = SimpleNamespace(first_name=sender_name) if sender_name else None
+    return SimpleNamespace(
+        chat_id=chat_id,
+        chat=SimpleNamespace(title=title),
+        message=SimpleNamespace(out=out, id=message_id, text=text, action=None, date=NOW, sender=sender),
+    )
+
+
+def _wait_incoming_pool(cli_db, *, relay=None):
+    from telethon.tl.types import PeerChannel
+
+    pool = MagicMock()
+    pool.clients = {PHONE: object()}
+    pool.relay = relay
+    wait_client = FakeWaitClient()
+    pool.get_native_client_by_phone = AsyncMock(return_value=(wait_client, PHONE))
+    # A real TL peer: marked_peer_id() runs the actual telethon mapping, so the
+    # resolved -100… id equals the event chat ids the tests feed.
+    pool.resolve_entity_with_warm = AsyncMock(return_value=PeerChannel(channel_id=1525693788))
+    pool.disconnect_all = AsyncMock()
+
+    async def fake_init_db(_):
+        from tg_agent.config import AppConfig
+
+        return AppConfig(), cli_db
+
+    async def fake_init_pool(_, __):
+        return MagicMock(), pool
+
+    return pool, wait_client, fake_init_db, fake_init_pool
+
+
+async def _drive_incoming(cli_db, *, chat=str(CHAT_ID), timeout=0.5, settle_ms=50,
+                          json_output=True, phone=PHONE, feed=None, relay=None):
+    """Run the incoming impl as a task while ``feed`` produces events."""
+    from tg_agent.cli.commands.messages import messages_wait_incoming_impl
+
+    pool, wait_client, fake_init_db, fake_init_pool = _wait_incoming_pool(cli_db, relay=relay)
+
+    async def scenario():
+        task = asyncio.create_task(
+            messages_wait_incoming_impl(
+                "config.yaml",
+                chat=chat,
+                phone=phone,
+                timeout=timeout,
+                settle_ms=settle_ms,
+                json_output=json_output,
+            )
+        )
+        if feed is not None:
+            await feed(wait_client, pool)
+        try:
+            await asyncio.wait_for(task, timeout=10)
+        except typer.Exit as exc:
+            assert exc.exit_code == 0
+        return pool, wait_client
+
+    with patch("tg_agent.cli.runtime.init_db", side_effect=fake_init_db), \
+         patch("tg_agent.cli.runtime.init_pool", side_effect=fake_init_pool):
+        return await scenario()
+
+
+async def _attached(client):
+    """The handler the impl attached, bounded — a missing attach fails fast."""
+    for _ in range(200):
+        if client.handlers:
+            return client.handlers[0]
+        await asyncio.sleep(0.005)
+    raise AssertionError("the incoming handler never attached")
+
+
+async def test_three_rapid_messages_settle_into_one_burst(cli_db, capsys):
+    async def feed(client, pool):
+        handler = await _attached(client)
+        await handler(_event(CHAT_ID, 10, "первое"))
+        await handler(_event(CHAT_ID, 11, None))  # media-only line of the burst
+        await handler(_event(CHAT_ID, 12, "третье"))
+
+    await _drive_incoming(cli_db, feed=feed)
+
+    record = json.loads(capsys.readouterr().out)
+    assert record["event"] is True
+    assert record["chat_id"] == CHAT_ID
+    assert record["name"] == "Тестовый чат"
+    assert record["phone"] == PHONE
+    assert record["message_count"] == 3
+    assert record["first_message_id"] == 10
+    assert record["last_message_id"] == 12
+    assert record["texts"] == ["первое", None, "третье"]
+
+
+async def test_foreign_chat_and_own_messages_do_not_wake(cli_db, capsys):
+    async def feed(client, pool):
+        handler = await _attached(client)
+        await handler(_event(-1009999999999, 1, "чужой чат"))
+        await handler(_event(CHAT_ID, 2, "своё", out=True))
+        await handler(_event(CHAT_ID, 3, "успех"))
+        # settling: nothing else arrives within the window
+
+    await _drive_incoming(cli_db, feed=feed)
+
+    record = json.loads(capsys.readouterr().out)
+    assert record["message_count"] == 1
+    assert record["texts"] == ["успех"]
+
+
+async def test_relayed_pool_pushes_bursts_over_wait_messages_op(cli_db, capsys):
+    relay = FakeRelayConnection()
+
+    async def feed(client, pool):
+        for _ in range(200):
+            if relay.push_handler is not None:
+                break
+            await asyncio.sleep(0.005)
+        else:
+            raise AssertionError("the wait.messages op never subscribed")
+        item = {
+            "phone": PHONE, "chat_id": CHAT_ID, "chat_title": "Тестовый чат",
+            "message_id": 20, "sender_name": "@peer", "text": "по релею", "date": NOW.isoformat(),
+        }
+        relay.push_handler({"push": "wait.message", **item})
+        relay.push_handler({"push": "wait.message", **{**item, "message_id": 21, "text": "ещё"}})
+
+    await _drive_incoming(cli_db, feed=feed, relay=relay, timeout=5)
+
+    record = json.loads(capsys.readouterr().out)
+    assert record["message_count"] == 2
+    assert record["texts"] == ["по релею", "ещё"]
+    op, fields = relay.calls[0]
+    assert op == "wait.messages"
+    assert fields["phone"] == PHONE
+    assert fields["chat_id"] == CHAT_ID
+    # The owner window covers the CLI timeout plus the settle tail plus grace.
+    assert fields["timeout_sec"] == 5 + 0.05 + 5.0
+
+
+def test_incoming_timeout_is_machine_readable_and_exits_one(cli_env, cli_db, capsys):
+    from tg_agent.cli.commands.messages import messages_wait_incoming_impl
+
+    pool, wait_client, fake_init_db, fake_init_pool = _wait_incoming_pool(cli_db)
+
+    async def scenario():
+        await messages_wait_incoming_impl(
+            "config.yaml", chat=str(CHAT_ID), phone=PHONE, timeout=0.1,
+            settle_ms=50, json_output=True,
+        )
+
+    with patch("tg_agent.cli.runtime.init_db", side_effect=fake_init_db), \
+         patch("tg_agent.cli.runtime.init_pool", side_effect=fake_init_pool):
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(scenario())
+
+    assert excinfo.value.exit_code == 1
+    assert json.loads(capsys.readouterr().out) == {"event": False, "reason": "timeout"}
+
+
+def test_an_unresolvable_chat_names_the_account_and_hints_phone(cli_env, cli_db, capsys):
+    from tg_agent.cli.commands.messages import messages_wait_incoming_impl
+
+    pool, wait_client, fake_init_db, fake_init_pool = _wait_incoming_pool(cli_db)
+    pool.resolve_entity_with_warm = AsyncMock(side_effect=RuntimeError("peer not found"))
+
+    async def scenario():
+        await messages_wait_incoming_impl(
+            "config.yaml", chat="@nobody", phone=PHONE, timeout=1, settle_ms=50, json_output=True,
+        )
+
+    with patch("tg_agent.cli.runtime.init_db", side_effect=fake_init_db), \
+         patch("tg_agent.cli.runtime.init_pool", side_effect=fake_init_pool):
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(scenario())
+
+    assert excinfo.value.exit_code == 1
+    err = capsys.readouterr().err
+    assert "Cannot resolve '@nobody' via account +10000000001" in err
+    assert "retry with --phone" in err
+
+
+# --- burst collector unit level ------------------------------------------- #
+
+def _item(message_id, text="x"):
+    return {
+        "phone": PHONE, "chat_id": CHAT_ID, "chat_title": "ч",
+        "message_id": message_id, "sender_name": None, "text": text, "date": None,
+    }
+
+
+def test_wait_burst_collects_until_the_chat_goes_quiet():
+    async def scenario():
+        queue: asyncio.Queue = asyncio.Queue()
+        queue.put_nowait(_item(1))
+        queue.put_nowait(_item(2))
+
+        async def late():
+            await asyncio.sleep(0.05)
+            queue.put_nowait(_item(3))
+
+        task = asyncio.create_task(late())
+        burst = await wait_burst(queue, timeout=1, settle_ms=200)
+        await task
+        return burst
+
+    burst = asyncio.run(scenario())
+    assert isinstance(burst, IncomingBurst)
+    assert burst.message_count == 3
+    assert burst.message_ids == [1, 2, 3]
+
+
+def test_wait_burst_times_out_without_events():
+    async def scenario():
+        queue: asyncio.Queue = asyncio.Queue()
+        return await wait_burst(queue, timeout=0.05, settle_ms=10)
+
+    with pytest.raises(WaitTimeoutError):
+        asyncio.run(scenario())
+
+
+def test_wait_burst_reraises_producer_failures():
+    async def scenario():
+        queue: asyncio.Queue = asyncio.Queue()
+        queue.put_nowait(RuntimeError("owner gone"))
+        return await wait_burst(queue, timeout=1, settle_ms=10)
+
+    with pytest.raises(RuntimeError, match="owner gone"):
+        asyncio.run(scenario())
+
+
+def test_normalize_incoming_drops_own_and_service_messages():
+    assert normalize_incoming(PHONE, _event(CHAT_ID, 1, "x", out=True)) is None
+    service = _event(CHAT_ID, 2, None)
+    service.message.action = SimpleNamespace()
+    assert normalize_incoming(PHONE, service) is None
+    kept = normalize_incoming(PHONE, _event(CHAT_ID, 3, "текст", sender_name="Аня"))
+    assert kept is not None
+    assert kept.sender_name == "Аня"
+    assert kept.date == NOW.isoformat()
+    assert build_burst([kept]).to_json()["event"] is True
+
+
+# --- mode dispatch on the Typer surface ----------------------------------- #
+
+def _invoke_wait(argv):
+    from typer.testing import CliRunner
+
+    from tg_agent.cli.typer_app import app
+
+    return CliRunner().invoke(app, ["messages", "wait", *argv])
+
+
+def test_wait_without_a_mode_names_both_options():
+    result = _invoke_wait(["--timeout", "1"])
+    assert result.exit_code == 1
+    assert "--message-id" in result.output and "--chat" in result.output
+
+
+def test_wait_message_id_with_chat_is_deletion_with_filter():
+    """--chat next to --message-id keeps its #1892 meaning: the deletion chat filter."""
+    from tg_agent.cli.commands import messages as messages_cmd
+
+    with patch.object(messages_cmd, "run_async") as run_async_mock:
+        result = _invoke_wait(["--message-id", "5", "--chat", "-100123"])
+    assert result.exit_code == 0
+    coroutine = run_async_mock.call_args.args[0]
+    assert coroutine.__name__ == "messages_wait_impl"
+    local = coroutine.cr_frame.f_locals
+    assert local["chat"] == -100123
+    assert local["timeout"] == 30  # deletion default unchanged
+    coroutine.close()
+
+
+def test_wait_deletion_mode_demands_a_numeric_chat():
+    result = _invoke_wait(["--message-id", "5", "--chat", "abc"])
+    assert result.exit_code == 1
+    assert "numeric chat id" in result.output
+
+
+def test_wait_incoming_mode_dispatches_with_defaults():
+    from tg_agent.cli.commands import messages as messages_cmd
+
+    with patch.object(messages_cmd, "run_async") as run_async_mock:
+        result = _invoke_wait(["--chat", "any"])
+    assert result.exit_code == 0
+    coroutine = run_async_mock.call_args.args[0]
+    assert coroutine.__name__ == "messages_wait_incoming_impl"
+    # Defaults documented in --help (issue #1871): settle 6000 ms, timeout 60 s.
+    local = coroutine.cr_frame.f_locals
+    assert local["settle_ms"] == 6000
+    assert local["timeout"] == 60
+    coroutine.close()

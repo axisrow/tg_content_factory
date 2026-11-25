@@ -187,8 +187,11 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("dm", "journal", "list"): "list-only local incoming_dms journal view — DB-only read (#1580)",
     ("dm", "archive", "list"): "list-only local dm_messages archive view — DB-only read (#1580)",
     ("messages", "wait"): (
-        "deletion verdict over the local observed_deletions store — DB-only "
-        "poll, no Telegram requests (deletion capture)"
+        "two modes: --message-id = deletion verdict over the local "
+        "observed_deletions store (DB-only poll, no Telegram requests, "
+        "deletion capture); --chat = incoming-message settled-burst long-poll "
+        "(#1871, live — burst/filter/timeout logic covered offline with fake "
+        "clients, the wait.messages relay op by relay harness tests)"
     ),
     ("messages", "sent"): (
         "sent-messages registry report over the local store (send rows + "

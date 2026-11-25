@@ -4,7 +4,7 @@ from typing import Any
 
 from tg_agent.utils.datetime import normalize_utc
 
-__all__ = ["chat_id_and_type", "normalize_utc"]
+__all__ = ["chat_id_and_type", "marked_peer_id", "normalize_utc"]
 
 
 def chat_id_and_type(entity: Any) -> tuple[int | None, str]:
@@ -25,3 +25,16 @@ def chat_id_and_type(entity: Any) -> tuple[int | None, str]:
     if marked <= -1_000_000_000_000:
         return marked, "channel"
     return None, "group"
+
+
+def marked_peer_id(entity: Any) -> int:
+    """The marked id Telethon reports on live events (#1871).
+
+    Unlike :func:`chat_id_and_type` (built for the deletion stores, NULL for
+    DMs), this keeps every peer's id: positive for users, ``-100…`` for
+    channels/supergroups — exactly the ``event.chat_id`` shape the incoming
+    wait matches against.
+    """
+    from telethon import utils
+
+    return int(utils.get_peer_id(entity))
