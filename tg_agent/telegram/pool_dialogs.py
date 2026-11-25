@@ -264,6 +264,9 @@ class DialogsMixin:
 
         async def run_live_username_resolve(self, *args: object, **kwargs: object) -> object: ...
 
+        # FloodRotationMixin (pool_flood.py), same signature.
+        async def gateway_flood_blocked_phones(self, *, warm_family: str | None = None) -> set[str]: ...
+
         async def get_stats_availability(
             self,
             *,
@@ -532,6 +535,18 @@ class DialogsMixin:
             }
         except Exception:
             logger.debug("warm_all_dialogs: failed to load flood-wait status", exc_info=True)
+        # Windows the session OWNER holds (gateway mode): a relayed pool's local
+        # DB can be blind to them after a gateway restart, and sweeping an
+        # account the owner knows is flooded re-earns the wait on real RPCs
+        # (#1847). Best-effort; local knowledge still applies.
+        gateway_blocked = await self.gateway_flood_blocked_phones(warm_family=WARM_DIALOG_FAMILY)
+        if gateway_blocked:
+            logger.info(
+                "warm_all_dialogs: session owner holds flood windows for %d account(s): %s",
+                len(gateway_blocked),
+                ", ".join(sorted(gateway_blocked)),
+            )
+            flood_waited |= gateway_blocked
         phones_list = list(self._connected_phones())
         for idx, phone in enumerate(phones_list):
             remaining = deadline - time.monotonic()
@@ -1098,6 +1113,7 @@ class DialogsMixin:
                             raise AllCollectionClientsFloodedError(
                                 cast(int, availability.retry_after_sec),
                                 cast(datetime, availability.next_available_at_utc),
+                                accounts=availability.accounts,
                             )
                     # The owning account is unavailable (flood/disconnected): we cannot
                     # trustworthily confirm gone, so do NOT deactivate. Flag for review
@@ -1117,6 +1133,7 @@ class DialogsMixin:
                         raise AllCollectionClientsFloodedError(
                             cast(int, availability.retry_after_sec),
                             cast(datetime, availability.next_available_at_utc),
+                            accounts=availability.accounts,
                         )
                 if last_flood_error is not None:
                     raise last_flood_error
@@ -1382,6 +1399,7 @@ class DialogsMixin:
                     raise AllCollectionClientsFloodedError(
                         cast(int, availability.retry_after_sec),
                         cast(datetime, availability.next_available_at_utc),
+                        accounts=availability.accounts,
                     )
             logger.warning("fetch_channel_meta: no available client for channel_id %s", channel_id)
             return None

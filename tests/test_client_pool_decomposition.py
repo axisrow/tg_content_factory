@@ -91,6 +91,9 @@ PUBLIC_CONTRACT: frozenset[str] = frozenset(
         "has_rotatable_resolve_phone",
         "next_resolve_capable_at",
         "lookup_capable_phone_count",
+        # flood diagnostics (#1847)
+        "flood_cause",
+        "gateway_flood_blocked_phones",
         # resolve / meta
         "resolve_channel",
         "resolve_any_entity",

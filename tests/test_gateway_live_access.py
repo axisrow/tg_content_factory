@@ -232,6 +232,52 @@ async def test_a_failed_warm_is_paced_so_status_polls_cannot_storm_it(tmp_path, 
         await store.close()
 
 
+async def test_startup_connects_are_staggered(tmp_path, monkeypatch):
+    """#1847: the startup account connects space out instead of starting at once.
+
+    The stagger waits inside each connect task, so start() itself returns
+    immediately (the housekeeping loop and the status op call it). The stagger
+    is 0.5s here: start() must come back well inside that window, while a
+    start() that awaited the stagger would take at least 0.5s — decisive on a
+    loaded CI runner, unlike scheduling-order assertions."""
+    monkeypatch.setattr("tg_agent.gateway.telegram.GATEWAY_CONNECT_STAGGER_SEC", 0.5)
+    store = GatewayStore(tmp_path / "gateway")
+    await store.open()
+    auth = LocalAuth()
+    access = LiveTelegramAccess(store, cast(TelegramAuth, auth))
+    project = PROJECTS[0]
+    try:
+        await store.register_project(project, tmp_path / project, "a" * 40)
+        acc_a = await store.import_account("+100", "a-session")
+        acc_b = await store.import_account("+200", "b-session")
+        await store.grant(project, acc_a)
+        await store.grant(project, acc_b)
+
+        delays: list[tuple[str, float]] = []
+        original_warm = access._warm
+
+        async def spy_warm(warm_project, account, *, delay: float = 0.0):
+            delays.append((account, delay))
+            await original_warm(warm_project, account, delay=delay)
+
+        monkeypatch.setattr(access, "_warm", spy_warm)
+
+        started = time.monotonic()
+        await asyncio.wait_for(access.start(), timeout=1.0)
+        elapsed = time.monotonic() - started
+        assert elapsed < 0.25, (
+            f"start() took {elapsed:.2f}s — it must not wait inside the 0.5s stagger"
+        )
+        await asyncio.gather(*access._startup)
+
+        assert [delay for _, delay in delays] == [0.0, pytest.approx(0.5)]
+        assert len(auth.connections) == 2
+    finally:
+        await access.close()
+        await store.close()
+        release_all_session_locks()
+
+
 async def test_cold_account_connection_respects_a_pending_flood_write(tmp_path, monkeypatch):
     monkeypatch.setenv("TGCF_SESSION_LOCK_DIR", str(tmp_path / "locks"))
     store = GatewayStore(tmp_path / "gateway")

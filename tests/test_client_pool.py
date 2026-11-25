@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -900,3 +901,152 @@ async def test_warm_runs_again_after_a_partial_sweep(real_pool_harness_factory, 
 
     await harness.pool.warm_all_dialogs(skip_already_swept=True)
     client.get_dialogs.assert_awaited()
+
+
+class _FakeGatewayRelay:
+    """Minimal RelayConnection double: serves the ``status`` op, records calls."""
+
+    def __init__(self, accounts: list[dict] | Exception):
+        self._accounts = accounts
+        self.status_calls = 0
+
+    async def call(self, op: str, **_fields):
+        assert op == "status"
+        self.status_calls += 1
+        if isinstance(self._accounts, Exception):
+            raise self._accounts
+        return {"accounts": self._accounts}
+
+
+@pytest.mark.anyio
+async def test_warm_skips_accounts_the_gateway_holds_flooded(
+    real_pool_harness_factory, monkeypatch, caplog
+):
+    """#1847: a relayed pool's local DB can be blind to windows the gateway
+    earned before this process started. The startup sweep must ask the owner
+    and skip such accounts instead of re-earning the wait on real RPCs."""
+    import logging
+
+    monkeypatch.setattr("tg_agent.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
+    harness = real_pool_harness_factory()
+    flooded = FakeCliTelethonClient(dialogs=[])
+    ok = FakeCliTelethonClient(dialogs=[])
+
+    await _setup_warm_harness(
+        harness,
+        {
+            "+70000000001": flooded,
+            "+70000000002": ok,
+        },
+    )
+    soon = datetime.now(timezone.utc).timestamp() + 6 * 3600
+    relay = _FakeGatewayRelay([
+        {"phone": "+70000000001", "flood_until": soon, "family_floods": {}},
+        {"phone": "+70000000002", "flood_until": None, "family_floods": {}},
+    ])
+    harness.pool._relay = relay
+
+    with caplog.at_level(logging.INFO, logger="tg_agent.telegram.pool_dialogs"):
+        await harness.pool.warm_all_dialogs()
+
+    flooded.get_dialogs.assert_not_awaited()
+    ok.get_dialogs.assert_awaited()
+    assert "session owner holds flood windows" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_warm_skips_gateway_dialogs_family_flood_but_not_resolve(
+    real_pool_harness_factory, monkeypatch
+):
+    """The gateway filter obeys the same family rule as the local one (#1832):
+    the sweep's own family blocks, an unrelated read family must not."""
+    monkeypatch.setattr("tg_agent.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
+    harness = real_pool_harness_factory()
+    dialogs_flooded = FakeCliTelethonClient(dialogs=[])
+    resolve_flooded = FakeCliTelethonClient(dialogs=[])
+
+    await _setup_warm_harness(
+        harness,
+        {
+            "+70000000001": dialogs_flooded,
+            "+70000000002": resolve_flooded,
+        },
+    )
+    soon = datetime.now(timezone.utc).timestamp() + 6 * 3600
+    harness.pool._relay = _FakeGatewayRelay([
+        {"phone": "+70000000001", "flood_until": None, "family_floods": {"dialogs": soon}},
+        {"phone": "+70000000002", "flood_until": None, "family_floods": {"resolve": soon}},
+    ])
+
+    await harness.pool.warm_all_dialogs()
+
+    dialogs_flooded.get_dialogs.assert_not_awaited()
+    resolve_flooded.get_dialogs.assert_awaited()
+
+
+@pytest.mark.anyio
+async def test_warm_proceeds_when_the_gateway_status_fails(
+    real_pool_harness_factory, monkeypatch
+):
+    """A broken relay must not block the sweep: fall back to local knowledge."""
+    monkeypatch.setattr("tg_agent.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
+    harness = real_pool_harness_factory()
+    client = FakeCliTelethonClient(dialogs=[])
+    await _setup_warm_harness(harness, {"+70000000001": client})
+    harness.pool._relay = _FakeGatewayRelay(ConnectionError("gateway gone"))
+
+    await harness.pool.warm_all_dialogs()
+
+    client.get_dialogs.assert_awaited()
+
+
+@pytest.mark.anyio
+async def test_report_flood_records_the_causing_request(real_pool_harness_factory):
+    """#1847 diagnostics: the account-wide flood remembers which RPC earned it,
+    forgets it when the window expires or the flood is cleared."""
+    harness = real_pool_harness_factory()
+    await harness.add_account("+71234567890", session_string="session1", is_primary=True)
+
+    assert harness.pool.flood_cause("+71234567890") is None
+    await harness.pool.report_flood(
+        "+71234567890", 3600, rpc="SendMessageRequest", operation="dialogs_send"
+    )
+    assert harness.pool.flood_cause("+71234567890") == "SendMessageRequest, dialogs_send"
+
+    # A shorter, newer flood does not overwrite the longer window's cause.
+    await harness.pool.report_flood("+71234567890", 30, rpc="SmallRequest")
+    assert harness.pool.flood_cause("+71234567890") == "SendMessageRequest, dialogs_send"
+
+    await harness.pool.clear_flood("+71234567890")
+    assert harness.pool.flood_cause("+71234567890") is None
+
+
+@pytest.mark.anyio
+async def test_all_flooded_error_lists_per_account_windows(real_pool_harness_factory):
+    """#1847: the pool-exhausted error carries one line per blocked account with
+    its window and what blocks it; the aggregate first line stays unchanged."""
+    from tg_agent.telegram.collector_types import AllCollectionClientsFloodedError
+
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(phone="+70000000002", client=FakeCliTelethonClient())
+    await harness.add_account("+70000000002", session_string="s2", is_primary=True)
+    await harness.initialize_connected_accounts()
+    now = datetime.now(timezone.utc)
+    await harness.db.update_account_flood("+70000000002", now + timedelta(hours=6))
+    await harness.pool.report_family_flood("+70000000002", 120, "history")
+
+    availability = await harness.pool.get_stats_availability()
+    assert availability.state == "all_flooded"
+    assert availability.accounts, "per-account rows must be populated"
+
+    error = AllCollectionClientsFloodedError(
+        cast(int, availability.retry_after_sec),
+        cast(datetime, availability.next_available_at_utc),
+        accounts=availability.accounts,
+    )
+    message = str(error)
+    assert message.startswith("All active clients are flood-waited until ")
+    assert "Per-account flood windows (#1847):" in message
+    assert "+70000000002: until " in message
+    assert "account-wide" in message
+    assert "family: history" in message

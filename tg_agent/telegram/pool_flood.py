@@ -219,6 +219,67 @@ class FloodRotationMixin:
             capable += 1
         return capable
 
+    async def gateway_flood_blocked_phones(
+        self, *, warm_family: str | None = None
+    ) -> set[str]:
+        """Accounts the session OWNER holds a flood window for (#1847).
+
+        A relayed pool restores no flood-guard state of its own — the owner's
+        snapshot is authoritative — so its local DB can be blind to windows the
+        owner earned before this process even started. Before a startup mass
+        request (the dialog warm sweep) spends real RPCs on such an account,
+        ask the owner: one ``status`` call returns per-account windows
+        (``flood_until`` epoch, ``family_floods``). Only ``warm_family``-family
+        and account-wide windows block here; a flood on an unrelated read
+        family must not stop a sweep that does not need it (#1832/#1879).
+
+        Best-effort: any failure returns an empty set — the sweep falls back to
+        its local knowledge, never blocked by a diagnostics fetch.
+        """
+        relay = vars(self).get("_relay")
+        if relay is None or not warm_family:
+            return set()
+        try:
+            status = await asyncio.wait_for(relay.call("status"), timeout=3.0)
+        except Exception:
+            logger.debug("gateway flood windows unavailable; continuing on local state", exc_info=True)
+            return set()
+        rows = status.get("accounts") if isinstance(status, dict) else None
+        if not isinstance(rows, list):
+            return set()
+        now = datetime.now(timezone.utc)
+        blocked: set[str] = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            phone = str(row.get("phone") or "")
+            if not phone:
+                continue
+            flood_until = row.get("flood_until")
+            try:
+                account_until = (
+                    datetime.fromtimestamp(float(flood_until), timezone.utc)
+                    if flood_until
+                    else None
+                )
+            except (TypeError, ValueError):
+                account_until = None
+            if account_until is not None and account_until > now:
+                blocked.add(phone)
+                continue
+            families = row.get("family_floods")
+            if not isinstance(families, dict):
+                continue
+            for family, epoch in families.items():
+                try:
+                    family_until = datetime.fromtimestamp(float(epoch), timezone.utc)
+                except (TypeError, ValueError):
+                    continue
+                if family == warm_family and family_until > now:
+                    blocked.add(phone)
+                    break
+        return blocked
+
     async def available_stats_client_count(self) -> int:
         return await self._lease_pool.available_exclusive_count(self._connected_phones())
 
@@ -321,7 +382,7 @@ class FloodRotationMixin:
         # of the StatsClientAvailability dataclass at module load time.
         from tg_agent.telegram.client_pool import StatsClientAvailability
 
-        state, retry_after_sec, next_available_at_utc = (
+        state, retry_after_sec, next_available_at_utc, accounts = (
             await self._lease_pool.snapshot_stats_availability(
                 self._connected_phones(), allow_families=allow_families, block_families=block_families
             )
@@ -330,6 +391,7 @@ class FloodRotationMixin:
             state=state,
             retry_after_sec=retry_after_sec,
             next_available_at_utc=next_available_at_utc,
+            accounts=accounts,
         )
 
     async def get_premium_stats_availability(self):
@@ -384,8 +446,20 @@ class FloodRotationMixin:
         if callable(note):
             note(phone, float(wait_seconds))
 
-    async def report_flood(self, phone: str, wait_seconds: int) -> None:
-        """Mark account as flood-waited (account-wide, all surfaces)."""
+    async def report_flood(
+        self,
+        phone: str,
+        wait_seconds: int,
+        *,
+        rpc: str | None = None,
+        operation: str | None = None,
+    ) -> None:
+        """Mark account as flood-waited (account-wide, all surfaces).
+
+        ``rpc``/``operation`` name the request that earned the window (#1847
+        diagnostics): kept in memory for the pool's lifetime, surfaced via
+        :meth:`flood_cause` and the flood log line.
+        """
         self._attribute_tool_flood(phone, wait_seconds)
         until = datetime.now(timezone.utc) + timedelta(seconds=wait_seconds)
         deadlines = getattr(self, "_rpc_account_deadlines", None)
@@ -393,9 +467,62 @@ class FloodRotationMixin:
             deadlines = self._rpc_account_deadlines = {}
         until = max(normalize_utc(deadlines.get(phone)) or until, until)
         deadlines[phone] = until
+        self._remember_flood_cause(
+            phone,
+            until,
+            reach=datetime.now(timezone.utc) + timedelta(seconds=wait_seconds),
+            rpc=rpc,
+            operation=operation,
+        )
         await self._db.update_account_flood(phone, until)
         level = logging.INFO if is_transient_flood_wait_seconds(wait_seconds) else logging.WARNING
-        logger.log(level, "Flood wait for %s: %d seconds (until %s)", phone, wait_seconds, until)
+        cause = " ".join(part for part in (rpc, operation) if part)
+        logger.log(
+            level,
+            "Flood wait for %s: %d seconds (until %s)%s",
+            phone,
+            wait_seconds,
+            until,
+            f" via {cause}" if cause else "",
+        )
+
+    def _remember_flood_cause(
+        self,
+        phone: str,
+        until: datetime,
+        *,
+        reach: datetime,
+        rpc: str | None = None,
+        operation: str | None = None,
+    ) -> None:
+        """Keep the in-memory (rpc, operation, until) behind the account-wide window.
+
+        The longest active window wins: a fresh cause replaces the stored one
+        only when its own window (``reach`` = now + wait_seconds, before the
+        deadline merge) reaches at least as far — otherwise the older, longer
+        flood is still what blocks the account (#1847).
+        """
+        causes = getattr(self, "_flood_cause", None)
+        if not isinstance(causes, dict):
+            causes = self._flood_cause = {}
+        previous = causes.get(phone)
+        if isinstance(previous, dict):
+            previous_until = normalize_utc(previous.get("until"))
+            if previous_until is not None and previous_until > reach:
+                return
+        causes[phone] = {"rpc": rpc, "operation": operation, "until": until}
+
+    def flood_cause(self, phone: str) -> str | None:
+        """RPC/operation that earned the active account-wide flood, else None."""
+        causes = getattr(self, "_flood_cause", None)
+        entry = causes.get(phone) if isinstance(causes, dict) else None
+        if not isinstance(entry, dict):
+            return None
+        until = normalize_utc(entry.get("until"))
+        if until is None or until <= datetime.now(timezone.utc):
+            return None
+        parts = [part for part in (entry.get("rpc"), entry.get("operation")) if part]
+        return ", ".join(parts) or None
 
     async def report_family_flood(
         self, phone: str, wait_seconds: int, family: str, *, operation: str | None = None
@@ -482,6 +609,9 @@ class FloodRotationMixin:
             await repo.clear_family_floods(phone)
         if self._family_floods is not None:
             self._family_floods.pop(phone, None)
+        causes = getattr(self, "_flood_cause", None)
+        if isinstance(causes, dict):
+            causes.pop(phone, None)
 
     def clear_premium_flood(self, phone: str) -> None:
         self._premium_flood_wait_until.pop(phone, None)

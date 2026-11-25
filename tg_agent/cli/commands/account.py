@@ -590,14 +590,15 @@ async def _gateway_flood_status(config) -> None:
     finally:
         await client.close()
     now = datetime.now(timezone.utc)
-    fmt = "{:<16} {:<28} {:<14} {:<18}"
-    print(fmt.format("Phone", "Flood wait until", "Remaining", "Resolve backoff"))
-    print("-" * 78)
+    fmt = "{:<16} {:<28} {:<14} {:<18} {:<24}"
+    print(fmt.format("Phone", "Flood wait until", "Remaining", "Resolve backoff", "Cause"))
+    print("-" * 102)
     for row in accounts:
         until_str, remaining_str = _flood_columns(
             datetime.fromtimestamp(row["flood_until"], timezone.utc) if row["flood_until"] else None, now)
         backoff = row.get("resolve_backoff_remaining_sec") or 0
-        print(fmt.format(row["phone"], until_str, remaining_str, f"{int(backoff)}s" if backoff else ""))
+        cause = str(row.get("flood_cause") or "")[:24]
+        print(fmt.format(row["phone"], until_str, remaining_str, f"{int(backoff)}s" if backoff else "", cause))
     flooded = {row["phone"]: row.get("family_floods") or {} for row in accounts}
     flooded = {phone: fams for phone, fams in flooded.items() if fams}
     if flooded:
