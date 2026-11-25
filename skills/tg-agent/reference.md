@@ -507,6 +507,7 @@ analytics trending-topics | trending-channels | velocity | peak-hours | calendar
 analytics trending-emojis | channel
 analytics channel-rate <channel_id> | channel-rating
 analytics usefulness [--limit 100] [--json]
+analytics authority [--days 30] [--apply] [--json] [--limit 100]
 ```
 
 `analytics usefulness` — content rating per channel, «полезное vs вода»
@@ -521,6 +522,21 @@ blocks (no is_filtered effect).
 `analytics channel-rate <channel_id>` — LLM judge (water/authorship rubric +
 useful/genre). CALIBRATION ONLY: costs provider spend; its verdicts are the
 ground truth that calibrates `usefulness` thresholds, never a production path.
+
+`analytics authority` — per-channel authority rating for digest source
+selection (#1748), offline over collected posts of the `--days` window
+(default 30). Clusters near-duplicate posts across channels (normalized text →
+char shingles → Jaccard ≥ 0.35 → union-find); the earliest poster of a cluster
+is the scoop, the rest are echoes. Per channel: `scoop_rate`, `noise_rate`
+(water stamps via the deterministic usefulness classifier, ad/promo markers,
+mechanical short posts), `volume`, `score = scoop_rate * (1 - noise_rate)`.
+Tiers `auth:A/B/C` are tercile cuts of the score distribution over eligible
+channels (volume ≥ 10, participations ≥ 3; ineligible channels stay untagged).
+Digest semantics: a topic passes only when ≥ 2 tier-A/B channels printed it —
+tier-C echoes are not coverage, and one channel counts once per topic, so a
+single channel can never be "most of the links". Default is a dry-run report;
+`--apply` merges tier tags into existing channel tags (stale `auth:*`
+replaced, e.g. `keep` kept). DB-only: no live Telegram, no LLM.
 
 ## plugins — installed plugin tools
 

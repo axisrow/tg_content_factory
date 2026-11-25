@@ -237,6 +237,11 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("agent", "thread-delete"): "cleanup-only live CLI command; deletes agent thread rows",
     ("agent", "thread-rename"): "local agent-thread mutation",
     ("agent", "thread-stop"): "local agent-stream cancel + last-exchange rollback (DB-only)",
+    ("analytics", "authority"): (
+        "offline authority rating over collected posts (scoop/noise, #1748); "
+        "DB-only read by default, --apply merges auth:* tier tags into local "
+        "channel tags; no live Telegram, covered by offline CLI tests"
+    ),
     ("analytics", "channel-rate"): (
         "LLM-judge run: provider spend + channel_ratings DB write; no live Telegram. "
         "Covered by unit/integration tests with a fake provider_callable (#994)"

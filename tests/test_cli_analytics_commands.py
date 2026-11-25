@@ -606,3 +606,88 @@ def test_channel_rate_sample_size_clamped():
     _run_rate(db, _make_provider_svc(), analysis_svc, sample_size=10000)
     _, kwargs = analysis_svc.classify_channel.await_args
     assert kwargs["sample_size"] == 200
+
+
+# ---------------------------------------------------------------------------
+# authority (#1748)
+# ---------------------------------------------------------------------------
+
+
+def _seed_authority_rows():
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    story = "Anthropic выпустила Claude 5.2 с режимом длинного контекста: модель держит весь репозиторий."
+    return [
+        {
+            "channel_id": 100,
+            "message_id": 1,
+            "date": (now - timedelta(hours=3)).isoformat(),
+            "text": story,
+            "is_forward": False,
+        },
+        {
+            "channel_id": 200,
+            "message_id": 2,
+            "date": (now - timedelta(hours=1)).isoformat(),
+            "text": f"⚡ Коротко: {story} Подробности у первоисточника.",
+            "is_forward": False,
+        },
+    ]
+
+
+def _run_authority(db, **ns):
+    db.get_channels = AsyncMock(return_value=[])
+    db.repos.messages.fetch_authority_posts = AsyncMock(return_value=_seed_authority_rows())
+    patches = _init_patches(db)
+    with patches[0], patches[1]:
+        run(_args(analytics_action="authority", days=30, apply=False, json=False, limit=100, **ns))
+
+
+def test_authority_empty_window(capsys):
+    db = make_cli_db()
+    db.repos.messages.fetch_authority_posts = AsyncMock(return_value=[])
+    patches = _init_patches(db)
+    with patches[0], patches[1]:
+        run(_args(analytics_action="authority", days=30, apply=False, json=False, limit=100))
+    assert "No posts found in the last 30 days." in capsys.readouterr().out
+
+
+def test_authority_report_scoop_first(capsys):
+    db = make_cli_db()
+    _run_authority(db)
+    out = capsys.readouterr().out
+    assert "authority window=30d posts=2" in out
+    assert "tags_written=0 (dry-run)" in out
+    # канал 100 напечатал первым — его строка выше (score 1.0 против 0.0)
+    assert out.index("100") < out.index("200")
+    assert "1.00" in out and "0.00" in out
+
+
+def test_authority_json_envelope(capsys):
+    db = make_cli_db()
+    patches = _init_patches(db)
+    with patches[0], patches[1]:
+        db.get_channels = AsyncMock(return_value=[])
+        db.repos.messages.fetch_authority_posts = AsyncMock(return_value=_seed_authority_rows())
+        run(_args(analytics_action="authority", days=7, apply=False, json=True, limit=100))
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["window_days"] == 7 and payload["posts"] == 2 and payload["channels"] == 2
+    assert payload["applied"] == 0 and payload["tiers"] == {"A": 0, "B": 0, "C": 0}
+    assert payload["rows"][0]["channel_id"] == 100 and payload["rows"][0]["scoop_rate"] == 1.0
+    assert payload["rows"][0]["tier"] is None  # volume < 10 — без тира
+
+
+def test_authority_apply_writes_tags(capsys):
+    db = make_cli_db()
+    db.get_channels = AsyncMock(return_value=[])
+    db.repos.messages.fetch_authority_posts = AsyncMock(return_value=_seed_authority_rows())
+    db.repos.channels.get_channel_by_channel_id = AsyncMock(return_value=SimpleNamespace(id=5))
+    db.repos.channels.get_channel_tags = AsyncMock(return_value=["keep"])
+    db.repos.channels.set_channel_tags = AsyncMock()
+    patches = _init_patches(db)
+    with patch("tg_agent.cli.commands.analytics.assign_tiers", return_value={100: "B", 200: "C"}):
+        with patches[0], patches[1]:
+            run(_args(analytics_action="authority", days=30, apply=True, json=False, limit=100))
+    db.repos.channels.set_channel_tags.assert_any_await(5, ["keep", "auth:B"])
+    assert "tags_written=2 (applied)" in capsys.readouterr().out

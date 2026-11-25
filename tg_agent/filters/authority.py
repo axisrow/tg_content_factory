@@ -1,14 +1,18 @@
-"""Офлайн-прототип рейтинга авторитета каналов (#1748).
+"""Офлайн-рейтинг авторитета каналов для отбора дайджеста (#1748).
 
-ПРОТОТИП (итерация 1): считает scoop_rate / noise_rate / volume по списку постов
-в памяти и предлагает теги ``auth:A/B/C`` для отбора дайджеста. Ни CLI-поверхности,
-ни живого Telegram, ни чтения БД здесь нет — только синтетические фикстуры;
-калибровка на реальной БД — следующий ручной шаг, затем промоушен в
-``analytics authority`` по иссую.
+Промоушен прототипа (#1822) в прод-путь: CLI ``analytics authority`` читает
+окно собранных постов из БД (``collect_window_posts`` → репозиторный
+``fetch_authority_posts``), считает scoop_rate / noise_rate / volume и
+предлагает теги ``auth:A/B/C``; ``--apply`` сливает их в существующий m2m
+tags/channel_tags. Живого Telegram и LLM здесь нет; потребитель метрики —
+LLM-кураторство дайджеста (automation-first): тема проходит, если её
+напечатали ≥2 канала тира A/B (``passes_digest_gate``), эхи тира C покрытием
+не считаются, «один канал ≠ большинство ссылок» выполняется самим счётом
+каналов, а не постов.
 
-Конвейер по иссую: нормализованный текст → символьные шинглы → инвертированный
-индекс → кандидаты по Жаккару → union-find кластеры; самый ранний пост кластера —
-скуп, остальные — эхи.
+Конвейер по иссую: нормализованный текст → символьные шинглы → префиксный
+инвертированный индекс (AllPairs) → Жаккар по парам → union-find кластеры;
+самый ранний пост кластера — скуп, остальные — эхи.
 
 Журнал допущений (метрики не «правда», а предложения для калибровки):
 
@@ -24,10 +28,18 @@
 3. Почти-дубликат = Жаккар ≥ ``JACCARD_THRESHOLD`` по символьным
    k-шинглам ``SHINGLE_K`` нормализованного текста. Транзитивность union-find
    может сшить цепочку почти-дубликатов (дрейф) — для прототипа принимаем.
-4. Шинглы с документной частотой > ``MAX_DF_SHARE`` корпуса исключаются из
-   генерации кандидатов (guard от стоп-слов), но только когда корпус достаточно
-   велик (малый cap отрезал бы легитимных кандидатов); сам Жаккар считается по
-   полным множествам шинглов.
+4. Кандидаты — документ-мажорный AllPairs-пробинг (Xiao et al.): документы в
+   порядке возрастания длины зондируют инвертированный индекс своими
+   редчайшими шинглами — префикс длины ``|d| - ceil(t*|d|) + 1``; лямма SSJ
+   гарантирует, что пара с Жаккаром ≥ t встретится. Жаккар вызывается только
+   для кандидатов с ≥2 общими префиксными шинглами: одна общая шинглина —
+   почти всегда клей разных тем, и вызовов jaccard на фабричном корпусе
+   становится на порядки меньше (замер: shingle-мажорный перебор давал
+   9.8 млн вызовов/нед). Шинглы с df выше капа (доля ``MAX_DF_SHARE``
+   корпуса, но не больше абсолютного ``MAX_DF_ABSOLUTE``) из индекса не
+   попадают; потеря полноты на «только стоп-шингловых» парах принята —
+   у новостных эх сотни общих редких шинглов, у мусора искажение скупов
+   терпимо; сам Жаккар считается по полным множествам шинглов.
 5. ``noise`` = штамп воды (детерминированный ``classify_post``, #1658) ИЛИ
    рекламный маркер (``AD_PROMO_PHRASES``, стартовый список) ИЛИ механический
    короткий пост (нормализованный текст < ``MECHANICAL_MIN_CHARS``). Пост,
@@ -52,18 +64,29 @@
 11. Теги: ``auth:A/B/C`` заменяют протухшие ``auth:*`` и сохраняют прочие теги
     (например ``keep``); запись идёт через ``ChannelsRepository.set_channel_tags``
     (он полная замена набора, поэтому слияние делает эта функция). По умолчанию
-    ``dry_run=True`` — реальная запись тегов есть действие оператора и на
-    промоушене должно идти от имени человека.
+    ``dry_run=True`` — реальная запись тегов есть действие оператора, CLI-флаг
+    ``--apply`` и есть это явное действие.
+12. Загрузка окна: только обычные посты (``message_kind`` regular/NULL) каналов
+    вне фильтра — та же популяция, что у контент-рейтинга
+    (``fetch_recent_post_samples``). Пустые тексты (медиа без подписи)
+    сохраняются: для дайджеста это механический шум, а выкинуть их из volume
+    значило бы завысить качество канала. Наивные даты старых строк читаются
+    как UTC — сборщик пишет aware-UTC isoformat.
+13. Кластеризация по суточным UTC-бакетам: эхо-волна новости живёт часы,
+    повтор той же темы через сутки — другой цикл; общий перебор по всему
+    окну квадратичен и на 30 днях не сходится (бакеты + df-кап сводят
+    недельные пары-кандидаты с 1.86 млрд к единицам млн). Потеря: кластер,
+    пересекающий полночь, делится надвое — скуп у обоих берегов свой.
 """
 from __future__ import annotations
 
+import math
 import re
 import statistics
 import unicodedata
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from itertools import combinations
+from datetime import date, datetime, timedelta, timezone
 from typing import Iterable, Sequence
 
 from tg_agent.filters.criteria import USEFULNESS_SCAN_PREFIX
@@ -75,6 +98,11 @@ SHINGLE_K = 5
 JACCARD_THRESHOLD = 0.35
 #: Шинглы с df выше этой доли корпуса не генерируют кандидатов (стоп-слова).
 MAX_DF_SHARE = 0.2
+#: Абсолютный df-cap кандидатов: шингл в >MAX_DF_ABSOLUTE постах бакета —
+#: boilerplate, пары он только плодит (замер на фабричной БД: без капа
+#: префиксный индекс даёт 1.86 млрд пар на неделе, с капом 50 — десятки млн,
+#: с суточными бакетами — единицы млн).
+MAX_DF_ABSOLUTE = 50
 #: «Механический короткий пост»: нормализованный текст короче этого — шум.
 MECHANICAL_MIN_CHARS = 40
 #: Порог пригодности для тиров: минимум постов (volume).
@@ -83,6 +111,8 @@ MIN_POSTS_FOR_TIER = 10
 MIN_PARTICIPATIONS_FOR_TIER = 3
 #: Правило дайджеста: минимум принтеров тира A/B.
 DIGEST_MIN_AB_PRINTERS = 2
+#: Окно рейтинга по умолчанию (дни сбора).
+DEFAULT_WINDOW_DAYS = 30
 #: Префикс тега тира в существующем m2m tags/channel_tags.
 AUTH_TAG_PREFIX = "auth:"
 
@@ -156,9 +186,45 @@ def cluster_posts(
 ) -> list[list[Post]]:
     """Слить почти-дубликаты в кластеры; каждый кластер отсортирован по дате.
 
-    # ponytail: кандидаты через инвертированный индекс — O(sum df^2); на
-    # недельном окне (единицы тысяч постов) это доли секунды. Если калибровка
-    # покажет иначе — MinHash/LSH.
+    Кластеризация идёт по суточным UTC-бакетам (допущение 13): эхо-волна
+    новости живёт часы, повтор той же темы через сутки — другой цикл, а
+    общий перебор по всему окну квадратичен (замер на фабричной БД: 1.86 млрд
+    пар-кандидатов на неделе, ~5 млн с бакетами и df-капом).
+
+    Внутри бакета — префиксный фильтр (AllPairs, Xiao et al.): шинглы
+    документа упорядочены по глобальной df по возрастанию, индексируются
+    только первые ``len - ceil(threshold * len) + 1`` — два текста с
+    Жаккаром ≥ threshold обязаны пересечься префиксами (стандартная лямма
+    SSJ-джойна). Шинглы с df выше капа (доля корпуса, но не больше
+    ``MAX_DF_ABSOLUTE``) из индекса исключаются — теоретическая потеря
+    полноты на парах «только из стоп-шинглов» принята (допущение 4); сама
+    пара проверяется честным Жаккаром по полным множествам.
+
+    # ponytail: union-find поверх порогового Жаккара; транзитивность может
+    # сшить цепочку дрейфа — принято (допущение 3). MinHash/LSH если корпус
+    # вырастет на порядок.
+    """
+    by_day: dict[date, list[Post]] = defaultdict(list)
+    for post in posts:
+        by_day[post.date.date()].append(post)
+    clusters: list[list[Post]] = []
+    for day in sorted(by_day):
+        clusters.extend(_cluster_same_day(by_day[day], threshold))
+    return clusters
+
+
+def _cluster_same_day(
+    posts: Sequence[Post], threshold: float = JACCARD_THRESHOLD
+) -> list[list[Post]]:
+    """Один суточный бакет: документ-мажорный AllPairs-пробинг → union-find.
+
+    Документы в порядке возрастания длины: каждый зондирует индекс своими
+    редчайшими шинглами (префикс по лямме SSJ) и копит co-occurrence счётчик
+    по кандидатам — инкремент счётчика на ~2 порядка дешевле jaccard, а
+    жаккар достаётся только кандидатам с ≥2 общими префиксными шинглами
+    (одна общая шинглина — клей разных тем, не свидетельство near-dup,
+    допущение 4). Замер на фабричной БД: shingle-мажорный перебор пар —
+    9.8 млн jaccard-вызовов (264 с) на неделе, документ-мажорный — секунды.
     """
     n = len(posts)
     if n == 0:
@@ -167,16 +233,14 @@ def cluster_posts(
     df: Counter[str] = Counter()
     for group in shingles:
         df.update(group)
-    max_df = int(MAX_DF_SHARE * n)
+    # Глобальный порядок «редкие раньше»: детерминированный тай-брейк по имени.
+    df_rank = {s: r for r, s in enumerate(sorted(df, key=lambda s: (df[s], s)))}
+    max_df = min(int(MAX_DF_SHARE * n), MAX_DF_ABSOLUTE)
     if max_df < 8:
         # ponytail: на малых корпусах df-cap отрежет легитимных кандидатов;
         # охранять от стоп-слов имеет смысл только когда корпус большой.
         max_df = n
-    index: dict[str, list[int]] = {}
-    for i, group in enumerate(shingles):
-        for shingle in group:
-            if df[shingle] <= max_df:
-                index.setdefault(shingle, []).append(i)
+    lengths = [len(group) for group in shingles]
 
     parent = list(range(n))
 
@@ -191,12 +255,31 @@ def cluster_posts(
         if ra != rb:
             parent[max(ra, rb)] = min(ra, rb)
 
-    for candidates in index.values():
-        for a, b in combinations(candidates, 2):
-            if find(a) == find(b):
+    index: dict[str, list[int]] = {}
+    for i in sorted(range(n), key=lengths.__getitem__):
+        group = shingles[i]
+        prefix_len = len(group) - math.ceil(threshold * len(group)) + 1
+        prefix = sorted(group, key=df_rank.__getitem__)[:prefix_len]
+        lx = lengths[i]
+        hits: dict[int, int] = {}
+        for shingle in prefix:
+            if df[shingle] > max_df:
                 continue
-            if jaccard(shingles[a], shingles[b]) >= threshold:
-                union(a, b)
+            for j in index.get(shingle, ()):
+                ly = lengths[j]
+                lo, hi = (lx, ly) if lx < ly else (ly, lx)
+                # Жаккар ≤ min/max длин: пара слишком разных длин не дотягивает.
+                if hi == 0 or lo / hi < threshold:
+                    continue
+                hits[j] = hits.get(j, 0) + 1
+        for j, cnt in hits.items():
+            if cnt < 2:
+                continue
+            if jaccard(shingles[i], shingles[j]) >= threshold:
+                union(i, j)
+        for shingle in prefix:
+            if df[shingle] <= max_df:
+                index.setdefault(shingle, []).append(i)
 
     buckets: dict[int, list[Post]] = {}
     for i in range(n):
@@ -370,6 +453,30 @@ def make_synthetic_fixture() -> list[Post]:
     for i, story in enumerate(stories):
         posts.append(
             Post(4, 40_000 + i, t0 + timedelta(hours=2 * i + 2, minutes=20), f"[обзор] {story[::-1][:-8]}{story[-8:]}")
+        )
+    return posts
+
+
+async def collect_window_posts(db, days: int = DEFAULT_WINDOW_DAYS) -> list[Post]:
+    """Посты окна сбора из локальной БД → ``Post`` (допущение 12).
+
+    Наивные даты (старые строки) читаются как UTC: смешивать оснащённости
+    нельзя (допущение 10), а сборщик пишет aware-UTC isoformat.
+    """
+    rows = await db.repos.messages.fetch_authority_posts(days)
+    posts: list[Post] = []
+    for row in rows:
+        date = datetime.fromisoformat(row["date"])
+        if date.tzinfo is None:
+            date = date.replace(tzinfo=timezone.utc)
+        posts.append(
+            Post(
+                channel_id=row["channel_id"],
+                message_id=row["message_id"],
+                date=date,
+                text=row["text"] or "",
+                is_forward=bool(row["is_forward"]),
+            )
         )
     return posts
 

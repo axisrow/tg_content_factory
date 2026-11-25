@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from tg_agent.models import Message
@@ -209,6 +209,33 @@ class MessageAnalyticsMixin:
         )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
+
+    async def fetch_authority_posts(self: "MessagesRepository", days: int = 30) -> list[dict]:
+        """Сырьё рейтинга авторитета (#1748): посты окна сбора одним срезом.
+
+        Строки `channel_id, message_id, date, text, is_forward` — только обычные
+        посты (`message_kind` regular/NULL) каналов вне фильтра, та же
+        популяция, что у контент-рейтинга (filters.fetch_recent_post_samples).
+        Пустые тексты (медиа без подписи) НЕ вырезаются: для рейтинга это
+        механический шум, вырезание завысило бы качество канала. Срез
+        `date >= cutoff` — строковое сравнение ISO-штампов (сборщик пишет
+        aware-UTC isoformat); наивные старые строки отсекаются по нижней
+        границе, но внутри окна читаются как UTC (filters/authority.py).
+        Без LIMIT: обрез окна ломал бы статистику скупов.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        cur = await self._db.execute(
+            """SELECT m.channel_id, m.message_id, m.date, m.text,
+                      (m.forward_from_channel_id IS NOT NULL) AS is_forward
+               FROM messages m
+               LEFT JOIN channels c ON m.channel_id = c.channel_id
+               WHERE m.date >= ?
+                 AND (c.is_filtered IS NULL OR c.is_filtered = 0)
+                 AND (m.message_kind = 'regular' OR m.message_kind IS NULL)
+               ORDER BY m.date""",
+            (cutoff,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
 
     async def _get_engagement_rows(
         self: "MessagesRepository",
