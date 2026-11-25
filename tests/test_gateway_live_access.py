@@ -7,12 +7,13 @@ projects use it, one DM handler, and every granted project sees each DM event.
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from telethon_floodgate import TelegramRateLimitedError
+from telethon_floodgate import TelegramRateLimitedError, TelegramRpcDeferredError
 
 from tg_agent.gateway import runtime
 from tg_agent.gateway.store import GatewayStore
@@ -145,6 +146,87 @@ async def test_a_repeated_account_failure_is_reported_once(tmp_path, monkeypatch
         # the repeat stays a one-line debug note.
         assert "acc-1" in warning.getMessage() and "network down" in warning.getMessage()
         assert warning.exc_info and not repeat.exc_info
+    finally:
+        await access.close()
+        await store.close()
+
+
+async def test_a_deferred_warm_waits_out_the_gate_window(tmp_path, monkeypatch, caplog):
+    """A floodgate deferral paces the warm, not the poll cadence (#1867).
+
+    Every ``status`` request used to respawn the warm the moment the previous
+    one died: the gate's "retry in ~Ns" was re-entered every few seconds and
+    logged as a failure with a traceback. Now the window from the deferral is
+    honored, the deferral is one info line without a traceback.
+    """
+    store = GatewayStore(tmp_path / "gateway")
+    await store.open()
+    access = LiveTelegramAccess(store, cast(TelegramAuth, LocalAuth()))
+    project = PROJECTS[0]
+    attempts = []
+
+    async def deferred(project, account):
+        attempts.append(1)
+        raise TelegramRpcDeferredError(account, "get_users", 500.0, "GetUsersRequest")
+
+    monkeypatch.setattr(access, "connection", deferred)
+    try:
+        await store.register_project(project, tmp_path / project, "a" * 40)
+        account = await store.import_account("+100", "gated-session")
+        await store.grant(project, account)
+        with caplog.at_level(logging.DEBUG, logger="tg_agent.gateway.telegram"):
+            await access.start()
+            while account not in access._warm_retry_at:
+                await asyncio.sleep(0.01)
+            for _ in range(5):  # every poll used to respawn the warm
+                await access.start()
+            await asyncio.sleep(0.05)
+        assert attempts == [1]
+        remaining = access._warm_retry_at[account] - time.monotonic()
+        assert 499 < remaining <= 500  # the gate's estimate, not the retry floor
+        (record,) = [rec for rec in caplog.records if "deferred by the floodgate" in rec.getMessage()]
+        assert record.levelno == logging.INFO
+        assert not record.exc_info
+        # Once the window is out, the next start warms again.
+        access._warm_retry_at[account] = 0.0
+        await access.start()
+        while len(attempts) < 2:
+            await asyncio.sleep(0.01)
+        assert attempts == [1, 1]
+    finally:
+        await access.close()
+        await store.close()
+
+
+async def test_a_failed_warm_is_paced_so_status_polls_cannot_storm_it(tmp_path, monkeypatch, caplog):
+    """A plain connect failure also paces the warm; the #1875 report is unchanged."""
+    store = GatewayStore(tmp_path / "gateway")
+    await store.open()
+    access = LiveTelegramAccess(store, cast(TelegramAuth, LocalAuth()))
+    project = PROJECTS[0]
+    attempts = []
+
+    async def unavailable(project, account):
+        attempts.append(1)
+        raise ConnectionError("network down")
+
+    monkeypatch.setattr(access, "connection", unavailable)
+    try:
+        await store.register_project(project, tmp_path / project, "a" * 40)
+        account = await store.import_account("+100", "failing-session")
+        await store.grant(project, account)
+        with caplog.at_level(logging.DEBUG, logger="tg_agent.gateway.telegram"):
+            await access.start()
+            while account not in access._warm_retry_at:
+                await asyncio.sleep(0.01)
+            for _ in range(5):  # every poll used to respawn the warm
+                await access.start()
+            await asyncio.sleep(0.05)
+        assert attempts == [1]
+        remaining = access._warm_retry_at[account] - time.monotonic()
+        assert 29 < remaining <= 30
+        warning = next(rec for rec in caplog.records if rec.levelno == logging.WARNING)
+        assert warning.exc_info  # a real failure still carries its traceback
     finally:
         await access.close()
         await store.close()

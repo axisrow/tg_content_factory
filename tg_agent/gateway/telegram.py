@@ -25,6 +25,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# The fastest a warm attempt for one account repeats after a failure (#1867):
+# the housekeeping cadence. Status polls must not pace account connects.
+_WARM_RETRY_FLOOR_SEC = 30.0
+
 
 class LiveTelegramAccess:
     """Cache one connection per account; releasing a request never disconnects it."""
@@ -37,14 +41,21 @@ class LiveTelegramAccess:
         self._pool = None
         self._startup: set[asyncio.Task] = set()
         self._warm_failures: dict[str, str] = {}  # account -> last connect failure
+        # account -> monotonic time before which ``start`` spawns no warm (#1867):
+        # a floodgate deferral's "retry in ~Ns" is honored instead of re-entering
+        # the closed gate on every status poll.
+        self._warm_retry_at: dict[str, float] = {}
         # Set by the relay hub (``on_event(account)``): projects granted the account
         # pull its new DM events at once.
         self.on_event: Callable[[str], Awaitable[None]] | None = None
 
     async def start(self) -> None:
+        now = time.monotonic()
         for project, account in await self.store.subscriptions():
             name = f"gateway-account-connect:{account}"
             if self.account_status(account)["connected"] or any(task.get_name() == name for task in self._startup):
+                continue
+            if self._warm_retry_at.get(account, 0.0) > now:
                 continue
             task = asyncio.create_task(self._warm(project, account), name=name)
             self._startup.add(task)
@@ -53,16 +64,28 @@ class LiveTelegramAccess:
     async def _warm(self, project: str, account: str) -> None:
         try:
             await self.connection(project, account)
+        except TelegramRateLimitedError as exc:
+            # The gate refused the warm RPC before dispatch ("retry in ~Ns") —
+            # an expected state, not a failure: come back at the gate's own
+            # deadline and keep it to one line per account per window (#1867).
+            self._warm_failures.pop(account, None)
+            self._warm_retry_at[account] = time.monotonic() + max(exc.retry_after_sec, _WARM_RETRY_FLOOR_SEC)
+            logger.info("Gateway account connect deferred by the floodgate: account=%s retry in %.0fs",
+                        account, exc.retry_after_sec)
         except Exception as exc:
             # Housekeeping retries every half minute: a new failure is reported once,
             # with its text and traceback; its repeats stay one-line debug notes.
+            # Either way the next attempt waits out _WARM_RETRY_FLOOR_SEC, so a
+            # status poll cannot restart the warm (#1867).
             failure = type(exc).__name__
             first = self._warm_failures.get(account) != failure
             self._warm_failures[account] = failure
             log = logger.warning if first else logger.debug
             log("Gateway account unavailable: account=%s error=%s: %s", account, failure, exc, exc_info=first)
+            self._warm_retry_at[account] = time.monotonic() + _WARM_RETRY_FLOOR_SEC
         else:
             self._warm_failures.pop(account, None)
+            self._warm_retry_at.pop(account, None)
 
     async def _incoming(self, account: str, event) -> None:
         message = event.message
