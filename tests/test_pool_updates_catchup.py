@@ -148,6 +148,9 @@ async def test_force_reconnect_phone_unauthorized_skips_catch_up(pool):
     client = AsyncMock()
     client.disconnect = AsyncMock()
     client.connect = AsyncMock()
+    # Real contract: TelegramClient.is_connected is sync; a bare AsyncMock
+    # would hand the pool an un-awaited coroutine per check.
+    client.is_connected = MagicMock(return_value=True)
     client.is_user_authorized = AsyncMock(return_value=False)
     pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
 
