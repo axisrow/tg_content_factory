@@ -820,6 +820,10 @@ async def test_run_loop_requeues_handled_flood_wait():
         "phone": "+1",
         "wait_seconds": 21,
         "next_available_at_utc": info.next_available_at_utc.isoformat(),
+        # RPC attribution (#1828); None here — this info carries no guard metadata.
+        "rpc": None,
+        "source": None,
+        "delivery_state": None,
     }
     assert update_safely.await_args.kwargs["log_action"] == "pending after flood-wait"
 

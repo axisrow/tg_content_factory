@@ -6,11 +6,14 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitedError
+
 from tg_agent.database import Database
 from tg_agent.models import ContentPipeline, GenerationRun, PipelinePublishMode, PipelineTarget
 from tg_agent.services.sent_registry import record_send
 from tg_agent.telegram.backends import adapt_transport_session
 from tg_agent.telegram.relay import RelayDeliveryUnconfirmedError
+from tg_agent.telegram.rpc_guard import describe_rpc_failure
 
 logger = logging.getLogger(__name__)
 
@@ -526,7 +529,13 @@ class PublishService:
             return PublishResult(success=False, error="Timeout")
         except Exception as e:
             logger.exception("Failed to publish to %s:%s", target.phone, target.dialog_id)
-            return PublishResult(success=False, error=str(e))
+            # Flood/throttle refusals carry curated RPC attribution (#1828):
+            # which RPC refused and whether anything was dispatched. Anything
+            # else keeps its plain message.
+            error = describe_rpc_failure(e) if isinstance(
+                e, (HandledFloodWaitError, TelegramRateLimitedError)
+            ) else str(e)
+            return PublishResult(success=False, error=error)
         finally:
             if acquired_phone is not None:
                 # New ClientPool releases the exact lease session; older test

@@ -10,15 +10,18 @@ from telethon import TelegramClient, errors, functions, types
 from telethon.sessions import MemorySession
 from telethon_floodgate import (
     FloodCircuitBreaker,
+    FloodWaitInfo,
     HandledFloodWaitError,
     RateLimitSpec,
     ResolveRateLimiter,
     TelegramRateLimitedError,
     TelegramRateLimitGate,
+    TelegramRpcDeferredError,
 )
 
 from tg_agent.telegram.backends import TelegramTransportSession
 from tg_agent.telegram.outgoing_ceiling import OutgoingRateCeiling
+from tg_agent.telegram.rpc_guard import describe_rpc_failure, diagnostic_fields
 
 PHONE = "11111111-1111-1111-1111-111111111111"
 PEER = types.InputPeerUser(42, 42)
@@ -138,6 +141,85 @@ async def test_nested_resolve_flood_reports_resolve_family():
     pool.report_family_flood.assert_awaited_once()
     assert pool.report_family_flood.await_args.args[:3] == (PHONE, 3600, "resolve")
     assert caught.value.info.rpc == "ResolveUsernameRequest"
+    # #1828: a nested resolve flood is not a send failure — nothing was dispatched.
+    assert caught.value.info.delivery_state == "not_sent"
+    assert caught.value.info.source == "telegram"
+
+
+@pytest.mark.asyncio
+async def test_send_flood_is_attributed_to_sendmessage_and_stays_uncertain():
+    pool = make_pool()
+    session, sent = make_session(pool, send_flood=3600)
+    with pytest.raises(HandledFloodWaitError) as caught:
+        await session.send_message(PEER, "plain text")
+    assert [type(r).__name__ for r in sent] == ["SendMessageRequest"]
+    # #1828: the send-side flood names SendMessage and must stay distinct from
+    # the resolve-side case — the write WAS dispatched, so delivery is uncertain.
+    assert caught.value.info.rpc == "SendMessageRequest"
+    assert caught.value.info.delivery_state == "uncertain"
+    assert getattr(caught.value, "rpc", None) == "SendMessageRequest"
+    # write-family flood: account-wide report, never the read-only family
+    pool.report_flood.assert_awaited_once()
+    pool.report_family_flood.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_local_refusal_names_the_rpc_and_stays_local():
+    pool = make_pool()
+    for _ in range(2):
+        assert pool._resolve_rate_limiter.try_acquire(PHONE) == 0
+    session, sent = make_session(pool)
+    with pytest.raises(TelegramRpcDeferredError) as caught:
+        await session.send_message(PEER, "[x](@audituser)")
+    assert sent == []
+    exc = caught.value
+    assert exc.rpc == "ResolveUsernameRequest"
+    assert exc.source == "local"
+    assert exc.rpc_dispatched is False
+    fields = diagnostic_fields(exc)
+    assert fields["outer_operation"] == "telegram_send_message"
+    assert fields["rpc"] == "ResolveUsernameRequest"
+    assert fields["source"] == "local"
+    assert fields["delivery_state"] == "not_sent"
+    text = describe_rpc_failure(exc)
+    assert "local throttling by resolve_username" in text
+    assert "rpc=ResolveUsernameRequest" in text
+    assert "operation=telegram_send_message" in text
+    assert "not dispatched" in text
+    assert "retry in" in text
+
+
+@pytest.mark.asyncio
+async def test_timeout_after_a_dispatched_send_stays_delivery_uncertain():
+    pool = make_pool()
+    session, sent = make_session(pool, pending_send=True)
+    with pytest.raises(asyncio.TimeoutError) as caught:
+        await asyncio.wait_for(session.send_message(PEER, "hello"), timeout=0.05)
+    assert [type(r).__name__ for r in sent] == ["SendMessageRequest"]
+    # #1828: the timeout may have left the request in flight — the stamp via
+    # wait_for's cause must read "uncertain", never a safe-retry signal.
+    fields = diagnostic_fields(caught.value)
+    assert fields["rpc"] == "SendMessageRequest"
+    assert fields["delivery_state"] == "uncertain"
+    assert fields["outer_operation"] == "telegram_send_message"
+
+
+@pytest.mark.asyncio
+async def test_describe_rpc_failure_formats_curated_lines_only():
+    info = FloodWaitInfo(
+        operation="telegram_send_message", phone=PHONE, wait_seconds=3600,
+        next_available_at_utc=datetime.now(timezone.utc), detail="Flood wait 3600s",
+        rpc="ResolveUsernameRequest", source="telegram", delivery_state="not_sent",
+    )
+    text = describe_rpc_failure(HandledFloodWaitError(info))
+    assert "Telegram FloodWait" in text
+    assert "rpc=ResolveUsernameRequest" in text
+    assert "not dispatched" in text
+    assert "retry in 3600s" in text
+    # old receipt without metadata stays readable and leaks no exception text
+    plain = describe_rpc_failure(ValueError("secret body @user"))
+    assert plain == "ValueError"
+    assert "secret" not in plain
 
 
 @pytest.mark.asyncio

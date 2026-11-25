@@ -9,7 +9,7 @@ import time
 from collections.abc import Awaitable, Callable
 
 import typer
-from telethon_floodgate import HandledFloodWaitError, is_blocking_flood_wait_until
+from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitedError, is_blocking_flood_wait_until
 
 from tg_agent.cli import runtime
 from tg_agent.cli.commands.common import (
@@ -39,6 +39,7 @@ from tg_agent.telegram.reactions import (
     TelegramReactionInvalidError,
     normalize_outgoing_reaction_emoji,
 )
+from tg_agent.telegram.rpc_guard import describe_rpc_failure
 from tg_agent.telegram.transcription import default_engine
 from tg_agent.utils.datetime import parse_required_datetime
 from tg_agent.utils.text_safety import csv_safe_cell
@@ -338,6 +339,10 @@ async def _dialogs_send(args, db, pool) -> None:
         print(f"Message sent to {recipient}.{message_id} via {result.phone}")
     except TelegramActionClientUnavailableError:
         cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")
+    except (HandledFloodWaitError, TelegramRateLimitedError) as exc:
+        # Curated attribution (#1828): refusing RPC + delivery verdict + retry
+        # deadline, so a resolve-side flood never reads as a send failure.
+        cli_error(f"Send refused: {describe_rpc_failure(exc)}")
     except Exception as exc:
         cli_error(f"Error sending message: {exc}")
 
@@ -368,6 +373,8 @@ async def _dialogs_forward(args, db, pool) -> None:
         print(f"Forwarded {len(ids)} message(s) from {args.from_chat} to {args.to_chat}.{id_suffix}")
     except TelegramActionClientUnavailableError:
         cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")
+    except (HandledFloodWaitError, TelegramRateLimitedError) as exc:
+        cli_error(f"Forward refused: {describe_rpc_failure(exc)}")
     except Exception as exc:
         cli_error(f"Error forwarding messages: {exc}")
 
@@ -393,6 +400,8 @@ async def _dialogs_edit_message(args, db, pool) -> None:
         print(f"Message #{args.message_id} edited.")
     except TelegramActionClientUnavailableError:
         cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")
+    except (HandledFloodWaitError, TelegramRateLimitedError) as exc:
+        cli_error(f"Edit refused: {describe_rpc_failure(exc)}")
     except Exception as exc:
         cli_error(f"Error editing message: {exc}")
 

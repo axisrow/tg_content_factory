@@ -214,10 +214,22 @@ def error_payload(exc: BaseException) -> dict:
     if isinstance(exc, RPCError):
         reduced = exc.__reduce__()
         args = _plain(reduced[1][1:]) if len(reduced) > 1 and reduced[1] else []
-        if args is not None:
-            return {"kind": "rpc", "name": type(exc).__name__, "args": args, "message": str(exc)}
-        return {"kind": "rpc", "name": "RPCError", "args": [str(exc), getattr(exc, "code", None)],
-                "message": str(exc)}
+        payload = (
+            {"kind": "rpc", "name": type(exc).__name__, "args": args, "message": str(exc)}
+            if args is not None
+            else {"kind": "rpc", "name": "RPCError", "args": [str(exc), getattr(exc, "code", None)],
+                  "message": str(exc)}
+        )
+        # Curated dispatch facts (#1828): the owner's rpc gate names the
+        # constructor a server flood refused (FloodWait/PremiumWait/SlowMode —
+        # its "telegram" source marks exactly that family). Carry only these
+        # two strings, never request arguments, so the client attributes the
+        # same way.
+        rpc = getattr(exc, "rpc", None)
+        if isinstance(rpc, str) and getattr(exc, "source", None) == "telegram":
+            payload["rpc"] = rpc
+            payload["source"] = "telegram"
+        return payload
     if isinstance(exc, TelegramRateLimitedError):
         # Which of the owner's limiters refused (gate, resolve_username, flood_backoff, …):
         # the client names it, a username-budget refusal is not a gate one.
@@ -254,7 +266,12 @@ def rebuild_error(payload: dict, request: Any = None) -> BaseException:
         cls = getattr(errors, str(payload.get("name") or ""), None)
         if isinstance(cls, type) and issubclass(cls, RPCError):
             with contextlib.suppress(TypeError):
-                return cls(request, *(payload.get("args") or []))
+                rebuilt = cls(request, *(payload.get("args") or []))
+                for name in ("rpc", "source"):
+                    value = payload.get(name)
+                    if isinstance(value, str):
+                        setattr(rebuilt, name, value)
+                return rebuilt
         return RPCError(request, message or "RPC error")
     if kind == "rate_limited":
         phone = str(payload.get("phone") or "")

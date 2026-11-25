@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import typer
+from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError, TelegramRpcDeferredError
 
 from tests.helpers import cli_ns
 from tg_agent.config import AppConfig
@@ -288,6 +290,43 @@ class TestCliSend:
         with pytest.raises(typer.Exit):
             _run_cli("send", pool, cli_db, {"phone": _PHONE, "recipient": "@user", "text": "hi", "yes": True})
         assert "Error sending message" in capsys.readouterr().err
+
+    def test_send_refused_flood_names_the_rpc(self, cli_db, capsys):
+        """#1828: a flood refusal renders the curated line, not a bare flood."""
+        pool, client = _mock_pool()
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=123))
+        info = FloodWaitInfo(
+            operation="telegram_send_message", phone=_PHONE, wait_seconds=3600,
+            next_available_at_utc=datetime.now(timezone.utc) + timedelta(seconds=3600),
+            detail="Flood wait 3600s", rpc="ResolveUsernameRequest", source="telegram",
+            delivery_state="not_sent",
+        )
+        client.send_message = AsyncMock(side_effect=HandledFloodWaitError(info))
+        with pytest.raises(typer.Exit):
+            _run_cli("send", pool, cli_db, {"phone": _PHONE, "recipient": "@user", "text": "hi", "yes": True})
+        err = capsys.readouterr().err
+        assert "Send refused:" in err
+        assert "Telegram FloodWait" in err
+        assert "rpc=ResolveUsernameRequest" in err
+        assert "not dispatched" in err
+        assert "retry in 3600s" in err
+
+    def test_send_refused_local_throttling_survives_resolve_wrapping(self, cli_db, capsys):
+        """#1828 review: a resolve-side local refusal must not be swallowed into
+        TelegramActionEntityResolutionError — the curated line reaches stderr."""
+        pool, client = _mock_pool()
+        client.get_input_entity = AsyncMock(side_effect=TelegramRpcDeferredError(
+            _PHONE, "rpc_resolve", 42.0, "ResolveUsernameRequest",
+            category="resolve", budget="resolve_username",
+        ))
+        with pytest.raises(typer.Exit):
+            _run_cli("send", pool, cli_db, {"phone": _PHONE, "recipient": "@user", "text": "hi", "yes": True})
+        err = capsys.readouterr().err
+        assert "Send refused:" in err
+        assert "local throttling by resolve_username" in err
+        assert "rpc=ResolveUsernameRequest" in err
+        assert "not dispatched" in err
+        assert "retry in 42s" in err
 
     def test_send_long_text_preview(self, cli_db, capsys):
         pool, client = _mock_pool()

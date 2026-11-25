@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 from telethon import TelegramClient
 from telethon.errors import AuthKeyDuplicatedError
@@ -393,6 +393,27 @@ class TelegramTransportSession:
             report_flood_wait=report_flood_wait,
         )
 
+    async def _handled_flood(
+        self, exc: Any, operation: str, **handle_kwargs: Any
+    ) -> HandledFloodWaitError:
+        """Record the flood and wrap it with the guard's attribution (#1828).
+
+        One stamping site for every branch: ``rpc``/``rpc_category``/``source``
+        come from the dispatch guard, ``delivery_state`` from the outer
+        ``rpc_operation`` context — so a resolve-side flood inside a send
+        reports the resolve RPC and "not dispatched", while a send-side one
+        reports SendMessage and "uncertain".
+        """
+        info = await handle_flood_wait(exc, operation=operation, phone=self._phone, **handle_kwargs)
+        info.rpc, info.source = getattr(exc, "rpc", None), getattr(exc, "source", None) or "telegram"
+        info.delivery_state = diagnostic_fields(exc).get("delivery_state")
+        translated = cast(Any, HandledFloodWaitError(info))
+        translated.flood_reported = bool(getattr(exc, "flood_reported", False))
+        translated.rpc = info.rpc
+        translated.rpc_category = getattr(exc, "rpc_category", None)
+        translated.source = info.source
+        return translated
+
     async def _translate_flood_wait(self, exc: Exception, operation: str) -> HandledFloodWaitError:
         """Convert a raw Telethon FloodWaitError into a HandledFloodWaitError.
 
@@ -414,28 +435,17 @@ class TelegramTransportSession:
         if self._phone is None:
             raise exc
         if await wait_rpc_report(exc):
-            info = await handle_flood_wait(exc, operation=operation, phone=self._phone, logger_=self._logger)
-            info.rpc, info.source = getattr(exc, "rpc", None), "telegram"
-            info.delivery_state = diagnostic_fields(exc).get("delivery_state")
-            translated = HandledFloodWaitError(info)
-            translated.flood_reported = True
-            translated.rpc = info.rpc
-            translated.rpc_category = getattr(exc, "rpc_category", None)
-            translated.source = "telegram"
-            return translated
+            return await self._handled_flood(exc, operation, logger_=self._logger)
         family = resolve_operation_family(
             operation,
             gate=self._pool_gate(),
             app_categories=_GATE_OPERATION_CATEGORIES,
         )
         if self._report_flood_wait and is_read_family(operation, family):
-            info = await handle_flood_wait(
-                exc,
-                operation=operation,
-                phone=self._phone,
-                pool=None,
-                logger_=self._logger,
+            info_exc = await self._handled_flood(
+                exc, operation, pool=None, logger_=self._logger
             )
+            info = info_exc.info
             reporter = getattr(self._pool, "report_family_flood", None)
             if callable(reporter):
                 reported = reporter(self._phone, info.wait_seconds, family, operation=operation)
@@ -449,15 +459,12 @@ class TelegramTransportSession:
                     reported = fallback(self._phone, info.wait_seconds)
                     if inspect.isawaitable(reported):
                         await reported
-            return HandledFloodWaitError(info)
-        info = await handle_flood_wait(
-            exc,
-            operation=operation,
-            phone=self._phone,
+            return info_exc
+        return await self._handled_flood(
+            exc, operation,
             pool=self._pool if self._report_flood_wait else None,
             logger_=self._logger,
         )
-        return HandledFloodWaitError(info)
 
     async def _run(self, operation: str, awaitable: Any, **kwargs: Any) -> Any:
         with rpc_operation(operation) as current:
