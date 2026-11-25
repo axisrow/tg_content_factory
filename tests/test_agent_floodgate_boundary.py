@@ -10,7 +10,7 @@ pool's flood reporters.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from claude_agent_sdk import SdkMcpTool
@@ -49,11 +49,11 @@ class _FakeGate(TelegramRateLimitGate):
 class _FakeBreaker(FloodCircuitBreaker):
     def __init__(self, suspended=()):
         self.suspended = set(suspended)
-        self.floods: list[tuple[str, str]] = []
-        self.successes: list[tuple[str, str]] = []
+        self.floods: list[tuple[str, str | None]] = []
+        self.successes: list[tuple[str, str | None]] = []
 
     def check(self, operation, phone):
-        if (operation, phone) in self.suspended:
+        if phone is not None and (operation, phone) in self.suspended:
             raise TelegramOperationSuspendedError(operation, phone, 300.0)
 
     def record_flood(self, operation, phone):
@@ -103,12 +103,18 @@ def _wrapped(calls, *, name="send_message", pool=None, db=None, **tool_kwargs):
 
 
 @pytest.fixture(autouse=True)
-def _phone_bound_tools(monkeypatch):
-    """Treat the spec's tool names as phone-bound regardless of the real registry."""
-    monkeypatch.setattr(
+def _phone_bound_tools():
+    """Treat the spec's tool names as phone-bound regardless of the real registry.
+
+    mock.patch, not monkeypatch.setattr: PHONE_BINDED_TOOLS is served by the
+    permissions module __getattr__, and monkeypatch's undo would pin the
+    current snapshot as a real attribute for every later test in the worker.
+    """
+    with patch(
         "tg_agent.agent.tools.permissions.PHONE_BINDED_TOOLS",
         frozenset({"send_message", "create_telegram_channel", "mark_read"}),
-    )
+    ):
+        yield
 
 
 async def test_gate_allow_runs_the_tool():
@@ -249,6 +255,7 @@ async def test_flood_reported_during_the_call_keeps_the_flood():
         calls.append(dict(args))
         # Simulate the pool funnel attributing a real flood to this call.
         scope = current_tool_flood_scope()
+        assert scope is not None
         scope.flooded = True
         return {"content": [{"type": "text", "text": "Flood wait активен"}]}
 
@@ -294,13 +301,9 @@ async def test_result_quoting_flood_text_does_not_wedge_the_trial():
     assert len(calls) == 2
 
 
-async def test_non_phone_bound_tool_skips_the_boundary(monkeypatch):
+async def test_non_phone_bound_tool_skips_the_boundary():
     calls = []
     gate = _FakeGate()
-    monkeypatch.setattr(
-        "tg_agent.agent.tools.permissions.PHONE_BINDED_TOOLS",
-        frozenset({"send_message"}),
-    )
     wrapped = _wrapped(calls, name="list_pipelines", pool=_pool(gate=gate))
     await wrapped.handler({})
 
