@@ -83,6 +83,7 @@ def test_without_phone_or_chat_any_row_matches(cli_env, cli_db, capsys):
 # incoming long-poll mode (#1871): settle debounce, chat filter, both producers
 # --------------------------------------------------------------------------- #
 
+import time  # noqa: E402
 from datetime import datetime, timezone  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
@@ -339,6 +340,53 @@ def test_wait_burst_collects_until_the_chat_goes_quiet():
     assert isinstance(burst, IncomingBurst)
     assert burst.message_count == 3
     assert burst.message_ids == [1, 2, 3]
+
+
+def test_any_mode_bursts_only_the_first_messages_chat():
+    """--chat any: foreign-chat arrivals during the settle window are dropped (review)."""
+    other = dict(_item(99, "другой чат"))
+    other["chat_id"] = -1009999999999
+
+    async def scenario():
+        queue: asyncio.Queue = asyncio.Queue()
+        queue.put_nowait(_item(1, "первый"))
+        queue.put_nowait(other)
+        queue.put_nowait(_item(2, "тот же чат"))
+        return await wait_burst(queue, timeout=1, settle_ms=100)
+
+    burst = asyncio.run(scenario())
+    assert burst.chat_id == CHAT_ID
+    assert burst.message_count == 2
+    assert burst.texts == ["первый", "тот же чат"]
+
+
+def test_a_foreign_chat_does_not_reset_the_settle_timer():
+    """A busy inbox must not stretch one burst: only matching arrivals reset."""
+
+    async def scenario():
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def noisy_inbox():
+            foreign = dict(_item(50, "шум"))
+            foreign["chat_id"] = -1009999999999
+            await asyncio.sleep(0.02)
+            queue.put_nowait(foreign)
+            await asyncio.sleep(0.02)
+            queue.put_nowait(dict(foreign, message_id=51))
+
+        noise = asyncio.create_task(noisy_inbox())
+        queue.put_nowait(_item(1))
+        started = time.monotonic()
+        burst = await wait_burst(queue, timeout=1, settle_ms=80)
+        elapsed = time.monotonic() - started
+        await noise
+        return burst, elapsed
+
+    burst, elapsed = asyncio.run(scenario())
+    assert burst.message_count == 1  # the foreign noise never joined
+    # Two foreign arrivals inside the window did not extend it past the settle
+    # deadline (80ms) by more than scheduling slack.
+    assert elapsed < 0.4
 
 
 def test_wait_burst_times_out_without_events():

@@ -162,6 +162,12 @@ def build_burst(items: list[Any]) -> IncomingBurst:
     )
 
 
+def _chat_of(item: Any) -> int | None:
+    if isinstance(item, NormalizedIncoming):
+        return item.chat_id
+    return item.get("chat_id")
+
+
 async def wait_burst(
     queue: asyncio.Queue,
     *,
@@ -172,19 +178,34 @@ async def wait_burst(
 
     Raises :class:`WaitTimeoutError` when nothing matches in time; re-raises any
     exception a producer dropped into the queue (relay failure, unknown op).
+    The burst is the FIRST message's chat only: in ``--chat any`` mode items
+    from other conversations are consumed and dropped, and only matching
+    arrivals reset the settle timer — a busy inbox cannot stretch one burst.
     """
     deadline = time.monotonic() + max(timeout, 0.0)
     try:
         first = await asyncio.wait_for(queue.get(), timeout=max(deadline - time.monotonic(), 0.0))
     except TimeoutError:
         raise WaitTimeoutError from None
+    if isinstance(first, BaseException):
+        raise first
     items = [first]
     settle_sec = max(settle_ms, 0) / 1000.0
-    while settle_sec > 0:
+    settle_deadline = time.monotonic() + settle_sec
+    while True:
+        remaining = settle_deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
-            items.append(await asyncio.wait_for(queue.get(), timeout=settle_sec))
+            item = await asyncio.wait_for(queue.get(), timeout=remaining)
         except TimeoutError:
             break
+        if isinstance(item, BaseException):
+            raise item
+        if _chat_of(item) != _chat_of(first):
+            continue
+        items.append(item)
+        settle_deadline = time.monotonic() + settle_sec
     return build_burst(items)
 
 
