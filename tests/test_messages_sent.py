@@ -80,6 +80,22 @@ def test_json_output_is_a_list_of_dicts(cli_env, cli_db, capsys):
     assert rows[0]["phone"] == "+7001"
 
 
+def test_a_bare_channel_id_matches_a_marked_registry_row(cli_env, cli_db, capsys):
+    """#1926: the bare id `messages read` prints must find the -100… store row."""
+    _seed(cli_db, "+7001", -1001525693788, 41)
+
+    _sent(chat=1525693788)
+    assert "message_id=41" in _row(capsys)
+
+
+def test_a_marked_channel_id_still_matches_its_row(cli_env, cli_db, capsys):
+    """#1926 keeps the original form working: the store's own -100… shape."""
+    _seed(cli_db, "+7001", -1001525693788, 41)
+
+    _sent(chat=-1001525693788)
+    assert "message_id=41" in _row(capsys)
+
+
 def test_empty_registry_prints_placeholder(cli_env, cli_db, capsys):
     _sent()
 

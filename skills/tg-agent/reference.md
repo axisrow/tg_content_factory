@@ -220,7 +220,8 @@ search-query list | get | add | edit | delete | toggle | run | stats
   **0 = deleted** (stdout prints who saw it, which chat, when), **1 = alive**
   within the timeout. A send the registry knows (#1893) is judged in its own
   chat, whichever account saw the deletion (#1919). For sends the registry
-  does not know: `--chat` (the id as Telegram reports it, e.g. `-100…`)
+  does not know: `--chat` (a channel id in either form — the bare id other
+  output prints, or the marked `-100…` the store keeps, #1926)
   matches that chat strictly; with only `--phone` the chat-less DM shape is
   demanded; with neither, any row for the id counts.
 - **Incoming long-poll (`messages wait --chat …`, #1871):** one blocking call
@@ -244,7 +245,8 @@ search-query list | get | add | edit | delete | toggle | run | stats
   `agent`, `agent_forward`, `pipeline_publish`, `pipeline_forward`,
   `photo_publish`) — with the deletion status joined from the same local store
   (`status=deleted=…` / `alive`).
-  Client reports = one call: filter by `--phone`/`--chat`/`--date-from`/
+  Client reports = one call: filter by `--phone`/`--chat` (`--chat` takes a
+  channel id in either form — bare or marked `-100…`, #1926)/`--date-from`/
   `--date-to`, `--format csv` for spreadsheets. No Telegram requests.
 - **Exit-code contract (#1486):** a failed command prints its error to **stderr**
   and exits 1 (parser usage errors exit 2); **stdout stays for results**.
