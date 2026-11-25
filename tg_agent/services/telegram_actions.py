@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from telethon_floodgate import HandledFloodWaitError, run_with_flood_wait
+from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitedError, run_with_flood_wait
 
 from tg_agent.database import Database
 from tg_agent.models import MessagesResult
@@ -452,6 +452,10 @@ class TelegramActionService:
                     )
                 except HandledFloodWaitError:
                     raise
+                # A local refusal (#1828) is curated diagnostic, not a resolver
+                # failure: wrap only genuine misses below.
+                except TelegramRateLimitedError:
+                    raise
                 except (ValueError, TypeError, KeyError):
                     continue
                 except Exception as exc:
@@ -474,6 +478,8 @@ class TelegramActionService:
                         allow_warm=index == 0,
                     )
                 except HandledFloodWaitError:
+                    raise
+                except TelegramRateLimitedError:
                     raise
                 except (ValueError, TypeError, KeyError):
                     continue
@@ -506,6 +512,8 @@ class TelegramActionService:
                 )
             return await client.get_input_entity(identifier)
         except HandledFloodWaitError:
+            raise
+        except TelegramRateLimitedError:
             raise
         except Exception as exc:
             raise TelegramActionEntityResolutionError(

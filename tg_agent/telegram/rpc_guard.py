@@ -146,6 +146,9 @@ def describe_rpc_failure(exc: BaseException) -> str:
             if isinstance(value, str) and value and name not in fields:
                 fields[name] = value
     if isinstance(exc, TelegramRpcDeferredError):
+        # The guard refuses the whole dispatch batch before sending it: that
+        # verdict is structural — a context stamp (partial batch) still wins.
+        fields.setdefault("delivery_state", "not_sent")
         reason = f"local throttling by {exc.budget}"
         deadline = f"; retry in {max(0, int(exc.retry_after_sec))}s"
     elif isinstance(exc, TelegramRateLimitedError):
