@@ -144,7 +144,19 @@ async def build_test_db(out_path: str | Path, seeds: Path | None = None) -> int:
     channels, message_files = _read_seeds(Path(seeds) if seeds is not None else seed_dir())
 
     tmp_path = out_path.with_name(out_path.name + ".building")
-    leftovers = (tmp_path, Path(f"{tmp_path}-wal"), Path(f"{tmp_path}-shm"))
+    # Replacing the main file strands the OLD database's -wal/-shm: SQLite
+    # replays whatever -wal sits next to the main file it opens, so stale
+    # frames would be poured into the freshly built fixture (torn DB). Clear
+    # them up front — before the swap — and again on the failure path before
+    # raise; a WAL next to a *reused* (not rebuilt) DB is normal crash
+    # recovery and stays untouched on the reuse path.
+    leftovers = (
+        tmp_path,
+        Path(f"{tmp_path}-wal"),
+        Path(f"{tmp_path}-shm"),
+        Path(f"{out_path}-wal"),
+        Path(f"{out_path}-shm"),
+    )
     for leftover in leftovers:
         leftover.unlink(missing_ok=True)
     out_path.parent.mkdir(parents=True, exist_ok=True)

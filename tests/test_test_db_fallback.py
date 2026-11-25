@@ -227,6 +227,29 @@ async def test_resolve_rebuilds_corrupt_test_db(tmp_path, monkeypatch, caplog):
     assert "assembling fixture database" in caplog.text
 
 
+def _sibling(path: Path, suffix: str) -> Path:
+    """WAL/SHM-style sibling of *path* (sync helper: ASYNC240-clean in async tests)."""
+    return Path(f"{path}{suffix}")
+
+
+async def test_rebuild_drops_stale_target_wal(tmp_path):
+    """A rebuild must not leave the OLD database's -wal/-shm next to the new file.
+
+    SQLite replays a found -wal into the main file it sits next to, so stale
+    frames would pour into the freshly built fixture (review finding on #1770).
+    """
+    test = tmp_path / "test" / "tg_search_test.db"
+    test.parent.mkdir(parents=True)
+    test.write_bytes(b"garbage, not sqlite" * 16)  # forces a rebuild
+    _sibling(test, "-wal").write_bytes(b"stale wal frames")
+    _sibling(test, "-shm").write_bytes(b"stale shm")
+    await build_test_db(test)
+    assert test.read_bytes()[:16] == b"SQLite format 3\x00"
+    assert not _sibling(test, "-wal").exists()
+    assert not _sibling(test, "-shm").exists()
+    assert not list(test.parent.glob("*.building*"))
+
+
 async def test_resolve_passthrough_when_real_db_exists(tmp_path, monkeypatch, caplog):
     _enable_fallback(monkeypatch)
     real = tmp_path / "tg_search.db"
