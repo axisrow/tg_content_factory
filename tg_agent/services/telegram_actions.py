@@ -551,6 +551,7 @@ class TelegramActionService:
         reply_to: int | None = None,
         is_user: bool = False,
         silent: bool = False,
+        comment_to: int | None = None,
         source: str = "unknown",
         ref: str | None = None,
     ) -> SendMessageResult:
@@ -561,7 +562,10 @@ class TelegramActionService:
         # RPC shape is unchanged. is_user (#1830): callers addressing a DM
         # peer by numeric id must say so — otherwise the resolver tries a
         # channel first and pays a dialog sweep for it. silent (upstream #395
-        # port, #1856): send without a notification sound.
+        # port, #1856): send without a notification sound. comment_to
+        # (#1903): the recipient is a channel and the text becomes a comment
+        # under its post — Telethon resolves the linked discussion group
+        # (GetDiscussionMessageRequest) and replies to the top message.
         async with self._client(phone=phone, native=True) as (client, acquired_phone):
             entity = await self._resolve_entity(
                 client, phone=acquired_phone, identifier=recipient, is_user=is_user
@@ -571,6 +575,8 @@ class TelegramActionService:
                 options["reply_to"] = reply_to
             if silent:
                 options["silent"] = True
+            if comment_to is not None:
+                options["comment_to"] = comment_to
             message = await client.send_message(entity, text, **options)
             message_id = getattr(message, "id", None)
             await record_send(

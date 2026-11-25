@@ -287,6 +287,25 @@ async def test_send_message_silent_passes_through_to_the_client():
 
 
 @pytest.mark.anyio
+async def test_send_message_comment_to_passes_through_to_the_client():
+    """#1903: a comment send carries comment_to so Telethon routes it to the
+    linked discussion group of the recipient channel's post."""
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
+    client.send_message = AsyncMock(return_value=SimpleNamespace(id=9))
+    pool = _pool_with_client(client)
+
+    await TelegramActionService(pool).send_message(
+        phone="+1", recipient="@channel", text="nice", comment_to=42
+    )
+
+    client.send_message.assert_awaited_once_with(
+        "entity", "nice", link_preview=False, comment_to=42
+    )
+
+
+@pytest.mark.anyio
 async def test_edit_message_disables_link_preview_by_default():
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value="entity")

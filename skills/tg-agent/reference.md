@@ -273,7 +273,10 @@ dialogs archive-history
 All of these touch the user's live Telegram account — see Safety in SKILL.md.
 `dialogs send` posts a message to a chat by identifier (links render without a
 Telegram web preview); `--silent` sends without a notification sound (night or
-scheduled posts); `dialogs queue` (with the
+scheduled posts); `--comment-to <post_id>` turns the send into a comment under
+that channel post — the recipient must be a channel, Telegram routes the text
+into its linked discussion group (use `messages read <channel> --limit N` or
+the collected store to find the post id first); `dialogs queue` (with the
 `status`, `cancel`, `clear-pending` subcommands) manages the send queue.
 `dialogs draft-save <chat> <text> [--parse-mode md|html|plain] [--reply-to N] [--no-webpage]`
 saves a draft to a chat's input box — nothing is sent to anyone; the user opens the chat
