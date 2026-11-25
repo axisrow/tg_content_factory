@@ -616,7 +616,8 @@ def test_channel_rate_sample_size_clamped():
 def _seed_authority_rows():
     from datetime import datetime, timedelta, timezone
 
-    now = datetime.now(timezone.utc)
+    # Полдень UTC: обе метки в одних сутках (суточный бакет не рвёт кластер).
+    now = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
     story = "Anthropic выпустила Claude 5.2 с режимом длинного контекста: модель держит весь репозиторий."
     return [
         {

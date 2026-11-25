@@ -267,7 +267,8 @@ async def test_collect_window_posts_naive_date_reads_as_utc(db):
 
 
 async def test_db_to_ratings_end_to_end(db):
-    now = datetime.now(timezone.utc)
+    # Полдень UTC: все метки в одних сутках, суточный бакет не рвёт кластер.
+    now = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
     await _seed_channel(db, 300)  # скуп
     await _seed_channel(db, 400)  # эхо
     await _seed_message(db, 300, 1, now - timedelta(hours=4), STORY)

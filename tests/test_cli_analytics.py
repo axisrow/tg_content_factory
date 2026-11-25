@@ -122,7 +122,8 @@ class TestCLIAnalytics:
         """
         _add_channel(cli_env, channel_id=710, title="ScoopCh")
         _add_channel(cli_env, channel_id=711, title="EchoCh")
-        now = datetime.now(timezone.utc)
+        # Полдень UTC: метки в одних сутках, суточный бакет не рвёт кластер.
+        now = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
         story = (
             "Anthropic выпустила Claude 5.2 с режимом длинного контекста: "
             "модель держит весь репозиторий в памяти."
@@ -159,7 +160,9 @@ class TestCLIAnalytics:
         """
         _add_channel(cli_env, channel_id=720, title="FastCh")
         _add_channel(cli_env, channel_id=721, title="LateCh")
-        now = datetime.now(timezone.utc)
+        # Полдень UTC: все метки (до 20ч назад) в пределах соседних суток,
+        # каждая пара скуп/эхо остаётся в одном суточном бакете.
+        now = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
         story = (
             "Anthropic выпустила Claude 5.2 с режимом длинного контекста: "
             "модель держит весь репозиторий в памяти."
