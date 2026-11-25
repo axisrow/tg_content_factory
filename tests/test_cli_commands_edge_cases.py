@@ -15,6 +15,7 @@ import csv
 import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -45,8 +46,8 @@ def _make_coro(value):
 
 
 class TestPrintMessages:
-    def _make_msg(self, **overrides) -> Message:
-        defaults = dict(
+    def _make_msg(self, **overrides: Any) -> Message:
+        defaults: dict[str, Any] = dict(
             id=1,
             channel_id=100,
             message_id=500,
@@ -2069,8 +2070,10 @@ class TestMessagesReadLiveMode:
         assert "live reacted" in out
         assert "reactions: 👍 5" in out
         assert "reaction users: 👍 @ivan" in out
-        assert client.await_args.args[0].id == 10
-        assert client.await_args.args[0].limit == 10
+        await_args = client.await_args
+        assert await_args is not None
+        assert await_args.args[0].id == 10
+        assert await_args.args[0].limit == 10
 
 
 # ---------------------------------------------------------------------------
