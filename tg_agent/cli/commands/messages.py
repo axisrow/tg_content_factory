@@ -7,6 +7,7 @@ import io
 import json
 import sys
 import time
+from collections.abc import Callable
 
 import typer
 from telethon_floodgate import (
@@ -27,6 +28,7 @@ from tg_agent.cli.commands.common import (
 )
 from tg_agent.models import Message
 from tg_agent.services.account_service import resolve_default_phone
+from tg_agent.telegram.incoming_wait import DEFAULT_SETTLE_MS, DEFAULT_WAIT_TIMEOUT_SEC
 from tg_agent.telegram.reactions import (
     fetch_message_reaction_users,
     format_message_reactions,
@@ -35,7 +37,7 @@ from tg_agent.telegram.reactions import (
     normalize_reaction_users_limit,
     parse_reactions_json,
 )
-from tg_agent.telegram.utils import chat_id_and_type
+from tg_agent.telegram.utils import chat_id_and_type, marked_peer_id
 from tg_agent.utils.text_safety import csv_safe_cell
 
 
@@ -407,6 +409,154 @@ async def messages_read_impl(
 _WAIT_POLL_SEC = 1.0
 
 
+async def messages_wait_incoming_impl(
+    config_path: str,
+    *,
+    chat: str,
+    phone: str | None = None,
+    timeout: float = 60,
+    settle_ms: int = 6000,
+    json_output: bool = False,
+) -> None:
+    """Block until an incoming message arrives in ``chat`` — the settled burst (#1871).
+
+    ``chat`` is a chat id / @username / phone, or ``"any"`` for inbox mode.
+    The event producer depends on who owns the connection: with the session-owner
+    relay live (worker daemon or gateway) matches are pushed by the ``wait.messages``
+    relay op — a relayed client never sees updates; without a daemon this process
+    attaches the Telethon handler to its own client. ``--timeout`` bounds the wait
+    for the *first* match; the settle tail may run past it (that is the debounce).
+    """
+    from tg_agent.telegram import incoming_wait
+    from tg_agent.telegram.relay import RelayError, RelayRemoteError
+
+    config, db = await runtime.init_db(config_path)
+    pool = None
+    try:
+        _, pool = await runtime.init_pool(config, db)
+        if not pool.clients:
+            cli_error("No connected accounts.")
+        if not phone:
+            phone = await resolve_default_phone(db, connected=set(pool.clients))
+        if phone is None:
+            cli_error("No connected accounts.")
+        if phone not in pool.clients:
+            cli_error(f"Account {phone} not connected.")
+        result = await pool.get_native_client_by_phone(phone)
+        if result is None:
+            cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")
+        client, _ = result
+
+        target_chat_id: int | None = None
+        if chat != "any":
+            try:
+                entity_id = int(chat)
+            except ValueError:
+                entity_id = None
+            resolve_target = entity_id if entity_id is not None else chat
+            try:
+                entity = await pool.resolve_entity_with_warm(
+                    client, phone, resolve_target, operation="cli_messages_wait_resolve"
+                )
+            except Exception as exc:
+                cli_error(
+                    f"Cannot resolve '{chat}' via account {phone}: {exc}. "
+                    "The dialog may live on another account — retry with --phone."
+                )
+            target_chat_id = marked_peer_id(entity)
+
+        queue: asyncio.Queue = asyncio.Queue()
+        detach = None
+        cleanup: Callable[[], None] | None = None
+        if pool.relay is not None:
+            connection = pool.relay
+            active = True
+            settle_sec = max(settle_ms, 0) / 1000.0
+
+            def _on_push(message: dict) -> None:
+                if not active or message.get("push") != incoming_wait.PUSH_KIND:
+                    return
+                queue.put_nowait({k: v for k, v in message.items() if k != "push"})
+
+            connection.on_push(_on_push)
+
+            async def _subscribe() -> None:
+                try:
+                    await connection.call(
+                        "wait.messages",
+                        phone=phone,
+                        chat_id=target_chat_id,
+                        timeout_sec=timeout + settle_sec + 5.0,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except BaseException as exc:  # noqa: BLE001 - delivered through the queue
+                    if active:
+                        queue.put_nowait(exc)
+
+            op_task = asyncio.create_task(_subscribe())
+
+            def _stop_subscription() -> None:
+                nonlocal active
+                active = False
+                op_task.cancel()
+
+            cleanup = _stop_subscription
+        else:
+            detach = incoming_wait.attach_local_listener(
+                getattr(client, "raw_client", client), phone, target_chat_id, queue
+            )
+        try:
+            try:
+                burst = await incoming_wait.wait_burst(queue, timeout=timeout, settle_ms=settle_ms)
+            except incoming_wait.WaitTimeoutError:
+                if json_output:
+                    print(json.dumps({"event": False, "reason": "timeout"}, ensure_ascii=False))
+                else:
+                    print(f"No incoming message within {timeout}s.")
+                raise typer.Exit(1) from None
+            except RelayRemoteError as exc:
+                if "unknown relay operation" in str(exc):
+                    cli_error(
+                        f"The session owner does not serve the wait.messages relay op: {exc}. "
+                        "Restart it once: `tg-agent restart`."
+                    )
+                cli_error(f"messages wait failed: {exc}")
+            except (RelayError, ConnectionError, OSError) as exc:
+                cli_error(f"messages wait failed: the session owner went away: {exc}")
+        finally:
+            if cleanup is not None:
+                cleanup()
+            if detach is not None:
+                detach()
+        if json_output:
+            print(json.dumps(burst.to_json(), ensure_ascii=False, indent=2))
+        else:
+            _print_incoming_burst(burst)
+    finally:
+        if pool:
+            await pool.disconnect_all()
+        await db.close()
+
+
+def _print_incoming_burst(burst) -> None:
+    print(
+        f"Incoming: chat={burst.chat_id} name={burst.name or '—'} "
+        f"via={burst.phone} messages={burst.message_count}"
+    )
+    for message_id, sender, date, text in zip(
+        burst.message_ids, burst.senders, burst.dates, burst.texts, strict=True
+    ):
+        header = f"  #{message_id}"
+        if sender:
+            header += f" {sender}"
+        if date:
+            header += f" [{date[:19]}]"
+        print(header)
+        if text:
+            print(f"    {text[:500]}")
+
+
 async def messages_wait_impl(
     config_path: str,
     *,
@@ -606,27 +756,70 @@ def messages_read(
 @messages_app.command("wait")
 def messages_wait(
     ctx: typer.Context,
-    message_id: int = typer.Option(..., "--message-id", help="Sent message id to watch"),
-    phone: str | None = typer.Option(
-        None, "--phone", help="Account the message was sent from; omit to match any account"
+    message_id: int | None = typer.Option(
+        None,
+        "--message-id",
+        help="Deletion mode: sent message id to watch (local store, no Telegram calls)",
     ),
-    chat: int | None = typer.Option(
+    phone: str | None = typer.Option(
+        None, "--phone", help="Account (deletion: sender; incoming: listener); omit for the primary"
+    ),
+    chat: str | None = typer.Option(
         None,
         "--chat",
-        help="Chat id as Telegram reports it (e.g. -100…); without it, "
-        "only chat-less (DM-shaped) deletions match",
+        help="Deletion mode: chat id as Telegram reports it (e.g. -100…). Incoming mode "
+        "(long-poll): chat id / @username / phone, or 'any' for every conversation",
     ),
-    timeout: int = typer.Option(30, "--timeout", help="Seconds to wait; 0 = single check"),
+    timeout: int | None = typer.Option(
+        None,
+        "--timeout",
+        help="Seconds to wait (default: 30 deletion, 60 incoming); 0 = single check",
+    ),
+    settle_ms: int = typer.Option(
+        DEFAULT_SETTLE_MS,
+        "--settle-ms",
+        help="Incoming mode: keep collecting until the chat is quiet this long (default: 6000)",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Incoming mode: emit the burst as one JSON record"
+    ),
 ) -> None:
-    """Wait until a sent message is observed deleted (local store, no Telegram calls)."""
+    """Wait for an event: --message-id = deletion verdict, --chat = incoming long-poll."""
     apply_startup(ctx)
+    if message_id is None and chat is None:
+        cli_error(
+            "Nothing to wait for: pass --message-id (deletion verdict) "
+            "or --chat (incoming long-poll)."
+        )
+    if message_id is not None:
+        # Deletion mode: --chat stays what it always was — an optional numeric
+        # chat filter over the local deletion store (#1892).
+        chat_id: int | None = None
+        if chat is not None:
+            try:
+                chat_id = int(chat)
+            except ValueError:
+                cli_error(f"--chat in deletion mode is a numeric chat id, got {chat!r}.")
+        run_async(
+            messages_wait_impl(
+                ctx.obj.config,
+                message_id=message_id,
+                phone=phone,
+                chat=chat_id,
+                timeout=timeout if timeout is not None else 30,
+            )
+        )
+        return
+    if timeout is None:
+        timeout = DEFAULT_WAIT_TIMEOUT_SEC
     run_async(
-        messages_wait_impl(
+        messages_wait_incoming_impl(
             ctx.obj.config,
-            message_id=message_id,
+            chat=chat or "any",
             phone=phone,
-            chat=chat,
             timeout=timeout,
+            settle_ms=settle_ms,
+            json_output=json_output,
         )
     )
 

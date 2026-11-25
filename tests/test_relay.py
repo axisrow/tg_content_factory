@@ -600,3 +600,104 @@ async def test_pool_relay_publishes_a_private_endpoint_and_retracts_it(tmp_path)
     finally:
         await handle.stop()
     assert not path.exists()
+
+
+# --------------------------------------------------------------------------- #
+# wait.messages: `messages wait --chat` long-poll over the relay (#1871)
+# --------------------------------------------------------------------------- #
+
+
+class ListeningOwnerClient(FakeOwnerClient):
+    """Records event-handler attach/detach like a live Telethon client."""
+
+    def __init__(self):
+        super().__init__()
+        self.added: list = []
+        self.removed: list = []
+
+    def add_event_handler(self, callback, event=None):
+        self.added.append(callback)
+
+    def remove_event_handler(self, callback, event=None):
+        self.removed.append(callback)
+
+
+def _wait_event(chat_id: int, message_id: int, text: str, *, out: bool = False):
+    return SimpleNamespace(
+        chat_id=chat_id,
+        chat=SimpleNamespace(title="Чат"),
+        message=SimpleNamespace(out=out, id=message_id, text=text, action=None,
+                                date=None, sender=None),
+    )
+
+
+async def _attached_handler(owner_client: ListeningOwnerClient) -> Any:
+    for _ in range(200):
+        if owner_client.added:
+            return owner_client.added[0]
+        await asyncio.sleep(0.01)
+    raise AssertionError("the wait.messages op never attached its handler")
+
+
+async def test_wait_messages_pushes_matches_and_detaches_on_cancel():
+    from tg_agent.telegram.incoming_wait import PUSH_KIND
+
+    owner_client = ListeningOwnerClient()
+    async with running({PHONE: owner_client}) as (_server, connection):
+        pushes: list[dict] = []
+        first_push = asyncio.Event()
+
+        def on_push(message: dict) -> None:
+            pushes.append(message)
+            first_push.set()
+
+        connection.on_push(on_push)
+        op = asyncio.create_task(
+            connection.call("wait.messages", phone=PHONE, chat_id=-100123, timeout_sec=5)
+        )
+        handler = await _attached_handler(owner_client)
+
+        await handler(_wait_event(-100123, 7, "привет"))
+        # asyncio.timeout form: the #1840/#1850 unreleased-waiter hang class.
+        async with asyncio.timeout(2):
+            await first_push.wait()
+        # A foreign chat and an own outgoing message must not push.
+        await handler(_wait_event(-100999, 8, "чужой"))
+        await handler(_wait_event(-100123, 9, "своё", out=True))
+        await asyncio.sleep(0.05)
+        assert len(pushes) == 1
+        assert pushes[0]["push"] == PUSH_KIND
+        assert pushes[0]["phone"] == PHONE
+        assert pushes[0]["chat_id"] == -100123
+        assert pushes[0]["message_id"] == 7
+        assert pushes[0]["text"] == "привет"
+
+        # The CLI is done (burst complete): the process stops reading; the
+        # owner-side op is cancelled when the connection drops (or window ends).
+        op.cancel()
+        await asyncio.gather(op, return_exceptions=True)
+    # The context closed the connection: the server cancelled the op, which
+    # detaches its handler in the finally.
+    assert owner_client.removed == [owner_client.added[0]]
+
+
+async def test_wait_messages_op_ends_by_its_window_and_detaches():
+    owner_client = ListeningOwnerClient()
+    async with running({PHONE: owner_client}) as (_server, connection):
+        result = await asyncio.wait_for(
+            connection.call("wait.messages", phone=PHONE, chat_id=None, timeout_sec=0.1),
+            timeout=5,
+        )
+        assert result == {"listened": True}
+        assert owner_client.removed == [owner_client.added[0]]
+
+
+async def test_wait_messages_unknown_account_is_a_clean_error():
+    owner_client = ListeningOwnerClient()
+    async with running({PHONE: owner_client}) as (_server, connection):
+        with pytest.raises(Exception) as excinfo:  # noqa: PT011 - RelayRemoteError wrapper
+            await asyncio.wait_for(
+                connection.call("wait.messages", phone="+70000000000", chat_id=None, timeout_sec=1),
+                timeout=5,
+            )
+        assert "no live connection" in str(excinfo.value)

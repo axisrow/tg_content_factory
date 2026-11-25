@@ -183,6 +183,7 @@ messages read <identifier> [--limit N] [--live] [--phone PHONE] [--query TEXT]
               [--date-from DATE] [--date-to DATE] [--topic-id ID] [--offset-id ID]
               [--after-id ID] [--format text|json|csv]
 messages wait --message-id N [--phone PHONE] [--chat CHAT_ID] [--timeout S]
+messages wait --chat ID|@USER|PHONE|any [--settle-ms MS] [--timeout S] [--json] [--phone P]
 messages sent [--phone PHONE] [--chat CHAT_ID] [--source SRC] [--date-from DATE]
               [--date-to DATE] [--limit N] [--format text|json|csv]
 search "query" ["query2" ...] [--limit N] [--mode MODE] [--date-from DATE]
@@ -213,6 +214,21 @@ search-query list | get | add | edit | delete | toggle | run | stats
   within the timeout. Matching: `--chat` (the id as Telegram reports it, e.g.
   `-100…`) matches that chat strictly; with only `--phone` the chat-less DM
   shape is demanded; with neither, any row for the id counts.
+- **Incoming long-poll (`messages wait --chat …`, #1871):** one blocking call
+  instead of a `messages read --live` polling loop — send X, then wait for the
+  peer's reply. `--chat` takes a chat id / `@username` / phone, or `any` for
+  every conversation (inbox mode). The first matching **incoming** message
+  (`out=false`) must arrive within `--timeout` (default 60 s; exit **1** with
+  `{"event": false, "reason": "timeout"}` on `--json`, plain text otherwise);
+  afterwards every further message in the same chat within `--settle-ms`
+  (default 6000, reset on each arrival) joins ONE settled burst — exit **0**
+  with the burst record: `{"event": true, "chat_id", "name", "phone",
+  "message_count", "first_message_id", "last_message_id", "message_ids",
+  "texts", "senders", "dates"}` — usually no follow-up read is needed. A chat
+  must be named explicitly (`--chat`), so an unrelated conversation never wakes
+  the call. Works both next to the worker daemon/gateway (matches are pushed by
+  the owner over the relay; an owner too old for the op asks for a restart) and
+  on a machine with no daemon (the command holds its own connection).
 - `messages sent` lists every outgoing send we made — what, when, from which
   account, through which feature (`--source`: `dialogs_send`, `dialogs_queue`,
   `dialogs_forward`, `dialogs_queue_forward`, `dm_draft`, `seeding`, `ping`,

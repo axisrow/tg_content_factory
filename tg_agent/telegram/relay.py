@@ -435,6 +435,7 @@ class RelayServer:
         self._ops: dict[str, OpHandler] = {
             "botfather.create_bot": self._botfather_create_bot,
             "botfather.delete_bot": self._botfather_delete_bot,
+            "wait.messages": self._wait_messages,
             **(ops or {}),
         }
         self._server: asyncio.base_events.Server | None = None
@@ -606,6 +607,49 @@ class RelayServer:
         except botfather.BotNotFoundError:
             return False
         return True
+
+    # `messages wait --chat` (#1871): only the session owner receives updates, so
+    # the waiting CLI subscribes through the relay. One blocking op: it attaches a
+    # temporary NewMessage handler on the owner's client, pushes every match as a
+    # `wait.message` push, and returns when its window ends. The caller's own
+    # disconnect (process exit, timeout, burst complete) cancels this op task via
+    # `_accept`'s cleanup, which detaches the handler; the window is a backstop,
+    # not the normal end.
+
+    async def _wait_messages(self, grant: Any, message: dict, peer: RelayPeer) -> dict:
+        from telethon import events
+
+        from tg_agent.telegram.incoming_wait import (
+            PUSH_KIND,
+            matches_chat,
+            normalize_incoming,
+        )
+
+        phone = str(message.get("phone") or "")
+        chat_id = message.get("chat_id")
+        chat_id = int(chat_id) if chat_id is not None else None
+        timeout_sec = max(float(message.get("timeout_sec") or 0.0), 0.0)
+        client = await self._owner.client(grant, phone)
+        new_message = events.NewMessage()
+
+        async def _handler(event: Any) -> None:
+            # Async callback: telethon awaits every handler unconditionally (#1477);
+            # wrapped so nothing escapes into the owner's recv loop.
+            try:
+                if not matches_chat(event, chat_id):
+                    return
+                item = normalize_incoming(phone, event)
+                if item is not None:
+                    await peer.push(PUSH_KIND, **item.as_item())
+            except Exception:
+                logger.exception("relay: wait.messages handler failed for %s", mask_phone(phone))
+
+        client.add_event_handler(_handler, new_message)
+        try:
+            await asyncio.sleep(timeout_sec)
+        finally:
+            client.remove_event_handler(_handler, new_message)
+        return {"listened": True}
 
     async def _entities(self, grant: Any, message: dict) -> list[list]:
         client = await self._owner.client(grant, str(message.get("phone") or ""))
