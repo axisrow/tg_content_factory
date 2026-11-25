@@ -2,7 +2,7 @@
 
 ## Требования
 
-- Python 3.11+
+- Python 3.11.5+
 - Telegram API ключи ([получить на my.telegram.org](https://my.telegram.org/apps))
 - SQLite (встроен в Python)
 

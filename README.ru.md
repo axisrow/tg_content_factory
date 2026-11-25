@@ -18,7 +18,7 @@
 
 ### Требования
 
-- Python 3.11+
+- Python 3.11.5+
 - API-ключи Telegram с [my.telegram.org/apps](https://my.telegram.org/apps)
 
 ### 1. Установите плагин (Claude Code) — или только скилл

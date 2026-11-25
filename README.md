@@ -18,7 +18,7 @@ Telegram automation for **coding agents** — Claude Code, OpenCode, Codex. Ship
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.11.5+
 - Telegram API credentials from [my.telegram.org/apps](https://my.telegram.org/apps)
 
 ### 1. Install the plugin (Claude Code) — or the skill alone
