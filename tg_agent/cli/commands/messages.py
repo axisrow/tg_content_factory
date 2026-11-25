@@ -597,15 +597,28 @@ async def messages_wait_impl(
     The gateway records Telegram deletion updates as they arrive (deletion
     capture), so the verdict is read from ``observed_deletions`` with zero
     Telegram requests: exit 0 once the id shows up, exit 1 when ``--timeout``
-    passes without one. Chat matching is ``ObservedDeletionsRepository.
-    lookup_deletion``'s policy — this command only forwards the flags.
+    passes without one. A registered send is judged in its own chat,
+    whichever account saw the deletion — the rule ``messages sent`` applies
+    (#1919); sends the registry does not know keep
+    ``ObservedDeletionsRepository.lookup_deletion``'s fallbacks.
     """
     _, db = await runtime.init_db(config_path)
     try:
         deadline = time.monotonic() + timeout
         repo = db.repos.observed_deletions
+        registered = await db.repos.sent_messages.list(message_id=message_id, phone=phone, chat_id=chat)
         while True:
-            found = await repo.lookup_deletion(message_id, phone=phone, chat_id=chat)
+            # None = an unregistered send: the documented fallbacks.
+            found = None
+            for row in registered or [None]:
+                if row is None:
+                    found = await repo.lookup_deletion(message_id, phone=phone, chat_id=chat)
+                elif row["chat_id"] is not None:
+                    found = await repo.lookup_deletion(message_id, chat_id=row["chat_id"])
+                else:
+                    found = await repo.lookup_deletion(message_id, phone=row["phone"])
+                if found is not None:
+                    break
             if found is not None:
                 observed_phone, observed_chat, deleted_at = found
                 print(

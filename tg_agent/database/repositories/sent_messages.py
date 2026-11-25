@@ -76,6 +76,7 @@ class SentMessagesRepository:
         *,
         phone: str | None = None,
         chat_id: int | None = None,
+        message_id: int | None = None,
         source: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -113,6 +114,9 @@ class SentMessagesRepository:
         if chat_id is not None:
             sql += " AND sm.chat_id=?"
             params.append(chat_id)
+        if message_id is not None:
+            sql += " AND sm.message_id=?"
+            params.append(message_id)
         if source is not None:
             sql += " AND sm.source=?"
             params.append(source)

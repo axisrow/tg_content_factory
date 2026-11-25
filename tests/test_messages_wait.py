@@ -79,6 +79,50 @@ def test_without_phone_or_chat_any_row_matches(cli_env, cli_db, capsys):
     assert "via=+7002" in out
 
 
+def _register(db, phone: str, chat_id: int | None, message_id: int):
+    asyncio.run(
+        db.repos.sent_messages.record_many(
+            phone,
+            chat_id,
+            [message_id],
+            chat_type="channel" if chat_id is not None else "dm",
+            source="dialogs_send",
+        )
+    )
+
+
+def test_a_registered_channel_send_is_judged_in_its_own_chat(cli_env, cli_db, capsys):
+    """#1919: `--message-id N --phone <sender>` — the recipe printed next to `dialogs send`."""
+    _register(cli_db, "+7001", -1001525693788, 5)
+    # A peer account saw the deletion — the sender did not.
+    _seed(cli_db, "+7002", -1001525693788, 5)
+
+    _wait(5, phone="+7001")
+
+    out = capsys.readouterr().out
+    assert "Deleted: message_id=5 chat=-1001525693788 via=+7002" in out
+
+
+def test_another_chats_deletion_of_the_same_id_never_lands_on_a_registered_send(cli_env, cli_db, capsys):
+    """#1919: message ids are per-chat; a bare id used to match any chat's row."""
+    _register(cli_db, "+7001", -1001525693788, 5)
+    _seed(cli_db, "+7002", -1009999999999, 5)  # another chat, same number
+
+    with pytest.raises(typer.Exit) as excinfo:
+        _wait(5)
+    assert excinfo.value.exit_code == 1
+    assert "Alive: no deletion recorded for message_id=5" in capsys.readouterr().err
+
+
+def test_a_registered_dm_send_still_matches_by_the_senders_phone(cli_env, cli_db, capsys):
+    """#1919: NULL-chat rows keep the DM rule — the sender's own account saw it."""
+    _register(cli_db, "+7001", None, 41)
+    _seed(cli_db, "+7001", None, 41)
+
+    _wait(41, phone="+7001")
+    assert "Deleted: message_id=41" in capsys.readouterr().out
+
+
 # --------------------------------------------------------------------------- #
 # incoming long-poll mode (#1871): settle debounce, chat filter, both producers
 # --------------------------------------------------------------------------- #
