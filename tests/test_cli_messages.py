@@ -251,6 +251,31 @@ def test_messages_read_by_pk(cli_env, capsys):
     assert any(m["text"] == "found by pk" for m in data)
 
 
+def test_messages_read_names_a_filtered_channels_history(cli_env, capsys):
+    """#1917: the filter flag hides a channel from cross-channel search, not from its own read."""
+    pk = _add_channel(cli_env, channel_id=600, title="FilteredCh")
+    _add_message(cli_env, channel_id=600, message_id=1, text="still stored")
+    asyncio.run(cli_env.repos.channels.set_channel_filtered(pk, True, origin="auto"))
+
+    from tg_agent.cli.commands.messages import run
+
+    run(_ns(
+        messages_action="read",
+        identifier=str(pk),
+        limit=50,
+        live=False,
+        phone=None,
+        query="",
+        date_from=None,
+        date_to=None,
+        topic_id=None,
+        offset_id=None,
+        output_format="json",
+    ))
+    data = json.loads(capsys.readouterr().out)
+    assert [m["text"] for m in data] == ["still stored"]
+
+
 # --------------------------------------------------------------------------- #
 # --live mode: default account is the DB primary (#1480)
 # --------------------------------------------------------------------------- #

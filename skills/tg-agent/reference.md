@@ -192,7 +192,9 @@ search-query list | get | add | edit | delete | toggle | run | stats
 ```
 
 - `messages read` accepts t.me links, @usernames or internal ids as `<identifier>`;
-  `--live` reads directly from Telegram instead of the local DB.
+  `--live` reads directly from Telegram instead of the local DB. A filtered
+  channel's stored history is read like any other (#1917) — the filter flag
+  hides a channel from cross-channel `search`, not from its own read.
 - **Store rows name the author (#1914):** JSON and CSV carry `sender_id`,
   `sender_name`, `sender_username`, `sender_kind`; JSON also has `sender`
   (`@username` or name — the live envelope's shape); text prints

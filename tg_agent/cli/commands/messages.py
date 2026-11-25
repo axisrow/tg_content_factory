@@ -413,6 +413,9 @@ async def messages_read_impl(
                     file=sys.stderr,
                 )
                 raise typer.Exit(1)
+            # An explicit channel read is a read of that channel: the filter
+            # flag hides it from cross-channel search, not from its own history
+            # (#1917) — a curator judging the flag needs the messages.
             page = await db.search_messages(
                 query=query,
                 channel_id=ch.channel_id,
@@ -420,6 +423,7 @@ async def messages_read_impl(
                 date_to=date_to,
                 limit=limit,
                 topic_id=topic_id,
+                include_filtered=True,
             )
             messages = page.messages
             if not messages and output_format == "text":
