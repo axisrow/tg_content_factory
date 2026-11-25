@@ -236,8 +236,11 @@ async def test_startup_connects_are_staggered(tmp_path, monkeypatch):
     """#1847: the startup account connects space out instead of starting at once.
 
     The stagger waits inside each connect task, so start() itself returns
-    immediately (the housekeeping loop and the status op call it)."""
-    monkeypatch.setattr("tg_agent.gateway.telegram.GATEWAY_CONNECT_STAGGER_SEC", 0.05)
+    immediately (the housekeeping loop and the status op call it). The stagger
+    is 0.5s here: start() must come back well inside that window, while a
+    start() that awaited the stagger would take at least 0.5s — decisive on a
+    loaded CI runner, unlike scheduling-order assertions."""
+    monkeypatch.setattr("tg_agent.gateway.telegram.GATEWAY_CONNECT_STAGGER_SEC", 0.5)
     store = GatewayStore(tmp_path / "gateway")
     await store.open()
     auth = LocalAuth()
@@ -259,11 +262,15 @@ async def test_startup_connects_are_staggered(tmp_path, monkeypatch):
 
         monkeypatch.setattr(access, "_warm", spy_warm)
 
+        started = time.monotonic()
         await asyncio.wait_for(access.start(), timeout=1.0)
-        assert delays == [], "start() must spawn the connect tasks"
+        elapsed = time.monotonic() - started
+        assert elapsed < 0.25, (
+            f"start() took {elapsed:.2f}s — it must not wait inside the 0.5s stagger"
+        )
         await asyncio.gather(*access._startup)
 
-        assert [delay for _, delay in delays] == [0.0, pytest.approx(0.05)]
+        assert [delay for _, delay in delays] == [0.0, pytest.approx(0.5)]
         assert len(auth.connections) == 2
     finally:
         await access.close()
