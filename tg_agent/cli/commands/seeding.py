@@ -347,6 +347,26 @@ async def samples_impl(
 _VOCABULARY_DAYS = 3650
 
 
+def _print_transcript(rows: list[tuple[int, str, int | None, str, int | None]]) -> None:
+    """Диалог как в чате: персона, пауза перед репликой, полный текст (#1793).
+
+    Цикл построчного ревью владельца («у нас так не напишут») — обрезка
+    текста в обычном ``show`` для этого не годится.
+    """
+    print(f"=== transcript · {len(rows)} message(s) ===")
+    for position, persona, gap, text, reply_to in rows:
+        meta = [
+            part
+            for part in (
+                f"+{gap}s" if gap is not None else "",
+                f"reply→#{reply_to}" if reply_to is not None else "",
+            )
+            if part
+        ]
+        head = f"  #{position} {persona} ({', '.join(meta)}): " if meta else f"  #{position} {persona}: "
+        _print_block(head, text)
+
+
 async def validate_impl(
     config_path: str,
     *,
@@ -354,6 +374,7 @@ async def validate_impl(
     chat: int,
     days: int,
     start_at: datetime | None,
+    transcript: bool = False,
 ) -> list[str]:
     scenario = _load_scenario(scenario_path)
     if scenario.chat_channel_id != chat:
@@ -379,6 +400,11 @@ async def validate_impl(
         print("Слова, которых в чате не было (замени словами чата или оставь осознанно):")
         for position, words in foreign.items():
             print(f"  #{position}: {', '.join(words)}")
+    if transcript:
+        ordered = sorted(scenario.messages, key=lambda m: m.position)
+        _print_transcript(
+            [(m.position, m.persona, m.delay_seconds, m.text, m.reply_to_position) for m in ordered]
+        )
     return violations
 
 
@@ -512,7 +538,7 @@ async def list_impl(config_path: str, *, status: str | None, limit: int) -> None
         await db.close()
 
 
-async def show_impl(config_path: str, *, thread_id: int) -> None:
+async def show_impl(config_path: str, *, thread_id: int, transcript: bool = False) -> None:
     _, db = await runtime.init_db(config_path)
     try:
         thread = await db.repos.seeding.get_thread(thread_id)
@@ -535,6 +561,24 @@ async def show_impl(config_path: str, *, thread_id: int) -> None:
     print(f"  прогресс: {progress.sent}/{progress.total} sent{extras}")
     if not messages:
         print("  Реплик нет — сценарий ещё не записан (seeding add).")
+        return
+    if transcript:
+        gaps: list[int | None] = []
+        prev: SeedingMessage | None = None
+        for m in messages:
+            gap = (
+                int((m.planned_at - prev.planned_at).total_seconds())
+                if prev is not None and m.planned_at and prev.planned_at
+                else None
+            )
+            gaps.append(gap)
+            prev = m
+        _print_transcript(
+            [
+                (m.position, m.persona_name, gap, m.text, m.reply_to_position)
+                for m, gap in zip(messages, gaps, strict=False)
+            ]
+        )
         return
     for m in messages:
         planned = m.planned_at.strftime("%Y-%m-%d %H:%M") if m.planned_at else "-"
@@ -761,6 +805,11 @@ def validate_command(
     start_at: str | None = typer.Option(
         None, "--start-at", help="ISO datetime (naive = UTC) — enables the quiet-hour checks"
     ),
+    transcript: bool = typer.Option(
+        False,
+        "--transcript",
+        help="Also render the dialogue (persona, pause, full text) for the owner's line-by-line review",
+    ),
 ) -> None:
     """Validate a scenario against the learned chat profile; exit 1 on violations.
 
@@ -774,6 +823,7 @@ def validate_command(
             chat=chat,
             days=days,
             start_at=_parse_start_at(start_at) if start_at else None,
+            transcript=transcript,
         )
     )
 
@@ -828,10 +878,15 @@ def list_command(
 def show_command(
     ctx: typer.Context,
     thread_id: int = typer.Argument(..., metavar="thread-id"),
+    transcript: bool = typer.Option(
+        False,
+        "--transcript",
+        help="Render the dialogue (persona, pause, full text) instead of the truncated list",
+    ),
 ) -> None:
     """Show a seeding thread with its scheduled draft messages."""
     apply_startup(ctx)
-    run_async(show_impl(ctx.obj.config, thread_id=thread_id))
+    run_async(show_impl(ctx.obj.config, thread_id=thread_id, transcript=transcript))
 
 
 @seeding_app.command("approve")

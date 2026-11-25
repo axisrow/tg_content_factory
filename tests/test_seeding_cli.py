@@ -599,6 +599,55 @@ def test_show_impl_unknown_thread(cli_db, capsys):
     assert "не найден" in capsys.readouterr().err
 
 
+def test_validate_impl_transcript_renders_full_dialogue(cli_db, capsys, tmp_path):
+    """--transcript: диалог с персоной/паузой/reply и ПОЛНЫМ текстом (review loop #1793)."""
+    _seed_chat(cli_db)
+    path = _scenario_file(tmp_path, delays=[400, 600])
+
+    _, out = _run_impl(
+        lambda: seeding_cli.validate_impl(
+            "cfg", scenario_path=path, chat=CHAT_ID, days=14, start_at=None, transcript=True
+        ),
+        cli_db,
+        capsys,
+    )
+
+    assert "=== transcript · 2 message(s) ===" in out
+    assert "#1 Аня (+400s): " in out
+    assert "первая реплика" in out
+    assert "#2 Борис (+600s, reply→#1): " in out
+    assert "вторая реплика длиннее" in out
+    assert "Scenario OK." in out
+
+
+def test_show_impl_transcript_prints_full_text(cli_db, capsys, tmp_path):
+    """show --transcript: полный текст вместо 60-символьной обрезки; паузы из planned_at."""
+    long_text = "эта реплика заведомо длиннее шестидесяти символов, чтобы обычный show её обрезал"
+    payload = _scenario_dict(delays=[400, 600])
+    payload["messages"][1]["text"] = long_text
+    path = _write_json(tmp_path, "scenario.json", payload)
+    base = _seed_chat(cli_db)
+    thread_id = _make_thread(cli_db)
+    _run_impl(
+        lambda: seeding_cli.add_impl(
+            "cfg", scenario_path=path, thread_id=thread_id, days=14, start_at=_start_at(base)
+        ),
+        cli_db,
+        capsys,
+    )
+    capsys.readouterr()
+
+    _, out = _run_impl(
+        lambda: seeding_cli.show_impl("cfg", thread_id=thread_id, transcript=True), cli_db, capsys
+    )
+
+    assert "=== transcript" in out
+    assert "#1 Аня: первая реплика" in out
+    assert "#2 Борис (+600s, reply→#1): " in out
+    assert long_text in out  # обрезка "…" в обычном show это сломала бы
+    assert "…" not in out
+
+
 # --------------------------------------------------------------------------- #
 # publisher (#1757): approve / schedule / cancel / status
 # --------------------------------------------------------------------------- #

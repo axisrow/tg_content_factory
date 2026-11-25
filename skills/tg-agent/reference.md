@@ -366,11 +366,11 @@ seeding samples --chat <chat-id> [--days N] [--windows N] [--window N] [--sender
                 [--gap-minutes N] [--min-messages N] [--min-speakers N] [--format text|json]
                 [--live] [--phone P] [--limit N]
 seeding stats <chat-id> [--days N] [--live] [--phone P] [--limit N]
-seeding validate <scenario.json> --chat <chat-id> [--days N] [--start-at ISO]
+seeding validate <scenario.json> --chat <chat-id> [--days N] [--start-at ISO] [--transcript]
 seeding thread-create --chat <chat-id> --personas personas.json [--ref REF]
 seeding add <scenario.json> --thread <thread-id> --start-at ISO [--days N]
 seeding list [--status draft|scheduled|active|done|cancelled] [--limit N]
-seeding show <thread-id>
+seeding show <thread-id> [--transcript]
 seeding approve <thread-id>
 seeding schedule <thread-id> [--days N]
 seeding cancel <thread-id>
@@ -390,10 +390,17 @@ hours UTC, emoji and style habits, per-sender stats) — the prompt input for
 the composing LLM (Claude Code CLI, workflow in
 [seeding.md](seeding.md)) and the base `validate`/`add` check timings and
 anti-patterns against (no links, no echo, no equal-length runs, no
-machine-like pauses, no messages landing in `quiet_hours`). After
+machine-like pauses, no messages landing in `quiet_hours`, plus the
+mechanical floor of #1793: scenario delay quartiles within the chat gaps'
+IQR, no three consecutive near-equal delays, token-Jaccard echo between
+personas/consecutive cross-persona messages ≤ 0.5, no persona above
+max(learned top-sender share, 50%) of the messages). After
 `Scenario OK.`, `validate` also lists per message the words the chat's
 members never wrote (vocabulary = all collected history, not `--days`;
 channel posts and the anonymous admin excluded) — a hint, exit code stays 0.
+`validate --transcript` / `show --transcript` render the dialogue (persona,
+pause, reply chain, full text) for the owner's line-by-line review loop
+before the one-shot `add`.
 Every seeding read accepts the chat id bare (as stored, `1997034059`) or
 Telegram-marked (`-1001997034059`). By default both read collected messages
 from the DB; an unregistered chat is reported as such with two ways out —

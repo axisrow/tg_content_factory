@@ -30,11 +30,12 @@
 from __future__ import annotations
 
 import bisect
+import itertools
 import math
 import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from statistics import fmean
+from statistics import fmean, median
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
@@ -323,6 +324,8 @@ def validate_scenario(
     #1751: ссылки (spam-reportable), эхо-повторы фраз между аккаунтами,
     три+ одинаковые длины подряд, машинные паузы (вне выученного
     распределения), ночная тишина (``start_at`` включает проверку часов).
+    Сверху — механический пол #1793 (``_segment_violations``): форма и
+    каденс задержек, эхо-лексика персон, баланс говорящих.
     """
     violations: list[str] = []
 
@@ -407,6 +410,96 @@ def validate_scenario(
                 )
         prev = m
 
+    violations.extend(_segment_violations(ordered, stats))
+    return violations
+
+
+#: Порог «звучат одинаково» (persona_echo): доля общих слов ≥4 букв.
+_ECHO_JACCARD = 0.5
+
+#: Нижняя грань speaker_balance: при неизвестной доле топ-участника персона
+#: не берёт больше половины реплик.
+_BALANCE_FLOOR = 0.5
+
+
+def _message_tokens(text: str) -> frozenset[str]:
+    return frozenset(t.lower() for t in _TOKEN_RE.findall(text))
+
+
+def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+    union = a | b
+    return len(a & b) / len(union) if union else 0.0
+
+
+def _segment_violations(
+    ordered: list[SeedingScenarioMessage], stats: ChatStatistics
+) -> list[str]:
+    """Механический пол #1793 — проверки по сценарию целиком, не по одной реплике.
+
+    - ``delay_shape``: квартили задержек сценария внутри IQR пауз чата
+      (сценарий не сидит целиком в быстром или медленном хвосте);
+    - ``delay_cadence``: три+ подряд почти равных задержек — фиксированный
+      интервал выдаёт автоматизацию;
+    - ``persona_echo``: пересказ соседней кросс-персона реплики или общий
+      словарь двух персон (token-Jaccard);
+    - ``speaker_balance``: персона не берёт больше
+      max(learned-доли топ-участника чата, 50%).
+    """
+    violations: list[str] = []
+
+    if len(ordered) >= 4 and stats.max_gap_seconds is not None:
+        sorted_delays = sorted(float(m.delay_seconds) for m in ordered)
+        lo, hi = stats.gaps_seconds.p25, stats.gaps_seconds.p75
+        q1, q2, q3 = (_pct(sorted_delays, q) for q in (25, 50, 75))
+        if any(not lo <= q <= hi for q in (q1, q2, q3)):
+            violations.append(
+                f"delay_shape: квартили задержек сценария ({q1:.0f}/{q2:.0f}/{q3:.0f}s) "
+                f"вне IQR пауз чата [{lo:.0f}s, {hi:.0f}s] — форма пауз не совпадает с чатом"
+            )
+
+    delays = [m.delay_seconds for m in ordered]
+    i = 0
+    while i + 2 < len(delays):
+        triple = delays[i : i + 3]
+        if max(triple) - min(triple) <= max(5.0, median(triple) * 0.1):
+            violations.append(
+                f"#{ordered[i + 2].position}: задержки {triple[0]}/{triple[1]}/{triple[2]}s "
+                "почти равны — фиксированный интервал; разбросай паузы по распределению чата"
+            )
+            i += 3  # перекрывающиеся тройки — то же нарушение, не дублируем
+        else:
+            i += 1
+
+    tokens = {m.position: _message_tokens(m.text) for m in ordered}
+    for prev, cur in zip(ordered, ordered[1:], strict=False):
+        if prev.persona != cur.persona:
+            jac = _jaccard(tokens[prev.position], tokens[cur.position])
+            if jac > _ECHO_JACCARD:
+                violations.append(
+                    f"#{cur.position}: реплика пересказывает предыдущую (Jaccard {jac:.2f} > "
+                    f"{_ECHO_JACCARD}) — {prev.persona} и {cur.persona} пишут одно и то же"
+                )
+    vocabulary: dict[str, set[str]] = {}
+    for m in ordered:
+        vocabulary.setdefault(m.persona, set()).update(tokens[m.position])
+    for a, b in itertools.combinations(sorted(vocabulary), 2):
+        jac = _jaccard(frozenset(vocabulary[a]), frozenset(vocabulary[b]))
+        if jac > _ECHO_JACCARD:
+            violations.append(
+                f"persona_echo: персоны «{a}» и «{b}» говорят одним словарём "
+                f"(Jaccard {jac:.2f} > {_ECHO_JACCARD}) — разведи их голоса"
+            )
+
+    if ordered:
+        cap = max(_BALANCE_FLOOR, stats.per_sender[0].share if stats.per_sender else 0.0)
+        total = len(ordered)
+        counts = Counter(m.persona for m in ordered)
+        for name, count in sorted(counts.items()):
+            if count / total > cap:
+                violations.append(
+                    f"speaker_balance: «{name}» берёт {count}/{total} реплик "
+                    f"({count / total:.0%} > порога {cap:.0%}) — перекрывает чат"
+                )
     return violations
 
 
