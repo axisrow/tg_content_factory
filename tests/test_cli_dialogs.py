@@ -1,6 +1,7 @@
 """Tests for CLI dialogs commands."""
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,6 +11,7 @@ import typer
 from tests.helpers import cli_ns as _ns
 from tg_agent.cli.commands.dialogs import run_with_dependencies
 from tg_agent.config import AppConfig
+from tg_agent.telegram.pool_dialogs import ForumTopicsError
 
 pytestmark = pytest.mark.aiosqlite_serial
 
@@ -247,6 +249,60 @@ def test_cli_dialogs_topics_with_data(cli_db, capsys):
     _run(_ns(dialogs_action="topics", channel_id=100111), pool, cli_db)
     out = capsys.readouterr().out
     assert "General" in out
+    assert "(live)" in out
+
+
+def test_cli_dialogs_topics_store_rows_labeled_when_live_empty(cli_db, capsys):
+    """#1927: rows served from the store say so; a valid empty live read keeps exit 0."""
+    pool = _mock_pool()
+    pool.get_forum_topics = AsyncMock(return_value=[])
+
+    async def _seed():
+        await cli_db.upsert_forum_topics(100111, [{"id": 2, "title": "Ideas"}])
+
+    asyncio.run(_seed())
+    _run(_ns(dialogs_action="topics", channel_id=100111), pool, cli_db)
+    out = capsys.readouterr().out
+    assert "Ideas" in out
+    assert "(stored)" in out
+
+
+@pytest.mark.parametrize(
+    ("reason", "needle"),
+    [
+        ("Telegram flood wait: 30s (history)", "flood wait"),
+        ("Telegram rate limit (history); retry in 12s.", "rate limit"),
+    ],
+)
+def test_cli_dialogs_topics_live_failure_fails_loudly(cli_db, capsys, reason, needle):
+    """#1927: a failed live read is not "No forum topics found … not a forum" —
+    the reason goes to stderr with a non-zero exit."""
+    pool = _mock_pool()
+    pool.get_forum_topics = AsyncMock(side_effect=ForumTopicsError(reason))
+    with pytest.raises(typer.Exit):
+        _run(_ns(dialogs_action="topics", channel_id=100111), pool, cli_db)
+    captured = capsys.readouterr()
+    assert needle in captured.err
+    assert "No forum topics" not in captured.out
+
+
+def test_cli_dialogs_topics_live_failure_still_shows_stored_rows(cli_db, capsys):
+    """#1927: live read failed + stored rows → labeled rows on stdout, reason on stderr, exit 1."""
+    pool = _mock_pool()
+    pool.get_forum_topics = AsyncMock(
+        side_effect=ForumTopicsError("Telegram flood wait: 30s (history)")
+    )
+
+    async def _seed():
+        await cli_db.upsert_forum_topics(100111, [{"id": 2, "title": "Ideas"}])
+
+    asyncio.run(_seed())
+    with pytest.raises(typer.Exit):
+        _run(_ns(dialogs_action="topics", channel_id=100111), pool, cli_db)
+    captured = capsys.readouterr()
+    assert "Ideas" in captured.out
+    assert "stored" in captured.out
+    assert "flood wait" in captured.err
 
 
 def test_cli_dialogs_send_no_client(cli_db, capsys):

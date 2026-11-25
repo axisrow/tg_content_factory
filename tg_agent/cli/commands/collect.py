@@ -24,6 +24,7 @@ from tg_agent.telegram.collector import (
     UsernameResolveFloodWaitDeferredError,
     UsernameResolveRateLimitedError,
 )
+from tg_agent.telegram.collector_mixins.collection import SampleChannelError
 from tg_agent.telegram.collector_types import ChannelCollectionTerminalError
 
 
@@ -179,7 +180,10 @@ async def collect_sample_impl(config_path: str, *, channel_id: int, limit: int =
         collector = Collector(pool, db, config.scheduler)
 
         print(f"Sampling last {limit} messages from channel {channel_id}...\n")
-        previews = await collector.sample_channel(channel_id, limit=limit)
+        try:
+            previews = await collector.sample_channel(channel_id, limit=limit)
+        except SampleChannelError as exc:
+            cli_error(f"Sample failed for channel {channel_id}: {exc}")
 
         if not previews:
             print("No messages found.")

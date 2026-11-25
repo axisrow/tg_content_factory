@@ -301,9 +301,15 @@ search-query list | get | add | edit | delete | toggle | run | stats
 - **Batch mode (#1668):** 2+ positional queries — `search "нейросети" "LLM" "OpenAI" …`
   — run every keyword against the same shared filters in ONE call and print a
   single JSON object `{"queries": [<envelope>, ...]}`; each envelope carries the
-  same `query/total/has_more/error/messages` contract (completeness is judged
+  same `query/total/has_more/error/flood_wait/messages` contract (completeness is judged
   per keyword). Batch requires `--format json`; live modes follow the same
   rules as single-query calls (date windows work on `telegram`, not on `my_chats`/`channel`).
+- **A failed live read is not an empty answer (#1927):** when the live search
+  fails (no available account, flood wait, Premium quota, RPC timeout), the
+  reason goes to stderr and the command exits 1 — text/csv print no
+  "Found 0 results"; the JSON envelope still prints and carries `error` plus
+  `flood_wait` (the wait in seconds, `null` otherwise). Batch exits non-zero
+  when any envelope has an `error`.
 
 ## dialogs — real actions in real chats
 
@@ -320,6 +326,10 @@ dialogs archive-history
 ```
 
 All of these touch the user's live Telegram account — see Safety in SKILL.md.
+`dialogs topics --channel-id <id>` reads forum topics live; rows served from
+the local store (live read empty or failed) are labeled `(stored)` in the
+output header, and a failed live read exits 1 with the reason on stderr even
+when stored rows print (#1927).
 `dialogs send` posts a message to a chat by identifier (links render without a
 Telegram web preview); `--silent` sends without a notification sound (night or
 scheduled posts); `--reply-to <message_id>` replies to a specific message in the

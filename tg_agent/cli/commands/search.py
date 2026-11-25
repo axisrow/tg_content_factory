@@ -7,6 +7,7 @@ import io
 import logging
 
 from tg_agent.cli import runtime
+from tg_agent.cli.commands.common import cli_error
 from tg_agent.search.engine import DATE_BOUNDED_SEARCH_MODES, TELEGRAM_SEARCH_MODES, SearchEngine
 from tg_agent.services.embedding_service import EmbeddingService
 from tg_agent.utils.json import safe_json_dumps
@@ -43,6 +44,7 @@ def _search_envelope(result) -> dict:
         "total": result.total,
         "has_more": result.has_more,
         "error": result.error,
+        "flood_wait": (result.flood_wait.wait_seconds if result.flood_wait else None),
         "messages": [
             {
                 "id": msg.id,
@@ -241,7 +243,14 @@ async def search_impl(
 
         if len(queries) == 1:
             result = await run_one(queries[0])
+            if result.error and output_format != "json":
+                # A failed live read is not "Found 0 results" (#1927): the reason
+                # goes to stderr with a non-zero exit. JSON still prints its
+                # envelope (error/flood_wait fields) and then fails.
+                cli_error(result.error)
             _print_search_result(result, output_format)
+            if result.error:
+                cli_error(result.error)
             return
 
         # Batch: one JSON object of per-query envelopes — the digest sweep needs
@@ -251,6 +260,9 @@ async def search_impl(
             return
         envelopes = [_search_envelope(await run_one(q)) for q in queries]
         print(safe_json_dumps({"queries": envelopes}, indent=2))
+        failed = sum(1 for envelope in envelopes if envelope["error"])
+        if failed:
+            cli_error(f"{failed} of {len(envelopes)} queries failed; see the error field of each envelope.")
     finally:
         if pool:
             await pool.disconnect_all()

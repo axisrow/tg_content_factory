@@ -34,6 +34,7 @@ from tg_agent.services.telegram_actions import (
 )
 from tg_agent.services.telegram_command_service import TelegramCommandService
 from tg_agent.telegram.dm_archive import backfill_account
+from tg_agent.telegram.pool_dialogs import ForumTopicsError
 from tg_agent.telegram.reactions import (
     SUPPORTED_REACTION_EMOJIS_DISPLAY,
     TelegramReactionInvalidError,
@@ -283,15 +284,35 @@ async def _dialogs_join(args, db, pool) -> None:
 
 async def _dialogs_topics(args, db, pool) -> None:
     channel_id = args.channel_id
-    topics = await pool.get_forum_topics(channel_id)
-    if not topics:
+    # A failed live read must say so (#1927): reason on stderr + non-zero exit,
+    # while stored rows still print, labeled "(stored)". Empty-but-valid keeps
+    # today's exit-0 output.
+    live_error: str | None = None
+    try:
+        topics = await pool.get_forum_topics(channel_id, prefer=getattr(args, "phone", None) or None)
+        from_store = False
+    except ForumTopicsError as exc:
+        live_error = str(exc)
         topics = await db.get_forum_topics(channel_id)
+        from_store = True
+    if not topics and live_error is None:
+        topics = await db.get_forum_topics(channel_id)
+        from_store = True
+
     if not topics:
+        if live_error is not None:
+            cli_error(f"Forum topics read failed for channel {channel_id}: {live_error}")
         print(
             f"No forum topics found for channel {channel_id}."
             " The channel may not be a forum or is not accessible."
         )
         return
+
+    if live_error is not None:
+        source = f"stored — live read failed: {live_error}"
+    else:
+        source = "stored" if from_store else "live"
+    print(f"Forum topics for channel {channel_id} ({source}):")
     fmt = "{:<8} {:<40} {:<20} {:<26}"
     print(fmt.format("ID", "Title", "Icon", "Date"))
     print("-" * 98)
@@ -304,6 +325,8 @@ async def _dialogs_topics(args, db, pool) -> None:
                 str(topic.get("date") or "-")[:26],
             )
         )
+    if live_error is not None:
+        cli_error(f"Live forum-topics read failed for channel {channel_id}: {live_error}")
 
 
 async def _dialogs_send(args, db, pool) -> None:

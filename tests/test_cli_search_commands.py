@@ -1,8 +1,13 @@
 """Tests for src/cli/commands/search.py — CLI search subcommands."""
 from __future__ import annotations
 
+import json
 import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+import typer
 
 from tests.helpers import cli_ns, fake_asyncio_run, make_cli_config, make_cli_db
 from tg_agent.cli.commands.search import run
@@ -87,7 +92,7 @@ def test_local_search_with_results(capsys):
     db = make_cli_db()
     config = make_cli_config()
     msg = MagicMock(date="2024-01-01", channel_id=100, text="Hello world")
-    result = MagicMock(total=1, query="test", messages=[msg])
+    result = MagicMock(total=1, query="test", messages=[msg], error=None)
     mock_engine = MagicMock()
     mock_engine.search_local = AsyncMock(return_value=result)
     with patch("tg_agent.cli.commands.search.runtime.init_db", AsyncMock(return_value=(config, db))), \
@@ -121,7 +126,7 @@ def test_telegram_search_with_results(capsys):
     config = make_cli_config()
     pool = _make_pool()
     msg = MagicMock(date="2024-01-01", channel_id=100, text="TG result")
-    result = MagicMock(total=1, query="test", messages=[msg])
+    result = MagicMock(total=1, query="test", messages=[msg], error=None)
     mock_engine = MagicMock()
     mock_engine.search_telegram = AsyncMock(return_value=result)
     with patch("tg_agent.cli.commands.search.runtime.init_db", AsyncMock(return_value=(config, db))), \
@@ -138,7 +143,7 @@ def test_mode_tg_alias_dispatches_to_telegram(capsys):
     config = make_cli_config()
     pool = _make_pool()
     msg = MagicMock(date="2024-01-01", channel_id=100, text="TG result")
-    result = MagicMock(total=1, query="test", messages=[msg])
+    result = MagicMock(total=1, query="test", messages=[msg], error=None)
     mock_engine = MagicMock()
     mock_engine.search_telegram = AsyncMock(return_value=result)
     with patch("tg_agent.cli.commands.search.runtime.init_db", AsyncMock(return_value=(config, db))), \
@@ -156,7 +161,7 @@ def test_telegram_search_with_dates_reaches_engine(caplog):
     db = make_cli_db()
     config = make_cli_config()
     pool = _make_pool()
-    result = MagicMock(total=0, query="test", messages=[])
+    result = MagicMock(total=0, query="test", messages=[], error=None)
     mock_engine = MagicMock()
     mock_engine.search_telegram = AsyncMock(return_value=result)
     with caplog.at_level(logging.ERROR), \
@@ -197,7 +202,7 @@ def test_dates_rejected_on_windowless_live_mode(caplog):
 def test_semantic_search(capsys):
     db = make_cli_db()
     config = make_cli_config()
-    result = MagicMock(total=0, query="test", messages=[])
+    result = MagicMock(total=0, query="test", messages=[], error=None)
     mock_engine = MagicMock()
     mock_engine.search_semantic = AsyncMock(return_value=result)
     with patch("tg_agent.cli.commands.search.runtime.init_db", AsyncMock(return_value=(config, db))), \
@@ -215,7 +220,7 @@ def test_semantic_search(capsys):
 def test_hybrid_search(capsys):
     db = make_cli_db()
     config = make_cli_config()
-    result = MagicMock(total=0, query="test", messages=[])
+    result = MagicMock(total=0, query="test", messages=[], error=None)
     mock_engine = MagicMock()
     mock_engine.search_hybrid = AsyncMock(return_value=result)
     with patch("tg_agent.cli.commands.search.runtime.init_db", AsyncMock(return_value=(config, db))), \
@@ -234,7 +239,7 @@ def test_my_chats_search(capsys):
     db = make_cli_db()
     config = make_cli_config()
     pool = _make_pool()
-    result = MagicMock(total=0, query="test", messages=[])
+    result = MagicMock(total=0, query="test", messages=[], error=None)
     mock_engine = MagicMock()
     mock_engine.search_my_chats = AsyncMock(return_value=result)
     with patch("tg_agent.cli.commands.search.runtime.init_db", AsyncMock(return_value=(config, db))), \
@@ -254,7 +259,7 @@ def test_channel_search(capsys):
     db = make_cli_db()
     config = make_cli_config()
     pool = _make_pool()
-    result = MagicMock(total=0, query="test", messages=[])
+    result = MagicMock(total=0, query="test", messages=[], error=None)
     mock_engine = MagicMock()
     mock_engine.search_in_channel = AsyncMock(return_value=result)
     with patch("tg_agent.cli.commands.search.runtime.init_db", AsyncMock(return_value=(config, db))), \
@@ -263,3 +268,79 @@ def test_channel_search(capsys):
          patch("asyncio.run", fake_asyncio_run):
         run(_args(mode="channel", channel_id=100))
     assert "Found 0" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# #1927 — a failed live search is not "Found 0 results"
+# ---------------------------------------------------------------------------
+
+
+def test_telegram_search_error_fails_loudly(capsys):
+    # text mode: the reason goes to stderr with a non-zero exit; stdout keeps
+    # no "Found 0 results" that reads as an answer.
+    db = make_cli_db()
+    config = make_cli_config()
+    pool = _make_pool()
+    result = MagicMock(total=0, query="test", messages=[], error="Telegram flood wait: 30s")
+    mock_engine = MagicMock()
+    mock_engine.search_telegram = AsyncMock(return_value=result)
+    with pytest.raises(typer.Exit), \
+         patch("tg_agent.cli.commands.search.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch("tg_agent.cli.commands.search.runtime.init_pool", AsyncMock(return_value=(MagicMock(), pool))), \
+         patch("tg_agent.cli.commands.search.SearchEngine", return_value=mock_engine), \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(mode="telegram"))
+    captured = capsys.readouterr()
+    assert "flood wait" in captured.err
+    assert "Found 0" not in captured.out
+
+
+def test_telegram_search_error_json_envelope_carries_flood_wait(capsys):
+    # JSON keeps the envelope (error + flood_wait seconds) and still exits non-zero.
+    db = make_cli_db()
+    config = make_cli_config()
+    pool = _make_pool()
+    result = MagicMock(
+        total=0, query="test", messages=[], has_more=False,
+        error="Telegram flood wait: 30s", flood_wait=SimpleNamespace(wait_seconds=30),
+    )
+    mock_engine = MagicMock()
+    mock_engine.search_telegram = AsyncMock(return_value=result)
+    with pytest.raises(typer.Exit), \
+         patch("tg_agent.cli.commands.search.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch("tg_agent.cli.commands.search.runtime.init_pool", AsyncMock(return_value=(MagicMock(), pool))), \
+         patch("tg_agent.cli.commands.search.SearchEngine", return_value=mock_engine), \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(mode="telegram", output_format="json"))
+    captured = capsys.readouterr()
+    envelope = json.loads(captured.out)
+    assert envelope["error"] == "Telegram flood wait: 30s"
+    assert envelope["flood_wait"] == 30
+    assert "flood wait" in captured.err
+
+
+def test_batch_search_failure_exits_non_zero(capsys):
+    # batch digest sweep: every envelope keeps its own error; any failure
+    # fails the whole command after the payload is printed.
+    db = make_cli_db()
+    config = make_cli_config()
+    ok = MagicMock(total=1, query="alpha", messages=[], has_more=False, error=None, flood_wait=None)
+    bad = MagicMock(total=0, query="beta", messages=[], has_more=False,
+                    error="Telegram flood wait: 30s",
+                    flood_wait=SimpleNamespace(wait_seconds=30))
+    mock_engine = MagicMock()
+
+    async def _search(query, **_kw):
+        return bad if query == "beta" else ok
+
+    mock_engine.search_telegram = AsyncMock(side_effect=_search)
+    with pytest.raises(typer.Exit), \
+         patch("tg_agent.cli.commands.search.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch("tg_agent.cli.commands.search.runtime.init_pool", AsyncMock(return_value=(MagicMock(), _make_pool()))), \
+         patch("tg_agent.cli.commands.search.SearchEngine", return_value=mock_engine), \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(mode="telegram", query=["alpha", "beta"], output_format="json"))
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["queries"][0]["error"] is None
+    assert payload["queries"][1]["error"] == "Telegram flood wait: 30s"
+    assert payload["queries"][1]["flood_wait"] == 30

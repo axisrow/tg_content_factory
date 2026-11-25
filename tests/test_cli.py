@@ -875,6 +875,42 @@ class TestCLICollect:
         out = capsys.readouterr().out
         assert "No messages found" in out
 
+    @pytest.mark.parametrize(
+        ("reason", "needle"),
+        [
+            ("Telegram flood wait: 30s (history)", "flood wait"),
+            ("Telegram rate limit (history); retry in 12s.", "rate limit"),
+        ],
+    )
+    def test_sample_failure_fails_loudly(self, cli_env_with_pool, capsys, reason, needle):
+        """#1927: a failed live sample is not "No messages found." — the reason
+        goes to stderr with a non-zero exit."""
+        from tg_agent.cli.commands.collect import run
+        from tg_agent.telegram.collector_mixins.collection import SampleChannelError
+
+        fake_pool = AsyncMock()
+        fake_pool.clients = {"dummy": object()}
+        fake_pool.disconnect_all = AsyncMock()
+
+        async def fake_init_pool(config, db, **_kwargs):
+            from tg_shared.auth import TelegramAuth
+
+            return TelegramAuth(0, ""), fake_pool
+
+        with (
+            patch("tg_agent.cli.runtime.init_pool", side_effect=fake_init_pool),
+            patch(
+                "tg_agent.telegram.collector.Collector.sample_channel",
+                new=AsyncMock(side_effect=SampleChannelError(reason)),
+            ),
+        ):
+            with pytest.raises(typer.Exit):
+                run(_ns(collect_action="sample", channel_id=-100123, limit=10))
+
+        captured = capsys.readouterr()
+        assert needle in captured.err
+        assert "No messages found" not in captured.out
+
 
 # ---------------------------------------------------------------------------
 # scheduler
