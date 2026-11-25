@@ -188,13 +188,13 @@ def test_validate_scenario_valid_with_quiet_hours(chat_stats: ChatStatistics) ->
     scenario = _scenario(
         [400, 500, 600, 700, 800],
         texts=[
-            "раз",
-            "два слова",
-            "три слова тут",
-            "четыре слова в этой реплике",
-            "пять слов в этой вот реплике",
+            "тут была первая",
+            "вторая заметка",
+            "третья мысль подлиннее",
+            "четвёртая совсем длинная запись",
+            "пятая заключительная",
         ],
-        personas=["Аня"],
+        personas=["Аня", "Борис"],
         reply_to={2: 1, 3: 2, 4: 3, 5: 4},
     )
     start = datetime(2026, 10, 20, 10, 0, tzinfo=timezone.utc)
@@ -301,6 +301,85 @@ def test_validate_naive_start_at_treated_as_utc(chat_stats: ChatStatistics) -> N
     assert validate_scenario(scenario, chat_stats, start_at=naive) == validate_scenario(
         scenario, chat_stats, start_at=aware
     )
+
+
+# --------------------------------------------------------------------------- #
+# Механический пол #1793: delay_shape / delay_cadence / persona_echo / speaker_balance
+# --------------------------------------------------------------------------- #
+
+
+def test_validate_delay_shape_outside_chat_iqr(chat_stats: ChatStatistics) -> None:
+    """Квартили задержек сценария не сидят в IQR пауз чата — форма выдаёт автоматизацию."""
+    # IQR пауз фикстуры [360s, 8940s]: все 6 задержек из медленного хвоста за p75.
+    scenario = _scenario(
+        [9500, 11500, 13500, 15500, 17500, 19500],
+        texts=["мысль первая", "вторая реплика", "третья совсем другая", "четвёртая", "пятая", "шестая"],
+    )
+    violations = validate_scenario(scenario, chat_stats)
+    assert any("delay_shape" in v for v in violations)
+
+
+def test_validate_delay_shape_inside_chat_iqr_passes(chat_stats: ChatStatistics) -> None:
+    scenario = _scenario(
+        [400, 500, 600, 700, 800],
+        texts=["тут была первая", "вторая заметка", "третья мысль подлиннее", "четвёртая запись", "пятая"],
+    )
+    assert not any("delay_shape" in v for v in validate_scenario(scenario, chat_stats))
+
+
+def test_validate_delay_cadence_flags_fixed_interval(chat_stats: ChatStatistics) -> None:
+    scenario = _scenario(
+        [400, 400, 410, 700, 900, 1100],
+        texts=["мысль первая", "вторая реплика", "третья другая", "четвёртая", "пятая", "шестая"],
+    )
+    violations = validate_scenario(scenario, chat_stats)
+    assert any("фиксированный интервал" in v for v in violations)
+
+
+def test_validate_delay_cadence_varied_delays_pass(chat_stats: ChatStatistics) -> None:
+    scenario = _scenario(
+        [400, 500, 600, 700, 800],
+        texts=["тут была первая", "вторая заметка", "третья мысль подлиннее", "четвёртая запись", "пятая"],
+    )
+    assert not any("фиксированный интервал" in v for v in validate_scenario(scenario, chat_stats))
+
+
+def test_validate_persona_echo_consecutive_cross_persona(chat_stats: ChatStatistics) -> None:
+    """Соседние реплики разных персон пересказывают друг друга — token-Jaccard."""
+    scenario = _scenario(
+        [400, 500],
+        texts=["агент это точно переписывает код быстрее", "переписывает код быстрее чем агент"],
+    )
+    violations = validate_scenario(scenario, chat_stats)
+    assert any("пересказывает предыдущую" in v for v in violations)
+
+
+def test_validate_persona_echo_same_persona_vocabulary(chat_stats: ChatStatistics) -> None:
+    """Две персоны говорят одним словарём — голоса не разведены."""
+    texts = ["деплой упал снова ночью", "деплой упал ночью", "деплой упал снова утром"]
+    scenario = _scenario([400, 500, 600], texts=texts)
+    violations = validate_scenario(scenario, chat_stats)
+    assert any("одним словарём" in v for v in violations)
+
+
+def test_validate_persona_echo_distinct_voices_pass(chat_stats: ChatStatistics) -> None:
+    scenario = _scenario(
+        [400, 500],
+        texts=["взял новый агент и гоняю его на сборке", "а я пока докручиваю фильтры вручную"],
+    )
+    assert not any("Jaccard" in v for v in validate_scenario(scenario, chat_stats))
+
+
+def test_validate_speaker_balance_exceeds_learned_share(chat_stats: ChatStatistics) -> None:
+    """Доля реплик персоны выше max(learned топ-доли чата, 50%) — нарушение."""
+    # Все реплики одной персоны (Аня): 4/4 = 100% > cap 67% (топ-доля фикстуры).
+    scenario = _scenario(
+        [400, 500, 600, 700],
+        texts=["мысль первая", "вторая реплика", "третья другая", "четвёртая заметка"],
+        personas=["Аня"],
+    )
+    violations = validate_scenario(scenario, chat_stats)
+    assert any("speaker_balance" in v and "Аня" in v for v in violations)
 
 
 def test_derive_planned_schedule() -> None:

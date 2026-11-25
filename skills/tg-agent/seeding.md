@@ -84,6 +84,14 @@ Rules (the validator enforces most of them — do not wait for it to fail):
   the activity window in `style` and reuse the same file for the same chat.
 - **No echo**: accounts never repeat each other's (or their own) phrasings —
   no duplicate texts, ignore-insensitive.
+- **Mechanical floor (the validator enforces, #1793)**: scenario delay
+  quartiles stay within the chat gaps' IQR (`delay_shape`); no three
+  consecutive near-equal delays (`delay_cadence`); consecutive
+  cross-persona messages and persona vocabularies do not overlap
+  token-wise (Jaccard ≤ 0.5, `persona_echo`); no persona takes more than
+  max(learned top-sender share, 50%) of the messages (`speaker_balance`).
+  These are the floor, not the quality source — real speech transfer above
+  stays the quality bar.
 - **Timing**: sample `delay_seconds` from the learned `gaps_seconds`
   distribution (mostly between p25 and p75, an occasional long pause up to
   `max`); never below the chat's fast tail; messages must land in active
@@ -103,7 +111,7 @@ Rules (the validator enforces most of them — do not wait for it to fail):
 ## 3. Validate (loop until clean)
 
 ```bash
-tg-agent seeding validate scenario.json --chat <chat-id> [--days 14] [--start-at "2026-11-02T18:00"]
+tg-agent seeding validate scenario.json --chat <chat-id> [--days 14] [--start-at "2026-11-02T18:00"] [--transcript]
 ```
 
 Exit 1 lists violations; fix the scenario and re-run. A clean run prints
@@ -118,11 +126,18 @@ always pass it before drafting. The scenario file must pass schema
 validation (`personas` unique names/phones, `messages` positions 1..N,
 `reply_to_position` points backwards).
 
+`--transcript` renders the dialogue as it will read in the chat — persona,
+pause, reply chain, FULL text — for the owner's line-by-line review
+(acceptance of #1793: the owner marks any line «у нас так не напишут»;
+a dialogue passes with zero marked lines). Run it on every clean validate
+and show the transcript to the owner before `add`.
+
 ## 4. Record drafts
 
 ```bash
 tg-agent seeding thread-create --chat <chat-id> --personas personas.json
 tg-agent seeding add scenario.json --thread <thread-id> --start-at "2026-11-02T18:00"
+tg-agent seeding show <thread-id> --transcript   # full-text dialogue for the owner review
 ```
 
 `thread-create` stores the persona map «name → account_phone» in
