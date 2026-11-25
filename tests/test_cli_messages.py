@@ -8,6 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import typer
+from telethon.tl.types import Channel as TLChannel
+from telethon.tl.types import ChatPhotoEmpty
+from telethon.tl.types import User as TLUser
 
 from tests.helpers import cli_add_channel as _add_channel
 from tests.helpers import cli_ns as _ns
@@ -432,7 +435,8 @@ def test_messages_read_channel_not_found_json_stderr_and_exit(cli_env, capsys):
     assert exc_info.value.exit_code == 1
 
 
-def test_messages_read_live_rejects_non_text_format(cli_env, capsys):
+def test_messages_read_live_rejects_csv_format(cli_env, capsys):
+    """Live CSV stays refused (#1598); live JSON became supported in #1872."""
     from tg_agent.cli.commands.messages import run
 
     with pytest.raises(typer.Exit) as exc_info:
@@ -447,9 +451,214 @@ def test_messages_read_live_rejects_non_text_format(cli_env, capsys):
             date_to=None,
             topic_id=None,
             offset_id=None,
+            output_format="csv",
+        ))
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "csv" in captured.err.lower()
+    assert exc_info.value.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# issue #1872: --after-id forward cursor + live JSON envelope
+# ---------------------------------------------------------------------------
+
+
+def _live_msg(i, *, text="m", out=False, mentioned=False, sender=None):
+    return SimpleNamespace(
+        id=i, date=NOW, sender=sender, text=text, media=None, out=out, mentioned=mentioned,
+    )
+
+
+def _run_live_read(cli_db, identifier, *, capsys, messages, entity, output_format="json",
+                   after_id=None, offset_id=None, limit=10):
+    from tg_agent.cli.commands.messages import messages_read_impl
+
+    pool = MagicMock()
+    pool.clients = {"+90000000009": object()}
+    fake_client = MagicMock()
+    fake_client.iter_messages = MagicMock(return_value=_fake_iter(messages))
+    pool.get_native_client_by_phone = AsyncMock(return_value=(fake_client, "+90000000009"))
+    pool.resolve_entity_with_warm = AsyncMock(return_value=entity)
+    pool.disconnect_all = AsyncMock()
+
+    async def fake_init_db(_):
+        return AppConfig(), cli_db
+
+    async def fake_init_pool(_, __):
+        return MagicMock(), pool
+
+    with patch("tg_agent.cli.runtime.init_db", side_effect=fake_init_db), \
+         patch("tg_agent.cli.runtime.init_pool", side_effect=fake_init_pool):
+        asyncio.run(messages_read_impl(
+            "config.yaml", identifier=identifier, limit=limit, live=True,
+            phone="+90000000009", after_id=after_id, offset_id=offset_id,
+            output_format=output_format,
+        ))
+    return fake_client, capsys.readouterr()
+
+
+def test_messages_read_live_json_after_id_forward_cursor(cli_db, capsys):
+    """--after-id fetches forward (min_id+reverse) and emits the cursor envelope."""
+    msgs = [
+        _live_msg(5, text="first", sender=TLUser(id=4242, first_name="Ann")),
+        _live_msg(6, text="second"), _live_msg(7, text="third"),
+    ]
+    client, captured = _run_live_read(
+        cli_db, "@friend", capsys=capsys, messages=msgs,
+        entity=TLUser(id=4242, first_name="Ann"), after_id=4,
+    )
+
+    kwargs = client.iter_messages.call_args.kwargs
+    assert kwargs["min_id"] == 4
+    assert kwargs["reverse"] is True
+    assert kwargs["limit"] == 11  # limit+1 powers the exact has_more (#1872)
+    envelope = json.loads(captured.out)
+    assert [m["id"] for m in envelope["messages"]] == [5, 6, 7]
+    assert envelope["newest_id"] == 7
+    assert envelope["has_more"] is False
+    first = envelope["messages"][0]
+    assert first["out"] is False
+    assert first["addressed"] is True  # private chat: incoming is always addressed
+    assert first["sender"] == "Ann"
+    assert first["text"] == "first"
+    assert first["date"] == NOW.isoformat()
+
+
+def test_messages_read_live_json_after_id_truncates_with_has_more(cli_db, capsys):
+    msgs = [_live_msg(i, text=f"m{i}") for i in range(5, 9)]
+    _, captured = _run_live_read(
+        cli_db, "@friend", capsys=capsys, messages=msgs,
+        entity=TLUser(id=4242, first_name="Ann"), after_id=4, limit=2,
+    )
+    envelope = json.loads(captured.out)
+    assert [m["id"] for m in envelope["messages"]] == [5, 6]
+    assert envelope["newest_id"] == 6
+    assert envelope["has_more"] is True
+
+
+def test_messages_read_live_json_empty_is_clean_envelope(cli_db, capsys):
+    _, captured = _run_live_read(
+        cli_db, "@friend", capsys=capsys, messages=[],
+        entity=TLUser(id=4242, first_name="Ann"), after_id=99,
+    )
+    assert json.loads(captured.out) == {"messages": [], "newest_id": None, "has_more": False}
+
+
+def test_messages_read_live_json_group_addressed_by_mention(cli_db, capsys):
+    msgs = [
+        _live_msg(5, text="plain"),
+        _live_msg(6, text="mention", mentioned=True),
+        _live_msg(7, text="mine", out=True),
+    ]
+    _, captured = _run_live_read(
+        cli_db, "@room", capsys=capsys, messages=msgs,
+        entity=TLChannel(id=777, title="Room", photo=ChatPhotoEmpty(), date=NOW),
+    )
+    recs = {m["id"]: m for m in json.loads(captured.out)["messages"]}
+    assert recs[5]["addressed"] is False
+    assert recs[6]["addressed"] is True
+    assert recs[7]["out"] is True
+    assert recs[7]["addressed"] is False
+
+
+def test_messages_read_live_json_sender_username_and_channel_title(cli_db, capsys):
+    msgs = [
+        _live_msg(5, sender=TLUser(id=1, first_name="A", username="ann")),
+        _live_msg(6, sender=TLChannel(id=2, title="News", photo=ChatPhotoEmpty(), date=NOW)),
+    ]
+    _, captured = _run_live_read(
+        cli_db, "@room", capsys=capsys, messages=msgs,
+        entity=TLChannel(id=777, title="Room", photo=ChatPhotoEmpty(), date=NOW),
+    )
+    recs = {m["id"]: m for m in json.loads(captured.out)["messages"]}
+    assert recs[5]["sender"] == "@ann"
+    assert recs[6]["sender"] == "News"
+
+
+def test_messages_read_live_text_after_id_stays_text(cli_db, capsys):
+    """Text live output keeps its shape and chronological order (#1872, criterion 3)."""
+    msgs = [_live_msg(6, text="t6"), _live_msg(5, text="t5")]
+    _, captured = _run_live_read(
+        cli_db, "@friend", capsys=capsys, messages=msgs,
+        entity=TLUser(id=4242, first_name="Ann"), after_id=4, output_format="text",
+    )
+    out = captured.out
+    assert "t5" in out and "t6" in out
+    assert out.index("t5") < out.index("t6")
+    with pytest.raises(ValueError):
+        json.loads(out)
+
+
+def test_messages_read_after_id_requires_live(cli_env, capsys):
+    """--after-id is a live cursor — refused in DB mode (#1872, non-goal)."""
+    from tg_agent.cli.commands.messages import run
+
+    with pytest.raises(typer.Exit) as exc_info:
+        run(_ns(
+            messages_action="read",
+            identifier="100",
+            limit=50,
+            live=False,
+            phone=None,
+            query="",
+            date_from=None,
+            date_to=None,
+            topic_id=None,
+            offset_id=None,
+            after_id=5,
+            output_format="text",
+        ))
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "--after-id" in captured.err
+    assert exc_info.value.exit_code == 1
+
+
+def test_messages_read_live_after_id_offset_id_conflict(cli_env, capsys):
+    from tg_agent.cli.commands.messages import run
+
+    with pytest.raises(typer.Exit) as exc_info:
+        run(_ns(
+            messages_action="read",
+            identifier="100",
+            limit=50,
+            live=True,
+            phone=None,
+            query="",
+            date_from=None,
+            date_to=None,
+            topic_id=None,
+            offset_id=9,
+            after_id=5,
+            output_format="text",
+        ))
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "mutually exclusive" in captured.err
+    assert exc_info.value.exit_code == 1
+
+
+def test_messages_read_live_json_rejects_include_reaction_users(cli_env, capsys):
+    from tg_agent.cli.commands.messages import run
+
+    with pytest.raises(typer.Exit) as exc_info:
+        run(_ns(
+            messages_action="read",
+            identifier="100",
+            limit=50,
+            live=True,
+            phone=None,
+            query="",
+            date_from=None,
+            date_to=None,
+            topic_id=None,
+            offset_id=None,
+            after_id=None,
+            include_reaction_users=True,
             output_format="json",
         ))
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err.strip()
+    assert "--include-reaction-users" in captured.err
     assert exc_info.value.exit_code == 1

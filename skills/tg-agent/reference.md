@@ -181,7 +181,7 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
 ```
 messages read <identifier> [--limit N] [--live] [--phone PHONE] [--query TEXT]
               [--date-from DATE] [--date-to DATE] [--topic-id ID] [--offset-id ID]
-              [--format text|json|csv]
+              [--after-id ID] [--format text|json|csv]
 messages wait --message-id N [--phone PHONE] [--chat CHAT_ID] [--timeout S]
 messages sent [--phone PHONE] [--chat CHAT_ID] [--source SRC] [--date-from DATE]
               [--date-to DATE] [--limit N] [--format text|json|csv]
@@ -192,6 +192,18 @@ search-query list | get | add | edit | delete | toggle | run | stats
 
 - `messages read` accepts t.me links, @usernames or internal ids as `<identifier>`;
   `--live` reads directly from Telegram instead of the local DB.
+- **Incremental live reads (#1872):** `messages read <chat> --live --after-id N
+  --format json` returns only messages with id **> N, oldest first** — the
+  forward cursor (mirror of the backwards `--offset-id`; the two flags are
+  mutually exclusive, and `--after-id` works only with `--live`). The JSON
+  envelope `{"messages": [...], "newest_id": N, "has_more": bool}` is the
+  integration loop: read → process → repeat with `--after-id <newest_id>`.
+  Each record carries `id`, `out` (own message), `addressed` (to the account:
+  always in private chats unless own; in groups a @mention of the account or a
+  reply to its message), `date` (ISO-8601), `sender` (`@username`/name/chat
+  title or null), `text`. Empty result = a clean empty envelope, not an error.
+  Composes with `dialogs send` (`… message_id=N via PHONE`): pass the sent id
+  as `--after-id` to capture exactly the reply window.
 - `messages wait` answers "did a bot delete my sent message?" from the local
   deletion store (the gateway records Telegram deletion updates as they arrive)
   — it makes **no Telegram requests**. Pair it with `dialogs send`, which now
@@ -220,8 +232,9 @@ search-query list | get | add | edit | delete | toggle | run | stats
   its usage error to stdout and exits 2.
 - `--format json` always emits valid JSON (empty result → `[]`); `--format csv`
   always includes the header row. Errors (e.g. channel not found in DB) go to
-  **stderr** with exit code 1. `--live` combined with `--format json|csv` is
-  rejected with exit code 1 — live output is text-only (#1598).
+  **stderr** with exit code 1. With `--live`, `--format json` emits the #1872
+  envelope (see the incremental-read bullet above); live CSV stays rejected
+  with exit code 1 (#1598).
 - Forum messages carry `topic_id` plus the cached `topic_title` (#1552): text output
   renders `topic=<id> (<title>)`, JSON/CSV expose both fields. Titles come from the
   collector-maintained cache; an unknown/deleted topic renders without a title.

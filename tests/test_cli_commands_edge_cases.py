@@ -221,13 +221,21 @@ class TestPrintLiveMessages:
         assert "check this link" in out
         assert "media:" not in out
 
-    def test_reversed_order(self, capsys):
-        msgs = [self._make_live_msg(id=1), self._make_live_msg(id=2)]
-        _print_live_messages(msgs)
+    def test_chronological_order(self, capsys):
+        """Display is id-ascending regardless of the fetch direction (#1872).
+
+        The default live fetch yields newest-first; the --after-id cursor
+        yields oldest-first — the printer normalizes both to chronological.
+        """
+        newest_first = [self._make_live_msg(id=2), self._make_live_msg(id=1)]
+        _print_live_messages(newest_first)
         out = capsys.readouterr().out
-        pos_2 = out.index("#2")
-        pos_1 = out.index("#1")
-        assert pos_2 < pos_1
+        assert out.index("#1") < out.index("#2")
+
+        oldest_first = [self._make_live_msg(id=1), self._make_live_msg(id=2)]
+        _print_live_messages(oldest_first)
+        out = capsys.readouterr().out
+        assert out.index("#1") < out.index("#2")
 
     def test_no_date(self, capsys):
         msgs = [self._make_live_msg(date=None)]
