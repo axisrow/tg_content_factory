@@ -1585,6 +1585,11 @@ database:
         cwd=unrelated_cwd,
         env={
             "PATH": os.environ.get("PATH", ""),
+            # This test observes the configured DB path being created to prove
+            # the .env next to the config was loaded; opt the subprocess out of
+            # the #1770 fixture fallback, which would redirect the absent DB
+            # to <parent>/test/ and break that observable for the wrong reason.
+            "TGCF_DISABLE_TEST_DB_FALLBACK": "1",
             "PYTHONPATH": str(source_root),
             "PYTHONSAFEPATH": "1",
         },

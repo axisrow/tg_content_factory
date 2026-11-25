@@ -71,6 +71,10 @@ async def test_dotenv_only_import_encrypts_session(tmp_path, monkeypatch):
     monkeypatch.delenv("SESSION_ENCRYPTION_KEY", raising=False)
     monkeypatch.delenv("TG_API_ID", raising=False)
     monkeypatch.delenv("TG_API_HASH", raising=False)
+    # This test observes the account row landing in the default data/tg_search.db;
+    # opt out of the #1770 fixture fallback, which would redirect the absent DB
+    # to data/test/tg_search_test.db and break that observable for the wrong reason.
+    monkeypatch.setenv("TGCF_DISABLE_TEST_DB_FALLBACK", "1")
     key = "onboarding-regression-secret"
     (tmp_path / ".env").write_text(f"TG_API_ID=12345\nTG_API_HASH=test-hash\nSESSION_ENCRYPTION_KEY={key}\n")
     # Startup loads .env before runtime.init_db; no YAML or Telegram connection.

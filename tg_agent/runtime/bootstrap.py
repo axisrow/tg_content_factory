@@ -50,6 +50,7 @@ from tg_agent.telegram.collector import Collector
 from tg_agent.telegram.dm_catchup import DmCatchupService
 from tg_agent.telegram.dm_listener import DmListener, IncomingDmEvent
 from tg_agent.telegram.notifier import Notifier
+from tg_agent.test_db import resolve_startup_db_path
 from tg_agent.utils.asyncio import make_log_task_exception_callback
 from tg_shared.auth import TelegramAuth
 
@@ -209,6 +210,9 @@ async def build_runtime_container(
     if _is_dev:
         t_build = time.monotonic()
 
+    # #1770: absent real DB -> fixture test DB + "test mode is on" warning
+    # (TGCF_DISABLE_TEST_DB_FALLBACK=1 restores the previous behavior).
+    config.database.path = await resolve_startup_db_path(config)
     db = Database(
         config.database.path,
         session_encryption_secret=resolve_session_encryption_secret(config),

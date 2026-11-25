@@ -14,6 +14,7 @@ from tg_agent.database import Database
 from tg_agent.paths import data_root
 from tg_agent.settings_utils import parse_int_setting
 from tg_agent.telegram.client_pool import ClientPool
+from tg_agent.test_db import resolve_startup_db_path
 from tg_agent.utils.safe_logging import RedactingFormatter
 from tg_shared.auth import TelegramAuth
 
@@ -175,6 +176,9 @@ def _install_daemon_waker(config) -> None:
 async def init_db(config_path: str):
     config = load_config(config_path)
     _install_daemon_waker(config)
+    # #1770: absent real DB -> fixture test DB + "test mode is on" warning
+    # (TGCF_DISABLE_TEST_DB_FALLBACK=1 restores the previous behavior).
+    config.database.path = await resolve_startup_db_path(config)
     db = Database(
         config.database.path,
         session_encryption_secret=resolve_session_encryption_secret(config),

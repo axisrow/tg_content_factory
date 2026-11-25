@@ -53,6 +53,7 @@ Task → group (details in [reference.md](reference.md)):
 
 | Task | Group |
 |------|-------|
+| Fresh checkout with no collected DB (fixture test mode, #1770) | automatic: when `database.path` is absent the runtime builds `data/test/tg_search_test.db` from committed seeds (sanitized @prog_ai + @vAIbecoding, >=1000 messages) and logs a `test mode is on` warning — every command then runs on the fixture. Rebuild manually with `test-db build`; `TGCF_DISABLE_TEST_DB_FALLBACK=1` opts out |
 | AI news digest (structured, schema-first) | [digest.md](digest.md) — window search → schema JSON → format per request → publish on approval |
 | Chat seeding: compose dialogues for own chats, then publish on explicit approval | [seeding.md](seeding.md) — real chat speech is the prompt input (`seeding samples`: conversation windows + sender voices; composing method in [seeding-voice.md](seeding-voice.md)), stats bound the timing; drafts (`samples → stats → scenario → validate → add`), then `seeding approve` + `seeding schedule` per run — each publish run needs the owner's explicit consent |
 | Per-channel posting style specs (local-only, never committed) | `style init|list|show --channel <id>` — voice specs live in `~/.tg-agent/designs/`; bootstrap a missing one, read it before rendering for a channel |

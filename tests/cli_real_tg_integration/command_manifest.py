@@ -394,6 +394,9 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("plugin", "run"): "operator-installed tools have arbitrary effects; schema/ACL and digest covered offline (#1710)",
     ("style", "list"): "list-only local style spec view; file-only, no live Telegram (#1687)",
     ("style", "show"): "list-only local style spec view; file-only, no live Telegram (#1687)",
+    ("test-db", "build"): (
+        "local fixture DB assembly from committed seed files; no Telegram (#1770)"
+    ),
     ("telegraph", "create"): (
         "external telegra.ph HTTP POST — no Telegram; covered by offline "
         "unit/integration tests with a fake HTTP session (#1703)"
