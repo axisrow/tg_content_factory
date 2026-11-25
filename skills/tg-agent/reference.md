@@ -192,6 +192,11 @@ search-query list | get | add | edit | delete | toggle | run | stats
 
 - `messages read` accepts t.me links, @usernames or internal ids as `<identifier>`;
   `--live` reads directly from Telegram instead of the local DB.
+- **Store rows name the author (#1914):** JSON and CSV carry `sender_id`,
+  `sender_name`, `sender_username`, `sender_kind`; JSON also has `sender`
+  (`@username` or name — the live envelope's shape); text prints
+  `sender=Name @username` for group messages. A channel's own posts and
+  anonymous-admin messages carry no label.
 - **Incremental live reads (#1872):** `messages read <chat> --live --after-id N
   --format json` returns only messages with id **> N, oldest first** — the
   forward cursor (mirror of the backwards `--offset-id`; the two flags are
