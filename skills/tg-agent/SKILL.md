@@ -68,6 +68,7 @@ Task → group (details in [reference.md](reference.md)):
 | Channels: list, add, collect, stats, import | `channel`, `filter` |
 | Chats: read, send, edit, forward, media, participants, admins — real actions, see Safety | `dialogs` |
 | Comment on a channel post (lands in the linked discussion group) | `dialogs send <channel> <text> --comment-to <post_id>` — recipient must be a channel; find the post id first (`messages read <channel> --limit N` or the collected store) |
+| Reply to a specific message inside a chat (DM/group/channel) | `dialogs send <chat> <text> --reply-to <message_id>` — in-chat reply reference; find the id via `messages read <chat> --limit N`; not combinable with `--comment-to` |
 | Incoming-DM reply drafts: prepare → owner approves → worker sends (queue, no double-send) | `dm drafts` |
 | Incoming-DM subsystem state: listener/catch-up liveness, unprocessed journal, effective settings | `dm status` |
 | Dormant-DM friendly pings: monitor silent 1:1 chats, auto re-ping on a decaying schedule | `ping` |

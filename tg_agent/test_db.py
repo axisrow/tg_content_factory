@@ -61,6 +61,17 @@ _CHANNEL_INSERT = (
 
 _LAST_COLLECTED_UPDATE = "UPDATE channels SET last_collected_id = ? WHERE channel_id = ?"
 
+# Fixed stamp for timestamp columns the build does not control: migrations seed
+# channel_ratings and initialize() seeds the builtin pipeline templates without
+# their timestamp columns, so the schema's non-constant datetime('now') default
+# fills them with wall-clock time — two builds a second apart were not
+# byte-identical (test_build_is_deterministic, #1770/#1922 CI flake).
+_FIXTURE_STAMP = "2026-01-01 00:00:00"
+_FIXTURE_STAMP_UPDATES = (
+    "UPDATE channel_ratings SET updated_at = ?",
+    "UPDATE pipeline_templates SET created_at = ?",
+)
+
 
 def fallback_disabled() -> bool:
     """True when the env var is set to exactly ``1`` (issue #1770 wording).
@@ -216,6 +227,13 @@ async def build_test_db(out_path: str | Path, seeds: Path | None = None) -> int:
                 _LAST_COLLECTED_UPDATE,
                 [(mid, cid) for cid, mid in sorted(max_ids.items())],
             )
+            for stamp_sql in _FIXTURE_STAMP_UPDATES:
+                await conn.execute(stamp_sql, (_FIXTURE_STAMP,))
+        # The stamp UPDATEs above leave the overwritten wall-clock cells behind
+        # as freeblock garbage: logically gone (no reader sees them) but still
+        # on the page bytes. VACUUM rebuilds the file without them so the
+        # byte-hash below is stable, not just the logical content.
+        await db.execute("VACUUM")
     finally:
         await db.close()
 

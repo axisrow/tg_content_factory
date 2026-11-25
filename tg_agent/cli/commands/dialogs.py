@@ -313,12 +313,20 @@ async def _dialogs_send(args, db, pool) -> None:
     recipient = args.recipient
     text = args.text
     comment_to = getattr(args, "comment_to", None)
+    reply_to = getattr(args, "reply_to", None)
+    # comment_to routes the text into the linked discussion group, whose reply
+    # target Telethon picks itself; an explicit in-chat reply_to would fight it.
+    if comment_to is not None and reply_to is not None:
+        cli_error("--comment-to and --reply-to are mutually exclusive: a comment's reply target is picked by Telegram.")
+        return
 
     headline = (
         f"Comment on post #{comment_to} in {recipient} from {phone}:"
         if comment_to is not None
         else f"Send message from {phone} to {recipient}:"
     )
+    if reply_to is not None:
+        headline += f" (reply to #{reply_to})"
     if not _confirm_or_abort(
         args,
         headline,
@@ -333,6 +341,7 @@ async def _dialogs_send(args, db, pool) -> None:
             text=text,
             silent=bool(getattr(args, "silent", False)),
             comment_to=comment_to,
+            reply_to=reply_to,
             source="dialogs_send",
         )
         message_id = f" message_id={result.message_id}" if result.message_id is not None else ""
@@ -1433,11 +1442,15 @@ def dialogs_send(
     comment_to: int | None = typer.Option(
         None, "--comment-to", help="Comment on this channel post ID instead of sending a plain message"
     ),
+    reply_to: int | None = typer.Option(
+        None, "--reply-to", help="Reply to this message ID within the same chat"
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Send a direct message to a user or chat."""
     _run_dialogs(
-        ctx, "send", recipient=recipient, text=text, phone=phone, silent=silent, comment_to=comment_to, yes=yes
+        ctx, "send", recipient=recipient, text=text, phone=phone, silent=silent,
+        comment_to=comment_to, reply_to=reply_to, yes=yes,
     )
 
 

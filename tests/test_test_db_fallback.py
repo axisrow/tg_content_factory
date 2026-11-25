@@ -21,6 +21,7 @@ from tg_agent.cli import runtime as cli_runtime
 from tg_agent.cli.commands.test_db import build_impl
 from tg_agent.config import AppConfig
 from tg_agent.test_db import (
+    _FIXTURE_STAMP,
     CHANNELS_SEED,
     FALLBACK_DISABLED_ENV,
     build_test_db,
@@ -131,6 +132,31 @@ async def test_build_is_deterministic(tmp_path):
     await build_test_db(first)
     await build_test_db(second)
     assert _sha256(first) == _sha256(second)
+
+
+async def test_build_pins_seeded_timestamps(tmp_path):
+    """The stamp contract, asserted deterministically (#1922 review).
+
+    test_build_is_deterministic is probabilistic: back-to-back builds landing
+    in the same wall-clock second hash equal even without the pin, which is
+    exactly why the bug shipped as a CI flake instead of a red test. The
+    build must overwrite every initialize()-seeded wall-clock timestamp with
+    the fixed fixture stamp.
+    """
+    built = tmp_path / "pinned.db"
+    await build_test_db(built)
+    con = sqlite3.connect(built)
+    try:
+        assert con.execute("SELECT COUNT(*) FROM channel_ratings").fetchone()[0] > 0
+        assert con.execute(
+            "SELECT DISTINCT updated_at FROM channel_ratings"
+        ).fetchall() == [(_FIXTURE_STAMP,)]
+        assert con.execute("SELECT COUNT(*) FROM pipeline_templates").fetchone()[0] > 0
+        assert con.execute(
+            "SELECT DISTINCT created_at FROM pipeline_templates"
+        ).fetchall() == [(_FIXTURE_STAMP,)]
+    finally:
+        con.close()
 
 
 async def test_build_missing_seeds_raises(tmp_path):
