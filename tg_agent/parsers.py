@@ -161,3 +161,18 @@ def bare_channel_id(channel_id: int) -> int:
     if channel_id < 0 and cid > _MTPROTO_CHANNEL_MARKER:
         return cid - _MTPROTO_CHANNEL_MARKER
     return cid
+
+
+def marked_channel_id(channel_id: int) -> int:
+    """Return the marked ``-100<bare>`` id; a negative id is already marked.
+
+    The inverse of :func:`bare_channel_id`: the deletion stores
+    (``sent_messages`` / ``observed_deletions``) keep channels and supergroups
+    in the marked form, while callers accept both it and the bare id other
+    CLI output prints (#1926). A positive id is the bare channel id; a
+    negative id passes through untouched (DM/small-group rows carry NULL
+    chat ids, so no other positive shape exists in those stores).
+    """
+    if channel_id < 0:
+        return channel_id
+    return -(channel_id + _MTPROTO_CHANNEL_MARKER)

@@ -27,6 +27,7 @@ from tg_agent.cli.commands.common import (
     run_async,
 )
 from tg_agent.models import Message
+from tg_agent.parsers import marked_channel_id
 from tg_agent.services.account_service import resolve_default_phone
 from tg_agent.telegram.incoming_wait import DEFAULT_SETTLE_MS, DEFAULT_WAIT_TIMEOUT_SEC
 from tg_agent.telegram.reactions import (
@@ -609,6 +610,9 @@ async def messages_wait_impl(
     _, db = await runtime.init_db(config_path)
     try:
         deadline = time.monotonic() + timeout
+        # Both id forms are accepted (#1926): the store keeps -100… rows.
+        if chat is not None:
+            chat = marked_channel_id(chat)
         repo = db.repos.observed_deletions
         registered = await db.repos.sent_messages.list(message_id=message_id, phone=phone, chat_id=chat)
         while True:
@@ -698,6 +702,9 @@ async def messages_sent_impl(
     """
     _, db = await runtime.init_db(config_path)
     try:
+        # Both id forms are accepted (#1926): the store keeps -100… rows.
+        if chat is not None:
+            chat = marked_channel_id(chat)
         rows = await db.repos.sent_messages.list(
             phone=phone,
             chat_id=chat,
@@ -811,8 +818,8 @@ def messages_wait(
     chat: str | None = typer.Option(
         None,
         "--chat",
-        help="Deletion mode: chat id as Telegram reports it (e.g. -100…). Incoming mode "
-        "(long-poll): chat id / @username / phone, or 'any' for every conversation",
+        help="Deletion mode: channel id, bare (e.g. 1525693788) or marked (-100…) — #1926. "
+        "Incoming mode (long-poll): chat id / @username / phone, or 'any' for every conversation",
     ),
     timeout: int | None = typer.Option(
         None,
@@ -873,7 +880,7 @@ def messages_sent(
     ctx: typer.Context,
     phone: str | None = typer.Option(None, "--phone", help="Filter by sending account"),
     chat: int | None = typer.Option(
-        None, "--chat", help="Chat id as Telegram reports it (e.g. -100…)"
+        None, "--chat", help="Channel id, bare (e.g. 1525693788) or marked (-100…)"
     ),
     source: str | None = typer.Option(
         None,

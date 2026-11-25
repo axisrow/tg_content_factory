@@ -6,6 +6,7 @@ from tg_agent.parsers import (
     bare_channel_id,
     deduplicate_identifiers,
     extract_identifiers,
+    marked_channel_id,
     normalize_identifier,
     parse_file,
     parse_identifiers,
@@ -30,6 +31,26 @@ class TestBareChannelId:
     )
     def test_bare_channel_id(self, channel_id, expected):
         assert bare_channel_id(channel_id) == expected
+
+
+class TestMarkedChannelId:
+    @pytest.mark.parametrize(
+        "channel_id,expected",
+        [
+            # A bare-positive id is the bare channel id (#1926) — marked form.
+            (1234567890, -1001234567890),
+            (1525693788, -1001525693788),
+            # Already-marked and plain-negative ids pass through untouched.
+            (-1001234567890, -1001234567890),
+            (-123, -123),
+        ],
+    )
+    def test_marked_channel_id(self, channel_id, expected):
+        assert marked_channel_id(channel_id) == expected
+
+    @pytest.mark.parametrize("channel_id", [1234567890, 1005551782, 1525693788])
+    def test_round_trip_with_bare_channel_id(self, channel_id):
+        assert bare_channel_id(marked_channel_id(channel_id)) == channel_id
 
 
 class TestParseIdentifiers:

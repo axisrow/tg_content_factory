@@ -53,6 +53,14 @@ def test_a_chat_filter_matches_that_chat(cli_env, cli_db, capsys):
     assert "Deleted: message_id=5" in capsys.readouterr().out
 
 
+def test_a_bare_channel_id_matches_a_marked_deletion(cli_env, cli_db, capsys):
+    """#1926: the bare id `messages read` prints must find the -100… store row."""
+    _seed(cli_db, "+7001", -1001525693788, 5)
+
+    _wait(5, chat=1525693788)
+    assert "Deleted: message_id=5 chat=-1001525693788" in capsys.readouterr().out
+
+
 def test_a_wrong_chat_never_matches(cli_env, cli_db, capsys):
     _seed(cli_db, "+7001", -1001525693788, 5)
 
