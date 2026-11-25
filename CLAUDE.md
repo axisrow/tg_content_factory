@@ -142,7 +142,7 @@ python -m tg_agent.main dialogs list|refresh|resolve|leave|join|topics|cache-cle
 python -m tg_agent.main dm drafts list|create|approve|reject|send
 python -m tg_agent.main seeding samples|stats|validate|thread-create|add|list|show|approve|schedule|cancel|status   # chat seeding (эпик #1751): composer (#1756, samples = real speech #1793) + publisher (#1757)
 python -m tg_agent.main agent threads|thread-create|thread-delete|chat|thread-rename|thread-stop|messages|context|test-escaping|test-tools
-python -m tg_agent.main analytics top|content-types|hourly|summary|daily|pipeline-stats|trending-topics|trending-channels|velocity|peak-hours|calendar|trending-emojis|channel|channel-rating|channel-rate|usefulness
+python -m tg_agent.main analytics top|content-types|hourly|summary|daily|pipeline-stats|trending-topics|trending-channels|velocity|peak-hours|calendar|trending-emojis|channel|channel-rating|channel-rate|usefulness|authority
 python -m tg_agent.main provider list|add|delete|probe|refresh|test-all
 python -m tg_agent.main export json|csv|rss
 python -m tg_agent.main translate stats|detect|run|message

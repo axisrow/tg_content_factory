@@ -1,4 +1,4 @@
-"""Таргет-тесты офлайн-прототипа рейтинга авторитета (#1748); только синтетика."""
+"""Таргет-тесты рейтинга авторитета каналов (#1748); синтетика + :memory:-БД."""
 
 from __future__ import annotations
 
@@ -6,12 +6,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from tg_agent.filters.authority_proto import (
+from tg_agent.filters.authority import (
     AUTH_TAG_PREFIX,
     Post,
     apply_tier_tags,
     assign_tiers,
     cluster_posts,
+    collect_window_posts,
     compute_authority,
     jaccard,
     make_shingles,
@@ -84,6 +85,33 @@ def test_tie_gives_scoop_to_all_earliest():
     posts = [_post(1, 0, STORY, 1), _post(2, 0, STORY, 2)]
     ratings = compute_authority(posts)
     assert ratings[1].scoop_rate == 1.0 and ratings[2].scoop_rate == 1.0
+
+
+def test_prefix_filter_finds_threshold_pairs_and_keeps_outliers():
+    """Лямма SSJ: пара с Жаккаром ≥ порога обязана сойтись префиксами (regress #1748)."""
+    a = " ".join(f"слово{i:02d}" for i in range(30))
+    b = " ".join(f"слово{i:02d}" for i in range(28)) + " плюс хвост совсем другой новости"
+    posts = [
+        _post(1, 0, a, 1),
+        _post(2, 5, b, 2),
+        _post(3, 10, "Совершенно посторонний текст про погоду за окном и старый трамвай.", 3),
+    ]
+    clusters = cluster_posts(posts)
+    assert len(clusters) == 2
+    echo = next(c for c in clusters if len(c) == 2)
+    assert {p.channel_id for p in echo} == {1, 2}
+
+
+def test_day_buckets_split_cross_midnight_echoes():
+    """Допущение 13: эхо через полночь — другой кластер (другой цикл новости)."""
+    late = datetime(2026, 11, 1, 23, 50, tzinfo=timezone.utc)
+    posts = [
+        Post(1, 1, late, STORY),
+        Post(2, 2, late + timedelta(minutes=20), STORY),
+        Post(3, 3, late + timedelta(minutes=40), STORY),
+    ]
+    clusters = cluster_posts(posts)
+    assert len(clusters) == 2
 
 
 def test_noise_classification_water_ad_short():
@@ -195,3 +223,67 @@ async def test_apply_tier_tags_merges_keeps_and_replaces_auth(db):
 async def test_apply_tier_tags_unknown_channel_raises(db):
     with pytest.raises(ValueError, match="not found"):
         await apply_tier_tags(db, {404_404: "A"})
+
+
+# ---------------------------------------------------------------------------
+# DB-путь: collect_window_posts → compute (промоушен #1748, :memory:-БД)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_channel(db, channel_id: int) -> int:
+    from tg_agent.models import Channel
+
+    return await db.repos.channels.add_channel(Channel(channel_id=channel_id, title=f"ch{channel_id}"))
+
+
+async def _seed_message(db, channel_id: int, message_id: int, date, text, **kwargs) -> None:
+    from tg_agent.models import Message
+
+    await db.repos.messages.insert_message(
+        Message(channel_id=channel_id, message_id=message_id, date=date, text=text, **kwargs)
+    )
+
+
+async def test_collect_window_posts_window_forward_and_kind(db):
+    now = datetime.now(timezone.utc)
+    await _seed_channel(db, 200)
+    await _seed_message(db, 200, 1, now - timedelta(days=1), STORY)
+    await _seed_message(db, 200, 2, now - timedelta(days=40), "слишком старый пост окна")  # вне окна
+    await _seed_message(  # форвард помечен is_forward
+        db, 200, 3, now - timedelta(days=2), STORY, forward_from_channel_id=999
+    )
+    await _seed_message(db, 200, 4, now - timedelta(days=1), "участник присоединился", message_kind="service")
+    posts = await collect_window_posts(db, days=30)
+    assert [(p.message_id, p.is_forward) for p in posts] == [(3, True), (1, False)]  # ORDER BY date
+
+
+async def test_collect_window_posts_naive_date_reads_as_utc(db):
+    await _seed_channel(db, 201)
+    await _seed_message(
+        db, 201, 7, datetime.now() - timedelta(hours=2), STORY  # noqa: DTZ005 — наивная дата, предмет теста
+    )
+    posts = await collect_window_posts(db, days=30)
+    assert posts[0].date.tzinfo is not None
+
+
+async def test_db_to_ratings_end_to_end(db):
+    # Полдень UTC: все метки в одних сутках, суточный бакет не рвёт кластер.
+    now = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
+    await _seed_channel(db, 300)  # скуп
+    await _seed_channel(db, 400)  # эхо
+    await _seed_message(db, 300, 1, now - timedelta(hours=4), STORY)
+    await _seed_message(db, 400, 1, now - timedelta(hours=1), f"⚡ Коротко: {STORY} Подробности у первоисточника.")
+    await _seed_message(db, 400, 2, now - timedelta(hours=2), "купить дёшево")  # механический шум
+    ratings = compute_authority(await collect_window_posts(db, days=30))
+    assert ratings[300].scoop_rate == 1.0 and ratings[300].volume == 1
+    # «купить дёшево» — шум-синглтон: participation + скуп (допущение 1) канала 400
+    assert ratings[400].scoop_rate == 0.5 and ratings[400].noise_count == 1
+    assert ratings[400].participations == 2 and ratings[400].scoops == 1
+    assert ratings[300].score > ratings[400].score
+
+
+async def test_fetch_authority_posts_filters_filtered_channels(db):
+    pk = await _seed_channel(db, 500)
+    await _seed_message(db, 500, 1, datetime.now(timezone.utc) - timedelta(days=1), STORY)
+    await db.repos.channels.set_channel_filtered(pk, True, origin="auto")
+    assert await collect_window_posts(db, days=30) == []

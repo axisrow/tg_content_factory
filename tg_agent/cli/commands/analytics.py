@@ -15,6 +15,13 @@ from tg_agent.cli.commands.common import (
     resolve_date_bounds,
     run_async,
 )
+from tg_agent.filters.authority import (
+    DEFAULT_WINDOW_DAYS,
+    apply_tier_tags,
+    assign_tiers,
+    collect_window_posts,
+    compute_authority,
+)
 from tg_agent.filters.criteria import USEFULNESS_SAMPLE_SIZE
 from tg_agent.filters.usefulness import TIER_ORDER, score_channel
 
@@ -531,6 +538,99 @@ async def usefulness_impl(config_path: str, *, limit: int, as_json: bool) -> Non
         await db.close()
 
 
+async def authority_impl(
+    config_path: str, *, days: int, apply: bool, as_json: bool, limit: int
+) -> None:
+    """Per-channel authority rating (scoop/noise) + теги тиров auth:A/B/C (#1748).
+
+    Офлайн по собранным постам окна: scoop_rate (кто первый напечатал кластер
+    почти-дубликатов), noise_rate (вода/реклама/механика), volume;
+    score = scoop_rate * (1 - noise_rate), тиры — терцилями score по пригодным
+    каналам. Потребитель метрики — LLM-кураторство дайджеста: тема проходит,
+    если её напечатали ≥2 канала тира A/B, эхи тира C покрытием не считаются.
+    Без --apply только отчёт (dry-run); --apply сливает тиры в теги каналов,
+    не трогая прочие теги (например keep). Без живого Telegram и LLM.
+    """
+    _, db = await runtime.init_db(config_path)
+    try:
+        posts = await collect_window_posts(db, days=days)
+        if not posts:
+            print(f"No posts found in the last {days} days.")
+            return
+        ratings = compute_authority(posts)
+        tiers = assign_tiers(ratings)
+        applied = 0
+        if apply and tiers:
+            applied = sum(
+                1 for r in await apply_tier_tags(db, tiers, dry_run=False) if r["written"]
+            )
+        meta = {
+            ch.channel_id: ch
+            for ch in await db.get_channels(active_only=False, include_filtered=True)
+        }
+        rows: list[dict] = []
+        for cid, r in ratings.items():
+            channel = meta.get(cid)
+            rows.append(
+                {
+                    "channel_id": cid,
+                    "title": channel.title if channel else None,
+                    "username": channel.username if channel else None,
+                    "volume": r.volume,
+                    "noise_count": r.noise_count,
+                    "noise_rate": round(r.noise_rate, 4),
+                    "participations": r.participations,
+                    "scoops": r.scoops,
+                    "scoop_rate": round(r.scoop_rate, 4),
+                    "score": round(r.score, 4),
+                    "tier": tiers.get(cid),
+                }
+            )
+        rows.sort(key=lambda x: (-x["score"], -x["volume"]))
+        tier_counts = {"A": 0, "B": 0, "C": 0}
+        for tier in tiers.values():
+            tier_counts[tier] += 1
+        limit = max(1, min(limit, len(rows)))
+        shown = rows[:limit]
+        if as_json:
+            print(
+                json.dumps(
+                    {
+                        "window_days": days,
+                        "posts": len(posts),
+                        "channels": len(rows),
+                        "tiers": tier_counts,
+                        "applied": applied,
+                        "rows": shown,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return
+        mode = "applied" if apply else "dry-run"
+        print(
+            f"authority window={days}d posts={len(posts)} channels={len(rows)} "
+            f"tiers A/B/C={tier_counts['A']}/{tier_counts['B']}/{tier_counts['C']} "
+            f"tags_written={applied} ({mode})"
+        )
+        header = (
+            f"{'channel_id':<14} {'tier':<4} {'vol':>5} {'noise':>5} {'n%':>5} "
+            f"{'parts':>6} {'scoop':>5} {'s%':>5} {'score':>6}  title"
+        )
+        print(header)
+        print("-" * len(header))
+        for r in shown:
+            title = r["title"] or r["username"] or str(r["channel_id"])
+            print(
+                f"{r['channel_id']:<14} {r['tier'] or '-':<4} {r['volume']:>5} "
+                f"{r['noise_count']:>5} {r['noise_rate']:>5.2f} {r['participations']:>6} "
+                f"{r['scoops']:>5} {r['scoop_rate']:>5.2f} {r['score']:>6.2f}  {title[:40]}"
+            )
+    finally:
+        await db.close()
+
+
 # --------------------------------------------------------------------------- #
 # argparse adapter — thin dispatch over the *_impl functions
 # --------------------------------------------------------------------------- #
@@ -613,6 +713,14 @@ def run(args: argparse.Namespace) -> None:
             model=getattr(args, "model", None),
             sample_size=getattr(args, "sample_size", 40),
         )
+    elif action == "authority":
+        coro = authority_impl(
+            config_path,
+            days=getattr(args, "days", DEFAULT_WINDOW_DAYS),
+            apply=getattr(args, "apply", False),
+            as_json=getattr(args, "json", False),
+            limit=getattr(args, "limit", 100),
+        )
     else:
         coro = top_impl(
             config_path,
@@ -627,7 +735,7 @@ def run(args: argparse.Namespace) -> None:
 # --------------------------------------------------------------------------- #
 # analytics → top / content-types / hourly / summary / daily / pipeline-stats /
 #   trending-topics / trending-channels / velocity / peak-hours / calendar /
-#   trending-emojis / channel / channel-rating / channel-rate
+#   trending-emojis / channel / channel-rating / channel-rate / authority
 # --------------------------------------------------------------------------- #
 
 analytics_app = typer.Typer(no_args_is_help=True, help="Message analytics")
@@ -820,3 +928,26 @@ def analytics_usefulness(
     """Content-usefulness rating per channel (water vs useful) — no LLM."""
     apply_startup(ctx)
     run_async(usefulness_impl(ctx.obj.config, limit=limit, as_json=as_json))
+
+
+@analytics_app.command("authority")
+def analytics_authority(
+    ctx: typer.Context,
+    days: int = typer.Option(
+        DEFAULT_WINDOW_DAYS, "--days", help="Collection window in days (default: 30)"
+    ),
+    apply: bool = typer.Option(
+        False, "--apply", help="Write tier tags (auth:A/B/C) to channels; default is a dry-run"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
+    limit: int = typer.Option(100, "--limit", help="Max rows (default: 100)"),
+) -> None:
+    """Per-channel authority rating (scoop/noise) — digest source tiers (#1748).
+
+    Offline over collected posts; default prints a dry-run report, --apply
+    merges tier tags (auth:A/B/C) into existing channel tags.
+    """
+    apply_startup(ctx)
+    run_async(
+        authority_impl(ctx.obj.config, days=days, apply=apply, as_json=as_json, limit=limit)
+    )
