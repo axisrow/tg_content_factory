@@ -80,6 +80,13 @@ PERSISTED_ID_VERIFY_CHUNK_SIZE = 500
 NOTIFICATION_BACKLOG_LOOKBACK_HOURS = 24.0
 
 
+class SampleChannelError(RuntimeError):
+    """A live `collect sample` read failed (#1927) — no client, flood wait,
+    proactive rate limit, or an unresolvable peer. Distinct from an empty read
+    (channel exists, zero messages), which stays ``[]`` so the CLI can keep
+    "No messages found." a valid exit-0 answer."""
+
+
 class CollectionMixin:
     @property
     def delay_between_channels_sec(self: "Collector") -> int:
@@ -1456,11 +1463,15 @@ class CollectionMixin:
         return await self._db.get_channel_by_channel_id(channel_id) is not None
 
     async def sample_channel(self: "Collector", channel_id: int, limit: int = 10) -> list[dict]:
-        """Fetch the last `limit` messages from a channel for preview. No DB writes."""
+        """Fetch the last `limit` messages from a channel for preview. No DB writes.
+
+        Raises `SampleChannelError` when the live read fails (#1927); an empty
+        list means the read succeeded and the channel genuinely has no messages.
+        """
         result = await self._pool.get_available_client()
         if result is None:
             logger.error("No available clients for sample collection")
-            return []
+            raise SampleChannelError("No available Telegram accounts for sampling.")
 
         session, phone = result
         session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self._pool)
@@ -1476,8 +1487,8 @@ class CollectionMixin:
                         timeout=30.0,
                     )
                     self._pool.mark_dialogs_fetched(phone)
-                except HandledFloodWaitError:
-                    return []
+                except HandledFloodWaitError as exc:
+                    raise SampleChannelError(f"Telegram flood wait: {exc.info.detail}") from exc
                 except TelegramRateLimitedError as exc:
                     logger.info(
                         "sample_channel: proactive %s rate limit prefetching dialogs for %s; retry in %.1fs",
@@ -1485,7 +1496,9 @@ class CollectionMixin:
                         phone,
                         exc.retry_after_sec,
                     )
-                    return []
+                    raise SampleChannelError(
+                        f"Telegram rate limit ({exc.category}); retry in {exc.retry_after_sec:.0f}s."
+                    ) from exc
                 except Exception as e:
                     logger.warning("Failed to prefetch dialogs for %s: %s", phone, e, exc_info=True)
 
@@ -1498,11 +1511,13 @@ class CollectionMixin:
                     logger_=logger,
                     timeout=30.0,
                 )
-            except (asyncio.TimeoutError, ValueError, LookupError):
+            except (asyncio.TimeoutError, ValueError, LookupError) as exc:
                 logger.warning("Could not resolve entity for channel %d", channel_id)
-                return []
-            except HandledFloodWaitError:
-                return []
+                raise SampleChannelError(
+                    f"Could not resolve channel {channel_id} from any connected account."
+                ) from exc
+            except HandledFloodWaitError as exc:
+                raise SampleChannelError(f"Telegram flood wait: {exc.info.detail}") from exc
 
             previews: list[dict] = []
             async def _collect_previews() -> None:
@@ -1532,7 +1547,17 @@ class CollectionMixin:
             )
 
             return previews
-        except HandledFloodWaitError:
-            return []
+        except HandledFloodWaitError as exc:
+            raise SampleChannelError(f"Telegram flood wait: {exc.info.detail}") from exc
+        except TelegramRateLimitedError as exc:
+            logger.info(
+                "sample_channel: proactive %s rate limit for %d; retry in %.1fs",
+                exc.category,
+                channel_id,
+                exc.retry_after_sec,
+            )
+            raise SampleChannelError(
+                f"Telegram rate limit ({exc.category}); retry in {exc.retry_after_sec:.0f}s."
+            ) from exc
         finally:
             await self._pool.release_client(phone)

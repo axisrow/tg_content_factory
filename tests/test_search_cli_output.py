@@ -11,6 +11,8 @@ from __future__ import annotations
 import csv
 from datetime import datetime, timezone
 
+from telethon_floodgate import FloodWaitInfo
+
 from tg_agent.cli.commands.search import (
     _format_search_result_line,
     _print_search_result,
@@ -78,3 +80,20 @@ def test_envelope_exposes_truncation_contract() -> None:
     assert envelope["has_more"] is True
     assert envelope["error"] is None
     assert envelope["messages"][0]["message_id"] == 42
+
+
+def test_envelope_carries_flood_wait_seconds() -> None:
+    # #1927: a flood-waited live read is machine-readable — flood_wait carries
+    # the wait in seconds next to the human-readable error.
+    info = FloodWaitInfo(
+        operation="premium_search",
+        wait_seconds=30,
+        next_available_at_utc=datetime(2026, 11, 25, 12, 0, tzinfo=timezone.utc),
+        detail="FLOOD_WAIT_30 on messages.searchGlobal",
+    )
+    result = SearchResult(
+        messages=[], total=0, query="q", error=info.detail, flood_wait=info
+    )
+    envelope = _search_envelope(result)
+    assert envelope["error"] == "FLOOD_WAIT_30 on messages.searchGlobal"
+    assert envelope["flood_wait"] == 30

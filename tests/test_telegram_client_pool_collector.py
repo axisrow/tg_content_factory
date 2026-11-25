@@ -57,7 +57,9 @@ from tg_agent.telegram.collector import (
     NoActiveCollectionClientsError,
     NoActiveStatsClientsError,
 )
+from tg_agent.telegram.collector_mixins.collection import SampleChannelError
 from tg_agent.telegram.collector_resolve import _resolve_by_numeric
+from tg_agent.telegram.pool_dialogs import ForumTopicsError
 
 # ---------------------------------------------------------------------------
 # ClientPool fixtures
@@ -1835,8 +1837,9 @@ async def test_leave_channels_generic_error(pool):
 
 @pytest.mark.anyio
 async def test_get_forum_topics_no_client(pool):
-    result = await pool.get_forum_topics(1)
-    assert result == []
+    # #1927: no available account is a failed read, not an empty forum.
+    with pytest.raises(ForumTopicsError):
+        await pool.get_forum_topics(1)
 
 
 @pytest.mark.anyio
@@ -1853,12 +1856,12 @@ async def test_get_forum_topics_dialogs_fetched_but_still_fails(pool, mock_db):
     with patch.object(pool, "get_available_client", return_value=(
         TelegramTransportSession(client, disconnect_on_close=False), "+7001"
     )):
-        result = await pool.get_forum_topics(1)
-    assert result == []
+        with pytest.raises(ForumTopicsError):
+            await pool.get_forum_topics(1)
 
 
 @pytest.mark.anyio
-async def test_get_forum_topics_channel_invalid_returns_empty_without_traceback(pool, caplog):
+async def test_get_forum_topics_channel_invalid_returns_error_without_traceback(pool, caplog):
     client = AsyncMock()
     entity = SimpleNamespace()
     session = TelegramTransportSession(client, disconnect_on_close=False)
@@ -1874,9 +1877,11 @@ async def test_get_forum_topics_channel_invalid_returns_empty_without_traceback(
         ),
         caplog.at_level(logging.INFO, logger="tg_agent.telegram.pool_dialogs"),
     ):
-        result = await pool.get_forum_topics(1)
+        # #1927: ChannelInvalid surfaces as ForumTopicsError, still without a
+        # traceback in the log — the CLI turns it into the stderr reason.
+        with pytest.raises(ForumTopicsError, match="not accessible"):
+            await pool.get_forum_topics(1)
 
-    assert result == []
     assert "get_forum_topics unavailable for channel 1" in caplog.text
     assert "Traceback" not in caplog.text
 
@@ -2329,8 +2334,8 @@ async def test_stats_entity_lookup_quarantines_uncertain_channel():
 async def test_sample_channel_no_client():
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
     collector = Collector(pool, MagicMock(), SchedulerConfig())
-    result = await collector.sample_channel(123)
-    assert result == []
+    with pytest.raises(SampleChannelError):
+        await collector.sample_channel(123)
 
 
 @pytest.mark.anyio
@@ -2340,8 +2345,9 @@ async def test_sample_channel_resolve_entity_fails():
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(client, "+7001")))
     collector = Collector(pool, MagicMock(), SchedulerConfig())
-    result = await collector.sample_channel(123)
-    assert result == []
+    # #1927: a failed read raises instead of reading as an empty channel.
+    with pytest.raises(SampleChannelError, match="Could not resolve channel 123"):
+        await collector.sample_channel(123)
 
 
 @pytest.mark.anyio
@@ -2353,8 +2359,8 @@ async def test_sample_channel_flood_wait():
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(client, "+7001")))
     collector = Collector(pool, MagicMock(), SchedulerConfig())
-    result = await collector.sample_channel(123)
-    assert result == []
+    with pytest.raises(SampleChannelError, match="flood wait"):
+        await collector.sample_channel(123)
 
 
 @pytest.mark.anyio

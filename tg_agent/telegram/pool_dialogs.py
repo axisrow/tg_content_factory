@@ -85,6 +85,13 @@ DIALOG_FETCH_MAX_PASSES = 12
 DIALOG_FETCH_UPSERT_CHUNK = 200
 
 
+class ForumTopicsError(RuntimeError):
+    """A live `dialogs topics` read failed (#1927) — no available account,
+    flood wait, proactive rate limit, or an inaccessible channel. Distinct from
+    an empty read (forum exists, zero topics), which stays ``[]`` so the CLI
+    can fall back to the stored rows and keep "no topics" a valid answer."""
+
+
 class _ChannelEntity(Protocol):
     id: int
     title: str
@@ -2067,16 +2074,20 @@ class DialogsMixin:
         await self._db.repos.dialog_cache.clear_dialogs(phone)
         return outcomes
 
-    async def get_forum_topics(self, channel_id: int) -> list[dict]:
+    async def get_forum_topics(self, channel_id: int, *, prefer: str | None = None) -> list[dict]:
         """Fetch forum topics for a forum-type channel.
 
         Uses entity-first approach: tries get_entity(PeerChannel) directly (fast, 10s timeout).
         Falls back to get_dialogs() only if entity lookup fails with ValueError (cache miss).
+        ``prefer`` is the account tried first while it is free (the CLI ``--phone``).
+
+        Raises `ForumTopicsError` when the live read fails (#1927); an empty list
+        means the read succeeded and the channel genuinely has no topics.
         """
-        result = await self.get_available_client()
+        result = await self.get_available_client(prefer=prefer)
         if result is None:
             logger.warning("get_forum_topics: no available client for channel %d", channel_id)
-            return []
+            raise ForumTopicsError("No available Telegram accounts for the live topics read.")
         session, phone = result
         session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
         try:
@@ -2153,7 +2164,9 @@ class DialogsMixin:
             ]
         except ChannelInvalidError as e:
             logger.info("get_forum_topics unavailable for channel %d: %s", channel_id, e)
-            return []
+            raise ForumTopicsError(
+                f"Channel {channel_id} is not accessible from the connected account (may not be a forum)."
+            ) from e
         except TelegramRateLimitedError as exc:
             logger.info(
                 "get_forum_topics: proactive %s rate limit for channel %d; retry in %.1fs",
@@ -2161,12 +2174,16 @@ class DialogsMixin:
                 channel_id,
                 exc.retry_after_sec,
             )
-            return []
+            raise ForumTopicsError(
+                f"Telegram rate limit ({exc.category}); retry in {exc.retry_after_sec:.0f}s."
+            ) from exc
+        except HandledFloodWaitError as exc:
+            raise ForumTopicsError(f"Telegram flood wait: {exc.info.detail}") from exc
         except Exception as e:
             logger.warning(
                 "get_forum_topics failed for channel %d: %s", channel_id, e, exc_info=True
             )
-            return []
+            raise ForumTopicsError(f"Live forum-topics read failed for channel {channel_id}: {e}") from e
         finally:
             await self.release_client(phone)
 
