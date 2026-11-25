@@ -6,6 +6,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import typer
 
 from tests.helpers import cli_add_channel as _add_channel
 from tests.helpers import cli_ns as _ns
@@ -77,8 +78,11 @@ class TestCLIChannelDeleteNotFound:
     def test_delete_not_found(self, cli_env, capsys):
         from tg_agent.cli.commands.channel import run
 
-        run(_ns(channel_action="delete", identifier="99999"))
-        assert "not found" in capsys.readouterr().out
+        # A missing target is a failure: exit 1, the reason on stderr (#1933).
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(channel_action="delete", identifier="99999"))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 class TestCLIChannelStats:
@@ -149,8 +153,10 @@ class TestCLIChannelStats:
         ):
             from tg_agent.cli.commands.channel import run
 
-            run(_ns(channel_action="stats", identifier="99999", all=False))
-        assert "not found" in capsys.readouterr().out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(channel_action="stats", identifier="99999", all=False))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     @pytest.mark.aiosqlite_serial
     def test_stats_single_channel_found(self, cli_env, capsys):
@@ -260,8 +266,10 @@ class TestCLIChannelRefreshMeta:
         with patch("tg_agent.cli.runtime.init_pool", side_effect=_init_pool):
             from tg_agent.cli.commands.channel import run
 
-            run(_ns(channel_action="refresh-meta", all=False, identifier="99999"))
-        assert "not found" in capsys.readouterr().out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(channel_action="refresh-meta", all=False, identifier="99999"))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     @pytest.mark.aiosqlite_serial
     def test_refresh_meta_single_success(self, cli_env, capsys):
@@ -452,23 +460,25 @@ class TestCLIPipelineEdit:
         with patch("tg_agent.cli.runtime.init_db", side_effect=_pipeline_fake_init_db(db_path)):
             from tg_agent.cli.commands.pipeline import run
 
-            run(
-                _ns(
-                    pipeline_action="edit",
-                    id=999,
-                    name=None,
-                    prompt_template=None,
-                    source=[],
-                    target=[],
-                    llm_model=None,
-                    image_model=None,
-                    publish_mode=None,
-                    generation_backend=None,
-                    interval=None,
-                    active=None,
+            with pytest.raises(typer.Exit) as excinfo:
+                run(
+                    _ns(
+                        pipeline_action="edit",
+                        id=999,
+                        name=None,
+                        prompt_template=None,
+                        source=[],
+                        target=[],
+                        llm_model=None,
+                        image_model=None,
+                        publish_mode=None,
+                        generation_backend=None,
+                        interval=None,
+                        active=None,
+                    )
                 )
-            )
-        assert "not found" in capsys.readouterr().out
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_edit_success(self, tmp_path, capsys):
         db_path = _make_pipeline_db(tmp_path, "edit_ok.db")
@@ -674,8 +684,10 @@ class TestCLIPipelineToggle:
         with patch("tg_agent.cli.runtime.init_db", side_effect=_pipeline_fake_init_db(db_path)):
             from tg_agent.cli.commands.pipeline import run
 
-            run(_ns(pipeline_action="toggle", id=999))
-        assert "not found" in capsys.readouterr().out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(pipeline_action="toggle", id=999))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 class TestCLIPipelineHelpers:

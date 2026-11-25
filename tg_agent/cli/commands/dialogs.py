@@ -1186,13 +1186,12 @@ async def _dialogs_queue(args, db, pool) -> None:
         if not _confirm_or_abort(args, f"Cancel queue command #{args.command_id}"):
             return
         ok = await service.cancel(int(args.command_id))
-        if ok:
-            print(f"Command #{args.command_id} cancelled.")
-        else:
-            print(
+        if not ok:
+            cli_error(
                 f"Command #{args.command_id} not found or not pending "
                 f"(only PENDING commands can be cancelled)."
             )
+        print(f"Command #{args.command_id} cancelled.")
     elif args.queue_action == "clear-pending":
         filt = []
         if args.command_type:

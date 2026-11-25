@@ -923,9 +923,9 @@ class SearchQueryBundle:
         """Перезаписать сохранённый запрос новыми полями."""
         await self.search_queries.update(sq_id, sq)
 
-    async def delete(self, sq_id: int) -> None:
-        """Удалить сохранённый запрос по id."""
-        await self.search_queries.delete(sq_id)
+    async def delete(self, sq_id: int) -> bool:
+        """Удалить сохранённый запрос по id; вернуть, был ли он (#1933)."""
+        return await self.search_queries.delete(sq_id)
 
     async def record_stat(self, query_id: int, match_count: int) -> None:
         """Записать точку статистики запроса (число совпадений за прогон)."""
@@ -1033,9 +1033,9 @@ class PipelineBundle(_AccountReadOps):
         """Включить/выключить пайплайн."""
         await self.content_pipelines.set_active(pipeline_id, active)
 
-    async def delete(self, pipeline_id: int) -> None:
-        """Удалить пайплайн по id (вместе со связями источников/целей)."""
-        await self.content_pipelines.delete(pipeline_id)
+    async def delete(self, pipeline_id: int) -> bool:
+        """Удалить пайплайн по id (вместе со связями источников/целей); вернуть, был ли он (#1933)."""
+        return await self.content_pipelines.delete(pipeline_id)
 
     async def list_sources(self, pipeline_id: int) -> list[PipelineSource]:
         """Каналы-источники пайплайна."""

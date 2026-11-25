@@ -8,6 +8,7 @@ import sqlite3
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import typer
 
 from tests.helpers import cli_ns as _ns
 from tg_agent.cli.commands.pipeline import _parse_target_refs, _preview_text, run
@@ -280,18 +281,22 @@ class TestPipelineList:
 
 class TestPipelineToggle:
     def test_not_found(self, cli_env, capsys):
-
-        run(_ns(pipeline_action="toggle", id=999))
-        assert "not found" in capsys.readouterr().out
+        # A missing target is a failure: exit 1, the reason on stderr (#1933).
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="toggle", id=999))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 class TestPipelineDelete:
-    def test_delete(self, cli_env, capsys):
-
-        run(_ns(pipeline_action="delete", id=1))
-        out = capsys.readouterr().out
-        # The command always prints "Deleted" (no check)
-        assert "Deleted pipeline id=1" in out
+    def test_delete_missing_exits_1(self, cli_env, capsys):
+        # Nothing was deleted: no "Deleted" line, exit 1 (#1933).
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="delete", id=999))
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "Pipeline id=999 not found" in captured.err
+        assert "Deleted" not in captured.out
 
 
 class TestPipelineShow:
@@ -547,9 +552,10 @@ class TestPipelineAddLegacyErrors:
 
 class TestPipelineRefinementSteps:
     def test_not_found(self, cli_env, capsys):
-
-        run(_ns(pipeline_action="refinement-steps", id=999, steps_json=None))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="refinement-steps", id=999, steps_json=None))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

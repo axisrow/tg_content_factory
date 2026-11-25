@@ -21,8 +21,13 @@ import pytest
 import typer
 from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError
 
+from tg_agent.cli.commands import agent, channel, dialogs, photo_loader, ping, scheduler, search_query
+from tg_agent.cli.pipeline import crud
+from tg_agent.cli.pipeline import requests as pipeline_requests
 from tg_agent.config import AppConfig
+from tg_agent.database.bundles import PipelineBundle
 from tg_agent.models import Message
+from tg_agent.services.pipeline_service import PipelineService
 from tg_agent.services.telegram_actions import TelegramActionClientUnavailableError
 
 pytestmark = pytest.mark.aiosqlite_serial
@@ -485,3 +490,169 @@ class TestPhotoLoaderExitCodes:
         ):
             asyncio.run(photo_loader.auto_toggle_impl("config.yaml", job_id=5))
         _assert_exit(excinfo, capsys, "Auto job not found")
+
+
+# ---------------------------------------------------------------------------
+# a missing target is a failure, not a no-op with exit 0 (#1933)
+# ---------------------------------------------------------------------------
+
+
+def _assert_exit_clean(excinfo, capsys, fragment: str) -> None:
+    """Exit 1, the reason on stderr, nothing on stdout."""
+    assert excinfo.value.exit_code == 1
+    captured = capsys.readouterr()
+    assert fragment in captured.err
+    assert captured.out == ""
+
+
+def _pipeline_driver(handler, command):
+    async def _run(db):
+        svc = PipelineService(PipelineBundle.from_database(db))
+        await handler(command, db, AppConfig(), svc)
+
+    return _run
+
+
+class TestMissingTargetExitCodes:
+    """A write or action command aimed at a target that does not exist exits 1 (#1933).
+
+    Written red against the real store: 23 commands were run with an id absent from
+    every table; 21 exited 0 and five printed a success line for a change that never
+    happened. Each driver runs the real ``*_impl`` body over an empty ``cli_db``.
+    """
+
+    @pytest.mark.parametrize(
+        ("fragment", "driver"),
+        [
+            pytest.param(
+                "Search query id=999 not found",
+                lambda db: search_query.get_impl("c", query_id=999),
+                id="search-query get",
+            ),
+            pytest.param(
+                "Search query id=999 not found",
+                lambda db: search_query.edit_impl("c", query_id=999, query="x"),
+                id="search-query edit",
+            ),
+            pytest.param(
+                "Search query id=999 not found",
+                lambda db: search_query.delete_impl("c", query_id=999),
+                id="search-query delete",
+            ),
+            pytest.param(
+                "Tag 'ghost' not found",
+                lambda db: channel.tag_delete_impl(db, name="ghost"),
+                id="channel tag delete",
+            ),
+            pytest.param(
+                "Channel pk=999 not found",
+                lambda db: channel.tag_set_impl(db, pk=999, tags="x"),
+                id="channel tag set",
+            ),
+            pytest.param(
+                "Channel pk=999 not found",
+                lambda db: channel.tag_get_impl(db, pk=999),
+                id="channel tag get",
+            ),
+            pytest.param(
+                "Channel '999' not found",
+                lambda db: channel.delete_impl("c", identifier="999"),
+                id="channel delete",
+            ),
+            pytest.param(
+                "Channel '999' not found",
+                lambda db: channel.toggle_impl("c", identifier="999"),
+                id="channel toggle",
+            ),
+            pytest.param(
+                "Channel '999' not found",
+                lambda db: channel.review_confirm_impl("c", identifier="999"),
+                id="channel review-confirm",
+            ),
+            pytest.param(
+                "Channel '999' not found",
+                lambda db: channel.review_keep_impl("c", identifier="999"),
+                id="channel review-keep",
+            ),
+            pytest.param(
+                "Channel '999' not found",
+                lambda db: channel.stats_impl(
+                    "c", all_channels=False, identifier="999", max_channels=None
+                ),
+                id="channel stats",
+            ),
+            pytest.param(
+                "Channel '999' not found",
+                lambda db: channel._handoff_collect_to_worker(
+                    db, identifier="999", full=False, wait=False
+                ),
+                id="channel collect",
+            ),
+            pytest.param(
+                "Task 999 not found or already completed.",
+                lambda db: scheduler.task_cancel_impl("c", task_id=999),
+                id="scheduler task-cancel",
+            ),
+            pytest.param(
+                "Command #999 not found or not pending",
+                lambda db: dialogs._dialogs_queue(
+                    _ns(queue_action="cancel", command_id=999, yes=True), db, None
+                ),
+                id="dialogs queue cancel",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(crud._pipeline_edit, pipeline_requests.PipelineEditCommand(id=999)),
+                id="pipeline edit",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(crud._pipeline_toggle, pipeline_requests.PipelineToggleCommand(id=999)),
+                id="pipeline toggle",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(crud._pipeline_delete, pipeline_requests.PipelineDeleteCommand(id=999)),
+                id="pipeline delete",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(
+                    crud._pipeline_refinement_steps, pipeline_requests.PipelineRefinementStepsCommand(id=999)
+                ),
+                id="pipeline refinement-steps",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(crud._pipeline_export, pipeline_requests.PipelineExportCommand(id=999)),
+                id="pipeline export",
+            ),
+            pytest.param(
+                "Ping monitor #999 not found",
+                lambda db: ping.delete_impl("c", monitor_id=999),
+                id="ping delete",
+            ),
+            pytest.param(
+                "Тред #999 не найден.",
+                lambda db: agent.thread_rename_impl("c", thread_id=999, title="x"),
+                id="agent thread-rename",
+            ),
+        ],
+    )
+    def test_missing_target_exits_1(self, cli_env, capsys, fragment, driver):
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(driver(cli_env))
+        _assert_exit_clean(excinfo, capsys, fragment)
+
+    def test_photo_batch_cancel_miss(self, capsys):
+        async def fake_run(config_path, body):
+            services = SimpleNamespace(
+                tasks=SimpleNamespace(cancel_item=AsyncMock(return_value=False))
+            )
+            await body(services)
+
+        with pytest.raises(typer.Exit) as excinfo, patch.object(
+            photo_loader, "_run_with_services", new=fake_run
+        ):
+            asyncio.run(photo_loader.batch_cancel_impl("config.yaml", item_id=999))
+        _assert_exit_clean(excinfo, capsys, "not cancelled")

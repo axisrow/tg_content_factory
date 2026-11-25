@@ -23,6 +23,7 @@ from tg_agent.cli import runtime
 from tg_agent.cli.commands.common import (
     _NEG_ID_POSITIONAL,
     apply_startup,
+    cli_error,
     run_async,
 )
 from tg_agent.database.bundles import SearchQueryBundle
@@ -90,8 +91,7 @@ async def get_impl(config_path: str, *, query_id: int) -> None:
         svc = SearchQueryService(SearchQueryBundle.from_database(db))
         sq = await svc.get(query_id)
         if not sq:
-            print(f"Search query id={query_id} not found")
-            return
+            cli_error(f"Search query id={query_id} not found")
         print(f"ID: {sq.id}")
         print(f"Query: {sq.query}")
         print(f"Interval: {sq.interval_minutes}m")
@@ -176,8 +176,7 @@ async def edit_impl(
         svc = SearchQueryService(SearchQueryBundle.from_database(db))
         sq = await svc.get(query_id)
         if not sq:
-            print(f"Search query id={query_id} not found")
-            return
+            cli_error(f"Search query id={query_id} not found")
         notify_val = notify if notify is not None else sq.notify_on_collect
         tstats = track_stats if track_stats is not None else sq.track_stats
         is_fts_val = is_fts if is_fts is not None else sq.is_fts
@@ -229,7 +228,8 @@ async def delete_impl(config_path: str, *, query_id: int) -> None:
     _, db = await runtime.init_db(config_path)
     try:
         svc = SearchQueryService(SearchQueryBundle.from_database(db))
-        await svc.delete(query_id)
+        if not await svc.delete(query_id):
+            cli_error(f"Search query id={query_id} not found")
         print(f"Deleted search query id={query_id}")
     finally:
         await db.close()

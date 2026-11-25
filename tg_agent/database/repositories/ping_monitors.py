@@ -145,9 +145,10 @@ class PingMonitorRepository:
             tuple(params),
         )
 
-    async def delete(self, monitor_id: int) -> None:
-        """Удалить монитор по id."""
+    async def delete(self, monitor_id: int) -> bool:
+        """Удалить монитор по id; вернуть, была ли удалена строка (#1933)."""
         assert self._database is not None, (
             "PingMonitorRepository.delete requires a Database reference"
         )
-        await self._database.execute_write("DELETE FROM ping_monitors WHERE id = ?", (monitor_id,))
+        cur = await self._database.execute_write("DELETE FROM ping_monitors WHERE id = ?", (monitor_id,))
+        return cur.rowcount > 0

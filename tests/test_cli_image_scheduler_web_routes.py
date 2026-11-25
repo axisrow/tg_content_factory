@@ -16,6 +16,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import typer
 
 from tests.helpers import cli_ns as _ns
 from tg_shared.auth import TelegramAuth
@@ -403,15 +404,16 @@ class TestCLISchedulerCommand:
         assert "1 min" in out
 
     def test_task_cancel_not_found(self, cli_env_scheduler, capsys):
-        """task-cancel on missing task prints not-found message."""
+        """task-cancel on a missing task exits 1 with the reason on stderr (#1933)."""
         cli_env, fake_pool = cli_env_scheduler
         fake_pool.clients = {"dummy": MagicMock()}
 
         from tg_agent.cli.commands.scheduler import run
 
-        run(_ns(scheduler_action="task-cancel", task_id=99999))
-        out = capsys.readouterr().out
-        assert "not found" in out or "Task 99999" in out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(scheduler_action="task-cancel", task_id=99999))
+        assert excinfo.value.exit_code == 1
+        assert "Task 99999" in capsys.readouterr().err
 
     def test_clear_pending(self, cli_env_scheduler, capsys):
         """clear-pending prints deleted count."""

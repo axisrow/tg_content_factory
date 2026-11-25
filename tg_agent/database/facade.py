@@ -1445,11 +1445,13 @@ class Database:
         row = await cur.fetchone()
         return dict(row) if row else None
 
-    async def rename_agent_thread(self, thread_id: int, title: str) -> None:
+    async def rename_agent_thread(self, thread_id: int, title: str) -> bool:
+        """Вернуть, была ли найдена нить (#1933)."""
         self._require()
-        await self.execute_write(
+        cur = await self.execute_write(
             "UPDATE agent_threads SET title = ? WHERE id = ?", (title, thread_id)
         )
+        return cur.rowcount > 0
 
     async def delete_agent_thread(self, thread_id: int) -> None:
         self._require()

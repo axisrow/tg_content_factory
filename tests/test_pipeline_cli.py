@@ -5,6 +5,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import typer
 
 from tg_agent.database import Database
 from tg_agent.models import (
@@ -585,25 +586,27 @@ def test_pipeline_edit_not_found(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from tg_agent.cli.commands.pipeline import run
 
-        run(
-            _ns(
-                pipeline_action="edit",
-                id=999,
-                name="Name",
-                prompt_template="prompt",
-                source=None,
-                target=None,
-                llm_model=None,
-                image_model=None,
-                publish_mode=None,
-                generation_backend=None,
-                interval=None,
-                active=None,
+        with pytest.raises(typer.Exit) as excinfo:
+            run(
+                _ns(
+                    pipeline_action="edit",
+                    id=999,
+                    name="Name",
+                    prompt_template="prompt",
+                    source=None,
+                    target=None,
+                    llm_model=None,
+                    image_model=None,
+                    publish_mode=None,
+                    generation_backend=None,
+                    interval=None,
+                    active=None,
+                )
             )
-        )
 
-    out = capsys.readouterr().out
-    assert "not found" in out
+    # A missing target is a failure: exit 1, the reason on stderr (#1933).
+    assert excinfo.value.exit_code == 1
+    assert "not found" in capsys.readouterr().err
 
 
 def test_pipeline_toggle_found(tmp_path, cli_init_patch, capsys):
@@ -651,10 +654,11 @@ def test_pipeline_toggle_not_found(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from tg_agent.cli.commands.pipeline import run
 
-        run(_ns(pipeline_action="toggle", id=999))
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="toggle", id=999))
 
-    out = capsys.readouterr().out
-    assert "not found" in out
+    assert excinfo.value.exit_code == 1
+    assert "not found" in capsys.readouterr().err
 
 
 def test_pipeline_delete(tmp_path, cli_init_patch, capsys):

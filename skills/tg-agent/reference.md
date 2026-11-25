@@ -254,7 +254,10 @@ search-query list | get | add | edit | delete | toggle | run | stats
   normally and exit 0. Branch on the exit code, not on parsing stdout text.
   This holds repo-wide for `messages`/`dialogs`/`account`/`settings`/`provider`/
   `export`/`scheduler`/`filter`/`photo-loader` (and pre-existing `dm`/`export`
-  checks); remaining groups may still print-and-exit-0 — see issue #1486.
+  checks). A command whose target is missing exits 1 in every audited group —
+  `channel`/`search-query`/`pipeline`/`ping`/`agent` included — and a delete or
+  rename that changed nothing says so instead of printing success (#1933); other
+  failures in those groups may still print-and-exit-0 — see issue #1486.
   Known exception: `dialogs react` without `--emoji`/`--clear` still prints
   its usage error to stdout and exits 2.
 - **Flood/throttle errors carry RPC attribution (#1828):** `dialogs

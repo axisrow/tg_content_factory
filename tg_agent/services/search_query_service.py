@@ -110,8 +110,9 @@ class SearchQueryService:
         await self._bundle.update(sq_id, sq)
         return True
 
-    async def delete(self, sq_id: int) -> None:
-        await self._bundle.delete(sq_id)
+    async def delete(self, sq_id: int) -> bool:
+        """Вернуть, был ли удалён запрос (#1933)."""
+        return await self._bundle.delete(sq_id)
 
     async def run_once(self, sq_id: int) -> int | None:
         sq = await self._bundle.get_by_id(sq_id)

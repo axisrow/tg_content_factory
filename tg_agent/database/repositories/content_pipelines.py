@@ -282,12 +282,15 @@ class ContentPipelinesRepository:
             (value, pipeline_id),
         )
 
-    async def delete(self, pipeline_id: int) -> None:
-        """Удалить пайплайн по id (источники/цели уходят каскадом по FK)."""
+    async def delete(self, pipeline_id: int) -> bool:
+        """Удалить пайплайн по id (источники/цели уходят каскадом по FK); вернуть, был ли он (#1933)."""
         assert self._database is not None, (
             "ContentPipelinesRepository.delete requires a Database reference"
         )
-        await self._database.execute_write("DELETE FROM content_pipelines WHERE id = ?", (pipeline_id,))
+        cur = await self._database.execute_write(
+            "DELETE FROM content_pipelines WHERE id = ?", (pipeline_id,)
+        )
+        return cur.rowcount > 0
 
     async def list_sources(self, pipeline_id: int) -> list[PipelineSource]:
         """Каналы-источники пайплайна (`pipeline_sources`), по возрастанию id."""

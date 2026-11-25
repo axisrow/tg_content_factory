@@ -292,8 +292,9 @@ async def items_impl(config_path: str, *, batch_id: int | None = None, limit: in
 async def batch_cancel_impl(config_path: str, *, item_id: int) -> None:
     """Cancel a photo batch item."""
     async def _body(s: _Services) -> None:
-        ok = await s.tasks.cancel_item(item_id)
-        print("Cancelled" if ok else "Not cancelled")
+        if not await s.tasks.cancel_item(item_id):
+            cli_error(f"Photo batch item #{item_id} not cancelled.")
+        print("Cancelled")
     await _run_with_services(config_path, _body)
 
 

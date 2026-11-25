@@ -407,8 +407,9 @@ class PipelineService:
         )
         return self._hydrate_runtime_refs(pipeline, sources, targets)
 
-    async def delete(self, pipeline_id: int) -> None:
-        await self._bundle.delete(pipeline_id)
+    async def delete(self, pipeline_id: int) -> bool:
+        """Вернуть, был ли удалён пайплайн (#1933)."""
+        return await self._bundle.delete(pipeline_id)
 
     async def toggle(self, pipeline_id: int) -> bool:
         pipeline = await self._bundle.get_by_id(pipeline_id)

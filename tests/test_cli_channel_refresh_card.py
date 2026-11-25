@@ -774,8 +774,11 @@ def test_refresh_card_bulk_covers_only_active_channels(cli_env):
 def test_refresh_card_single_channel_not_found(cli_env, capsys):
     db = cli_env
     pool = FakeDirectPool(resolve_by_id={}, meta_by_id={})
-    _run_refresh_card(db, pool, identifier="@ghost")
-    assert "not found" in capsys.readouterr().out
+    # A missing target is a failure: exit 1, the reason on stderr (#1933).
+    with pytest.raises(typer.Exit) as excinfo:
+        _run_refresh_card(db, pool, identifier="@ghost")
+    assert excinfo.value.exit_code == 1
+    assert "not found" in capsys.readouterr().err
 
 
 def test_refresh_card_backfills_created_at_only_when_missing(cli_env):

@@ -104,15 +104,15 @@ async def tag_add_impl(db, *, name: str) -> None:
 
 async def tag_delete_impl(db, *, name: str) -> None:
     """``channel tag delete`` — delete a tag."""
-    await db.repos.channels.delete_tag(name)
+    if not await db.repos.channels.delete_tag(name):
+        cli_error(f"Tag '{name}' not found")
     print(f"Tag '{name}' deleted.")
 
 
 async def tag_set_impl(db, *, pk: int, tags: str) -> None:
     """``channel tag set`` — replace a channel's tags (comma-separated)."""
     if await db.get_channel_by_pk(pk) is None:
-        print(f"Channel pk={pk} not found")
-        return
+        cli_error(f"Channel pk={pk} not found")
     tag_names = [t.strip() for t in tags.split(",") if t.strip()]
     await db.repos.channels.set_channel_tags(pk, tag_names)
     print(f"Tags for channel pk={pk} set to: {', '.join(tag_names)}")
@@ -121,8 +121,7 @@ async def tag_set_impl(db, *, pk: int, tags: str) -> None:
 async def tag_get_impl(db, *, pk: int) -> None:
     """``channel tag get`` — show a channel's tags."""
     if await db.get_channel_by_pk(pk) is None:
-        print(f"Channel pk={pk} not found")
-        return
+        cli_error(f"Channel pk={pk} not found")
     tags = await db.repos.channels.get_channel_tags(pk)
     if not tags:
         print(f"No tags for channel pk={pk}.")
@@ -333,8 +332,7 @@ async def delete_impl(config_path: str, *, identifier: str) -> None:
         channels = await db.get_channels()
         ch = resolve_channel(channels, identifier)
         if not ch:
-            print(f"Channel '{identifier}' not found")
-            return
+            cli_error(f"Channel '{identifier}' not found")
         await db.delete_channel(ch.id)
         print(f"Deleted channel '{ch.title}' (pk={ch.id})")
     finally:
@@ -356,8 +354,7 @@ async def toggle_impl(config_path: str, *, identifier: str) -> None:
             pending = await db.repos.channels.list_pending_approval()
             ch = resolve_channel(pending, identifier)
             if not ch:
-                print(f"Channel '{identifier}' not found")
-                return
+                cli_error(f"Channel '{identifier}' not found")
             await db.repos.channels.approve_channel(
                 ch.id, actor="cli", reason="channel toggle"
             )
@@ -418,8 +415,7 @@ async def review_confirm_impl(config_path: str, *, identifier: str) -> None:
         channels = await db.get_channels()
         ch = resolve_channel(channels, identifier)
         if not ch:
-            print(f"Channel '{identifier}' not found")
-            return
+            cli_error(f"Channel '{identifier}' not found")
         await db.set_channel_active(ch.id, False, origin="human", actor="cli")
         await db.set_channel_type(ch.channel_id, "unavailable")
         await db.repos.channels.clear_channel_review(ch.id)
@@ -435,8 +431,7 @@ async def review_keep_impl(config_path: str, *, identifier: str) -> None:
         channels = await db.get_channels()
         ch = resolve_channel(channels, identifier)
         if not ch:
-            print(f"Channel '{identifier}' not found")
-            return
+            cli_error(f"Channel '{identifier}' not found")
         await db.repos.channels.clear_channel_review(ch.id)
         print(f"KEPT ACTIVE: {ch.title} (pk={ch.id}) — cleared from review")
     finally:
@@ -630,8 +625,7 @@ async def stats_impl(config_path: str, *, all_channels: bool, identifier: str | 
         channels = await db.get_channels()
         ch = resolve_channel(channels, identifier)
         if not ch:
-            print(f"Channel '{identifier}' not found")
-            return
+            cli_error(f"Channel '{identifier}' not found")
         cmd_id = await TelegramCommandService(db).enqueue(
             "channels.collect_stats",
             payload={"channel_pk": ch.id},
@@ -776,8 +770,7 @@ async def refresh_meta_impl(config_path: str, *, all_channels: bool, identifier:
             channels = await db.get_channels()
             ch = resolve_channel(channels, identifier)
             if not ch:
-                print(f"Channel '{identifier}' not found")
-                return
+                cli_error(f"Channel '{identifier}' not found")
             meta = await pool.fetch_channel_meta(ch.channel_id, ch.channel_type)
             if meta:
                 await db.update_channel_full_meta(
@@ -1011,8 +1004,7 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
         elif identifier:
             found = resolve_channel(await db.get_channels(), identifier)
             if not found:
-                print(f"Channel '{identifier}' not found")
-                return
+                cli_error(f"Channel '{identifier}' not found")
             channels = [found]
         else:
             print("Please provide --all or a channel identifier")
@@ -1439,8 +1431,8 @@ _TERMINAL_TASK_STATUSES = (
 async def report_pending_approval(db, identifier: str) -> bool:
     """If *identifier* matches a pending-approval channel, explain why it can't
     be collected and how to approve/reject it (#1701). Returns True when the
-    channel is pending and the caller should stop; call sites print their own
-    "not found" only when this returns False."""
+    channel is pending and the caller should stop; call sites report their own
+    "not found" (#1933) only when this returns False."""
     pending = await db.repos.channels.list_pending_approval()
     ch = resolve_channel(pending, identifier)
     if not ch:
@@ -1471,8 +1463,7 @@ async def _handoff_collect_to_worker(
     if not ch:
         if await report_pending_approval(db, identifier):
             return
-        print(f"Channel '{identifier}' not found")
-        return
+        cli_error(f"Channel '{identifier}' not found")
 
     service = CollectionService(ChannelBundle.from_database(db), None, collection_queue=None)
     result = await service.enqueue_channel_by_pk(ch.id, force=True, full=full)
@@ -1481,8 +1472,7 @@ async def _handoff_collect_to_worker(
         print(f"Канал '{ch.title}' уже стоит в очереди или собирается — новая задача не создана.")
         return
     if result == "not_found":
-        print(f"Channel '{identifier}' not found")
-        return
+        cli_error(f"Channel '{identifier}' not found")
     if result == "filtered":
         print(f"Канал '{ch.title}' отфильтрован; снимите фильтр (`tg-agent filter toggle`).")
         return
@@ -1580,8 +1570,7 @@ async def collect_impl(
         if not ch:
             if await report_pending_approval(db, identifier):
                 return
-            print(f"Channel '{identifier}' not found")
-            return
+            cli_error(f"Channel '{identifier}' not found")
         task_id = await db.create_collection_task(ch.channel_id, ch.title)
         await db.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
         collector = Collector(pool, db, config.scheduler)
