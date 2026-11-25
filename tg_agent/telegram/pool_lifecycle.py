@@ -56,6 +56,44 @@ logger = logging.getLogger(__name__)
 REMOVE_CLIENT_DISCONNECT_TIMEOUT_SEC = 5.0
 
 
+def _reset_stale_time_offset(phone: str, client: object) -> None:
+    """Clear a corrupted Telethon ``time_offset`` before reconnecting (#1873).
+
+    ``MTProtoState.reset()`` — which Telethon runs on its own auto-reconnect —
+    does not touch ``time_offset``, and every pool reconnect path reuses the
+    *same* raw client, so one corrupted offset (a message processed 30-40 s
+    late at the moment of a bad-msg notification sets it to ≈ -40 s; anything
+    ≤ -30 s makes every incoming update get dropped as «very new» — the #556
+    brick) survives disconnect + connect and defeats the watchdog recovery.
+
+    Resetting to 0 = trust the host clock, the state a brand-new client starts
+    in: with a correct clock incoming messages are accepted at once, and a
+    genuinely wrong clock re-syncs on the first bad-msg notification as
+    usual. ``_last_msg_id`` goes too — that is what Telethon itself does
+    whenever ``update_time_offset`` changes the offset.
+
+    Defensive on purpose: a ``RelayTelegramClient``'s ``RelaySender`` has no
+    ``_state`` (the offset lives in the gateway's own pool, which runs this
+    same helper on its real clients), and a Telethon upgrade could rename the
+    attribute chain — then this is a no-op, not a crash.
+    """
+    state = getattr(getattr(client, "_sender", None), "_state", None)
+    if state is None:
+        return
+    offset = getattr(state, "time_offset", 0)
+    if not isinstance(offset, (int, float)) or offset == 0:
+        return
+    logger.warning(
+        "Resetting corrupted Telethon time_offset for %s: %ds → 0 before "
+        "reconnect — a stale offset survives reconnects and bricks the "
+        "connection (#1873)",
+        mask_phone(phone),
+        offset,
+    )
+    state.time_offset = 0  # type: ignore[attr-defined]
+    state._last_msg_id = 0  # type: ignore[attr-defined]
+
+
 class ClientLifecycleMixin:
     """Connection lifecycle, lease acquisition/release, auth, primary selection.
 
@@ -463,11 +501,16 @@ class ClientLifecycleMixin:
         """Attempt to reconnect a disconnected client. Returns True on success."""
         session = cast(TelegramTransportSession | None, self.clients.get(phone))
         if session is None:
+            logger.warning(
+                "Reconnect of %s: no client in the pool (removed or never connected)",
+                mask_phone(phone),
+            )
             return False
         try:
             client = session.raw_client
             if not client.is_connected():
                 logger.info("Reconnecting client for %s", phone)
+                _reset_stale_time_offset(phone, client)
                 await client.connect()
                 await self._catch_up_after_reconnect(phone, client)
             # NB: no warm-flag reset here. A reconnect reuses the *same*
@@ -491,6 +534,10 @@ class ClientLifecycleMixin:
         """
         session = cast(TelegramTransportSession | None, self.clients.get(phone))
         if session is None:
+            logger.warning(
+                "Force reconnect of %s: no client in the pool (removed or never connected)",
+                mask_phone(phone),
+            )
             return False
         try:
             client = session.raw_client
@@ -500,17 +547,25 @@ class ClientLifecycleMixin:
                 )
             except asyncio.TimeoutError:
                 logger.warning("Timeout disconnecting %s during force reconnect", mask_phone(phone))
+            _reset_stale_time_offset(phone, client)
             await client.connect()
             # NB: no warm-flag reset here either. force_reconnect (the #556
             # MTProto-brick recovery) tears down and re-establishes the
             # transport on the *same* session object, so the StringSession
             # entity cache (``session._entities``) survives — numeric
             # PeerChannel resolves keep working without a re-warm (#1043).
+            if not client.is_connected():
+                logger.warning(
+                    "Force reconnect of %s failed: transport did not come back "
+                    "after connect()",
+                    mask_phone(phone),
+                )
+                return False
             if not await client.is_user_authorized():
                 logger.error("Force reconnect of %s: session no longer authorized", mask_phone(phone))
                 return False
             await self._catch_up_after_reconnect(phone, client)
-            return bool(client.is_connected())
+            return True
         except Exception:
             logger.exception("Force reconnect failed for %s", mask_phone(phone))
             return False
@@ -678,6 +733,7 @@ class ClientLifecycleMixin:
         if direct_session is not None and not direct_session.raw_client.is_connected():
             logger.warning("Client for %s disconnected, attempting auto-reconnect", phone)
             try:
+                _reset_stale_time_offset(phone, direct_session.raw_client)
                 await direct_session.raw_client.connect()
                 await self._catch_up_after_reconnect(phone, direct_session.raw_client)
             except Exception:

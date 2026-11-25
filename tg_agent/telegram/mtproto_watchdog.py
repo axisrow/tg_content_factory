@@ -15,6 +15,11 @@ affected client:
   logger names);
 - one :class:`MTProtoSecurityWatchdog` handler sits on the
   ``telethon.tgcf`` root and receives the per-phone children via propagation;
+- the per-phone ``network.mtprotosender`` logger is additionally lifted to
+  INFO and routed here with propagation off (#1873): Telethon logs the
+  clock-offset correction — the brick trigger — at INFO, and gateway.log keeps
+  WARNING+; this handler surfaces it as a WARNING and re-emits the sender's
+  warnings with the phone they lack;
 - ``threshold`` warnings within ``window_sec`` trigger the async
   ``reconnect_cb(phone)`` (scheduled via ``call_soon_threadsafe`` — Telethon
   may log from a non-loop thread), with a per-phone ``cooldown_sec`` guard
@@ -37,6 +42,12 @@ SECURITY_WARNING_SUBSTR = "Security error while unpacking a received message"
 BRICK_DETAIL_SUBSTR = "Too many messages had to be ignored consecutively"
 TGCF_TELETHON_LOGGER_ROOT = "telethon.tgcf"
 _SENDER_LOGGER_SUFFIX = ".network.mtprotosender"
+# Telethon logs its clock re-sync («System clock is wrong, set time offset to
+# %ds», mtprotosender._handle_bad_notification) at INFO — the level gateway.log
+# drops. A corrupted offset is exactly the #556 brick trigger (#1873), so the
+# per-phone sender loggers are lifted to INFO and this substring surfaces as a
+# WARNING through our logger.
+TIME_OFFSET_INFO_SUBSTR = "System clock is wrong, set time offset to"
 
 DEFAULT_THRESHOLD = 3
 DEFAULT_WINDOW_SEC = 60.0
@@ -54,12 +65,16 @@ class MTProtoSecurityWatchdog(logging.Handler):
         window_sec: float = DEFAULT_WINDOW_SEC,
         cooldown_sec: float = DEFAULT_COOLDOWN_SEC,
     ) -> None:
-        super().__init__(level=logging.WARNING)
+        # INFO, not WARNING: the per-phone sender loggers are lifted to INFO so
+        # the clock-offset correction (#1873) reaches this handler; everything
+        # below WARNING that is not that line is dropped inside emit().
+        super().__init__(level=logging.INFO)
         self._reconnect_cb = reconnect_cb
         self._threshold = max(1, int(threshold))
         self._window_sec = float(window_sec)
         self._cooldown_sec = float(cooldown_sec)
         self._slug_to_phone: dict[str, str] = {}
+        self._sender_loggers: dict[str, logging.Logger] = {}
         self._events: dict[str, deque[float]] = defaultdict(deque)
         self._last_reconnect_at: dict[str, float] = {}
         self._reconnect_count: dict[str, int] = defaultdict(int)
@@ -76,6 +91,9 @@ class MTProtoSecurityWatchdog(logging.Handler):
 
     def uninstall(self) -> None:
         logging.getLogger(TGCF_TELETHON_LOGGER_ROOT).removeHandler(self)
+        for sender in self._sender_loggers.values():
+            sender.removeHandler(self)
+        self._sender_loggers.clear()
         self._loop = None
 
     def register_phone(self, phone: str) -> logging.Logger:
@@ -83,12 +101,29 @@ class MTProtoSecurityWatchdog(logging.Handler):
         phone = str(phone)
         slug = text_hash(phone)
         self._slug_to_phone[slug] = phone
+        # Lift the per-phone sender logger to INFO and route it here (#1873):
+        # the clock-offset correction is logged at INFO, below every handler
+        # gateway.log keeps. propagate=False — the same record must not reach
+        # this handler a second time via the telethon.tgcf attachment (that
+        # would double-count toward the brick threshold), and the raw lines
+        # must not flood the root loggers with Telethon's INFO chatter.
+        sender = logging.getLogger(f"{TGCF_TELETHON_LOGGER_ROOT}.{slug}{_SENDER_LOGGER_SUFFIX}")
+        sender.setLevel(logging.INFO)
+        sender.propagate = False
+        if self not in sender.handlers:
+            sender.addHandler(self)
+        self._sender_loggers[slug] = sender
         return logging.getLogger(f"{TGCF_TELETHON_LOGGER_ROOT}.{slug}")
 
     def unregister_phone(self, phone: str) -> None:
         phone = str(phone)
         slug = text_hash(phone)
         self._slug_to_phone.pop(slug, None)
+        sender = self._sender_loggers.pop(slug, None)
+        if sender is not None:
+            sender.removeHandler(self)
+            sender.setLevel(logging.NOTSET)
+            sender.propagate = True
         self._events.pop(phone, None)
         self._last_reconnect_at.pop(phone, None)
 
@@ -103,7 +138,23 @@ class MTProtoSecurityWatchdog(logging.Handler):
             phone = self._phone_for_record(record)
             if phone is None:
                 return
-            if SECURITY_WARNING_SUBSTR not in record.getMessage():
+            message = record.getMessage()
+            if record.levelno < logging.WARNING:
+                # The per-phone sender loggers are INFO-enabled (#1873) so the
+                # clock-offset correction is visible; among their INFO only
+                # that line matters — the rest stays out of the log.
+                if TIME_OFFSET_INFO_SUBSTR in message:
+                    logger.warning(
+                        "Telethon adjusted time offset for %s — %s (a corrupted "
+                        "offset is the #556 brick trigger)",
+                        mask_phone(phone),
+                        message,
+                    )
+                return
+            # Sender records stop propagating (#1873): re-emit their warnings
+            # so gateway.log keeps them, now with the phone they always lacked.
+            self._reemit(phone, record, message)
+            if SECURITY_WARNING_SUBSTR not in message:
                 return
             now = time.monotonic()
             events = self._events[phone]
@@ -125,6 +176,24 @@ class MTProtoSecurityWatchdog(logging.Handler):
             loop.call_soon_threadsafe(self._spawn_reconnect, phone)
         except Exception:
             self.handleError(record)
+
+    def _reemit(self, phone: str, record: logging.LogRecord, message: str) -> None:
+        """Re-emit a WARNING+ per-phone sender record through our logger.
+
+        Only sender-logger records need it (they no longer propagate); records
+        from other telethon children keep their normal path to the root
+        handlers and must not be duplicated. The re-emitted line carries the
+        masked phone the raw Telethon line never had.
+        """
+        if not record.name.endswith(_SENDER_LOGGER_SUFFIX):
+            return
+        logger.log(
+            record.levelno,
+            "[mtproto %s] %s",
+            mask_phone(phone),
+            message,
+            exc_info=record.exc_info,
+        )
 
     def _phone_for_record(self, record: logging.LogRecord) -> str | None:
         name = record.name
