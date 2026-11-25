@@ -19,11 +19,13 @@ from typing import Any, cast
 
 from telethon import TelegramClient, errors
 from telethon_floodgate import (
+    DEFAULT_RPC_OPERATIONS,
     FloodCircuitBreaker,
     ResolveRateLimiter,
     RpcDispatchAdmission,
     RpcDispatchBudget,
     RpcDispatchDecision,
+    RpcDispatchPolicy,
     TelegramRateLimitGate,
     attach_rpc_gate,
 )
@@ -33,6 +35,25 @@ from tg_agent.telegram.outgoing_ceiling import OutgoingRateCeiling
 logger = logging.getLogger(__name__)
 FLOOD_ERRORS = (errors.FloodWaitError, getattr(errors, "FloodPremiumWaitError", errors.FloodWaitError),
                 errors.SlowModeWaitError, errors.FloodTestPhoneWaitError)
+
+# RPC constructors floodgate's DEFAULT_RPC_OPERATIONS has no row for: without
+# one, the dispatch boundary derives the tag "rpc:<ClassName>" and the gate
+# warns into the permissive "default" bucket (#1903). Same gap-fill policy as
+# _GATE_OPERATION_CATEGORIES in backends.py — floodgate stays authoritative
+# (merged UNDER its table, so any future floodgate row wins the lookup), and
+# a row here is dropped once a floodgate release registers the constructor.
+# test_relayed_comment_send_costs_a_deliberate_gate_category (test_relay_comment_to.py)
+# pins both the row and its pricing.
+_RPC_OPERATION_TAGS: dict[str, str] = {
+    # Resolves the linked discussion group before a comment send: a one-shot
+    # lookup of the same shape as floodgate's registered ReadDiscussionRequest
+    # ("rpc_default" — floodgate normalizes its own "default" rows to this
+    # registered boundary tag).
+    "GetDiscussionMessageRequest": "rpc_default",
+}
+
+#: The policy every owned guard runs: floodgate's table plus the gap rows.
+GAP_RPC_POLICY = RpcDispatchPolicy(operations={**_RPC_OPERATION_TAGS, **DEFAULT_RPC_OPERATIONS})
 
 
 @dataclass
@@ -166,8 +187,9 @@ class OwnedRpcGuard:
             budgets.append(RpcDispatchBudget(ceiling.peek_batch, ceiling.commit_batch,
                                               name="process_ceiling", mode="wait",
                                               max_batch_size=ceiling.max_calls))
-        self.handle = attach_rpc_gate(client, pool._rate_limit_gate, phone, budgets=budgets,
-                                      on_decision=self._decision, on_result=self._result, gate_wait_max_sec=5.0)
+        self.handle = attach_rpc_gate(client, pool._rate_limit_gate, phone, policy=GAP_RPC_POLICY,
+                                      budgets=budgets, on_decision=self._decision, on_result=self._result,
+                                      gate_wait_max_sec=5.0)
 
     def _spawn(self, coroutine) -> asyncio.Task:
         task = asyncio.create_task(coroutine, name="telegram-rpc-state")

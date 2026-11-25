@@ -311,10 +311,16 @@ async def _dialogs_send(args, db, pool) -> None:
         return
     recipient = args.recipient
     text = args.text
+    comment_to = getattr(args, "comment_to", None)
 
+    headline = (
+        f"Comment on post #{comment_to} in {recipient} from {phone}:"
+        if comment_to is not None
+        else f"Send message from {phone} to {recipient}:"
+    )
     if not _confirm_or_abort(
         args,
-        f"Send message from {phone} to {recipient}:",
+        headline,
         f"  {text[:200]}{'...' if len(text) > 200 else ''}",
     ):
         return
@@ -325,6 +331,7 @@ async def _dialogs_send(args, db, pool) -> None:
             recipient=recipient,
             text=text,
             silent=bool(getattr(args, "silent", False)),
+            comment_to=comment_to,
             source="dialogs_send",
         )
         message_id = f" message_id={result.message_id}" if result.message_id is not None else ""
@@ -1414,10 +1421,15 @@ def dialogs_send(
     text: str = typer.Argument(..., help="Message text to send"),
     phone: str | None = typer.Option(None, "--phone", help="Account phone (default: primary account)"),
     silent: bool = typer.Option(False, "--silent", help="Send without a notification sound"),
+    comment_to: int | None = typer.Option(
+        None, "--comment-to", help="Comment on this channel post ID instead of sending a plain message"
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Send a direct message to a user or chat."""
-    _run_dialogs(ctx, "send", recipient=recipient, text=text, phone=phone, silent=silent, yes=yes)
+    _run_dialogs(
+        ctx, "send", recipient=recipient, text=text, phone=phone, silent=silent, comment_to=comment_to, yes=yes
+    )
 
 
 @dialogs_app.command("forward", context_settings=_NEG_ID_POSITIONAL)
