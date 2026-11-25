@@ -35,6 +35,7 @@ from tg_agent.telegram.reactions import (
     normalize_reaction_users_limit,
     parse_reactions_json,
 )
+from tg_agent.telegram.utils import chat_id_and_type
 from tg_agent.utils.text_safety import csv_safe_cell
 
 
@@ -105,7 +106,9 @@ def _print_messages(messages: list[Message], fmt: str, total: int, has_more: boo
 
 def _print_live_messages(collected: list, reaction_users_by_message_id: dict[int, str] | None = None) -> None:
     reaction_users_by_message_id = reaction_users_by_message_id or {}
-    for msg in reversed(collected):
+    # Chronological display regardless of fetch direction (#1872): the default
+    # read fetches newest-first, the --after-id cursor oldest-first.
+    for msg in sorted(collected, key=lambda m: m.id):
         date_str = str(msg.date)[:19] if msg.date else "—"
         sender = ""
         if msg.sender:
@@ -129,6 +132,54 @@ def _print_live_messages(collected: list, reaction_users_by_message_id: dict[int
         print()
 
 
+def _live_sender_name(msg) -> str | None:
+    sender = getattr(msg, "sender", None)
+    if sender is None:
+        return None
+    username = getattr(sender, "username", None)
+    if username:
+        return f"@{username}"
+    name = " ".join(
+        part
+        for part in (getattr(sender, "first_name", None), getattr(sender, "last_name", None))
+        if part
+    ).strip()
+    return name or getattr(sender, "title", None) or None
+
+
+def _print_live_json(collected: list, *, has_more: bool, chat_type: str) -> None:
+    """Live JSON envelope (#1872): records + the forward cursor.
+
+    ``newest_id`` is the next ``--after-id`` for the loop read → process →
+    repeat; ``has_more`` says the page was truncated at ``--limit``.
+    """
+    items = []
+    for msg in sorted(collected, key=lambda m: m.id):
+        out = bool(getattr(msg, "out", False))
+        if out:
+            addressed = False
+        elif chat_type == "dm":
+            # A private chat: every incoming message is addressed to the account.
+            addressed = True
+        else:
+            # Groups/chats: Telegram marks @mentions and replies to the
+            # account's messages with the `mentioned` flag.
+            addressed = bool(getattr(msg, "mentioned", False))
+        items.append({
+            "id": msg.id,
+            "out": out,
+            "addressed": addressed,
+            "date": msg.date.isoformat() if msg.date else None,
+            "sender": _live_sender_name(msg),
+            "text": msg.text if msg.text else None,
+        })
+    print(json.dumps({
+        "messages": items,
+        "newest_id": items[-1]["id"] if items else None,
+        "has_more": has_more,
+    }, ensure_ascii=False, indent=2))
+
+
 async def messages_read_impl(
     config_path: str,
     *,
@@ -141,6 +192,7 @@ async def messages_read_impl(
     date_to: str | None = None,
     topic_id: int | None = None,
     offset_id: int | None = None,
+    after_id: int | None = None,
     include_reaction_users: bool = False,
     reaction_users_limit: int | None = None,
     output_format: str = "text",
@@ -151,6 +203,11 @@ async def messages_read_impl(
     below and the Typer ``messages read`` command (``tg_agent/cli/typer_commands.py``).
     Driven through the single async-bridge ``run_async`` by its callers, so
     there is no local ``asyncio.run`` in the migrated path.
+
+    ``--after-id`` is the live forward cursor (#1872): only messages with id
+    strictly above it, oldest first — the mirror of the backwards
+    ``--offset-id``. JSON live output is an envelope with ``newest_id`` and
+    ``has_more`` so callers loop ``read --after-id <newest_id>``.
     """
     config, db = await runtime.init_db(config_path)
     pool = None
@@ -158,15 +215,37 @@ async def messages_read_impl(
         include_reaction_users = bool(include_reaction_users)
         reaction_users_limit = normalize_reaction_users_limit(reaction_users_limit)
 
-        if live and output_format != "text":
-            # Live output has no json/csv printer (#1598) — refuse the mix
-            # instead of silently ignoring --format.
+        # Flag-mix guards (#1872): refuse incompatible combinations instead
+        # of silently ignoring a flag. Live JSON is supported; live CSV is not.
+        if not live and after_id is not None:
             print(
-                f"--format {output_format} is not supported with --live "
-                "(live output is text-only). Drop --format or drop --live.",
+                "--after-id works only with --live "
+                "(DB reads are already newest-first). Drop --after-id or add --live.",
                 file=sys.stderr,
             )
             raise typer.Exit(1)
+        if live:
+            if output_format == "csv":
+                print(
+                    "--format csv is not supported with --live "
+                    "(live supports text and JSON). Drop --format or drop --live.",
+                    file=sys.stderr,
+                )
+                raise typer.Exit(1)
+            if after_id is not None and offset_id:
+                print(
+                    "--after-id (read forward from an id) and --offset-id "
+                    "(read history before an id) are mutually exclusive.",
+                    file=sys.stderr,
+                )
+                raise typer.Exit(1)
+            if output_format == "json" and include_reaction_users:
+                print(
+                    "--include-reaction-users is not supported with --format json "
+                    "(works with live text output).",
+                    file=sys.stderr,
+                )
+                raise typer.Exit(1)
 
         if live:
             # Live mode: read from Telegram
@@ -201,9 +280,16 @@ async def messages_read_impl(
                         f"Cannot resolve '{identifier}' via account {phone}: {exc}. "
                         "The dialog may live on another account — retry with --phone."
                     )
-                kwargs = {"limit": limit}
+                # limit+1 detects has_more exactly (#1872): a page that
+                # fetched its full window plus one more message is truncated.
+                kwargs = {"limit": limit + 1}
                 if offset_id:
                     kwargs["offset_id"] = offset_id
+                if after_id is not None:
+                    # Forward cursor: ids strictly above after_id, oldest
+                    # first — Telethon's forward-pagination form.
+                    kwargs["min_id"] = after_id
+                    kwargs["reverse"] = True
                 if topic_id:
                     kwargs["reply_to"] = topic_id
                 collected: list = []
@@ -221,6 +307,15 @@ async def messages_read_impl(
                     )
                 except HandledFloodWaitError as exc:
                     cli_error(f"Flood wait: {exc.info.detail}")
+                has_more = len(collected) > limit
+                collected = collected[:limit]
+                if output_format == "json":
+                    _, live_chat_type = chat_id_and_type(entity)
+                    if not collected:
+                        _print_live_json([], has_more=False, chat_type=live_chat_type)
+                    else:
+                        _print_live_json(collected, has_more=has_more, chat_type=live_chat_type)
+                    return
                 if not collected:
                     print("No messages found.")
                     return
@@ -437,6 +532,7 @@ def run(args: argparse.Namespace) -> None:
             date_to=getattr(args, "date_to", None),
             topic_id=getattr(args, "topic_id", None),
             offset_id=getattr(args, "offset_id", None),
+            after_id=getattr(args, "after_id", None),
             include_reaction_users=getattr(args, "include_reaction_users", False),
             reaction_users_limit=getattr(args, "reaction_users_limit", None),
             output_format=getattr(args, "output_format", "text"),
@@ -467,6 +563,11 @@ def messages_read(
     offset_id: int | None = typer.Option(
         None, "--offset-id", help="Read messages before this message ID (--live)"
     ),
+    after_id: int | None = typer.Option(
+        None,
+        "--after-id",
+        help="Forward cursor (--live): only messages with id > N, oldest first",
+    ),
     include_reaction_users: bool = typer.Option(
         False, "--include-reaction-users", help="Show users who reacted (live mode only)"
     ),
@@ -494,6 +595,7 @@ def messages_read(
             date_to=date_to,
             topic_id=topic_id,
             offset_id=offset_id,
+            after_id=after_id,
             include_reaction_users=include_reaction_users,
             reaction_users_limit=reaction_users_limit,
             output_format=output_format.value,

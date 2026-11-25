@@ -363,6 +363,7 @@ def test_messages_read_defaults():
         date_to=None,
         topic_id=None,
         offset_id=None,
+        after_id=None,
         include_reaction_users=False,
         reaction_users_limit=20,
         output_format="text",
@@ -400,6 +401,22 @@ def test_messages_read_live_flags():
     assert kwargs["phone"] == "+15550001111"
     assert kwargs["offset_id"] == 900
     assert kwargs["topic_id"] == 7
+
+
+def test_messages_read_after_id_flag():
+    """--after-id passes through as the forward cursor (#1872)."""
+    mock_impl = MagicMock()
+    with (
+        patch("tg_agent.cli.typer_commands.messages_cmd.messages_read_impl", mock_impl),
+        patch("tg_agent.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app, ["messages", "read", "100", "--live", "--after-id", "900"]
+        )
+    assert result.exit_code == 0
+    kwargs = mock_impl.call_args.kwargs
+    assert kwargs["after_id"] == 900
+    assert kwargs["offset_id"] is None
 
 
 def test_messages_read_date_filters_db_mode():
