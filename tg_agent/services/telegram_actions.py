@@ -568,6 +568,7 @@ class TelegramActionService:
         silent: bool = False,
         comment_to: int | None = None,
         parse_mode: str | None = None,
+        verify_reply_to: bool = False,
         source: str = "unknown",
         ref: str | None = None,
     ) -> SendMessageResult:
@@ -589,10 +590,29 @@ class TelegramActionService:
         entities: list | None = None
         if parse_mode is not None:
             text, entities = parse_outgoing_text(text, parse_mode)
+        # verify_reply_to (#1940): read the reply target before sending —
+        # for ids that did not come from this process's own sends.
         async with self._client(phone=phone, native=True) as (client, acquired_phone):
             entity = await self._resolve_entity(
                 client, phone=acquired_phone, identifier=recipient, is_user=is_user
             )
+            if verify_reply_to and reply_to is not None:
+                # Telegram drops an unknown reply id without a word and delivers
+                # a plain message, so the target is read before anything goes
+                # out. Callers answering a message they have just posted
+                # themselves (the seeding publisher) skip the read.
+                try:
+                    await self._fetch_message_with_flood_wait(
+                        client,
+                        acquired_phone,
+                        entity,
+                        int(reply_to),
+                        operation_prefix="telegram_action_send_reply_to",
+                    )
+                except TelegramActionMessageNotFoundError as exc:
+                    raise TelegramActionMessageNotFoundError(
+                        f"Reply target #{reply_to} not found in {recipient}: nothing was sent."
+                    ) from exc
             options: dict[str, Any] = {"link_preview": link_preview}
             if reply_to is not None:
                 options["reply_to"] = reply_to

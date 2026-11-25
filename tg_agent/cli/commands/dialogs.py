@@ -375,6 +375,7 @@ async def _dialogs_send(args, db, pool) -> None:
             comment_to=comment_to,
             reply_to=reply_to,
             parse_mode=getattr(args, "parse_mode", None),
+            verify_reply_to=True,
             source="dialogs_send",
         )
         message_id = f" message_id={result.message_id}" if result.message_id is not None else ""
@@ -385,6 +386,9 @@ async def _dialogs_send(args, db, pool) -> None:
         # Curated attribution (#1828): refusing RPC + delivery verdict + retry
         # deadline, so a resolve-side flood never reads as a send failure.
         cli_error(f"Send refused: {describe_rpc_failure(exc)}")
+    except TelegramActionMessageNotFoundError as exc:
+        # The reply target is not in the chat: nothing was sent (#1940).
+        cli_error(str(exc))
     except Exception as exc:
         cli_error(f"Error sending message: {exc}")
 
