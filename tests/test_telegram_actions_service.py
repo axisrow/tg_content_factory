@@ -306,6 +306,34 @@ async def test_send_message_comment_to_passes_through_to_the_client():
 
 
 @pytest.mark.anyio
+async def test_send_message_comment_to_records_the_discussion_group_chat(db):
+    """#1903 review: the registry row joins the deletion store by chat, and a
+    comment's id lives in the linked discussion group's id space — the row
+    must carry the group's chat (message.peer_id), not the recipient channel,
+    while recipient keeps the channel context."""
+    from telethon import types
+
+    channel_peer = types.PeerChannel(channel_id=555)
+    group_peer = types.PeerChannel(channel_id=2000)
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value=channel_peer)
+    client.get_input_entity = AsyncMock(return_value=channel_peer)
+    client.send_message = AsyncMock(
+        return_value=SimpleNamespace(id=777, peer_id=group_peer)
+    )
+    pool = _pool_with_client(client)
+
+    await TelegramActionService(pool, db=db).send_message(
+        phone="+1", recipient="@chat", text="nice", comment_to=42, source="dialogs_send"
+    )
+
+    rows = await db.execute_fetchall(
+        "SELECT chat_id, chat_type, recipient FROM sent_messages"
+    )
+    assert [tuple(row) for row in rows] == [(-1000000002000, "channel", "@chat")]
+
+
+@pytest.mark.anyio
 async def test_edit_message_disables_link_preview_by_default():
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value="entity")

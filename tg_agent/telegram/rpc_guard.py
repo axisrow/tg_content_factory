@@ -39,11 +39,12 @@ FLOOD_ERRORS = (errors.FloodWaitError, getattr(errors, "FloodPremiumWaitError", 
 # RPC constructors floodgate's DEFAULT_RPC_OPERATIONS has no row for: without
 # one, the dispatch boundary derives the tag "rpc:<ClassName>" and the gate
 # warns into the permissive "default" bucket (#1903). Same gap-fill policy as
-# _GATE_OPERATION_CATEGORIES in backends.py — floodgate stays authoritative,
+# _GATE_OPERATION_CATEGORIES in backends.py — floodgate stays authoritative
+# (merged UNDER its table, so any future floodgate row wins the lookup), and
 # a row here is dropped once a floodgate release registers the constructor.
 # test_relayed_comment_send_costs_a_deliberate_gate_category (test_relay_comment_to.py)
 # pins both the row and its pricing.
-_RPC_OPERATION_CATEGORIES: dict[str, str] = {
+_RPC_OPERATION_TAGS: dict[str, str] = {
     # Resolves the linked discussion group before a comment send: a one-shot
     # lookup of the same shape as floodgate's registered ReadDiscussionRequest
     # ("rpc_default" — floodgate normalizes its own "default" rows to this
@@ -52,7 +53,7 @@ _RPC_OPERATION_CATEGORIES: dict[str, str] = {
 }
 
 #: The policy every owned guard runs: floodgate's table plus the gap rows.
-GAP_RPC_POLICY = RpcDispatchPolicy(operations={**DEFAULT_RPC_OPERATIONS, **_RPC_OPERATION_CATEGORIES})
+GAP_RPC_POLICY = RpcDispatchPolicy(operations={**_RPC_OPERATION_TAGS, **DEFAULT_RPC_OPERATIONS})
 
 
 @dataclass

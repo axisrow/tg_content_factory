@@ -579,10 +579,19 @@ class TelegramActionService:
                 options["comment_to"] = comment_to
             message = await client.send_message(entity, text, **options)
             message_id = getattr(message, "id", None)
+            # A comment physically lands in the linked discussion group, so the
+            # registry row must carry the group's chat: its id space owns the
+            # message id and the deletion joins match on it (#1903 review).
+            # recipient/text keep the channel context the caller asked for.
+            registry_entity = (
+                message.peer_id
+                if comment_to is not None and getattr(message, "peer_id", None) is not None
+                else entity
+            )
             await record_send(
                 self._db,
                 phone=acquired_phone,
-                entity=entity,
+                entity=registry_entity,
                 recipient=recipient,
                 message_ids=[message_id] if message_id is not None else [],
                 text=text,
