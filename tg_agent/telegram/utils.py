@@ -16,7 +16,13 @@ def chat_id_and_type(entity: Any) -> tuple[int | None, str]:
     account-global, so those rows carry NULL to join on exactly.
     """
     from telethon import utils
+    from telethon.tl.types import InputPeerSelf
 
+    if isinstance(entity, InputPeerSelf):
+        # Saved Messages: the session hands out the id-less self peer for the
+        # account's own id, so there is nothing to cast — and a DM row stores
+        # NULL for the chat anyway (#1936).
+        return None, "dm"
     marked = int(utils.get_peer_id(entity))
     if marked >= 0:
         return None, "dm"
