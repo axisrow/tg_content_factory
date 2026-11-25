@@ -982,9 +982,10 @@ class TestAccountLeasePoolCoverage:
         )
         db.get_accounts = AsyncMock(return_value=[acc])
         pool = AccountLeasePool(db, set())
-        status, retry, earliest = await pool.snapshot_stats_availability({"+1"})
+        status, retry, earliest, rows = await pool.snapshot_stats_availability({"+1"})
         assert status == "all_flooded"
         assert retry is not None
+        assert rows and rows[0][0] == "+1" and rows[0][2] == "account-wide"
 
 
 

@@ -45,7 +45,40 @@ class AccountLeasePool:
         return await repo.list_active_family_floods(now=now)
 
     @staticmethod
+    def _account_block_sources(
+        account: Account,
+        family_floods: dict[str, dict[str, datetime]],
+        now: datetime,
+        allow_families: frozenset[str],
+        block_families: frozenset[str] | None = None,
+    ) -> tuple[datetime | None, str]:
+        """The rule of :meth:`_blocked_until` plus WHAT blocks, for diagnostics (#1847).
+
+        One computation for both the pick/verdict and the per-account detail
+        rows: the ruler cannot drift between what blocks an account and what
+        the diagnostics say blocks it (#1879 lesson).
+        """
+        if block_families is None:
+            block_families = frozenset(family_floods.get(account.phone, {})) - allow_families
+        deadlines: list[datetime] = []
+        sources: list[str] = []
+        generic = normalize_utc(account.flood_wait_until)
+        if generic is not None and generic > now:
+            deadlines.append(generic)
+            sources.append("account-wide")
+        for family, until in sorted((family_floods.get(account.phone, {})).items()):
+            if family not in block_families:
+                continue
+            deadline = normalize_utc(until)
+            if deadline is not None and deadline > now:
+                deadlines.append(deadline)
+                sources.append(f"family: {family}")
+        blocked_until = max((until for until in deadlines if until is not None), default=None)
+        return blocked_until, ", ".join(sources) or "unknown"
+
+    @classmethod
     def _blocked_until(
+        cls,
         account: Account,
         family_floods: dict[str, dict[str, datetime]],
         now: datetime,
@@ -66,17 +99,9 @@ class AccountLeasePool:
         ``lookup_capable_phone_count``. ``block_families`` wins when both are
         given.
         """
-        deadlines = [normalize_utc(account.flood_wait_until)]
-        floods = family_floods.get(account.phone, {})
-        if block_families is None:
-            # The default ruler: every family outside ``allow_families`` blocks.
-            block_families = frozenset(floods) - allow_families
-        deadlines += [
-            normalize_utc(until)
-            for family, until in floods.items()
-            if family in block_families
-        ]
-        return max((until for until in deadlines if until is not None and until > now), default=None)
+        return cls._account_block_sources(
+            account, family_floods, now, allow_families, block_families
+        )[0]
 
     async def acquire_available(
         self,
@@ -215,29 +240,35 @@ class AccountLeasePool:
         *,
         allow_families: frozenset[str] = frozenset(),
         block_families: frozenset[str] | None = None,
-    ) -> tuple[str, int | None, datetime | None]:
+    ) -> tuple[str, int | None, datetime | None, tuple[tuple[str, datetime, str], ...]]:
         """Whether some connected account is free now, else when the first frees up.
 
         Judged by the pick's own rule (:meth:`_blocked_until`), with the same
         ``allow_families`` the matching pick uses (#1879) — or the same
         ``block_families`` for the lookup-retry pick and its report (#1889).
+        The fourth element carries per-account detail rows
+        (phone, blocked_until, sources) for diagnostics (#1847).
         """
         now = datetime.now(timezone.utc)
         accounts = await self.get_connected_accounts(connected_phones)
         if not accounts:
-            return "no_connected_active", None, None
+            return "no_connected_active", None, None, ()
 
         family_floods = await self._family_floods(self._db, now)
         deadlines: list[datetime] = []
+        rows: list[tuple[str, datetime, str]] = []
         for account in accounts:
-            until = self._blocked_until(account, family_floods, now, allow_families, block_families)
+            until, sources = self._account_block_sources(
+                account, family_floods, now, allow_families, block_families
+            )
             if until is None:
-                return "available", None, None
+                return "available", None, None, ()
             deadlines.append(until)
+            rows.append((account.phone, until, sources))
 
         earliest = min(deadlines)
         retry_after_sec = max(1, int((earliest - now).total_seconds()))
-        return "all_flooded", retry_after_sec, earliest
+        return "all_flooded", retry_after_sec, earliest, tuple(rows)
 
     async def _get_account(self, phone: str) -> Account | None:
         return await self.get_account(phone, active_only=True)

@@ -132,6 +132,8 @@ class StatsClientAvailability:
     state: str  # "available" | "all_flooded" | "no_connected_active"
     retry_after_sec: int | None = None
     next_available_at_utc: datetime | None = None
+    # Per-account (phone, blocked_until, sources) rows when all_flooded (#1847).
+    accounts: tuple[tuple[str, datetime, str], ...] = ()
 
 
 class ClientPool(

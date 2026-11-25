@@ -1080,7 +1080,7 @@ class TestClientPoolGetStatsAvail:
         pool.clients = {"+1": MagicMock()}
         pool._lease_pool = MagicMock()
         pool._lease_pool.snapshot_stats_availability = AsyncMock(
-            return_value=("available", None, None)
+            return_value=("available", None, None, ())
         )
         result = await pool.get_stats_availability()
         assert result.state == "available"

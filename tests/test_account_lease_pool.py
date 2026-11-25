@@ -364,13 +364,16 @@ async def test_availability_agrees_with_the_pick_under_family_floods(db):
     pool = AccountLeasePool(db, set())
     connected = {"+70051", "+70052"}
 
-    state, retry_after_sec, earliest = await pool.snapshot_stats_availability(connected)
+    state, retry_after_sec, earliest, rows = await pool.snapshot_stats_availability(connected)
     assert state == "all_flooded"
     assert earliest is not None and abs((earliest - (now + timedelta(hours=1))).total_seconds()) < 5
     assert retry_after_sec is not None and 3500 < retry_after_sec <= 3600
+    # Per-account detail (#1847): both rows name the family that blocks them.
+    assert {row[0] for row in rows} == {"+70051", "+70052"}
+    assert all("family: resolve" in row[2] for row in rows)
 
     allowed = await pool.snapshot_stats_availability(connected, allow_families=frozenset({"resolve"}))
-    assert allowed == ("available", None, None)
+    assert allowed == ("available", None, None, ())
 
 
 @pytest.mark.anyio
@@ -412,7 +415,7 @@ async def test_availability_agrees_with_the_pick_under_mixed_family_floods(db):
     pool = AccountLeasePool(db, set())
     connected = {"+70071", "+70072"}
 
-    state, retry_after_sec, earliest = await pool.snapshot_stats_availability(
+    state, retry_after_sec, earliest, _rows = await pool.snapshot_stats_availability(
         connected, block_families=LOOKUP_FAMILIES
     )
     assert (state, retry_after_sec, earliest) == ("available", None, None)
@@ -420,7 +423,7 @@ async def test_availability_agrees_with_the_pick_under_mixed_family_floods(db):
     # Every account genuinely unable to look up: the report stays all_flooded,
     # and the unrelated family's deadline must not enter the estimate.
     await db.repos.accounts.set_family_flood("+70072", "resolve", now + timedelta(minutes=30))
-    state, retry_after_sec, earliest = await pool.snapshot_stats_availability(
+    state, retry_after_sec, earliest, _rows = await pool.snapshot_stats_availability(
         connected, block_families=LOOKUP_FAMILIES
     )
     assert state == "all_flooded"

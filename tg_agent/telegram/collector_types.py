@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -113,13 +113,36 @@ class NoActiveCollectionClientsError(RuntimeError):
     """Raised when there are no active connected clients for message collection."""
 
 
+def format_flooded_accounts(
+    accounts: Iterable[tuple[str, datetime, str]] | None,
+) -> str:
+    """Per-account flood windows for the pool-exhausted errors (#1847).
+
+    ``accounts`` is (phone, blocked_until, sources) rows — sources names what
+    blocks the account ("account-wide", "family: <name>", "unknown"). Empty
+    input renders as "" so callers can append unconditionally.
+    """
+    if not accounts:
+        return ""
+    lines = ["Per-account flood windows (#1847):"]
+    for phone, until, sources in accounts:
+        lines.append(f"  {phone}: until {until.isoformat()} ({sources})")
+    return "\n" + "\n".join(lines)
+
+
 class AllStatsClientsFloodedError(RuntimeError):
     """Raised when all active connected clients are in flood-wait."""
 
-    def __init__(self, retry_after_sec: int, next_available_at: datetime):
+    def __init__(
+        self,
+        retry_after_sec: int,
+        next_available_at: datetime,
+        accounts: Iterable[tuple[str, datetime, str]] | None = None,
+    ):
         super().__init__(
             "All active clients are flood-waited until "
             f"{next_available_at.isoformat()} (retry in {retry_after_sec}s)"
+            + format_flooded_accounts(accounts)
         )
         self.retry_after_sec = retry_after_sec
         self.next_available_at = next_available_at
@@ -128,10 +151,16 @@ class AllStatsClientsFloodedError(RuntimeError):
 class AllCollectionClientsFloodedError(RuntimeError):
     """Raised when all active connected clients are in flood-wait."""
 
-    def __init__(self, retry_after_sec: int, next_available_at: datetime):
+    def __init__(
+        self,
+        retry_after_sec: int,
+        next_available_at: datetime,
+        accounts: Iterable[tuple[str, datetime, str]] | None = None,
+    ):
         super().__init__(
             "All active clients are flood-waited until "
             f"{next_available_at.isoformat()} (retry in {retry_after_sec}s)"
+            + format_flooded_accounts(accounts)
         )
         self.retry_after_sec = retry_after_sec
         self.next_available_at = next_available_at

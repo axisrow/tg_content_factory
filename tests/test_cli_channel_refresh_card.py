@@ -876,12 +876,13 @@ async def test_direct_pool_single_owner_flood_falls_back_to_review(real_pool_har
     monkeypatch.setattr(harness.pool, "get_client_by_phone", AsyncMock(return_value=None))
     monkeypatch.setattr(
         harness.pool._lease_pool, "snapshot_stats_availability",
-        AsyncMock(return_value=("all_flooded", 300, datetime.now(timezone.utc))),
+        AsyncMock(return_value=("all_flooded", 300, datetime.now(timezone.utc), ())),
     )
 
     def _availability(state: str):
         return AsyncMock(return_value=SimpleNamespace(
             state=state, retry_after_sec=300, next_available_at_utc=datetime.now(timezone.utc),
+            accounts=(),
         ))
 
     monkeypatch.setattr(harness.pool, "get_stats_availability", _availability("available"))

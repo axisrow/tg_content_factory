@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 # The fastest a warm attempt for one account repeats after a failure (#1867):
 # the housekeeping cadence. Status polls must not pace account connects.
 _WARM_RETRY_FLOOR_SEC = 30.0
+# Space the startup account connects out (#1847): every session starting at
+# once is the reconnect storm the restart-FloodWait incident points at. The
+# delay waits INSIDE each connect task, so start() itself never blocks.
+GATEWAY_CONNECT_STAGGER_SEC = 2.0
 
 
 class LiveTelegramAccess:
@@ -51,18 +55,24 @@ class LiveTelegramAccess:
 
     async def start(self) -> None:
         now = time.monotonic()
+        slot = 0  # stagger slot per SPAWNED connect: connected/skipped accounts take none
         for project, account in await self.store.subscriptions():
             name = f"gateway-account-connect:{account}"
             if self.account_status(account)["connected"] or any(task.get_name() == name for task in self._startup):
                 continue
             if self._warm_retry_at.get(account, 0.0) > now:
                 continue
-            task = asyncio.create_task(self._warm(project, account), name=name)
+            task = asyncio.create_task(
+                self._warm(project, account, delay=slot * GATEWAY_CONNECT_STAGGER_SEC), name=name
+            )
+            slot += 1
             self._startup.add(task)
             task.add_done_callback(self._startup.discard)
 
-    async def _warm(self, project: str, account: str) -> None:
+    async def _warm(self, project: str, account: str, *, delay: float = 0.0) -> None:
         try:
+            if delay > 0:
+                await asyncio.sleep(delay)
             await self.connection(project, account)
         except TelegramRateLimitedError as exc:
             # The gate refused the warm RPC before dispatch ("retry in ~Ns") —
@@ -121,7 +131,11 @@ class LiveTelegramAccess:
         return {"connected": session is not None and session.raw_client.is_connected(),
                 "resolve_backoff_remaining_sec": (self._pool.get_resolve_username_backoff_remaining_sec(account)
                                                    if self._pool is not None else 0),
-                "warming": self._pool.is_warming() if self._pool is not None else False}
+                "warming": self._pool.is_warming() if self._pool is not None else False,
+                # Which request earned the account-wide flood, while this
+                # process still remembers it (#1847; family floods carry their
+                # RPC class durably in account_family_floods).
+                "flood_cause": self._pool.flood_cause(account) if self._pool is not None else None}
 
     async def persist_flood_guards(self) -> None:
         """Save the shared pool's flood-guard state and channel keys (best-effort; housekeeping calls it)."""

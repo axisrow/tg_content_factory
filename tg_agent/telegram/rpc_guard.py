@@ -342,7 +342,11 @@ class OwnedRpcGuard:
             if pending.get(key) == deadline:
                 pending.pop(key, None)
         else:
-            await self.pool.report_flood(self.phone, seconds)
+            # Account-wide (write-family) flood: name the request that earned
+            # it — the in-memory cause feeds the diagnostics (#1847).
+            await self.pool.report_flood(
+                self.phone, seconds, rpc=member.rpc, operation=member.operation
+            )
             accounts = self.pool._rpc_account_deadlines
             accounts[self.phone] = max(accounts.get(self.phone) or deadline, deadline)
             pending = getattr(self.pool, "_rpc_pending_account_deadlines", {})
