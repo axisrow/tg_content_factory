@@ -423,6 +423,47 @@ async def test_an_owner_username_refusal_rotates_the_relayed_collector():
     assert 40 <= pool.get_resolve_username_backoff_remaining_sec(PHONE) <= 42
 
 
+async def test_a_nested_resolve_flood_keeps_its_rpc_attribution_across_the_relay():
+    """#1828: the owner's rpc gate names the constructor a server flood refused;
+    the rebuilt client-side FloodWaitError carries the same curated facts, and
+    an old owner without them still rebuilds a plain flood."""
+    def flood_on_send(request):
+        if isinstance(request, functions.messages.SendMessageRequest):
+            flood = errors.FloodWaitError(request=request, capture=3600)
+            flood.rpc = "SendMessageRequest"
+            flood.source = "telegram"
+            raise flood
+        return _state()
+
+    async with running({PHONE: FakeOwnerClient(flood_on_send)}) as (_, connection):
+        client = await _client(connection)
+        with pytest.raises(errors.FloodWaitError) as raised:
+            await client(functions.messages.SendMessageRequest(
+                peer=types.InputPeerUser(42, 42), message="hi", random_id=1,
+            ))
+    assert raised.value.seconds == 3600
+    assert getattr(raised.value, "rpc", None) == "SendMessageRequest"
+    assert getattr(raised.value, "source", None) == "telegram"
+
+    resolve_flood = errors.FloodWaitError(None, capture=60)
+    resolve_flood.rpc = "ResolveUsernameRequest"
+    resolve_flood.source = "telegram"
+    rebuilt = relay.rebuild_error(
+        relay.error_payload(resolve_flood),
+        functions.contacts.ResolveUsernameRequest(username="somechan"),
+    )
+    assert isinstance(rebuilt, errors.FloodWaitError)
+    assert getattr(rebuilt, "rpc", None) == "ResolveUsernameRequest"
+    assert getattr(relay.rebuild_error(relay.error_payload(
+        errors.FloodWaitError(None, capture=5))), "rpc", None) is None
+    # the wider flood family (slow mode) carries the facts the same way
+    slow_mode = errors.SlowModeWaitError(request=None, capture=30)
+    slow_mode.rpc = "SendMessageRequest"
+    slow_mode.source = "telegram"
+    assert getattr(relay.rebuild_error(relay.error_payload(slow_mode), None),
+                   "rpc", None) == "SendMessageRequest"
+
+
 def test_entity_rows_read_sqlite_sessions_with_text_phones(tmp_path):
     session = SQLiteSession(str(tmp_path / "owner"))
     try:

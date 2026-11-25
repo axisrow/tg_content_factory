@@ -13,7 +13,7 @@ from collections import Counter
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
@@ -21,12 +21,15 @@ from telethon import TelegramClient, errors
 from telethon_floodgate import (
     DEFAULT_RPC_OPERATIONS,
     FloodCircuitBreaker,
+    HandledFloodWaitError,
     ResolveRateLimiter,
     RpcDispatchAdmission,
     RpcDispatchBudget,
     RpcDispatchDecision,
     RpcDispatchPolicy,
+    TelegramRateLimitedError,
     TelegramRateLimitGate,
+    TelegramRpcDeferredError,
     attach_rpc_gate,
 )
 
@@ -63,6 +66,9 @@ class RpcOperation:
     confirmed: int = 0
     active: bool = True
     tracked: bool = False
+    # RPC constructor names actually dispatched under this operation — the
+    # only attribution a cancelled/timeout exception still carries (#1828).
+    dispatched_rpcs: list[str] = field(default_factory=list)
 
     @property
     def delivery_state(self) -> str:
@@ -108,8 +114,60 @@ def diagnostic_fields(exc: BaseException, *, current: RpcOperation | None = None
         if isinstance(value, str):
             result[target] = value
     if current is not None and (current.tracked or result):
+        # A cancellation or timeout carries no RPC of its own: name the one
+        # this operation dispatched, so "delivery uncertain" stays attributable.
+        if current.dispatched_rpcs and "rpc" not in result:
+            result["rpc"] = current.dispatched_rpcs[-1]
         result.update(outer_operation=current.operation, delivery_state=current.delivery_state)
     return result
+
+
+_DELIVERY_TEXT = {
+    "not_sent": "not dispatched",
+    "partial": "partially dispatched",
+    "uncertain": "delivery uncertain",
+}
+
+
+def describe_rpc_failure(exc: BaseException) -> str:
+    """One curated receipt line for a throttled or flood-refused RPC (#1828).
+
+    Composed only from whitelisted dispatch facts — the refusing RPC, the
+    outer operation, the delivery verdict and the retry deadline; never
+    request arguments or exception text. Errors without guard metadata
+    (old receipts, foreign call sites) still render a plain reason.
+    """
+    fields = diagnostic_fields(exc)
+    if isinstance(exc, HandledFloodWaitError):
+        # The wrap carries its own curated copy: a receipt saved without the
+        # context stamp still renders the RPC and the delivery verdict.
+        for name in ("rpc", "delivery_state"):
+            value = getattr(exc.info, name, None)
+            if isinstance(value, str) and value and name not in fields:
+                fields[name] = value
+    if isinstance(exc, TelegramRpcDeferredError):
+        reason = f"local throttling by {exc.budget}"
+        deadline = f"; retry in {max(0, int(exc.retry_after_sec))}s"
+    elif isinstance(exc, TelegramRateLimitedError):
+        reason = "refused by the local flood guard"
+        deadline = f"; retry in {max(0, int(exc.retry_after_sec))}s"
+    elif isinstance(exc, HandledFloodWaitError):
+        reason = "Telegram FloodWait"
+        deadline = (f"; retry in {exc.info.wait_seconds}s "
+                    f"(at {exc.info.next_available_at_utc.isoformat()} UTC)")
+    else:
+        # Foreign exception types: name the class, never the message text.
+        reason, deadline = type(exc).__name__, ""
+    parts = [reason]
+    rpc = fields.get("rpc") or getattr(exc, "rpc", None)
+    if isinstance(rpc, str):
+        parts.append(f"rpc={rpc}")
+    if fields.get("outer_operation"):
+        parts.append(f"operation={fields['outer_operation']}")
+    delivery = fields.get("delivery_state")
+    if isinstance(delivery, str) and delivery:
+        parts.append(_DELIVERY_TEXT.get(delivery, delivery))
+    return ", ".join(parts) + deadline
 
 
 def has_rpc_guard(client: Any) -> bool:
@@ -286,6 +344,7 @@ class OwnedRpcGuard:
             current.tracked = True
         if current is not None and current.active and decision.dispatched and not decision.read_only:
             current.writes += 1
+            current.dispatched_rpcs.append(decision.rpc)
 
     def _result(self, member: RpcDispatchAdmission, exception: BaseException | None) -> None:
         breaker = getattr(self.pool, "_flood_breaker", None)

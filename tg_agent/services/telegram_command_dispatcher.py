@@ -289,6 +289,12 @@ class TelegramCommandDispatcher(
                     "phone": exc.info.phone,
                     "wait_seconds": exc.info.wait_seconds,
                     "next_available_at_utc": exc.info.next_available_at_utc.isoformat(),
+                    # RPC attribution (#1828): which constructor refused and
+                    # whether the write was dispatched at all. Optional keys —
+                    # old receipts without them stay readable.
+                    "rpc": exc.info.rpc,
+                    "source": exc.info.source,
+                    "delivery_state": exc.info.delivery_state,
                 },
                 payload=command.payload,
                 run_after=run_after,
