@@ -37,6 +37,10 @@ RELAYED = {
     ("commands/account.py", "info_impl"),
     ("commands/search.py", "search_impl"),
     ("commands/messages.py", "messages_read_impl"),
+    # messages wait --chat (#1871): blocking long-poll; on the relay path the
+    # events are pushed by the owner's wait.messages op, without a daemon the
+    # command holds its own connection — either way one process, one session.
+    ("commands/messages.py", "messages_wait_incoming_impl"),
     ("commands/photo_loader.py", "_run_with_services"),
     ("commands/test.py", "_run_tg_pool_init_step"),
     ("commands/channel.py", "refresh_types_impl"),

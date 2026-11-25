@@ -617,7 +617,9 @@ async def test_wait_messages_pushes_matches_and_detaches_on_cancel():
         handler = await _attached_handler(owner_client)
 
         await handler(_wait_event(-100123, 7, "привет"))
-        await asyncio.wait_for(first_push.wait(), 2)
+        # asyncio.timeout form: the #1840/#1850 unreleased-waiter hang class.
+        async with asyncio.timeout(2):
+            await first_push.wait()
         # A foreign chat and an own outgoing message must not push.
         await handler(_wait_event(-100999, 8, "чужой"))
         await handler(_wait_event(-100123, 9, "своё", out=True))
