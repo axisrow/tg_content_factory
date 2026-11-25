@@ -15,6 +15,7 @@ import csv
 import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -45,8 +46,8 @@ def _make_coro(value):
 
 
 class TestPrintMessages:
-    def _make_msg(self, **overrides) -> Message:
-        defaults = dict(
+    def _make_msg(self, **overrides: Any) -> Message:
+        defaults: dict[str, Any] = dict(
             id=1,
             channel_id=100,
             message_id=500,
@@ -113,6 +114,73 @@ class TestPrintMessages:
         out = capsys.readouterr().out
         assert '"date":' in out
         assert "2025-06-15" in out
+
+    def test_json_format_carries_the_stored_sender(self, capsys):
+        """#1914: a group message's author is in the store — JSON must carry it."""
+        msgs = [
+            self._make_msg(
+                sender_id=4242,
+                sender_name="Jane Doe",
+                sender_username="janedoe",
+                sender_kind="user",
+            )
+        ]
+        _print_messages(msgs, "json", total=1)
+        out = capsys.readouterr().out
+        assert '"sender_id": 4242' in out
+        assert '"sender": "@janedoe"' in out
+        assert '"sender_name": "Jane Doe"' in out
+        assert '"sender_username": "janedoe"' in out
+        assert '"sender_kind": "user"' in out
+
+    def test_json_format_sender_keys_present_when_the_store_has_none(self, capsys):
+        """#1914: rows without an author keep the keys (null) — consumers can rely on them."""
+        _print_messages([self._make_msg()], "json", total=1)
+        out = capsys.readouterr().out
+        assert '"sender_id": null' in out
+        assert '"sender_name": null' in out
+        assert '"sender_kind": null' in out
+
+    def test_csv_format_appends_sender_columns(self, capsys):
+        """#1914: sender columns come last — the existing columns keep their positions."""
+        msgs = [
+            self._make_msg(
+                sender_id=4242,
+                sender_name="Jane Doe",
+                sender_username="janedoe",
+                sender_kind="user",
+            )
+        ]
+        _print_messages(msgs, "csv", total=1)
+        header, row = capsys.readouterr().out.splitlines()[:2]
+        columns = header.split(",")
+        assert columns[:3] == ["id", "channel_id", "message_id"]
+        assert columns[-4:] == ["sender_id", "sender_name", "sender_username", "sender_kind"]
+        assert row.endswith(",4242,Jane Doe,janedoe,user")
+
+    def test_text_format_names_a_group_message_author(self, capsys):
+        """#1914: a group message shows who wrote it."""
+        msgs = [
+            self._make_msg(
+                sender_id=4242,
+                sender_name="Jane Doe",
+                sender_username="@janedoe",
+                sender_kind="user",
+            )
+        ]
+        _print_messages(msgs, "text", total=1)
+        out = capsys.readouterr().out
+        assert "#500 sender=Jane Doe @janedoe" in out
+
+    def test_text_format_keeps_a_channel_s_own_posts_unlabelled(self, capsys):
+        """#1914: the sender of a channel post is the channel itself — not news."""
+        own_post = self._make_msg(sender_id=100, sender_name="The Channel", sender_kind="channel")
+        anonymous = self._make_msg(message_id=501, sender_kind="anonymous_admin")
+        _print_messages([own_post, anonymous], "text", total=2)
+        out = capsys.readouterr().out
+        assert "#500" in out
+        assert "#501" in out
+        assert "sender=" not in out
 
     def test_csv_format(self, capsys):
         msgs = [self._make_msg()]
@@ -2002,8 +2070,10 @@ class TestMessagesReadLiveMode:
         assert "live reacted" in out
         assert "reactions: 👍 5" in out
         assert "reaction users: 👍 @ivan" in out
-        assert client.await_args.args[0].id == 10
-        assert client.await_args.args[0].limit == 10
+        await_args = client.await_args
+        assert await_args is not None
+        assert await_args.args[0].id == 10
+        assert await_args.args[0].limit == 10
 
 
 # ---------------------------------------------------------------------------

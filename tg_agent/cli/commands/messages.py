@@ -48,6 +48,23 @@ def _format_topic(msg: Message) -> str:
     return f"topic={msg.topic_id}"
 
 
+def _sender_ref(msg: Message) -> str | None:
+    """``@username`` or name — the live envelope's ``sender`` shape (#1872, #1914)."""
+    handle = (msg.sender_username or "").lstrip("@")
+    return f"@{handle}" if handle else msg.sender_name
+
+
+def _sender_label(msg: Message) -> str:
+    """`` sender=Name @username`` unless the author is the channel itself (#1914)."""
+    if msg.sender_kind == "channel" and msg.sender_id == msg.channel_id:
+        return ""
+    name = msg.sender_name or (str(msg.sender_id) if msg.sender_id is not None else "")
+    if not name:
+        return ""
+    handle = (msg.sender_username or "").lstrip("@")
+    return f" sender={name}{' @' + handle if handle else ''}"
+
+
 def _print_messages(messages: list[Message], fmt: str, total: int, has_more: bool = False) -> None:
     if fmt == "json":
         items = []
@@ -63,6 +80,11 @@ def _print_messages(messages: list[Message], fmt: str, total: int, has_more: boo
                 "views": msg.views,
                 "forwards": msg.forwards,
                 "reactions": parse_reactions_json(msg.reactions_json),
+                "sender": _sender_ref(msg),
+                "sender_id": msg.sender_id,
+                "sender_name": msg.sender_name,
+                "sender_username": msg.sender_username,
+                "sender_kind": msg.sender_kind,
             })
         print(json.dumps(items, ensure_ascii=False, indent=2))
     elif fmt == "csv":
@@ -70,7 +92,8 @@ def _print_messages(messages: list[Message], fmt: str, total: int, has_more: boo
         writer = csv.writer(buf)
         writer.writerow(
             ["id", "channel_id", "message_id", "date", "text",
-             "topic_id", "topic_title", "views", "forwards", "reactions"]
+             "topic_id", "topic_title", "views", "forwards", "reactions",
+             "sender_id", "sender_name", "sender_username", "sender_kind"]
         )
         for msg in messages:
             writer.writerow([
@@ -81,6 +104,10 @@ def _print_messages(messages: list[Message], fmt: str, total: int, has_more: boo
                 csv_safe_cell(msg.topic_title or ""),
                 msg.views, msg.forwards,
                 format_reactions_json(msg.reactions_json),
+                msg.sender_id,
+                csv_safe_cell(msg.sender_name or ""),
+                csv_safe_cell(msg.sender_username or ""),
+                msg.sender_kind or "",
             ])
         print(buf.getvalue(), end="")
     else:
@@ -94,7 +121,7 @@ def _print_messages(messages: list[Message], fmt: str, total: int, has_more: boo
             if len(text) > 200:
                 preview += "..."
             reactions = format_reactions_json(msg.reactions_json)
-            fields = [f"#{msg.message_id}"]
+            fields = [f"#{msg.message_id}{_sender_label(msg)}"]
             if msg.topic_id is not None:
                 fields.append(_format_topic(msg))
             if msg.views:
