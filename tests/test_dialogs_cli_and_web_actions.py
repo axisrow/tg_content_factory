@@ -119,11 +119,27 @@ class TestCliList:
             _run_cli("list", pool, cli_db, {"phone": "+000"})
         assert "not connected" in capsys.readouterr().err
 
-    def test_list_no_dialogs(self, cli_db, capsys):
+    def test_list_without_a_cache_names_the_fix(self, cli_db, capsys):
+        """#1923: empty means the cache was never built — not that the account has no dialogs."""
         pool, _ = _mock_pool()
         with patch(_SVC_DIALOGS, new_callable=AsyncMock, return_value=[]):
+            with pytest.raises(typer.Exit) as excinfo:
+                _run_cli("list", pool, cli_db, {"phone": _PHONE})
+        assert excinfo.value.exit_code == 1
+        err = capsys.readouterr().err
+        assert f"No cached dialogs for {_PHONE}" in err
+        assert f"dialogs refresh --phone {_PHONE}" in err
+
+    def test_list_states_the_cache_snapshot_date(self, cli_db, capsys):
+        """#1923: the rows are a cached snapshot — the output says how old it is."""
+        pool, _ = _mock_pool()
+        asyncio.run(cli_db.repos.dialog_cache.replace_dialogs(_PHONE, _FAKE_DIALOGS))
+        with patch(_SVC_DIALOGS, new_callable=AsyncMock, return_value=_FAKE_DIALOGS):
             _run_cli("list", pool, cli_db, {"phone": _PHONE})
-        assert "No dialogs found." in capsys.readouterr().out
+        out = capsys.readouterr().out
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        assert f"Cached dialogs for {_PHONE}: 2, snapshot of {today}" in out
+        assert "My Channel" in out
 
     def test_list_with_dialogs(self, cli_db, capsys):
         pool, _ = _mock_pool()
@@ -581,6 +597,20 @@ class TestCliParticipants:
         assert "Bob" in out
         assert "Total: 2" in out
 
+    def test_participants_full_page_is_not_a_total(self, cli_db, capsys):
+        """#1923: a page that filled the limit says nothing about the chat's size."""
+        pool, client = _mock_pool()
+        client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        page = [SimpleNamespace(id=i, first_name=f"P{i}", last_name=None, username=None) for i in range(3)]
+        client.get_participants = AsyncMock(return_value=page)
+        _run_cli("participants", pool, cli_db, {
+            "phone": _PHONE, "chat_id": "@ch", "limit": 3, "search": "",
+        })
+        out = capsys.readouterr().out
+        assert "Total:" not in out
+        assert "Showing 3 participants (--limit 3 reached" in out
+
     def test_participants_empty(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
@@ -649,6 +679,25 @@ class TestCliRead:
         out = capsys.readouterr().out
         assert "hello there" in out
         assert "Total: 1 messages" in out
+
+    def test_read_full_page_is_not_a_total(self, cli_db, capsys):
+        """#1923: `Total` is the chat's count — a page that filled the limit is not it."""
+        import datetime as dt
+
+        page = [
+            SimpleNamespace(
+                id=i, sender_id=42, out=False, date=dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc),
+                text=f"m{i}", media=None, reply_to=None, forward=None, sender=None,
+            )
+            for i in range(3)
+        ]
+        pool, _ = self._client_with_history(page)
+        _run_cli("read", pool, cli_db, {
+            "phone": _PHONE, "chat_id": "@ch", "limit": 3, "offset_id": 0, "format": "text",
+        })
+        out = capsys.readouterr().out
+        assert "Total:" not in out
+        assert "Read: 3 messages" in out
 
     def test_read_json_format(self, cli_db, capsys):
         import datetime as dt

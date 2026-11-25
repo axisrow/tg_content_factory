@@ -114,7 +114,7 @@ class TestMyTelegramCommand:
         assert "Yes" in out
 
     def test_list_no_dialogs(self, cli_env_with_pool, capsys):
-        """Test dialogs list when no dialogs found."""
+        """No cached dialogs is an error naming the fix (#1923), not an empty list."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {"+70001112233": AsyncMock()}
 
@@ -125,10 +125,13 @@ class TestMyTelegramCommand:
         ):
             from tg_agent.cli.commands.dialogs import run
 
-            run(_ns(dialogs_action="list", phone="+70001112233"))
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(dialogs_action="list", phone="+70001112233"))
 
-        out = capsys.readouterr().out
-        assert "No dialogs found" in out
+        assert excinfo.value.exit_code == 1
+        err = capsys.readouterr().err
+        assert "No cached dialogs for +70001112233" in err
+        assert "dialogs refresh --phone +70001112233" in err
 
     def test_list_uses_first_account_by_default(self, cli_env_with_pool, capsys):
         """Test dialogs list uses first available account when phone not specified."""
@@ -145,7 +148,9 @@ class TestMyTelegramCommand:
         ) as mock_get:
             from tg_agent.cli.commands.dialogs import run
 
-            run(_ns(dialogs_action="list", phone=None))
+            # No cached dialogs exits 1 (#1923); the pick is what this test pins.
+            with pytest.raises(typer.Exit):
+                run(_ns(dialogs_action="list", phone=None))
 
         # Should use first account alphabetically
         mock_get.assert_awaited_once_with("+70001112233")
