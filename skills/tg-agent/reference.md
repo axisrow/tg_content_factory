@@ -617,6 +617,16 @@ image generate | models | providers | generated
 provider list | add | delete | probe | refresh | test-all
 debug logs | memory | timing
 test all | read | write | telegram | benchmark
+test-db build                            # fixture test DB from committed seeds (#1770)
+# test-db: assembles <dir of database.path>/test/tg_search_test.db from
+# tests/fixtures/test_db_seed/*.jsonl — sanitized exports of public channel
+# @prog_ai + public chat @vAIbecoding (>=1000 messages; identifier placeholders
+# per rule #1453, data prepared in #1794). When the real DB is absent the
+# runtime switches there automatically and logs a "test mode is on" warning;
+# the schema is the production one (schema.py + migrations, FTS included) and
+# last_collected_id continues from the fixture. TGCF_DISABLE_TEST_DB_FALLBACK=1
+# (exact value) restores the previous behavior: no fixture, no warning.
+# Repeated startups reuse the built file; no live collection ever runs.
 stop | restart [--force]
 daemon status                            # read-only: is the project daemon up, whose is it (#1714)
 serve [--web-pass PASS] [--no-worker]   # legacy web panel (deprecated); needs the optional tg-webui package, exits 1 with an install hint without it

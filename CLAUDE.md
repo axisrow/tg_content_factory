@@ -130,6 +130,7 @@ python -m tg_agent.main key set|clear|status   # machine-level SESSION_ENCRYPTIO
 python -m tg_agent.main scheduler start|trigger|status|stop|job-toggle|set-interval|task-cancel|clear-pending|queue-pause|queue-resume
 python -m tg_agent.main notification setup|status|delete|test|dry-run|set-account
 python -m tg_agent.main test all|read|write|telegram|benchmark
+python -m tg_agent.main test-db build   # fixture test DB from committed seeds (#1770); the runtime auto-switches to it when the real DB is absent (warning "test mode is on"; TGCF_DISABLE_TEST_DB_FALLBACK=1 opts out)
 
 python -m tg_agent.main stop|restart   # restart = stop + run the worker daemon; --force = provenance escape hatch
 python -m tg_agent.main daemon status  # read-only daemon provenance check (up/down, PID, store, executable; #1714)
