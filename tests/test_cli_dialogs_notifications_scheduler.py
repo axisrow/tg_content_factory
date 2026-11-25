@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1002,6 +1003,20 @@ class TestSchedulerCommandRW:
 
 class TestServeCommand:
     """Tests for serve CLI command."""
+
+    @pytest.fixture(autouse=True)
+    def isolate_pid_file_candidates(self, monkeypatch):
+        """serve tests never probe the real machine's PID files (#1925).
+
+        The #1698 sibling-daemon check enumerates the checkout's real
+        PID-file candidates, so these tests failed on any machine with the
+        worker daemon up. Same isolation as
+        test_cli_serve_commands.isolate_pid_file_candidates.
+        """
+        monkeypatch.setattr(
+            "tg_agent.cli.process_control.pid_file_candidates",
+            lambda config_path: [Path("/tmp/test.pid")],
+        )
 
     def test_serve_exits_without_password(self, capsys):
         """Test serve exits when no password is configured."""
