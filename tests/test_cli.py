@@ -500,10 +500,13 @@ class TestCLIFilter:
         assert rows[0]["cnt"] == 1  # ch2 messages untouched
 
     def test_hard_delete_requires_dev_mode(self, cli_env, capsys):
+        """A refusal is a failure: exit 1, the reason on stderr (#1955)."""
         from tg_agent.cli.commands.filter import run
 
-        run(_ns(filter_action="hard-delete", pks=None, yes=True))
-        assert "dev" in capsys.readouterr().out.lower()
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(filter_action="hard-delete", pks=None, yes=True))
+        assert excinfo.value.exit_code == 1
+        assert "developer mode" in capsys.readouterr().err
 
     def test_hard_delete_removes_channel(self, cli_env, capsys):
         asyncio.run(cli_env.set_setting("agent_dev_mode_enabled", "1"))

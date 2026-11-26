@@ -1106,6 +1106,7 @@ class TestFilterPurge:
         svc.purge_channels_by_pks = AsyncMock(return_value=result)
 
         db = MagicMock()
+        db.get_channel_by_pk = AsyncMock(return_value=Channel(id=1, channel_id=100, title="A"))
         db.close = AsyncMock()
 
         with patch("tg_agent.cli.commands.filter.runtime.init_db", side_effect=_make_coro((None, db))), \
@@ -1123,10 +1124,12 @@ class TestFilterPurge:
         db.close = AsyncMock()
 
         with patch("tg_agent.cli.commands.filter.runtime.init_db", side_effect=_make_coro((None, db))):
-            run(cli_ns(filter_action="purge", pks="abc"))
+            # A token that is not a pk refuses the whole list (#1955).
+            with pytest.raises(typer.Exit) as excinfo:
+                run(cli_ns(filter_action="purge", pks="abc"))
 
-        out = capsys.readouterr().out
-        assert "No valid PKs" in out
+        assert excinfo.value.exit_code == 1
+        assert "Invalid pk(s) in --pks: abc" in capsys.readouterr().err
 
     def test_purge_all_filtered(self, capsys):
         from tg_agent.cli.commands.filter import run
@@ -1157,10 +1160,12 @@ class TestFilterHardDelete:
         db.close = AsyncMock()
 
         with patch("tg_agent.cli.commands.filter.runtime.init_db", side_effect=_make_coro((None, db))):
-            run(cli_ns(filter_action="hard-delete"))
+            # A refusal is a failure, not a printed note (#1955).
+            with pytest.raises(typer.Exit) as excinfo:
+                run(cli_ns(filter_action="hard-delete"))
 
-        out = capsys.readouterr().out
-        assert "developer mode" in out
+        assert excinfo.value.exit_code == 1
+        assert "developer mode" in capsys.readouterr().err
 
     def test_hard_delete_no_filtered(self, capsys):
         from tg_agent.cli.commands.filter import run
@@ -1183,6 +1188,7 @@ class TestFilterHardDelete:
 
         db = MagicMock()
         db.get_setting = AsyncMock(return_value="1")
+        db.get_channel_by_pk = AsyncMock(return_value=Channel(id=1, channel_id=100, title="A"))
         db.close = AsyncMock()
 
         with patch("tg_agent.cli.commands.filter.runtime.init_db", side_effect=_make_coro((None, db))), \
@@ -1202,6 +1208,7 @@ class TestFilterHardDelete:
 
         db = MagicMock()
         db.get_setting = AsyncMock(return_value="1")
+        db.get_channel_by_pk = AsyncMock(return_value=Channel(id=1, channel_id=100, title="A"))
         db.close = AsyncMock()
 
         with patch("tg_agent.cli.commands.filter.runtime.init_db", side_effect=_make_coro((None, db))), \
@@ -1217,9 +1224,9 @@ class TestFilterPurgeMessages:
         from tg_agent.cli.commands.filter import run
 
         db = MagicMock()
-        db.get_channels = AsyncMock(return_value=[
-            Channel(id=1, channel_id=100, title="TestCh"),
-        ])
+        db.get_channel_by_channel_id = AsyncMock(
+            return_value=Channel(id=1, channel_id=100, title="TestCh")
+        )
         db.close = AsyncMock()
 
         with patch("tg_agent.cli.commands.filter.runtime.init_db", side_effect=_make_coro((None, db))), \
@@ -1233,9 +1240,9 @@ class TestFilterPurgeMessages:
         from tg_agent.cli.commands.filter import run
 
         db = MagicMock()
-        db.get_channels = AsyncMock(return_value=[
-            Channel(id=1, channel_id=100, title="TestCh"),
-        ])
+        db.get_channel_by_channel_id = AsyncMock(
+            return_value=Channel(id=1, channel_id=100, title="TestCh")
+        )
         db.delete_messages_for_channel = AsyncMock(return_value=42)
         db.close = AsyncMock()
 
@@ -1250,15 +1257,18 @@ class TestFilterPurgeMessages:
         from tg_agent.cli.commands.filter import run
 
         db = MagicMock()
-        db.get_channels = AsyncMock(return_value=[])
+        db.get_channel_by_channel_id = AsyncMock(return_value=None)
         db.delete_messages_for_channel = AsyncMock(return_value=0)
         db.close = AsyncMock()
 
         with patch("tg_agent.cli.commands.filter.runtime.init_db", side_effect=_make_coro((None, db))):
-            run(cli_ns(filter_action="purge-messages", channel_id=999, yes=True))
+            # Nothing to delete for a channel the store does not hold (#1955).
+            with pytest.raises(typer.Exit) as excinfo:
+                run(cli_ns(filter_action="purge-messages", channel_id=999, yes=True))
 
-        out = capsys.readouterr().out
-        assert "999" in out
+        assert excinfo.value.exit_code == 1
+        assert "Channel 999 not found" in capsys.readouterr().err
+        db.delete_messages_for_channel.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

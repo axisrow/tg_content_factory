@@ -266,6 +266,10 @@ search-query list | get | add | edit | delete | toggle | run | stats
   same way — a bad node spec, an invalid regex, a missing required option — and
   `pipeline bulk-approve|bulk-reject` exits 1 whenever a requested run was left
   undone (the summary line stays on stdout, the skipped ids go to stderr).
+  The destructive `filter` commands check the whole request first: a pk or a
+  channel id the store does not hold, or a `--pks` token that is not a number,
+  exits 1 before any prompt or deletion, and a channel that failed on the
+  database exits 1 after its report (#1955).
   Still print-and-exit-0: a failed generation itself — `pipeline run`/`generate`
   answer `Generation failed: …` or `LLM provider is not configured` (#1952).
 - **Flood/throttle errors carry RPC attribution (#1828):** `dialogs
