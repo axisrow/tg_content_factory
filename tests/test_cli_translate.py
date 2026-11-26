@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import typer
 
 from tests.helpers import cli_ns as _ns
 from tg_agent.config import AppConfig
@@ -170,8 +171,10 @@ class TestMessage:
     def test_message_not_found(self, mock_get, cli_env, capsys):
         mock_get.return_value = None
         from tg_agent.cli.commands.translate import run
-        run(_ns(translate_action="message", message_id=999))
-        out = capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(translate_action="message", message_id=999))
+        assert excinfo.value.exit_code == 1
+        out = capsys.readouterr().err
         assert "not found" in out
 
     @patch("tg_agent.database.repositories.messages.MessagesRepository.get_by_id")

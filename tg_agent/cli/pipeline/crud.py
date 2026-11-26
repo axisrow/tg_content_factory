@@ -68,7 +68,7 @@ async def _pipeline_add_from_json(
     return await svc.import_json(data)
 
 
-def _build_pipeline_add_node_specs(node_specs_raw: list[str]) -> tuple[list, bool]:
+def _build_pipeline_add_node_specs(node_specs_raw: list[str]) -> list:
     from tg_agent.cli.node_dsl import NodeSpecError, parse_node_spec
 
     specs = []
@@ -76,24 +76,21 @@ def _build_pipeline_add_node_specs(node_specs_raw: list[str]) -> tuple[list, boo
         try:
             specs.append(parse_node_spec(raw))
         except NodeSpecError as exc:
-            print(f"Invalid node spec '{raw}': {exc}")
-            return specs, False
-    return specs, True
+            cli_error(f"Invalid node spec '{raw}': {exc}")
+    return specs
 
 
-def _apply_pipeline_add_edges(args: requests.PipelineAddCommand, builder) -> bool:
-    if getattr(args, "edge", None):
+def _apply_pipeline_add_edges(args: requests.PipelineAddCommand, builder) -> None:
+    if args.edge:
         for edge_str in args.edge:
             from_id, _, to_id = edge_str.partition("->")
             if not to_id:
-                print(f"Invalid edge format '{edge_str}'; use FROM->TO")
-                return False
+                cli_error(f"Invalid edge format '{edge_str}'; use FROM->TO")
             builder.add_explicit_edge(from_id.strip(), to_id.strip())
-    return True
 
 
-def _apply_pipeline_add_node_configs(args: requests.PipelineAddCommand, builder) -> bool:
-    if getattr(args, "node_configs", None):
+def _apply_pipeline_add_node_configs(args: requests.PipelineAddCommand, builder) -> None:
+    if args.node_configs:
         import json as _json
 
         for nc_str in args.node_configs:
@@ -101,19 +98,14 @@ def _apply_pipeline_add_node_configs(args: requests.PipelineAddCommand, builder)
             try:
                 config = _json.loads(json_str)
             except _json.JSONDecodeError as exc:
-                print(f"Invalid JSON in --node-config for {node_id}: {exc}")
-                return False
+                cli_error(f"Invalid JSON in --node-config for {node_id}: {exc}")
             builder.set_node_config_override(node_id.strip(), config)
-    return True
 
 
 def _build_pipeline_add_graph(args: requests.PipelineAddCommand, node_specs_raw: list[str]):
     from tg_agent.cli.graph_builder import GraphBuilder, GraphBuilderError
 
-    specs, ok = _build_pipeline_add_node_specs(node_specs_raw)
-    if not ok:
-        return None
-
+    specs = _build_pipeline_add_node_specs(node_specs_raw)
     builder = GraphBuilder()
     for spec in specs:
         builder.add_node_spec(spec)
@@ -125,28 +117,23 @@ def _build_pipeline_add_graph(args: requests.PipelineAddCommand, node_specs_raw:
         target_refs_list = [{"phone": t.phone, "dialog_id": t.dialog_id} for t in _parse_target_refs(args.target)]
         builder.set_targets(target_refs_list)
 
-    if not _apply_pipeline_add_edges(args, builder):
-        return None
-    if not _apply_pipeline_add_node_configs(args, builder):
-        return None
+    _apply_pipeline_add_edges(args, builder)
+    _apply_pipeline_add_node_configs(args, builder)
 
     try:
         return builder.build()
     except GraphBuilderError as exc:
-        print(f"Graph build error: {exc}")
-        return None
+        cli_error(f"Graph build error: {exc}")
 
 
 async def _pipeline_add_from_nodes(
     args: requests.PipelineAddCommand,
     svc: PipelineService,
     node_specs_raw: list[str],
-) -> tuple[int | None, bool]:
+) -> int | None:
     import json as _json
 
     graph = _build_pipeline_add_graph(args, node_specs_raw)
-    if graph is None:
-        return None, False
 
     pipeline_id = await svc.import_json(
         {
@@ -172,23 +159,20 @@ async def _pipeline_add_from_nodes(
     # Activate if --inactive was not passed
     if not args.inactive and pipeline_id:
         await svc._bundle.set_active(pipeline_id, True)
-    return pipeline_id, True
+    return pipeline_id
 
 
 async def _pipeline_add_legacy(
     args: requests.PipelineAddCommand,
     svc: PipelineService,
-) -> tuple[int | None, bool]:
+) -> int | None:
     # Legacy mode: --prompt-template + --source + --target required
     if not args.prompt_template:
-        print("Error: --prompt-template is required when --json-file/--node is not used")
-        return None, False
+        cli_error("--prompt-template is required when --json-file/--node is not used")
     if not args.source:
-        print("Error: --source is required")
-        return None, False
+        cli_error("--source is required")
     if not args.target:
-        print("Error: --target is required")
-        return None, False
+        cli_error("--target is required")
     pipeline_id = await svc.add(
         name=args.name,
         prompt_template=args.prompt_template,
@@ -203,14 +187,14 @@ async def _pipeline_add_legacy(
         ab_num_variants=getattr(args, "ab_variants", 1) or 1,
         ab_auto_select=getattr(args, "ab_auto_select", False),
     )
-    return pipeline_id, True
+    return pipeline_id
 
 
-async def _pipeline_add_pipeline(args: requests.PipelineAddCommand, svc: PipelineService) -> tuple[int | None, bool]:
+async def _pipeline_add_pipeline(args: requests.PipelineAddCommand, svc: PipelineService) -> int | None:
     json_file = getattr(args, "json_file", None)
     node_specs_raw = getattr(args, "node_specs", None)
     if json_file:
-        return await _pipeline_add_from_json(args, svc, json_file), True
+        return await _pipeline_add_from_json(args, svc, json_file)
     if node_specs_raw:
         # DAG mode: build graph from --node specs
         return await _pipeline_add_from_nodes(args, svc, node_specs_raw)
@@ -229,13 +213,10 @@ async def _pipeline_enqueue_run_after(args: requests.PipelineAddCommand, db, pip
 
 async def _pipeline_add(args: requests.PipelineAddCommand, db, config, svc: PipelineService) -> None:
     try:
-        pipeline_id, should_print = await _pipeline_add_pipeline(args, svc)
+        pipeline_id = await _pipeline_add_pipeline(args, svc)
     except PipelineValidationError as exc:
-        print(f"Error: {exc}")
-        return
+        cli_error(str(exc))
 
-    if not should_print:
-        return
     print(f"Added pipeline id={pipeline_id}: {args.name}")
     if getattr(args, "run_after", False):
         await _pipeline_enqueue_run_after(args, db, pipeline_id)
@@ -266,16 +247,13 @@ async def _pipeline_edit(args: requests.PipelineEditCommand, db, config, svc: Pi
                 args.interval if args.interval is not None else existing.generate_interval_minutes
             ),
             is_active=existing.is_active if args.active is None else args.active,
-            ab_num_variants=(
-                args.ab_variants if getattr(args, "ab_variants", None) is not None else existing.ab_num_variants
-            ),
+            ab_num_variants=(args.ab_variants if args.ab_variants is not None else existing.ab_num_variants),
             ab_auto_select=(
-                args.ab_auto_select if getattr(args, "ab_auto_select", None) is not None else existing.ab_auto_select
+                args.ab_auto_select if args.ab_auto_select is not None else existing.ab_auto_select
             ),
         )
     except PipelineValidationError as exc:
-        print(f"Error: {exc}")
-        return
+        cli_error(str(exc))
     if not ok:
         cli_error(f"Pipeline id={args.id} not found")
     print(f"Updated pipeline id={args.id}")
@@ -306,11 +284,9 @@ async def _pipeline_refinement_steps(
         try:
             steps = json.loads(args.steps_json)
         except json.JSONDecodeError as exc:
-            print(f"Invalid JSON: {exc}")
-            return
+            cli_error(f"Invalid JSON: {exc}")
         if not isinstance(steps, list):
-            print("Refinement steps must be a JSON array.")
-            return
+            cli_error("Refinement steps must be a JSON array.")
         await db.repos.content_pipelines.set_refinement_steps(args.id, steps)
         print(f"Set {len(steps)} refinement step(s) for pipeline id={args.id}.")
     else:
@@ -332,8 +308,7 @@ async def _pipeline_export(args: requests.PipelineExportCommand, db, config, svc
     output = json.dumps(data, ensure_ascii=False, indent=2)
     if args.output:
         if await asyncio.to_thread(os.path.exists, args.output) and not args.force:
-            print(f"File {args.output} already exists. Use --force to overwrite.")
-            return
+            cli_error(f"File {args.output} already exists. Use --force to overwrite.")
         with open(args.output, "w", encoding="utf-8") as fh:
             fh.write(output)
         print(f"Exported pipeline id={args.id} to {args.output}")
@@ -350,7 +325,7 @@ async def _pipeline_import(args: requests.PipelineImportCommand, db, config, svc
         pipeline_id = await svc.import_json(data, name_override=getattr(args, "name", None))
         print(f"Imported pipeline (id={pipeline_id})")
     except PipelineValidationError as exc:
-        print(f"Validation error: {exc}")
+        cli_error(f"Validation error: {exc}")
 
 
 async def _pipeline_templates(args: requests.PipelineTemplatesCommand, db, config, svc: PipelineService) -> None:
@@ -372,7 +347,7 @@ async def _pipeline_from_template(args: requests.PipelineFromTemplateCommand, db
         )
         print(f"Created pipeline from template (id={pipeline_id})")
     except PipelineValidationError as exc:
-        print(f"Validation error: {exc}")
+        cli_error(f"Validation error: {exc}")
 
 
 async def _pipeline_ai_edit(args: requests.PipelineAiEditCommand, db, config, svc: PipelineService) -> None:
@@ -385,7 +360,7 @@ async def _pipeline_ai_edit(args: requests.PipelineAiEditCommand, db, config, sv
         if getattr(args, "show", False):
             print(json.dumps(result["pipeline_json"], ensure_ascii=False, indent=2))
     else:
-        print(f"Error: {result['error']}")
+        cli_error(result["error"])
 
 
 HANDLERS = {

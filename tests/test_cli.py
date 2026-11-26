@@ -78,8 +78,10 @@ class TestCLIAccount:
     def test_toggle_not_found(self, cli_env, capsys):
         from tg_agent.cli.commands.account import run
 
-        run(_ns(account_action="toggle", id=999))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(account_action="toggle", id=999))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_delete(self, cli_env, capsys):
         pk = _add_account(cli_env)
@@ -91,8 +93,10 @@ class TestCLIAccount:
     def test_delete_not_found(self, cli_env, capsys):
         from tg_agent.cli.commands.account import run
 
-        run(_ns(account_action="delete", id=999))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(account_action="delete", id=999))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_delete_notification_account_with_notify_to(self, cli_env, capsys):
         pk = _add_account(cli_env, phone="+70001112233")
@@ -268,6 +272,7 @@ class TestCLIAccount:
         out = capsys.readouterr().out
         assert phone1 in out
         assert phone2 not in out
+        assert init_pool_mock.await_args is not None
         assert init_pool_mock.await_args.kwargs == {"phones": (phone1,)}
 
     def test_info_no_connected_accounts(self, cli_env_with_pool, capsys):
@@ -350,8 +355,10 @@ class TestCLIAccount:
     def test_flood_clear_not_found(self, cli_env, capsys):
         from tg_agent.cli.commands.account import run
 
-        run(_ns(account_action="flood-clear", phone="+19990000000"))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(account_action="flood-clear", phone="+19990000000"))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -794,17 +801,23 @@ class TestCLISearchQuery:
 
 
 class TestCLICollect:
-    def test_no_clients(self, cli_env_with_pool, capsys, caplog):
+    def test_no_clients(self, cli_env_with_pool, capsys):
         from tg_agent.cli.commands.collect import run
 
-        run(_ns(channel_id=None))
-        assert "No connected accounts" in caplog.text
+        # No account to collect with is a failure, not a logged no-op (#1951).
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(channel_id=None))
+        assert excinfo.value.exit_code == 1
+        assert "No connected accounts" in capsys.readouterr().err
 
-    def test_sample_no_clients(self, cli_env_with_pool, capsys, caplog):
+    def test_sample_no_clients(self, cli_env_with_pool, capsys):
         from tg_agent.cli.commands.collect import run
 
-        run(_ns(collect_action="sample", channel_id=-100123, limit=5))
-        assert "No connected accounts" in caplog.text
+        # The same state as `collect` above: no account is a failure, not a logged no-op (#1951).
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(collect_action="sample", channel_id=-100123, limit=5))
+        assert excinfo.value.exit_code == 1
+        assert "No connected accounts" in capsys.readouterr().err
 
     def test_sample_returns_previews(self, cli_env_with_pool, capsys):
         from datetime import datetime, timezone

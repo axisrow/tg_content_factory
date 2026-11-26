@@ -77,10 +77,11 @@ def test_cli_create_rejects_duplicate(cli_db, capsys):
         )
 
     _run_ping_impl(_create, cli_db, capsys)
-    with pytest.raises(typer.Exit):
+    # A refused create keeps exit 1; its reason belongs on stderr like every miss (#1951).
+    with pytest.raises(typer.Exit) as excinfo:
         _run_ping_impl(_create, cli_db, capsys)
-    out = capsys.readouterr().out
-    assert "already monitored" in out
+    assert excinfo.value.exit_code == 1
+    assert "already monitored" in capsys.readouterr().err
     assert len(_monitors(cli_db)) == 1
 
 
@@ -178,7 +179,7 @@ def test_cli_update_unknown_monitor_exits(cli_db, capsys):
             cli_db,
             capsys,
         )
-    assert "not found" in capsys.readouterr().out
+    assert "not found" in capsys.readouterr().err
 
 
 def test_cli_delete_removes_monitor(cli_db, capsys):

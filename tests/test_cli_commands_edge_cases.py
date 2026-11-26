@@ -502,8 +502,10 @@ class TestAccountToggle:
     def test_toggle_not_found(self, cli_env, capsys):
         from tg_agent.cli.commands.account import run
 
-        run(cli_ns(account_action="toggle", id=9999))
-        out = capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(cli_ns(account_action="toggle", id=9999))
+        assert excinfo.value.exit_code == 1
+        out = capsys.readouterr().err
         assert "not found" in out
 
     def test_toggle_deactivates(self, cli_env, capsys):
@@ -553,9 +555,10 @@ class TestAccountFloodClear:
     def test_account_not_found(self, cli_env, capsys):
         from tg_agent.cli.commands.account import run
 
-        run(cli_ns(account_action="flood-clear", phone="+0000000000"))
-        out = capsys.readouterr().out
-        assert "not found" in out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(cli_ns(account_action="flood-clear", phone="+0000000000"))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_clear_flood(self, cli_env, capsys):
         from tg_agent.cli.commands.account import run
@@ -998,9 +1001,11 @@ class TestFilterToggle:
         db.close = AsyncMock()
 
         with patch("tg_agent.cli.commands.filter.runtime.init_db", side_effect=_make_coro((None, db))):
-            run(cli_ns(filter_action="toggle", pk=999))
+            with pytest.raises(typer.Exit) as excinfo:
+                run(cli_ns(filter_action="toggle", pk=999))
+            assert excinfo.value.exit_code == 1
 
-        out = capsys.readouterr().out
+        out = capsys.readouterr().err
         assert "not found" in out
 
     def test_toggle_marks_filtered(self, capsys):
@@ -1356,7 +1361,11 @@ class TestCollectNoAccounts:
 
         with patch("tg_agent.cli.commands.collect.runtime.init_db", side_effect=_make_coro((config, db))), \
              patch("tg_agent.cli.commands.collect.runtime.init_pool", side_effect=_make_coro((MagicMock(), pool))):
-            run(cli_ns(channel_id=None))
+            # No account to collect with is a failure, not a silent no-op (#1951).
+            with pytest.raises(typer.Exit) as excinfo:
+                run(cli_ns(channel_id=None))
+            assert excinfo.value.exit_code == 1
+        assert "No connected accounts" in capsys.readouterr().err
 
 
 class TestCollectChannelNotFound:
@@ -1376,9 +1385,11 @@ class TestCollectChannelNotFound:
 
         with patch("tg_agent.cli.commands.collect.runtime.init_db", side_effect=_make_coro((config, db))), \
              patch("tg_agent.cli.commands.collect.runtime.init_pool", side_effect=_make_coro((MagicMock(), pool))):
-            run(cli_ns(channel_id=99999))
+            with pytest.raises(typer.Exit) as excinfo:
+                run(cli_ns(channel_id=99999))
+            assert excinfo.value.exit_code == 1
 
-        out = capsys.readouterr().out
+        out = capsys.readouterr().err
         assert "not found" in out
 
 
@@ -1399,9 +1410,11 @@ class TestCollectFilteredChannel:
 
         with patch("tg_agent.cli.commands.collect.runtime.init_db", side_effect=_make_coro((config, db))), \
              patch("tg_agent.cli.commands.collect.runtime.init_pool", side_effect=_make_coro((MagicMock(), pool))):
-            run(cli_ns(channel_id=100))
+            with pytest.raises(typer.Exit) as excinfo:
+                run(cli_ns(channel_id=100))
+            assert excinfo.value.exit_code == 1
 
-        out = capsys.readouterr().out
+        out = capsys.readouterr().err
         assert "filtered" in out
 
 
@@ -1785,6 +1798,7 @@ class TestSearchQueryStats:
         db.close = AsyncMock()
 
         svc_instance = MagicMock()
+        svc_instance.get = AsyncMock(return_value=MagicMock())
         svc_instance.get_daily_stats = AsyncMock(return_value=[])
         bundle = MagicMock()
 
@@ -1808,6 +1822,7 @@ class TestSearchQueryStats:
             SearchQueryDailyStat(day="2025-01-02", count=20),
         ]
         svc_instance = MagicMock()
+        svc_instance.get = AsyncMock(return_value=MagicMock())
         svc_instance.get_daily_stats = AsyncMock(return_value=stats)
         bundle = MagicMock()
 

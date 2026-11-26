@@ -38,13 +38,11 @@ async def create_impl(
             _, pool = await runtime.init_pool(config, db)
             info = await pool.resolve_any_entity(username, phone=phone)
             if not info:
-                print(f"Error: could not resolve: {username}")
-                raise typer.Exit(1)
+                cli_error(f"Error: could not resolve: {username}")
             dialog_id = int(info["channel_id"])
             resolved_title = resolved_title or info.get("title")
         if dialog_id is None:
-            print("Error: --dialog-id or --username is required")
-            raise typer.Exit(1)
+            cli_error("Error: --dialog-id or --username is required")
 
         monitor = PingMonitor(
             phone=phone,
@@ -56,11 +54,10 @@ async def create_impl(
         try:
             monitor_id = await db.repos.ping_monitors.create(monitor)
         except sqlite3.IntegrityError:
-            print(
+            cli_error(
                 f"Error: dialog {dialog_id} is already monitored for {phone} "
                 "(UNIQUE(phone, dialog_id))"
             )
-            raise typer.Exit(1) from None
         print(f"Created ping monitor #{monitor_id} (dialog {dialog_id}, every {days}d of silence)")
     finally:
         if pool is not None:
@@ -112,8 +109,7 @@ async def update_impl(
     try:
         monitor = await db.repos.ping_monitors.get(monitor_id)
         if monitor is None:
-            print(f"Ping monitor #{monitor_id} not found.")
-            raise typer.Exit(1)
+            cli_error(f"Ping monitor #{monitor_id} not found")
         is_active = True if active else (False if inactive else None)
         await db.repos.ping_monitors.update(
             monitor_id,

@@ -368,8 +368,10 @@ class TestCLIPipelineRuns:
         with patch("tg_agent.cli.runtime.init_db", side_effect=_pipeline_fake_init_db(db_path)):
             from tg_agent.cli.commands.pipeline import run
 
-            run(_ns(pipeline_action="runs", id=999, limit=10, status=None))
-        assert "not found" in capsys.readouterr().out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(pipeline_action="runs", id=999, limit=10, status=None))
+            assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_runs_empty(self, tmp_path, capsys):
         db_path = _make_pipeline_db(tmp_path, "runs_empty.db")
@@ -542,18 +544,20 @@ class TestCLIPipelineRunAction:
         with patch("tg_agent.cli.runtime.init_db", side_effect=_pipeline_fake_init_db(db_path)):
             from tg_agent.cli.commands.pipeline import run
 
-            run(
-                _ns(
-                    pipeline_action="run",
-                    id=999,
-                    limit=10,
-                    max_tokens=None,
-                    temperature=None,
-                    preview=False,
-                    publish=False,
+            with pytest.raises(typer.Exit) as excinfo:
+                run(
+                    _ns(
+                        pipeline_action="run",
+                        id=999,
+                        limit=10,
+                        max_tokens=None,
+                        temperature=None,
+                        preview=False,
+                        publish=False,
+                    )
                 )
-            )
-        assert "not found" in capsys.readouterr().out
+            assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 class TestCLIPipelineRunShow:
@@ -566,8 +570,10 @@ class TestCLIPipelineRunShow:
         with patch("tg_agent.cli.runtime.init_db", side_effect=_pipeline_fake_init_db(db_path)):
             from tg_agent.cli.commands.pipeline import run
 
-            run(_ns(pipeline_action="run-show", run_id=9999))
-        assert "not found" in capsys.readouterr().out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(pipeline_action="run-show", run_id=9999))
+            assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 class TestCLIPipelineApproveReject:
@@ -580,8 +586,10 @@ class TestCLIPipelineApproveReject:
         with patch("tg_agent.cli.runtime.init_db", side_effect=_pipeline_fake_init_db(db_path)):
             from tg_agent.cli.commands.pipeline import run
 
-            run(_ns(pipeline_action="approve", run_id=9999))
-        assert "not found" in capsys.readouterr().out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(pipeline_action="approve", run_id=9999))
+            assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_reject_not_found(self, tmp_path, capsys):
         db_path = str(tmp_path / "reject_nf.db")
@@ -592,8 +600,10 @@ class TestCLIPipelineApproveReject:
         with patch("tg_agent.cli.runtime.init_db", side_effect=_pipeline_fake_init_db(db_path)):
             from tg_agent.cli.commands.pipeline import run
 
-            run(_ns(pipeline_action="reject", run_id=9999))
-        assert "not found" in capsys.readouterr().out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(pipeline_action="reject", run_id=9999))
+            assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 class TestCLIPipelineQueue:
@@ -606,8 +616,10 @@ class TestCLIPipelineQueue:
         with patch("tg_agent.cli.runtime.init_db", side_effect=_pipeline_fake_init_db(db_path)):
             from tg_agent.cli.commands.pipeline import run
 
-            run(_ns(pipeline_action="queue", id=999, limit=10))
-        assert "not found" in capsys.readouterr().out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(pipeline_action="queue", id=999, limit=10))
+            assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 class TestCLIPipelineBulkApproveReject:

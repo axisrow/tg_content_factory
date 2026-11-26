@@ -18,7 +18,7 @@ import json
 import logging
 import sys
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import typer
 
@@ -64,7 +64,7 @@ async def _load_resolve_backoffs(db, *, now: datetime) -> dict[str, datetime]:
     return parse_resolve_backoff_setting(raw, now=now)
 
 
-async def _resolve_credentials(config, db, *, api_id: int | None, api_hash: str | None) -> tuple[int, str]:
+async def _resolve_credentials(config, db, *, api_id: int | None, api_hash: str | None) -> tuple[int, str | None]:
     api_id = api_id or config.telegram.api_id
     api_hash = api_hash or config.telegram.api_hash
     if api_id == 0 or not api_hash:
@@ -467,8 +467,7 @@ async def toggle_impl(config_path: str, *, account_id: int) -> None:
         accounts = await db.get_account_summaries(active_only=False)
         acc = next((a for a in accounts if a.id == account_id), None)
         if not acc:
-            print(f"Account id={account_id} not found")
-            return
+            cli_error(f"Account id={account_id} not found")
         new_state = not acc.is_active
         if isinstance(config.gateway, dict) and config.gateway:
             from tg_agent.gateway.catalog import ProjectAccountCatalog
@@ -503,10 +502,9 @@ async def set_primary_impl(config_path: str, *, account_id: int) -> None:
             print(f"Project account id={account_id} set as primary")
             return
         changed = await db.repos.accounts.set_account_primary(account_id)
-        if changed:
-            print(f"Account id={account_id} set as primary")
-        else:
-            print(f"Account id={account_id} not found")
+        if not changed:
+            cli_error(f"Account id={account_id} not found")
+        print(f"Account id={account_id} set as primary")
     finally:
         await db.close()
 
@@ -529,8 +527,7 @@ async def delete_impl(config_path: str, *, account_id: int, notify_to: str | Non
         accounts = await db.get_account_summaries(active_only=False)
         acc = next((a for a in accounts if a.id == account_id), None)
         if not acc:
-            print(f"Account id={account_id} not found")
-            return
+            cli_error(f"Account id={account_id} not found")
         target_svc = NotificationTargetService(db)
         replacement = notify_to
         configured = await target_svc.get_configured_phone()
@@ -666,15 +663,14 @@ async def flood_clear_impl(config_path: str, *, phone: str) -> None:
         accounts = await db.get_account_summaries(active_only=False)
         acc = next((a for a in accounts if a.phone == phone), None)
         if not acc:
-            print(f"Account {phone} not found")
-            return
+            cli_error(f"Account {phone} not found")
         if isinstance(getattr(config, "gateway", None), dict) and config.gateway:
             # The shared gateway owns the timer; clearing only the local mirror
             # would be overwritten by the next catalog refresh (#1845).
             from tg_agent.gateway.catalog import project_catalog
 
             async with project_catalog(config, db) as catalog:
-                families = await catalog.client.clear_flood(await catalog.reference(acc.id))
+                families = await catalog.client.clear_flood(await catalog.reference(cast(int, acc.id)))
                 await catalog.refresh()
             print(f"Flood wait cleared for {phone}")
             for family in families:
@@ -797,7 +793,7 @@ def account_detach(ctx: typer.Context, phone: str = typer.Argument(...)) -> None
 
             client = await TelegramGatewayClient.from_config(config)
             try:
-                await ProjectAccountCatalog(db, client).detach(account.id)
+                await ProjectAccountCatalog(db, client).detach(cast(int, account.id))
             finally:
                 await client.close()
         finally:

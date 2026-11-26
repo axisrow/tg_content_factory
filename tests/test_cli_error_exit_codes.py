@@ -14,20 +14,36 @@ from __future__ import annotations
 import argparse
 import asyncio
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import typer
 from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError
 
-from tg_agent.cli.commands import agent, channel, dialogs, photo_loader, ping, scheduler, search_query
-from tg_agent.cli.pipeline import crud
+from tg_agent.cli.commands import (
+    account,
+    agent,
+    analytics,
+    channel,
+    collect,
+    dialogs,
+    photo_loader,
+    ping,
+    scheduler,
+    search_query,
+    translate,
+)
+from tg_agent.cli.commands import filter as filter_commands
+from tg_agent.cli.pipeline import crud, generation, graph, moderation, responses
 from tg_agent.cli.pipeline import requests as pipeline_requests
 from tg_agent.config import AppConfig
-from tg_agent.database.bundles import PipelineBundle
+from tg_agent.database.bundles import PipelineBundle, SearchQueryBundle
 from tg_agent.models import Message
 from tg_agent.services.pipeline_service import PipelineService
+from tg_agent.services.search_query_service import SearchQueryService
 from tg_agent.services.telegram_actions import TelegramActionClientUnavailableError
 
 pytestmark = pytest.mark.aiosqlite_serial
@@ -575,12 +591,14 @@ def _assert_exit_clean(excinfo, capsys, fragment: str) -> None:
     assert captured.out == ""
 
 
-def _pipeline_driver(handler, command):
-    async def _run(db):
-        svc = PipelineService(PipelineBundle.from_database(db))
-        await handler(command, db, AppConfig(), svc)
+async def _drive(handler, command, db):
+    """Call a pipeline handler the way the dispatcher does: real store, real service."""
+    svc = PipelineService(PipelineBundle.from_database(db))
+    await handler(command, db, AppConfig(), svc)
 
-    return _run
+
+def _pipeline_driver(handler, command):
+    return partial(_drive, handler, command)
 
 
 class TestMissingTargetExitCodes:
@@ -732,3 +750,504 @@ class TestMissingTargetExitCodes:
         with pytest.raises(typer.Exit) as excinfo:
             asyncio.run(search_query.add_impl("c", query="[", is_regex=True))
         _assert_exit_clean(excinfo, capsys, "invalid regex")
+
+
+# ---------------------------------------------------------------------------
+# second wave (#1951): the handlers the first fix did not reach
+# ---------------------------------------------------------------------------
+
+
+def _render(call):
+    """Wrap a synchronous renderer for the driver table."""
+
+    async def _run(db):
+        call()
+
+    return _run
+
+
+def _collect_driver(channel_id: int):
+    async def _run(db):
+        # Next to a running daemon the command only looks the channel up.
+        with patch(
+            "tg_agent.cli.commands.collect.worker_handoff.serve_is_running", return_value=True
+        ):
+            await collect.collect_impl("c", channel_id=channel_id)
+
+    return _run
+
+
+def _scratch_run(body):
+    """Run ``body(db, run_id)`` with a generation run that belongs to no pipeline."""
+
+    async def _run(db):
+        run_id = await db.repos.generation_runs.create_run(None, "prompt")
+        await body(db, run_id)
+
+    return _run
+
+
+# A pipeline holding ``source_0``, ``llm_generate_0`` and ``publish_0`` in a row.
+DAG_GRAPH = {
+    "nodes": [
+        {"id": "source_0", "type": "source", "name": "source", "config": {}},
+        {"id": "llm_generate_0", "type": "llm_generate", "name": "llm_generate", "config": {"prompt_template": "x"}},
+        {"id": "publish_0", "type": "publish", "name": "publish", "config": {}},
+    ],
+    "edges": [
+        {"from": "source_0", "to": "llm_generate_0"},
+        {"from": "llm_generate_0", "to": "publish_0"},
+    ],
+}
+
+
+async def _seed_pipeline(db, pipeline_json: dict | None = None) -> int:
+    """A pipeline with no sources and no targets — ``import_json`` skips their validation."""
+    svc = PipelineService(PipelineBundle.from_database(db))
+    return await svc.import_json(
+        {"name": "P", "prompt_template": "x", "source_ids": [], "target_refs": [], "pipeline_json": pipeline_json or {}}
+    )
+
+
+class TestMissingTargetExitCodesWave2:
+    """A missing target exits 1 in the handlers the first fix did not reach (#1951).
+
+    Written red against the real store: 36 commands ran with an id absent from
+    every table; 34 printed the miss on stdout and 33 of them exited 0. Each
+    driver runs the real handler body over an empty ``cli_db``.
+    """
+
+    @pytest.mark.parametrize(
+        ("fragment", "driver"),
+        [
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(graph._pipeline_filter, pipeline_requests.PipelineFilterSetCommand(id=999)),
+                id="pipeline filter set",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(graph._pipeline_filter, pipeline_requests.PipelineFilterShowCommand(id=999)),
+                id="pipeline filter show",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(graph._pipeline_filter, pipeline_requests.PipelineFilterClearCommand(id=999)),
+                id="pipeline filter clear",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(
+                    graph._pipeline_node,
+                    pipeline_requests.PipelineNodeRemoveCommand(pipeline_id=999, node_id="n1"),
+                ),
+                id="pipeline node remove",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(
+                    graph._pipeline_node,
+                    pipeline_requests.PipelineNodeReplaceCommand(pipeline_id=999, node_id="n1", node_spec="source"),
+                ),
+                id="pipeline node replace",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(
+                    graph._pipeline_node, pipeline_requests.PipelineNodeAddCommand(pipeline_id=999, node_spec="source")
+                ),
+                id="pipeline node add",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(
+                    graph._pipeline_edge,
+                    pipeline_requests.PipelineEdgeAddCommand(pipeline_id=999, from_node="a", to_node="b"),
+                ),
+                id="pipeline edge add",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(
+                    graph._pipeline_edge,
+                    pipeline_requests.PipelineEdgeRemoveCommand(pipeline_id=999, from_node="a", to_node="b"),
+                ),
+                id="pipeline edge remove",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(graph._pipeline_graph, pipeline_requests.PipelineGraphCommand(id=999)),
+                id="pipeline graph",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(moderation._pipeline_queue, pipeline_requests.PipelineQueueCommand(id=999)),
+                id="pipeline queue",
+            ),
+            pytest.param(
+                "Run id=999 not found",
+                _pipeline_driver(moderation._pipeline_approve, pipeline_requests.PipelineApproveCommand(run_id=999)),
+                id="pipeline approve",
+            ),
+            pytest.param(
+                "Run id=999 not found",
+                _pipeline_driver(moderation._pipeline_reject, pipeline_requests.PipelineRejectCommand(run_id=999)),
+                id="pipeline reject",
+            ),
+            pytest.param(
+                "Run id=999 not found",
+                _pipeline_driver(
+                    moderation._pipeline_resolve_unconfirmed,
+                    pipeline_requests.PipelineResolveUnconfirmedCommand(run_id=999, target="t"),
+                ),
+                id="pipeline resolve-unconfirmed",
+            ),
+            pytest.param(
+                "Run id=999 not found",
+                _pipeline_driver(moderation._pipeline_publish, pipeline_requests.PipelinePublishCommand(run_id=999)),
+                id="pipeline publish",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(generation._pipeline_run, pipeline_requests.PipelineRunCommand(id=999)),
+                id="pipeline run",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(generation._pipeline_generate, pipeline_requests.PipelineGenerateCommand(id=999)),
+                id="pipeline generate",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(
+                    generation._pipeline_generate_stream,
+                    pipeline_requests.PipelineGenerateStreamCommand(id=999),
+                ),
+                id="pipeline generate-stream",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _pipeline_driver(generation._pipeline_runs, pipeline_requests.PipelineRunsCommand(id=999)),
+                id="pipeline runs",
+            ),
+            pytest.param(
+                "Run id=999 not found",
+                _pipeline_driver(generation._pipeline_variants, pipeline_requests.PipelineVariantsCommand(run_id=999)),
+                id="pipeline variants",
+            ),
+            pytest.param(
+                "999 not found",
+                _pipeline_driver(
+                    generation._pipeline_select_variant,
+                    pipeline_requests.PipelineSelectVariantCommand(run_id=999, index=0),
+                ),
+                id="pipeline select-variant",
+            ),
+            pytest.param(
+                # Never looked the run up: the service answered variant 0 for a missing one.
+                "Run id=999 not found",
+                _pipeline_driver(
+                    generation._pipeline_auto_select, pipeline_requests.PipelineAutoSelectCommand(run_id=999)
+                ),
+                id="pipeline auto-select",
+            ),
+            pytest.param(
+                "Pipeline id=999 not found",
+                _render(
+                    lambda: responses.render_pipeline_show(pipeline_requests.PipelineShowCommand(id=999), None)
+                ),
+                id="pipeline show",
+            ),
+            pytest.param(
+                "Run id=999 not found",
+                _render(
+                    lambda: responses.render_pipeline_run_show(
+                        pipeline_requests.PipelineRunShowCommand(run_id=999), None
+                    )
+                ),
+                id="pipeline run-show",
+            ),
+            pytest.param(
+                "Run id=999 not found",
+                _pipeline_driver(
+                    moderation._pipeline_moderation_view,
+                    pipeline_requests.PipelineModerationViewCommand(run_id=999),
+                ),
+                id="pipeline moderation-view",
+            ),
+            pytest.param(
+                "Channel pk=999 not found",
+                lambda db: filter_commands.toggle_impl("c", pk=999),
+                id="filter toggle",
+            ),
+            pytest.param(
+                "Channel pk=999 not found",
+                lambda db: filter_commands.flag_impl("c", pk=999, set_flag="manual"),
+                id="filter flag",
+            ),
+            pytest.param("Channel 999 not found in DB", _collect_driver(999), id="collect --channel-id"),
+            pytest.param(
+                "Account id=999 not found",
+                lambda db: account.toggle_impl("c", account_id=999),
+                id="account toggle",
+            ),
+            pytest.param(
+                "Account id=999 not found",
+                lambda db: account.delete_impl("c", account_id=999),
+                id="account delete",
+            ),
+            pytest.param(
+                f"Account {PHONE} not found",
+                lambda db: account.flood_clear_impl("c", phone=PHONE),
+                id="account flood-clear",
+            ),
+            pytest.param(
+                "Ping monitor #999 not found",
+                lambda db: ping.update_impl(
+                    "c", monitor_id=999, text=None, days=None, active=False, inactive=True
+                ),
+                id="ping update",
+            ),
+            pytest.param(
+                "Channel 999 not found",
+                lambda db: analytics.channel_impl("c", channel_id=999, days=7),
+                id="analytics channel",
+            ),
+            pytest.param(
+                "Message id=999 not found",
+                lambda db: translate.message_impl("c", message_id=999),
+                id="translate message",
+            ),
+            pytest.param(
+                "Search query id=999 not found",
+                lambda db: search_query.stats_impl("c", query_id=999),
+                id="search-query stats",
+            ),
+        ],
+    )
+    def test_missing_target_exits_1(self, cli_env, capsys, fragment, driver):
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(driver(cli_env))
+        _assert_exit_clean(excinfo, capsys, fragment)
+
+
+class TestRefusedArgumentExitCodesWave2:
+    """A refused argument is a failure too — never `Error:` on stdout with exit 0 (#1951)."""
+
+    def test_pipeline_node_add_invalid_spec(self, cli_env, capsys):
+        driver = _pipeline_driver(
+            graph._pipeline_node, pipeline_requests.PipelineNodeAddCommand(pipeline_id=999, node_spec="n1")
+        )
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(driver(cli_env))
+        _assert_exit_clean(excinfo, capsys, "Invalid node spec")
+
+    @pytest.mark.parametrize(
+        ("kwargs", "fragment"),
+        [
+            (dict(name="x"), "--prompt-template is required"),
+            (dict(name="x", prompt_template="p"), "--source is required"),
+            (dict(name="x", prompt_template="p", source=[1]), "--target is required"),
+            (dict(name="", prompt_template="p", source=[1], target=["phone|1"]), "не может быть пустым"),
+        ],
+    )
+    def test_pipeline_add(self, cli_env, capsys, kwargs, fragment):
+        driver = _pipeline_driver(crud._pipeline_add, pipeline_requests.PipelineAddCommand(**kwargs))
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(driver(cli_env))
+        _assert_exit_clean(excinfo, capsys, fragment)
+
+    def test_pipeline_ai_edit_failure(self, cli_env, capsys):
+        driver = _pipeline_driver(
+            crud._pipeline_ai_edit, pipeline_requests.PipelineAiEditCommand(id=999, instruction="x")
+        )
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(driver(cli_env))
+        _assert_exit_clean(excinfo, capsys, "не найден")
+
+    def test_search_query_edit_invalid_regex(self, cli_env, capsys):
+        async def _seed(db):
+            return await SearchQueryService(SearchQueryBundle.from_database(db)).add("джомтьен*")
+
+        query_id = asyncio.run(_seed(cli_env))
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(search_query.edit_impl("c", query_id=query_id, query="[", is_regex=True))
+        _assert_exit_clean(excinfo, capsys, "invalid regex")
+
+    def test_ping_create_requires_a_target(self, cli_env, capsys):
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(
+                ping.create_impl(
+                    "c", phone=PHONE, dialog_id=None, username=None, text="x", days=3, title=None
+                )
+            )
+        _assert_exit_clean(excinfo, capsys, "--dialog-id or --username is required")
+
+    def test_dialogs_react_requires_an_emoji(self, capsys):
+        pool = MagicMock()
+        pool._get_account_for_phone = AsyncMock(return_value=None)
+        with patch.object(dialogs, "_resolve_phone", new=AsyncMock(return_value=PHONE)):
+            with pytest.raises(typer.Exit) as excinfo:
+                asyncio.run(dialogs._dialogs_react(_ns(clear=False, emoji=None), None, pool))
+        _assert_exit_clean(excinfo, capsys, "emoji is required")
+
+    def test_resolve_unconfirmed_names_an_untouched_target(self, cli_env, capsys):
+        async def body(db, run_id):
+            command = pipeline_requests.PipelineResolveUnconfirmedCommand(run_id=run_id, target="t")
+            await _drive(moderation._pipeline_resolve_unconfirmed, command, db)
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(_scratch_run(body)(cli_env))
+        _assert_exit_clean(excinfo, capsys, "is not unconfirmed")
+
+    def test_publish_names_a_run_without_pipeline(self, cli_env, capsys):
+        async def body(db, run_id):
+            await _drive(
+                moderation._pipeline_publish,
+                pipeline_requests.PipelinePublishCommand(run_id=run_id),
+                db,
+            )
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(_scratch_run(body)(cli_env))
+        _assert_exit_clean(excinfo, capsys, "has no pipeline")
+
+    def test_publish_names_a_failed_target_and_closes_the_pool(self, cli_env, capsys):
+        """A publish that failed is not a success line — and its pool is closed on the way out."""
+        from tg_agent.services.publish_service import PublishResult
+
+        pool = SimpleNamespace(clients={PHONE: object()}, disconnect_all=AsyncMock())
+        publish_run = AsyncMock(return_value=[PublishResult(success=False, error="chat not found")])
+        services: Any = SimpleNamespace(publish_service=lambda _db, _pool: SimpleNamespace(publish_run=publish_run))
+
+        async def body(db):
+            svc = PipelineService(PipelineBundle.from_database(db))
+            pipeline_id = await _seed_pipeline(db)
+            run_id = await db.repos.generation_runs.create_run(pipeline_id, "prompt")
+            with patch(
+                "tg_agent.cli.pipeline.moderation.runtime.init_pool",
+                new=AsyncMock(return_value=(AppConfig(), pool)),
+            ):
+                await moderation._pipeline_publish(
+                    pipeline_requests.PipelinePublishCommand(run_id=run_id),
+                    db,
+                    AppConfig(),
+                    svc,
+                    services=services,
+                )
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(body(cli_env))
+        captured = capsys.readouterr()
+        assert excinfo.value.exit_code == 1
+        assert captured.out == ""
+        assert "Failed to publish run id=" in captured.err
+        assert "chat not found" in captured.err
+        pool.disconnect_all.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ("kwargs", "fragment"),
+        [
+            (dict(name="x", node_specs=["source"], edge=["bad"]), "Invalid edge format"),
+            (dict(name="x", node_specs=["source"], node_configs=["source_0=["]), "Invalid JSON in --node-config"),
+        ],
+    )
+    def test_pipeline_add_graph_validation(self, cli_env, capsys, kwargs, fragment):
+        driver = _pipeline_driver(crud._pipeline_add, pipeline_requests.PipelineAddCommand(**kwargs))
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(driver(cli_env))
+        _assert_exit_clean(excinfo, capsys, fragment)
+
+    @pytest.mark.parametrize(
+        ("steps_json", "fragment"),
+        [("[", "Invalid JSON:"), ('{"step": 1}', "must be a JSON array")],
+    )
+    def test_refinement_steps_refuse_bad_json(self, cli_env, capsys, steps_json, fragment):
+        async def body(db):
+            command = pipeline_requests.PipelineRefinementStepsCommand(
+                id=await _seed_pipeline(db), steps_json=steps_json
+            )
+            await _drive(crud._pipeline_refinement_steps, command, db)
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(body(cli_env))
+        _assert_exit_clean(excinfo, capsys, fragment)
+
+    def test_pipeline_import_names_the_validation_error(self, cli_env, capsys, tmp_path):
+        bad = tmp_path / "pipeline.json"
+        bad.write_text('{"name": "", "prompt_template": "x"}', encoding="utf-8")
+        driver = _pipeline_driver(crud._pipeline_import, pipeline_requests.PipelineImportCommand(file=str(bad)))
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(driver(cli_env))
+        _assert_exit_clean(excinfo, capsys, "Validation error:")
+
+    def test_pipeline_from_template_names_a_missing_template(self, cli_env, capsys):
+        driver = _pipeline_driver(
+            crud._pipeline_from_template,
+            pipeline_requests.PipelineFromTemplateCommand(template_id=999, name="x"),
+        )
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(driver(cli_env))
+        _assert_exit_clean(excinfo, capsys, "не найден")
+
+    def test_ping_create_names_an_unresolvable_username(self, cli_env, capsys):
+        pool = SimpleNamespace(resolve_any_entity=AsyncMock(return_value=None), disconnect_all=AsyncMock())
+        with patch(
+            "tg_agent.cli.commands.ping.runtime.init_pool",
+            new=AsyncMock(return_value=(AppConfig(), pool)),
+        ):
+            with pytest.raises(typer.Exit) as excinfo:
+                asyncio.run(
+                    ping.create_impl(
+                        "c", phone=PHONE, dialog_id=None, username="@ghost", text="x", days=3, title=None
+                    )
+                )
+        _assert_exit_clean(excinfo, capsys, "could not resolve")
+
+    @pytest.mark.parametrize(
+        ("handler", "command_of", "fragment"),
+        [
+            pytest.param(
+                graph._pipeline_node,
+                lambda pid: pipeline_requests.PipelineNodeAddCommand(pipeline_id=pid, node_spec="source:id=source_0"),
+                "Node 'source_0' already exists in pipeline id=",
+                id="node add with a taken id",
+            ),
+            pytest.param(
+                graph._pipeline_edge,
+                lambda pid: pipeline_requests.PipelineEdgeAddCommand(
+                    pipeline_id=pid, from_node="source_0", to_node="ghost"
+                ),
+                "Node 'ghost' not found in pipeline id=",
+                id="edge add with an unknown endpoint",
+            ),
+            pytest.param(
+                graph._pipeline_node,
+                lambda pid: pipeline_requests.PipelineNodeReplaceCommand(
+                    pipeline_id=pid, node_id="source_0", node_spec="publish:id=publish_0"
+                ),
+                "Node 'publish_0' already exists in pipeline id=",
+                id="node replace onto a taken id",
+            ),
+        ],
+    )
+    def test_graph_edit_names_what_was_wrong(self, cli_env, capsys, handler, command_of, fragment):
+        """A refused graph edit names the real reason — a node that exists is not "not found" (#1951)."""
+
+        async def body(db):
+            await _drive(handler, command_of(await _seed_pipeline(db, DAG_GRAPH)), db)
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(body(cli_env))
+        _assert_exit_clean(excinfo, capsys, fragment)
+
+    def test_bulk_approve_with_every_id_missing(self, cli_env, capsys):
+        driver = _pipeline_driver(
+            moderation._pipeline_bulk_approve, pipeline_requests.PipelineBulkApproveCommand(run_ids=[999])
+        )
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(driver(cli_env))
+        captured = capsys.readouterr()
+        assert excinfo.value.exit_code == 1
+        assert captured.out == "Bulk approved: 0/1\n"
+        assert "run id=999 not found" in captured.err

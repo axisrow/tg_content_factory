@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from tg_agent.cli.commands.common import cli_error
 from tg_agent.cli.pipeline import requests, responses
 from tg_agent.cli.pipeline.responses import _format_filter_config
 from tg_agent.models import PipelineNode, PipelineNodeType
@@ -19,6 +20,21 @@ def _str_to_bool(value: str | None) -> bool | None:
 
 def _find_filter_node(graph) -> PipelineNode | None:
     return next((node for node in graph.nodes if node.type == PipelineNodeType.FILTER), None)
+
+
+async def _graph_or_miss(svc: PipelineService, pipeline_id: int):
+    """The pipeline's graph once a node or edge operation touched nothing (#1951).
+
+    The service answers ``False`` for a pipeline that does not exist, for one
+    without a graph and for a node or edge it does not hold; the first two
+    name themselves here, and the caller names the rest.
+    """
+    if await svc.get(pipeline_id) is None:
+        cli_error(f"Pipeline id={pipeline_id} not found")
+    graph = await svc.get_graph(pipeline_id)
+    if graph is None:
+        cli_error(f"Pipeline id={pipeline_id} has no graph")
+    return graph
 
 
 def _build_message_filter_config(args: requests.PipelineFilterSetCommand) -> dict:
@@ -128,8 +144,7 @@ async def _pipeline_filter(
 ) -> None:
     pipeline = await svc.get(args.id)
     if pipeline is None:
-        print(f"Pipeline id={args.id} not found")
-        return
+        cli_error(f"Pipeline id={args.id} not found")
     graph = await svc.get_graph(args.id)
     if graph is None:
         print(f"Pipeline id={args.id} has no graph (legacy pipeline)")
@@ -140,11 +155,9 @@ async def _pipeline_filter(
         try:
             ok = await _upsert_filter_node(svc, args.id, config)
         except PipelineValidationError as exc:
-            print(f"Error: {exc}")
-            return
+            cli_error(str(exc))
         if not ok:
-            print(f"Failed to update filter for pipeline id={args.id}")
-            return
+            cli_error(f"Failed to update filter for pipeline id={args.id}")
         print(f"Updated filter for pipeline id={args.id}")
         for line in _format_filter_config(config):
             print(line)
@@ -160,8 +173,7 @@ async def _pipeline_filter(
     elif args.filter_action == "clear":
         ok = await _clear_filter_node(svc, args.id)
         if not ok:
-            print(f"Failed to clear filter for pipeline id={args.id}")
-            return
+            cli_error(f"Failed to clear filter for pipeline id={args.id}")
         print(f"Cleared filter for pipeline id={args.id}")
 
 
@@ -177,8 +189,7 @@ async def _pipeline_node(
         try:
             spec = parse_node_spec(args.node_spec)
         except NodeSpecError as exc:
-            print(f"Invalid node spec: {exc}")
-            return
+            cli_error(f"Invalid node spec: {exc}")
         from tg_agent.cli.node_dsl import generate_node_id
 
         if spec.id:
@@ -201,28 +212,32 @@ async def _pipeline_node(
         if ok:
             print(f"Added node '{node_id}' to pipeline id={args.pipeline_id}")
         else:
-            print(f"Pipeline id={args.pipeline_id} not found or has no graph")
+            await _graph_or_miss(svc, args.pipeline_id)
+            cli_error(f"Node '{node_id}' already exists in pipeline id={args.pipeline_id}")
 
     elif args.node_action == "replace":
         try:
             spec = parse_node_spec(args.node_spec)
         except NodeSpecError as exc:
-            print(f"Invalid node spec: {exc}")
-            return
+            cli_error(f"Invalid node spec: {exc}")
         new_id = spec.id or args.node_id
         node = PipelineNode(id=new_id, type=spec.type, name=spec.type.value, config=spec.config)
         ok = await svc.replace_node(args.pipeline_id, args.node_id, node)
         if ok:
             print(f"Replaced node '{args.node_id}' in pipeline id={args.pipeline_id}")
         else:
-            print(f"Node '{args.node_id}' not found")
+            ids = {n.id for n in (await _graph_or_miss(svc, args.pipeline_id)).nodes}
+            if args.node_id not in ids:
+                cli_error(f"Node '{args.node_id}' not found in pipeline id={args.pipeline_id}")
+            cli_error(f"Node '{new_id}' already exists in pipeline id={args.pipeline_id}")
 
     elif args.node_action == "remove":
         ok = await svc.remove_node(args.pipeline_id, args.node_id)
         if ok:
             print(f"Removed node '{args.node_id}' from pipeline id={args.pipeline_id}")
         else:
-            print(f"Node '{args.node_id}' not found")
+            await _graph_or_miss(svc, args.pipeline_id)
+            cli_error(f"Node '{args.node_id}' not found in pipeline id={args.pipeline_id}")
 
 
 async def _pipeline_edge(
@@ -233,19 +248,21 @@ async def _pipeline_edge(
             ok = await svc.add_edge(args.pipeline_id, args.from_node, args.to_node)
         except PipelineValidationError as exc:
             # Fail-closed (#1077): a cycle-creating edge is rejected.
-            print(f"Error: {exc}")
-            return
+            cli_error(str(exc))
         if ok:
             print(f"Added edge {args.from_node} -> {args.to_node}")
         else:
-            print(f"Pipeline id={args.pipeline_id} not found or has no graph")
+            ids = {n.id for n in (await _graph_or_miss(svc, args.pipeline_id)).nodes}
+            missing = next(n for n in (args.from_node, args.to_node) if n not in ids)
+            cli_error(f"Node '{missing}' not found in pipeline id={args.pipeline_id}")
 
     elif args.edge_action == "remove":
         ok = await svc.remove_edge(args.pipeline_id, args.from_node, args.to_node)
         if ok:
             print(f"Removed edge {args.from_node} -> {args.to_node}")
         else:
-            print(f"Edge {args.from_node} -> {args.to_node} not found")
+            await _graph_or_miss(svc, args.pipeline_id)
+            cli_error(f"Edge {args.from_node} -> {args.to_node} not found in pipeline id={args.pipeline_id}")
 
 
 async def _pipeline_graph(args: requests.PipelineGraphCommand, db, config, svc: PipelineService) -> None:
@@ -253,9 +270,8 @@ async def _pipeline_graph(args: requests.PipelineGraphCommand, db, config, svc: 
     if graph is None:
         pipeline = await svc.get(args.id)
         if pipeline is None:
-            print(f"Pipeline id={args.id} not found")
-        else:
-            print(f"Pipeline id={args.id} has no graph (legacy pipeline)")
+            cli_error(f"Pipeline id={args.id} not found")
+        print(f"Pipeline id={args.id} has no graph (legacy pipeline)")
         return
     return responses.render_pipeline_graph(graph)
 
