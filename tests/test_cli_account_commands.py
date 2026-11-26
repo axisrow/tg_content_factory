@@ -135,3 +135,53 @@ def test_gateway_commands_name_a_missing_account(cli_db, monkeypatch, capsys, ca
     assert "Account id=999 not found" in captured.err
     assert captured.out == ""
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("call", "reaches_the_gateway"),
+    [
+        pytest.param(
+            lambda account_id: account_cli.set_primary_impl("cfg", account_id=account_id),
+            ("update", "acc-p", True),
+            id="set-primary",
+        ),
+        pytest.param(
+            lambda account_id: account_cli.delete_impl("cfg", account_id=account_id),
+            ("detach", "acc-p"),
+            id="delete",
+        ),
+    ],
+)
+def test_gateway_commands_let_a_mirrored_account_through(cli_db, monkeypatch, capsys, call, reaches_the_gateway):
+    """The miss check is a gate, not a wall: an id the mirror holds reaches the gateway."""
+    row = {"id": "acc-p", "phone": "+10000000001", "active": True, "flood_until": 0, "is_primary": True}
+    asyncio.run(cli_db.repos.accounts.sync_gateway_catalog([row]))
+    local_id = asyncio.run(cli_db.get_account_summaries(active_only=False))[0].id
+    calls = []
+
+    class Gateway:
+        async def accounts(self):
+            return [row]
+
+        async def update_account(self, account_id, *, active=None, primary=False):
+            calls.append(("update", account_id, primary))
+
+        async def detach(self, account_id):
+            calls.append(("detach", account_id))
+
+        async def close(self):
+            pass
+
+    async def from_config(cls, config):
+        return Gateway()
+
+    async def init_db(_path):
+        return SimpleNamespace(gateway={"project_id": "project-a"}), cli_db
+
+    monkeypatch.setattr(TelegramGatewayClient, "from_config", classmethod(from_config))
+    monkeypatch.setattr(runtime, "init_db", init_db)
+
+    asyncio.run(call(local_id))
+
+    assert calls == [reaches_the_gateway]
+    assert capsys.readouterr().err == ""

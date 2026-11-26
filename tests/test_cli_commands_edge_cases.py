@@ -1224,9 +1224,9 @@ class TestFilterPurgeMessages:
         from tg_agent.cli.commands.filter import run
 
         db = MagicMock()
-        db.get_channels = AsyncMock(return_value=[
-            Channel(id=1, channel_id=100, title="TestCh"),
-        ])
+        db.get_channel_by_channel_id = AsyncMock(
+            return_value=Channel(id=1, channel_id=100, title="TestCh")
+        )
         db.close = AsyncMock()
 
         with patch("tg_agent.cli.commands.filter.runtime.init_db", side_effect=_make_coro((None, db))), \
@@ -1240,9 +1240,9 @@ class TestFilterPurgeMessages:
         from tg_agent.cli.commands.filter import run
 
         db = MagicMock()
-        db.get_channels = AsyncMock(return_value=[
-            Channel(id=1, channel_id=100, title="TestCh"),
-        ])
+        db.get_channel_by_channel_id = AsyncMock(
+            return_value=Channel(id=1, channel_id=100, title="TestCh")
+        )
         db.delete_messages_for_channel = AsyncMock(return_value=42)
         db.close = AsyncMock()
 
@@ -1257,7 +1257,7 @@ class TestFilterPurgeMessages:
         from tg_agent.cli.commands.filter import run
 
         db = MagicMock()
-        db.get_channels = AsyncMock(return_value=[])
+        db.get_channel_by_channel_id = AsyncMock(return_value=None)
         db.delete_messages_for_channel = AsyncMock(return_value=0)
         db.close = AsyncMock()
 

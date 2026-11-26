@@ -42,7 +42,8 @@ def _build_deletion_service(db) -> FilterDeletionService:
     return FilterDeletionService(db, channel_service)
 
 
-def _parse_pks(raw: str) -> list[int]:
+def _parse_pks(raw: str, rejected: list[str] | None = None) -> list[int]:
+    """The lenient ``--pks`` reader: a token ``int()`` refuses is dropped — or named in *rejected*."""
     pks = []
     for pk_str in raw.split(","):
         pk_str = pk_str.strip()
@@ -50,7 +51,8 @@ def _parse_pks(raw: str) -> list[int]:
             try:
                 pks.append(int(pk_str))
             except ValueError:
-                continue
+                if rejected is not None:
+                    rejected.append(pk_str)
     return pks
 
 
@@ -60,14 +62,10 @@ def _requested_pks(raw: str) -> list[int]:
     A token that is not a number used to be dropped in silence, and the command
     ran on what was left of the list.
     """
-    invalid = [
-        token
-        for token in (piece.strip() for piece in raw.split(","))
-        if token and not token.lstrip("+-").isdigit()
-    ]
+    invalid: list[str] = []
+    pks = _parse_pks(raw, invalid)
     if invalid:
         cli_error(f"Invalid pk(s) in --pks: {', '.join(invalid)}")
-    pks = _parse_pks(raw)
     if not pks:
         cli_error("No valid PKs provided.")
     return pks
@@ -370,8 +368,9 @@ async def purge_messages_impl(config_path: str, *, channel_id: int, yes: bool = 
     """Delete all stored messages for a specific channel id (confirmation unless --yes)."""
     _, db = await runtime.init_db(config_path)
     try:
-        channels = await db.get_channels()
-        ch = next((c for c in channels if c.channel_id == channel_id), None)
+        # By id, not through ``get_channels()``: that list hides the rows awaiting
+        # approval (#1313), which are in the store with their cached messages.
+        ch = await db.get_channel_by_channel_id(channel_id)
         if ch is None:
             # Before the prompt: there is nothing to confirm for a channel the
             # store does not hold (#1955).

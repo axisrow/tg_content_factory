@@ -1272,14 +1272,22 @@ class TestFilterMissExitCodes:
     None of these bodies is run against the real store: `purge` and `hard-delete` delete.
     """
 
-    @pytest.mark.parametrize("pks", ["abc", "12,abc"])
-    def test_a_malformed_pks_list_is_refused_as_a_whole(self, cli_env, capsys, pks):
+    @pytest.mark.parametrize(
+        ("pks", "bad"),
+        [
+            pytest.param("abc", "abc", id="abc"),
+            pytest.param("12,abc", "abc", id="12,abc"),
+            # A doubled sign is not a number either: `int()` refuses it (#1955 review).
+            pytest.param("12,--7", "--7", id="12,--7"),
+        ],
+    )
+    def test_a_malformed_pks_list_is_refused_as_a_whole(self, cli_env, capsys, pks, bad):
         with patch(f"{_FILTER}.ChannelAnalyzer") as analyzer:
             analyzer.return_value.reset_filters_for_pks = AsyncMock()
             with pytest.raises(typer.Exit) as excinfo:
                 asyncio.run(filter_commands.reset_impl("c", pks=pks))
         # The bad token is named, and the good one next to it is not acted on either.
-        _assert_exit_clean(excinfo, capsys, "Invalid pk(s) in --pks: abc")
+        _assert_exit_clean(excinfo, capsys, f"Invalid pk(s) in --pks: {bad}")
         analyzer.return_value.reset_filters_for_pks.assert_not_awaited()
 
     def test_an_empty_pks_list_is_refused(self, cli_env, capsys):
@@ -1319,6 +1327,26 @@ class TestFilterMissExitCodes:
                 asyncio.run(filter_commands.purge_messages_impl("c", channel_id=999, yes=False))
         _assert_exit_clean(excinfo, capsys, "Channel 999 not found")
         prompt.assert_not_called()
+
+    def test_purge_messages_reaches_a_channel_awaiting_approval(self, cli_env, capsys):
+        """A pending channel is in the store with its cached messages: it is found, not missed.
+
+        `get_channels()` hides the pending-approval rows (#1313); the miss check reads by id.
+        """
+        from tg_agent.models import Channel
+
+        asyncio.run(
+            cli_env.add_channel(Channel(channel_id=4242, title="Discovered", approval_state="pending"))
+        )
+        asyncio.run(
+            cli_env.insert_message(
+                Message(channel_id=4242, message_id=1, text="cached", date=datetime.now(timezone.utc))
+            )
+        )
+
+        asyncio.run(filter_commands.purge_messages_impl("c", channel_id=4242, yes=True))
+
+        assert "Deleted 1 messages for channel Discovered (4242)." in capsys.readouterr().out
 
     def test_hard_delete_without_developer_mode_exits_1(self, cli_env, capsys):
         with pytest.raises(typer.Exit) as excinfo:
