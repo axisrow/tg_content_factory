@@ -573,6 +573,10 @@ class TestCLIChannelRefusals:
                 MagicMock(status=CollectionTaskStatus.FAILED, error="boom", note=None),
                 "завершилась ошибкой: boom",
             ),
+            (
+                MagicMock(status=CollectionTaskStatus.FAILED, error=None, note=None),
+                "завершилась ошибкой: причина не записана",
+            ),
             (MagicMock(status=CollectionTaskStatus.CANCELLED, error=None, note=None), "отменена"),
             (MagicMock(status=CollectionTaskStatus.RUNNING, error=None, note=None), "всё ещё в статусе"),
         ],

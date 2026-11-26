@@ -1517,7 +1517,10 @@ async def _wait_for_task(db, task_id: int) -> None:
             if task.status == CollectionTaskStatus.COMPLETED:
                 print(f"Собрано {task.messages_collected} сообщений.")
             elif task.status == CollectionTaskStatus.FAILED:
-                cli_error(f"Задача #{task_id} завершилась ошибкой: {task.error}")
+                # A failure without a stored reason is said to have none — not shown as "…: None".
+                cli_error(
+                    f"Задача #{task_id} завершилась ошибкой: {task.error or 'причина не записана'}"
+                )
             else:
                 cli_error(f"Задача #{task_id} отменена.")
             return
