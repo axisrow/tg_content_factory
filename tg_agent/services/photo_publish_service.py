@@ -71,6 +71,10 @@ class PhotoPublishService:
         async with self._acquire_client_and_resolve(
             phone, target_dialog_id, target_type
         ) as (session, acquired_phone, entity):
+            # A scheduled message is a cancel handle, not a delivered message: its
+            # id lives in the scheduled id space, and the delivered message will
+            # carry another one. The registry holds delivered messages only (#1944).
+            register = schedule_at is None
             if send_mode == PhotoSendMode.ALBUM and len(file_paths) > 1:
                 sent = await run_with_flood_wait(
                     session.publish_files(
@@ -85,16 +89,17 @@ class PhotoPublishService:
                     logger_=logger,
                 )
                 album_ids = [int(msg.id) for msg in sent]
-                await record_send(
-                    self._db,
-                    phone=acquired_phone,
-                    entity=entity,
-                    recipient=target_dialog_id,
-                    message_ids=album_ids,
-                    text=caption,
-                    source="photo_publish",
-                    ref=ref,
-                )
+                if register:
+                    await record_send(
+                        self._db,
+                        phone=acquired_phone,
+                        entity=entity,
+                        recipient=target_dialog_id,
+                        message_ids=album_ids,
+                        text=caption,
+                        source="photo_publish",
+                        ref=ref,
+                    )
                 if on_file_sent is not None:
                     # Atomic album send — record all files only after it succeeds.
                     for path in file_paths:
@@ -117,16 +122,17 @@ class PhotoPublishService:
                 )
                 msg_id = int(sent.id)
                 message_ids.append(msg_id)
-                await record_send(
-                    self._db,
-                    phone=acquired_phone,
-                    entity=entity,
-                    recipient=target_dialog_id,
-                    message_ids=[msg_id],
-                    text=caption,
-                    source="photo_publish",
-                    ref=ref,
-                )
+                if register:
+                    await record_send(
+                        self._db,
+                        phone=acquired_phone,
+                        entity=entity,
+                        recipient=target_dialog_id,
+                        message_ids=[msg_id],
+                        text=caption,
+                        source="photo_publish",
+                        ref=ref,
+                    )
                 # Record progress per file so a mid-batch failure doesn't cause the
                 # already-sent files to be re-sent next cycle (audit #835/4).
                 if on_file_sent is not None:
