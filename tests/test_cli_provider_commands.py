@@ -203,18 +203,22 @@ def test_probe_success(capsys):
 
 
 def test_probe_with_error(capsys):
+    """#1962: the live fetch failed — the cached list is not a confirmed connection."""
     db = make_cli_db()
     cfg = _make_provider_config("openai")
-    entry = MagicMock(error="timeout", models=[], source="api")
+    entry = MagicMock(error="timeout", models=["gpt-4o"], source="static cache")
     svc = _make_svc(
         load_provider_configs=AsyncMock(return_value=[cfg]),
         refresh_models_for_provider=AsyncMock(return_value=entry),
     )
     with patch("tg_agent.cli.commands.provider.runtime.init_db", AsyncMock(return_value=(make_cli_config(), db))), \
          patch("tg_agent.cli.commands.provider.ProviderConfigService", return_value=svc), \
-         patch("asyncio.run", fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run), \
+         pytest.raises(typer.Exit):
         run(_args(provider_action="probe", name="openai"))
-    assert "WARN" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "FAIL: timeout" in captured.err
+    assert "OK" not in captured.out
 
 
 def test_probe_exception(capsys):
@@ -239,13 +243,28 @@ def test_probe_exception(capsys):
 
 def test_refresh_single(capsys):
     db = make_cli_db()
-    entry = MagicMock(models=["m1", "m2"], source="api")
+    entry = MagicMock(error=None, models=["m1", "m2"], source="api")
     svc = _make_svc(refresh_models_for_provider=AsyncMock(return_value=entry))
     with patch("tg_agent.cli.commands.provider.runtime.init_db", AsyncMock(return_value=(make_cli_config(), db))), \
          patch("tg_agent.cli.commands.provider.ProviderConfigService", return_value=svc), \
          patch("asyncio.run", fake_asyncio_run):
         run(_args(provider_action="refresh", name="openai"))
     assert "2 models" in capsys.readouterr().out
+
+
+def test_refresh_single_with_error(capsys):
+    """#1962: a refresh that fell back to the static cache did not refresh."""
+    db = make_cli_db()
+    entry = MagicMock(error="401 Unauthorized", models=["m1"], source="static cache")
+    svc = _make_svc(refresh_models_for_provider=AsyncMock(return_value=entry))
+    with patch("tg_agent.cli.commands.provider.runtime.init_db", AsyncMock(return_value=(make_cli_config(), db))), \
+         patch("tg_agent.cli.commands.provider.ProviderConfigService", return_value=svc), \
+         patch("asyncio.run", fake_asyncio_run), \
+         pytest.raises(typer.Exit):
+        run(_args(provider_action="refresh", name="openai"))
+    captured = capsys.readouterr()
+    assert "FAIL: 401 Unauthorized" in captured.err
+    assert "OK" not in captured.out
 
 
 def test_refresh_single_exception(capsys):
@@ -268,6 +287,24 @@ def test_refresh_all(capsys):
          patch("asyncio.run", fake_asyncio_run):
         run(_args(provider_action="refresh", name=None))
     assert "openai" in capsys.readouterr().out
+
+
+def test_refresh_all_with_one_failed(capsys):
+    """#1962: the table stays on stdout; a provider that did not refresh fails the run."""
+    db = make_cli_db()
+    ok = MagicMock(error=None, models=["m1"], source="live")
+    broken = MagicMock(error="401 Unauthorized", models=["old"], source="static cache")
+    svc = _make_svc(refresh_all_models=AsyncMock(return_value={"openai": ok, "groq": broken}))
+    with patch("tg_agent.cli.commands.provider.runtime.init_db", AsyncMock(return_value=(make_cli_config(), db))), \
+         patch("tg_agent.cli.commands.provider.ProviderConfigService", return_value=svc), \
+         patch("asyncio.run", fake_asyncio_run), \
+         pytest.raises(typer.Exit):
+        run(_args(provider_action="refresh", name=None))
+    captured = capsys.readouterr()
+    assert "openai: 1 models — OK" in captured.out
+    assert "groq: 1 models — FAILED" in captured.out
+    assert "groq: 401 Unauthorized" in captured.err
+    assert "1 of 2 provider(s) failed." in captured.err
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +337,28 @@ def test_test_all_success(capsys):
     assert "OK" in capsys.readouterr().out
 
 
+def test_test_all_counts_a_reported_error_as_failure(capsys):
+    """#1962: the service answers a failed live fetch with the cached list and the
+    reason — that provider failed, like one that raised."""
+    db = make_cli_db()
+    cfg = _make_provider_config("openai")
+    entry = MagicMock(error="401 Unauthorized", models=["gpt-4o"], source="static cache")
+    svc = _make_svc(
+        load_provider_configs=AsyncMock(return_value=[cfg]),
+        refresh_models_for_provider=AsyncMock(return_value=entry),
+    )
+    with patch("tg_agent.cli.commands.provider.runtime.init_db", AsyncMock(return_value=(make_cli_config(), db))), \
+         patch("tg_agent.cli.commands.provider.ProviderConfigService", return_value=svc), \
+         patch("asyncio.run", fake_asyncio_run), \
+         pytest.raises(typer.Exit):
+        run(_args(provider_action="test-all"))
+    captured = capsys.readouterr()
+    assert "FAIL" in captured.out
+    assert "OK" not in captured.out
+    assert "openai: 401 Unauthorized" in captured.err
+    assert "1 of 1 provider(s) failed." in captured.err
+
+
 def test_test_all_with_failure(capsys):
     db = make_cli_db()
     cfg = _make_provider_config("bad_provider")
@@ -314,4 +373,5 @@ def test_test_all_with_failure(capsys):
         run(_args(provider_action="test-all"))
     captured = capsys.readouterr()
     assert "FAIL" in captured.out
+    assert "bad_provider: conn err" in captured.err
     assert "failed." in captured.err

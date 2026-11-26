@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 
 import typer
 
@@ -20,6 +21,7 @@ from tg_agent.cli.commands.common import (
     run_async,
 )
 from tg_agent.services.agent_provider_service import ProviderConfigService
+from tg_agent.services.provider_model_cache import ProviderModelCacheEntry
 
 
 async def list_impl(config_path: str) -> None:
@@ -119,6 +121,23 @@ async def delete_impl(config_path: str, *, name: str) -> None:
         await db.close()
 
 
+async def _refreshed_entry(
+    svc: ProviderConfigService, name: str, cfg: ProviderRuntimeConfig | None
+) -> ProviderModelCacheEntry:
+    """One provider's refreshed model entry; a failed live fetch is a failure.
+
+    The service answers a failed fetch with the cached list plus the reason
+    instead of raising (#1962) — that is no confirmed connection.
+    """
+    try:
+        entry = await svc.refresh_models_for_provider(name, cfg)
+    except Exception as exc:
+        cli_error(f"FAIL: {exc}")
+    if entry.error:
+        cli_error(f"FAIL: {entry.error}")
+    return entry
+
+
 async def probe_impl(config_path: str, *, name: str) -> None:
     """Test a provider connection by refreshing its model list."""
     config, db = await runtime.init_db(config_path)
@@ -130,18 +149,13 @@ async def probe_impl(config_path: str, *, name: str) -> None:
         if cfg is None:
             cli_error(f"Provider '{name}' not configured. Add it first.")
         print(f"Probing {name}...")
-        try:
-            entry = await svc.refresh_models_for_provider(name, cfg)
-            if entry.error:
-                print(f"WARN: {entry.error}")
-            print(f"OK: {len(entry.models)} models available (source: {entry.source})")
-            if entry.models:
-                for m in entry.models[:10]:
-                    print(f"  {m}")
-                if len(entry.models) > 10:
-                    print(f"  ... and {len(entry.models) - 10} more")
-        except Exception as exc:
-            cli_error(f"FAIL: {exc}")
+        entry = await _refreshed_entry(svc, name, cfg)
+        print(f"OK: {len(entry.models)} models available (source: {entry.source})")
+        if entry.models:
+            for m in entry.models[:10]:
+                print(f"  {m}")
+            if len(entry.models) > 10:
+                print(f"  ... and {len(entry.models) - 10} more")
     finally:
         await db.close()
 
@@ -154,17 +168,22 @@ async def refresh_impl(config_path: str, *, name: str | None = None) -> None:
         if name:
             name = name.lower()
             print(f"Refreshing models for {name}...")
-            try:
-                entry = await svc.refresh_models_for_provider(name)
-                print(f"OK: {len(entry.models)} models (source: {entry.source})")
-            except Exception as exc:
-                cli_error(f"FAIL: {exc}")
+            entry = await _refreshed_entry(svc, name, None)
+            print(f"OK: {len(entry.models)} models (source: {entry.source})")
         else:
             print("Refreshing all providers...")
             results = await svc.refresh_all_models()
+            failed = [prov for prov, entry in results.items() if entry.error]
             for prov, entry in results.items():
-                status = "OK" if not entry.error else f"WARN: {entry.error}"
+                status = "OK" if not entry.error else "FAILED"
                 print(f"  {prov}: {len(entry.models)} models — {status}")
+            if failed:
+                # The table stays on stdout; a provider that fell back to the
+                # static cache did not refresh, and its reason goes to stderr.
+                cli_error(
+                    "\n".join(f"{prov}: {results[prov].error}" for prov in failed)
+                    + f"\n{len(failed)} of {len(results)} provider(s) failed."
+                )
     finally:
         await db.close()
 
@@ -184,13 +203,16 @@ async def test_all_impl(config_path: str) -> None:
             print(f"  {cfg.provider}...", end=" ", flush=True)
             try:
                 entry = await svc.refresh_models_for_provider(cfg.provider, cfg)
-                if entry.error:
-                    print(f"WARN ({entry.error})")
-                else:
-                    print(f"OK ({len(entry.models)} models)")
+                # A failed live fetch is a failure too, not a warning (#1962).
+                reason = entry.error
             except Exception as exc:
-                print(f"FAIL ({exc})")
+                reason = str(exc)
+            if reason:
+                print("FAIL")
+                print(f"  {cfg.provider}: {reason}", file=sys.stderr)
                 failed += 1
+            else:
+                print(f"OK ({len(entry.models)} models)")
         if failed:
             # Any provider failure fails the whole test run for scripts (#1486).
             cli_error(f"{failed} of {len(configs)} provider(s) failed.")
