@@ -422,6 +422,15 @@ async def review_confirm_impl(config_path: str, *, identifier: str) -> None:
         ch = resolve_channel(channels, identifier)
         if not ch:
             cli_error(f"Channel '{identifier}' not found")
+        # The verb answers a flag: a channel the collector quarantined, or one
+        # stamped with a terminal username failure (#1783). A healthy channel
+        # has nothing to confirm — deactivating it here would be a mutation
+        # nobody asked for, reported as "removed from review" (#1979).
+        if not (ch.needs_review or ch.terminal_code):
+            cli_error(
+                f"Channel '{identifier}' is not under review and carries no terminal "
+                "stamp: nothing to confirm"
+            )
         await db.set_channel_active(ch.id, False, origin="human", actor="cli")
         await db.set_channel_type(ch.channel_id, "unavailable")
         await db.repos.channels.clear_channel_review(ch.id)
@@ -438,8 +447,17 @@ async def review_keep_impl(config_path: str, *, identifier: str) -> None:
         ch = resolve_channel(channels, identifier)
         if not ch:
             cli_error(f"Channel '{identifier}' not found")
+        if not ch.needs_review:
+            cli_error(f"Channel '{identifier}' is not under review: nothing to clear")
         await db.repos.channels.clear_channel_review(ch.id)
-        print(f"KEPT ACTIVE: {ch.title} (pk={ch.id}) — cleared from review")
+        if ch.is_active:
+            print(f"KEPT ACTIVE: {ch.title} (pk={ch.id}) — cleared from review")
+        else:
+            # The command does not touch `is_active`; the line must not claim it did (#1979).
+            print(
+                f"REVIEW CLEARED: {ch.title} (pk={ch.id}) — the channel stays inactive; "
+                f"`channel toggle {ch.id}` re-enables it"
+            )
     finally:
         await db.close()
 
