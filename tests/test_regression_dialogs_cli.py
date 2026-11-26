@@ -227,12 +227,15 @@ class TestMyTelegramActions:
 
     def test_forward_no_valid_ids(self, capsys):
         pool = _make_pool_with_clients()
-        self._run_action(
-            "forward", pool=pool,
-            extra_args={"from_chat": "@a", "to_chat": "@b", "message_ids": ["abc"]},
-        )
-        out = capsys.readouterr().out
-        assert "No valid" in out
+        # #1965: an id that does not parse refuses the request — stderr, exit 1.
+        with pytest.raises(typer.Exit):
+            self._run_action(
+                "forward", pool=pool,
+                extra_args={"from_chat": "@a", "to_chat": "@b", "message_ids": ["abc"]},
+            )
+        captured = capsys.readouterr()
+        assert "Invalid message ID: 'abc'" in captured.err
+        assert "Invalid message ID" not in captured.out
 
     def test_edit_message_action(self, capsys):
         pool = _make_pool_with_clients()

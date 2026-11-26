@@ -15,7 +15,7 @@ from tests.helpers import cli_add_channel as _add_channel
 from tests.helpers import cli_ns as _ns
 from tg_agent.config import AppConfig
 from tg_agent.database import Database
-from tg_agent.models import Account, Message
+from tg_agent.models import Account, CollectionTaskStatus, Message
 
 NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 pytestmark = pytest.mark.aiosqlite_serial
@@ -397,31 +397,206 @@ class TestCLIChannelDB:
 
 
 class TestCLIChannelPool:
-    def test_add_no_clients(self, cli_env_with_pool, capsys, caplog):
-        from tg_agent.cli.commands.channel import run
+    @pytest.mark.parametrize(
+        ("impl", "kwargs"),
+        [
+            ("add_impl", {"identifier": "@testchan"}),
+            ("import_impl", {"source": "@a,@b"}),
+            ("refresh_types_impl", {}),
+            ("refresh_meta_impl", {"all_channels": True, "identifier": None}),
+            ("refresh_card_impl", {"all_channels": True, "identifier": None}),
+            ("add_bulk_impl", {"phone": "+10000000001", "dialog_ids": "1,2"}),
+            ("probe_impl", {"identifier": "@testchan"}),
+            ("collect_impl", {"identifier": "99999", "full": False}),
+        ],
+    )
+    def test_no_clients_is_a_refusal(self, impl, kwargs, cli_env_with_pool, capsys):
+        """#1965: the reason goes to stderr and the command exits 1 — not to the log with exit 0."""
+        from tg_agent.cli.commands import channel
 
-        run(_ns(channel_action="add", identifier="@testchan"))
-        assert "No connected accounts" in caplog.text
-
-    def test_collect_not_found(self, cli_env_with_pool, capsys, caplog):
-        from tg_agent.cli.commands.channel import run
-
-        run(_ns(channel_action="collect", identifier="99999"))
-        # Pool has no clients → logs error
-        assert "No connected accounts" in caplog.text
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(getattr(channel, impl)("config.yaml", **kwargs))
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "No connected accounts" in captured.err
+        assert "No connected accounts" not in captured.out
 
     def test_stats_no_args(self, cli_env_with_pool, capsys, caplog):
         from tg_agent.cli.commands.channel import run
 
-        run(_ns(channel_action="stats", identifier=None, all=False))
-        # stats_impl no longer opens a pool (#1569) — it just asks for a target.
-        assert "Specify a channel identifier or use --all" in capsys.readouterr().out
+        # stats_impl no longer opens a pool (#1569) — it just asks for a target (#1965).
+        with pytest.raises(typer.Exit):
+            run(_ns(channel_action="stats", identifier=None, all=False))
+        assert "Specify a channel identifier or use --all" in capsys.readouterr().err
 
     def test_import_no_identifiers(self, cli_env_with_pool, capsys):
         from tg_agent.cli.commands.channel import run
 
-        run(_ns(channel_action="import", source=""))
-        assert "No identifiers found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit):
+            run(_ns(channel_action="import", source=""))
+        assert "No identifiers found" in capsys.readouterr().err
+
+
+class TestCLIChannelRefusals:
+    """#1965: a refusal or a miss in ``channel`` is a reason on stderr with exit 1."""
+
+    @pytest.fixture
+    def pool_with_client(self):
+        pool = AsyncMock()
+        pool.clients = {"+70001112233": MagicMock()}
+        pool.disconnect_all = AsyncMock()
+
+        async def fake_init_pool(config, db, **_kwargs):
+            from tg_shared.auth import TelegramAuth
+
+            return TelegramAuth(0, ""), pool
+
+        with patch("tg_agent.cli.runtime.init_pool", side_effect=fake_init_pool):
+            yield pool
+
+    @pytest.mark.parametrize(
+        ("resolve", "fragment"),
+        [
+            ({"return_value": None}, "Could not resolve channel: @missing"),
+            ({"side_effect": RuntimeError("no_client")}, "No connected accounts"),
+        ],
+    )
+    def test_add_names_why_nothing_was_added(
+        self, resolve, fragment, cli_env, pool_with_client, capsys
+    ):
+        from tg_agent.cli.commands.channel import add_impl
+
+        pool_with_client.resolve_channel = AsyncMock(**resolve)
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(add_impl("config.yaml", identifier="@missing"))
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert fragment in captured.err
+        assert captured.out == ""
+
+    def test_reject_outside_the_queue(self, cli_env, capsys):
+        from tg_agent.cli.commands.channel import reject_impl
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(reject_impl("config.yaml", identifier="99999"))
+        assert excinfo.value.exit_code == 1
+        assert "is not in the approval queue" in capsys.readouterr().err
+
+    def test_import_names_the_count_it_could_not_add(
+        self, cli_env, pool_with_client, capsys
+    ):
+        from tg_agent.cli.commands.channel import import_impl
+
+        pool_with_client.resolve_channel = AsyncMock(return_value=None)
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(import_impl("config.yaml", source="@a,@b"))
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "Failed: 2" in captured.out
+        assert "2 of 2 channel(s) could not be imported." in captured.err
+
+    @pytest.mark.parametrize(
+        ("kwargs", "fragment"),
+        [
+            (
+                {"all_channels": True, "identifier": None, "max_channels": 0},
+                "--max-channels must be a positive integer",
+            ),
+            (
+                {"all_channels": False, "identifier": None, "max_channels": None},
+                "Specify a channel identifier or use --all",
+            ),
+        ],
+    )
+    def test_stats_refuses_the_request(self, kwargs, fragment, cli_env, capsys):
+        from tg_agent.cli.commands.channel import stats_impl
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(stats_impl("config.yaml", **kwargs))
+        assert excinfo.value.exit_code == 1
+        assert fragment in capsys.readouterr().err
+
+    @pytest.mark.parametrize("impl", ["refresh_meta_impl", "refresh_card_impl"])
+    def test_refresh_needs_a_target(self, impl, cli_env, pool_with_client, capsys):
+        from tg_agent.cli.commands import channel
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(getattr(channel, impl)("config.yaml", all_channels=False, identifier=None))
+        assert excinfo.value.exit_code == 1
+        assert "Please provide --all or a channel identifier" in capsys.readouterr().err
+
+    def test_add_bulk_names_an_account_that_is_not_connected(
+        self, cli_env, pool_with_client, capsys
+    ):
+        from tg_agent.cli.commands.channel import add_bulk_impl
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(add_bulk_impl("config.yaml", phone="+19999999999", dialog_ids="1"))
+        assert excinfo.value.exit_code == 1
+        assert "Account +19999999999 not connected." in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        ("dialog_ids", "fragment"),
+        [("abc", "Invalid dialog ID: 'abc'"), (",", "No valid dialog IDs provided.")],
+    )
+    def test_add_bulk_refuses_ids_that_do_not_parse(
+        self, dialog_ids, fragment, cli_env, pool_with_client, capsys
+    ):
+        from tg_agent.cli.commands.channel import add_bulk_impl
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(
+                add_bulk_impl("config.yaml", phone="+70001112233", dialog_ids=dialog_ids)
+            )
+        assert excinfo.value.exit_code == 1
+        assert fragment in capsys.readouterr().err
+
+    def test_collect_on_a_filtered_channel_names_the_filter(self, cli_env, capsys):
+        from tg_agent.cli.commands import channel
+        from tg_agent.services.collection_service import CollectionService
+
+        pk = _add_channel(cli_env, channel_id=300, title="Filtered")
+        asyncio.run(cli_env.set_channel_filtered(pk, True, origin="human"))
+        with (
+            patch.object(CollectionService, "enqueue_channel_by_pk", AsyncMock(return_value="filtered")),
+            pytest.raises(typer.Exit) as excinfo,
+        ):
+            asyncio.run(channel._handoff_collect_to_worker(cli_env, identifier="300", full=False, wait=False))
+        assert excinfo.value.exit_code == 1
+        assert "отфильтрован" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        ("task", "fragment"),
+        [
+            (None, "исчезла из очереди"),
+            (
+                MagicMock(status=CollectionTaskStatus.FAILED, error="boom", note=None),
+                "завершилась ошибкой: boom",
+            ),
+            (MagicMock(status=CollectionTaskStatus.CANCELLED, error=None, note=None), "отменена"),
+            (MagicMock(status=CollectionTaskStatus.RUNNING, error=None, note=None), "всё ещё в статусе"),
+        ],
+    )
+    def test_collect_wait_reports_a_task_that_did_not_complete(
+        self, task, fragment, cli_env, capsys
+    ):
+        from tg_agent.cli.commands import channel
+
+        cli_env.get_collection_task = AsyncMock(return_value=task)
+        with patch.object(channel, "_HANDOFF_WAIT_TIMEOUT_SEC", 0), pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(channel._wait_for_task(cli_env, 1))
+        assert excinfo.value.exit_code == 1
+        assert fragment in capsys.readouterr().err
+
+    def test_collect_wait_on_a_completed_task_exits_0(self, cli_env, capsys):
+        from tg_agent.cli.commands import channel
+
+        task = MagicMock(status=CollectionTaskStatus.COMPLETED, error=None, note=None, messages_collected=5)
+        cli_env.get_collection_task = AsyncMock(return_value=task)
+        asyncio.run(channel._wait_for_task(cli_env, 1))
+        captured = capsys.readouterr()
+        assert "Собрано 5 сообщений." in captured.out
+        assert captured.err == ""
 
 
 # ---------------------------------------------------------------------------

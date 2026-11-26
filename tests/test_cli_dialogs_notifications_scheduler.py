@@ -190,7 +190,7 @@ class TestMyTelegramCommand:
 
         with patch.object(
             ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]
-        ):
+        ), pytest.raises(typer.Exit):
             from tg_agent.cli.commands.dialogs import run
 
             run(
@@ -202,9 +202,10 @@ class TestMyTelegramCommand:
                 )
             )
 
-        out = capsys.readouterr().out
-        assert "Invalid dialog ID" in out
-        assert "No valid dialog IDs" in out
+        # #1965: the refusal goes to stderr; nothing was left.
+        captured = capsys.readouterr()
+        assert "Invalid dialog ID: 'notanid'" in captured.err
+        assert captured.out == ""
 
     def test_leave_success_with_yes_flag(self, cli_env_with_pool, capsys):
         """Test dialogs leave succeeds when --yes skips confirmation."""
@@ -249,7 +250,7 @@ class TestMyTelegramCommand:
         fake_pool.clients = {"+10001112233": AsyncMock()}
 
         from tg_agent.services.channel_service import ChannelService
-        fake_pool.leave_channels = AsyncMock(return_value={-100111: True, -100222: False})
+        fake_pool.leave_channels = AsyncMock(return_value={-100111: True, -100222: True})
 
         with (
             patch.object(ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]),
@@ -268,6 +269,34 @@ class TestMyTelegramCommand:
         called_dialogs = fake_pool.leave_channels.call_args[0][1]
         assert (-100111, "channel") in called_dialogs
         assert (-100222, "channel") in called_dialogs
+
+    def test_leave_names_the_dialog_that_failed(self, cli_env_with_pool, capsys):
+        """#1965: the table stays on stdout, the failed dialog goes to stderr, exit 1."""
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {"+10001112233": AsyncMock()}
+
+        from tg_agent.services.channel_service import ChannelService
+        fake_pool.leave_channels = AsyncMock(return_value={-100111: True, -100222: False})
+
+        with (
+            patch.object(ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]),
+            pytest.raises(typer.Exit) as excinfo,
+        ):
+            from tg_agent.cli.commands.dialogs import run
+
+            run(
+                _ns(
+                    dialogs_action="leave",
+                    phone="+10001112233",
+                    dialog_ids=["-100111,-100222"],
+                    yes=True,
+                )
+            )
+
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "Done: 1 left, 1 failed." in captured.out
+        assert "1 of 2 dialog(s) failed: -100222" in captured.err
 
     def test_leave_aborted_on_no_confirmation(self, cli_env_with_pool, capsys):
         """Test dialogs leave aborts when user answers 'n' to confirmation."""
@@ -749,7 +778,7 @@ class TestSchedulerCommandRW:
         _sched_run_with_db(
             db_path,
             cli_init_patch,
-            _ns(scheduler_action="job-toggle", job_id="content_generate_5"),
+            _ns(scheduler_action="job-toggle", job_id="collect_all"),
         )
 
         conn = sqlite3.connect(db_path)
@@ -760,7 +789,7 @@ class TestSchedulerCommandRW:
         finally:
             conn.close()
         assert rows == [
-            ("setting", "scheduler_job_disabled:content_generate_5", "1", "human", "cli")
+            ("setting", "scheduler_job_disabled:collect_all", "1", "human", "cli")
         ]
 
     def test_set_interval_writes_setting(

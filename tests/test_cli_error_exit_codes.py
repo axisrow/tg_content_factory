@@ -506,7 +506,7 @@ class TestPhotoLoaderExitCodes:
             photo_loader, "_run_with_services", new=fake_run
         ):
             asyncio.run(photo_loader.auto_toggle_impl("config.yaml", job_id=5))
-        _assert_exit(excinfo, capsys, "Auto job not found")
+        _assert_exit(excinfo, capsys, "Auto job #5 not found")
 
     def test_send_partial_failure_names_what_went_out_and_exits_1(self, capsys):
         """#1943: some files live, some failed — the report says which, and exits 1."""
@@ -577,6 +577,232 @@ class TestPhotoLoaderExitCodes:
         assert partial == "#157 batch=124 phone=+1 target=100 status=completed error=partial send failure: boom"
         assert clean == "#158 batch=124 phone=+1 target=100 status=cancelled"
         assert rest == []
+
+
+# ---------------------------------------------------------------------------
+# exit-code wave 4 (#1965): misses and refusals that still answered on
+# stdout — or in the log — with exit 0
+# ---------------------------------------------------------------------------
+
+
+def _channel_service_cls(dialogs_info=()):
+    """A ChannelService stand-in whose dialog list is awaitable."""
+    svc = MagicMock()
+    svc.get_my_dialogs = AsyncMock(return_value=list(dialogs_info))
+    return lambda *_args: svc
+
+
+_LEAVE_DELETE = [("_dialogs_leave", "leave_dialogs"), ("_dialogs_delete", "delete_dialogs")]
+
+
+class TestExitCodesWave4:
+    # -- photo-loader: a missing batch / job is not a success -----------------
+
+    @pytest.mark.parametrize(
+        ("impl", "fragment"),
+        [
+            ("publish_impl", "Photo batch #5 not found"),
+            ("auto_update_impl", "Auto job #5 not found"),
+            ("auto_delete_impl", "Auto job #5 not found"),
+        ],
+    )
+    def test_photo_loader_names_a_missing_target(self, impl, fragment, capsys):
+        from tg_agent.cli.commands import photo_loader
+
+        write = AsyncMock()
+        services = SimpleNamespace(
+            bundle=SimpleNamespace(get_batch=AsyncMock(return_value=None)),
+            tasks=SimpleNamespace(publish_batch=write),
+            auto=SimpleNamespace(
+                get_job=AsyncMock(return_value=None), update_job=write, delete_job=write
+            ),
+        )
+
+        async def fake_run(config_path, body):
+            await body(services)
+
+        kwargs = {"batch_id": 5} if impl == "publish_impl" else {"job_id": 5}
+        with pytest.raises(typer.Exit) as excinfo, patch.object(
+            photo_loader, "_run_with_services", new=fake_run
+        ):
+            asyncio.run(getattr(photo_loader, impl)("config.yaml", **kwargs))
+        write.assert_not_awaited()
+        _assert_exit_clean(excinfo, capsys, fragment)
+
+    # -- scheduler: an unknown job id is refused, not toggled -----------------
+
+    def test_job_toggle_unknown_job_writes_nothing(self, cli_env, capsys):
+        """Any id used to be accepted: a junk setting was written and success printed."""
+        from tg_agent.cli.commands.scheduler import job_toggle_impl
+
+        record = AsyncMock()
+        cli_env.repos.settings.record_setting_decision = record
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(job_toggle_impl("config.yaml", job_id="nope"))
+        _assert_exit_clean(excinfo, capsys, "Unknown job_id 'nope'")
+        record.assert_not_awaited()
+
+    def test_job_toggle_knows_a_record_job_only_when_the_record_exists(self, cli_env, capsys):
+        """`content_generate_<id>` / `sq_<id>` name a job only for a record that is there."""
+        from tg_agent.cli.commands.scheduler import job_toggle_impl
+
+        pipeline_id = asyncio.run(_seed_pipeline(cli_env))
+        asyncio.run(job_toggle_impl("config.yaml", job_id=f"pipeline_run_{pipeline_id}"))
+        assert f"Job 'content_generate_{pipeline_id}' disabled." in capsys.readouterr().out
+
+        if cli_env._connection.db is None:  # the command above closed its db
+            asyncio.run(cli_env.initialize())
+        sq_id = asyncio.run(
+            SearchQueryService(SearchQueryBundle.from_database(cli_env)).add("джомтьен*")
+        )
+        asyncio.run(job_toggle_impl("config.yaml", job_id=f"sq_{sq_id}"))
+        assert f"Job 'sq_{sq_id}' disabled." in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "job_id", ["content_generate_999", "sq_999", "sq_abc", "content_generate_x", "photo_due_"]
+    )
+    def test_job_toggle_refuses_an_id_without_a_record(self, job_id, cli_env, capsys):
+        from tg_agent.cli.commands.scheduler import job_toggle_impl
+
+        if cli_env._connection.db is None:  # a parametrized case before this one closed it
+            asyncio.run(cli_env.initialize())
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(job_toggle_impl("config.yaml", job_id=job_id))
+        _assert_exit_clean(excinfo, capsys, f"Unknown job_id '{job_id}'")
+
+        # -- dialogs: a destructive request is checked whole before it runs ------
+
+    @pytest.mark.parametrize(("handler_name", "method"), _LEAVE_DELETE)
+    def test_leave_delete_refuse_the_whole_request_on_an_invalid_id(
+        self, handler_name, method, capsys
+    ):
+        """A typo in one id must not leave the request half-executed."""
+        from tg_agent.cli.commands import dialogs
+
+        svc = MagicMock()
+        action = AsyncMock()
+        setattr(svc, method, action)
+        args = _dlg_args(dialog_ids=["100", "abc"], yes=True)
+        with pytest.raises(typer.Exit) as excinfo, patch.object(
+            dialogs, "TelegramActionService", return_value=svc
+        ):
+            asyncio.run(
+                getattr(dialogs, handler_name)(
+                    args, MagicMock(), _dlg_pool(), channel_service_cls=_channel_service_cls()
+                )
+            )
+        action.assert_not_awaited()
+        _assert_exit_clean(excinfo, capsys, "Invalid dialog ID: 'abc'")
+
+    @pytest.mark.parametrize(("handler_name", "method"), _LEAVE_DELETE)
+    def test_leave_delete_without_a_valid_id_exit_1(self, handler_name, method, capsys):
+        """A token that is not an id is named; an empty list is named as such."""
+        from tg_agent.cli.commands import dialogs
+
+        svc = MagicMock()
+        action = AsyncMock()
+        setattr(svc, method, action)
+        args = _dlg_args(dialog_ids=[","], yes=True)
+        with pytest.raises(typer.Exit) as excinfo, patch.object(
+            dialogs, "TelegramActionService", return_value=svc
+        ):
+            asyncio.run(
+                getattr(dialogs, handler_name)(
+                    args, MagicMock(), _dlg_pool(), channel_service_cls=_channel_service_cls()
+                )
+            )
+        action.assert_not_awaited()
+        _assert_exit_clean(excinfo, capsys, "No valid dialog IDs provided.")
+
+    @pytest.mark.parametrize(
+        ("handler_name", "done"),
+        [
+            ("_dialogs_leave", "Done: 1 left, 1 failed."),
+            ("_dialogs_delete", "Done: 1 deleted, 1 failed."),
+        ],
+    )
+    def test_leave_delete_name_the_failed_dialogs(self, handler_name, done, capsys):
+        """The table stays on stdout; the dialogs that failed go to stderr."""
+        from tg_agent.cli.commands import dialogs
+
+        svc = MagicMock()
+        result = SimpleNamespace(results={100: True, 200: False}, success_count=1, failed_count=1)
+        svc.leave_dialogs = AsyncMock(return_value=result)
+        svc.delete_dialogs = AsyncMock(return_value=result)
+        args = _dlg_args(dialog_ids=["100,200"], yes=True)
+        with pytest.raises(typer.Exit) as excinfo, patch.object(
+            dialogs, "TelegramActionService", return_value=svc
+        ):
+            asyncio.run(
+                getattr(dialogs, handler_name)(
+                    args, MagicMock(), _dlg_pool(), channel_service_cls=_channel_service_cls()
+                )
+            )
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert done in captured.out
+        assert "200" in captured.err
+        assert "100" not in captured.err
+
+    @pytest.mark.parametrize(
+        ("message_ids", "fragment"),
+        [([","], "No valid message IDs provided."), (["9,abc"], "Invalid message ID: 'abc'")],
+    )
+    def test_delete_message_refuses_invalid_ids_before_any_request(
+        self, message_ids, fragment, capsys
+    ):
+        from tg_agent.cli.commands import dialogs
+
+        svc = MagicMock()
+        with pytest.raises(typer.Exit) as excinfo, patch.object(
+            dialogs, "TelegramActionService", return_value=svc
+        ):
+            asyncio.run(
+                dialogs._dialogs_delete_message(
+                    _dlg_args(chat_id="me", message_ids=message_ids, yes=True), MagicMock(), _dlg_pool()
+                )
+            )
+        svc.delete_messages.assert_not_called()
+        _assert_exit_clean(excinfo, capsys, fragment)
+
+    # -- dm drafts and stop: the reason leaves stdout -------------------------
+
+    @pytest.mark.parametrize(
+        ("impl", "kwargs", "fragment"),
+        [
+            (
+                "create_impl",
+                {"incoming_dm_id": 7, "text": "hi", "phone": None, "chat_id": None},
+                "укажите --phone и --chat-id",
+            ),
+            ("decide_impl", {"draft_id": 7, "decision": "approved"}, "не найден"),
+            ("send_impl", {"draft_id": 7}, "не найден"),
+        ],
+    )
+    def test_dm_drafts_refusal_goes_to_stderr(self, impl, kwargs, fragment, cli_env, capsys):
+        from tg_agent.cli.commands import dm
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(getattr(dm, impl)("config.yaml", **kwargs))
+        _assert_exit_clean(excinfo, capsys, fragment)
+
+    def test_stop_refusal_goes_to_stderr(self, capsys):
+        from tg_agent.cli.commands import server_control
+
+        outcome = SimpleNamespace(
+            result=server_control.StopResult.UNMANAGED,
+            message="PID 1 is not a managed tg-agent daemon process.",
+        )
+        with (
+            patch.object(server_control, "pid_file_candidates", return_value=["x.pid"]),
+            patch.object(server_control, "stop_server", return_value=outcome),
+            pytest.raises(SystemExit) as excinfo,
+        ):
+            server_control._stop_managed_server("config.yaml", "stopping")
+        assert excinfo.value.code == 1
+        captured = capsys.readouterr()
+        assert captured.out == "stopping\n"
+        assert "not a managed tg-agent daemon process" in captured.err
 
 
 # ---------------------------------------------------------------------------

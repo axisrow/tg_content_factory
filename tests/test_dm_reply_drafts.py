@@ -441,11 +441,12 @@ def test_cli_send_deduplicates_pending_command(cli_db, capsys):
 def test_cli_send_guards_statuses(cli_db, capsys):
     draft_id = asyncio.run(_make_draft(cli_db, status="rejected"))
 
-    # Отклонённый: не approved — команда не ставится (exit 1).
+    # Отклонённый: не approved — команда не ставится (exit 1, причина на stderr, #1965).
     with pytest.raises(typer.Exit):
         _run_dm_impl(lambda: dm_cli.send_impl("cfg", draft_id=draft_id), cli_db, capsys)
-    out = capsys.readouterr().out
-    assert "нужен апрув" in out
+    captured = capsys.readouterr()
+    assert "нужен апрув" in captured.err
+    assert "нужен апрув" not in captured.out
     assert _commands(cli_db) == []
 
     # Отправленный: идемпотентный повтор без второй команды.
@@ -582,9 +583,11 @@ def test_cli_status_invalid_settings_loud_error(cli_db, capsys):
 
     with pytest.raises(typer.Exit):
         _run_dm_impl(lambda: dm_cli.status_impl("cfg"), cli_db, capsys)
-    out = capsys.readouterr().out
-    assert "INVALID" in out
-    assert "dm_catchup" in out
+    # Причина — на stderr (#1965); снимок слушателя остаётся результатом на stdout.
+    captured = capsys.readouterr()
+    assert "INVALID" in captured.err
+    assert "dm_catchup" in captured.err
+    assert "INVALID" not in captured.out
 
 
 def test_cli_journal_list_prints_rows(cli_db, capsys):

@@ -262,7 +262,19 @@ search-query list | get | add | edit | delete | toggle | run | stats
   checks). A command whose target is missing exits 1 in every audited group —
   `channel`/`search-query`/`pipeline`/`ping`/`agent`/`collect`/`analytics`/
   `translate` included — and a delete or rename that changed nothing says so
-  instead of printing success (#1933, #1951). A refused argument exits 1 the
+  instead of printing success (#1933, #1951). So does a command with no
+  connected account (`channel add|import|refresh-types|refresh-meta|refresh-card|
+  add-bulk|collect|probe`), a missing `photo-loader publish` batch or auto job,
+  and an unknown `scheduler job-toggle --job-id` (#1965). In `channel`, a target
+  that does not resolve, `reject` outside the approval queue, `stats` /
+  `refresh-meta` / `refresh-card` without a target, an import or add-bulk that
+  left requested ids undone (the table stays on stdout) and `collect --wait` on
+  a task that failed, was cancelled or did not finish in time exit 1 the same
+  way (#1965). A destructive `dialogs
+  leave|delete|forward|delete-message` request with one id that does not parse is
+  refused whole before anything runs; per-dialog failures and the refusals of
+  `dm drafts` and `stop`/`restart` put their reason on stderr (#1965). A refused
+  argument exits 1 the
   same way — a bad node spec, an invalid regex, a missing required option — and
   `pipeline bulk-approve|bulk-reject` exits 1 whenever a requested run was left
   undone (the summary line stays on stdout, the skipped ids go to stderr).

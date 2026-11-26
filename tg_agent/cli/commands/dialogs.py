@@ -17,6 +17,8 @@ from tg_agent.cli.commands.common import (
     OutputFormat,
     apply_startup,
     cli_error,
+    positive_id,
+    requested_ids,
     run_async,
     sync_prompt,
 )
@@ -69,20 +71,24 @@ async def _resolve_phone(db, pool, args) -> str | None:
     return await resolve_default_phone(db, connected=set(pool.clients))
 
 
-def _parse_message_ids(args) -> list[int] | None:
-    """Parse comma/space-separated ``args.message_ids`` into ints.
+def _parse_message_ids(args) -> list[int]:
+    """Parse comma-separated ``args.message_ids`` into ints; a refusal exits 1."""
+    return requested_ids(args.message_ids, cast=positive_id, what="message ID")
 
-    Returns the parsed ids, or ``None`` (after printing an error) when none are
-    valid.
-    """
-    raw_ids: list[str] = []
-    for item in args.message_ids:
-        raw_ids.extend(part.strip() for part in item.split(",") if part.strip())
-    ids = [int(raw) for raw in raw_ids if raw.isdigit()]
-    if not ids:
-        print("No valid message IDs provided.")
-        return None
-    return ids
+
+def _print_dialog_results(result, *, verb: str) -> None:
+    """The per-dialog table on stdout; the dialogs that failed fail the command."""
+    failed = [channel_id for channel_id, ok in result.results.items() if not ok]
+    for channel_id, ok in result.results.items():
+        print(f"  {channel_id}: {verb if ok else 'failed'}")
+    print(f"\nDone: {result.success_count} {verb}, {result.failed_count} failed.")
+    if failed:
+        # The rule pipeline bulk-approve follows (#1953): the table stays on
+        # stdout, the undone ids go to stderr, the command exits 1 (#1965).
+        cli_error(
+            f"{len(failed)} of {len(result.results)} dialog(s) failed: "
+            + ", ".join(str(channel_id) for channel_id in failed)
+        )
 
 
 def _confirm_or_abort(args, *lines: str) -> bool:
@@ -175,18 +181,7 @@ async def _dialogs_leave(args, db, pool, *, channel_service_cls) -> None:
     if phone is None:
         return
 
-    raw_ids: list[str] = []
-    for item in args.dialog_ids:
-        raw_ids.extend(part.strip() for part in item.split(",") if part.strip())
-    dialog_ids: list[int] = []
-    for raw in raw_ids:
-        try:
-            dialog_ids.append(int(raw))
-        except ValueError:
-            print(f"Invalid dialog ID: {raw!r}, skipping.")
-    if not dialog_ids:
-        print("No valid dialog IDs provided.")
-        return
+    dialog_ids = requested_ids(args.dialog_ids, cast=int, what="dialog ID")
 
     svc = channel_service_cls(db, pool, None)  # type: ignore[arg-type]
     dialogs_info = await svc.get_my_dialogs(phone)
@@ -212,13 +207,9 @@ async def _dialogs_leave(args, db, pool, *, channel_service_cls) -> None:
             print("Aborted.")
             return
 
-    result = await TelegramActionService(pool).leave_dialogs(phone=phone, dialogs=dialogs)
-    for channel_id, ok in result.results.items():
-        status = "left" if ok else "failed"
-        print(f"  {channel_id}: {status}")
-    left = result.success_count
-    failed = result.failed_count
-    print(f"\nDone: {left} left, {failed} failed.")
+    _print_dialog_results(
+        await TelegramActionService(pool).leave_dialogs(phone=phone, dialogs=dialogs), verb="left"
+    )
 
 
 async def _dialogs_delete(args, db, pool, *, channel_service_cls) -> None:
@@ -226,18 +217,7 @@ async def _dialogs_delete(args, db, pool, *, channel_service_cls) -> None:
     if phone is None:
         return
 
-    raw_ids: list[str] = []
-    for item in args.dialog_ids:
-        raw_ids.extend(part.strip() for part in item.split(",") if part.strip())
-    dialog_ids: list[int] = []
-    for raw in raw_ids:
-        try:
-            dialog_ids.append(int(raw))
-        except ValueError:
-            print(f"Invalid dialog ID: {raw!r}, skipping.")
-    if not dialog_ids:
-        print("No valid dialog IDs provided.")
-        return
+    dialog_ids = requested_ids(args.dialog_ids, cast=int, what="dialog ID")
 
     svc = channel_service_cls(db, pool, None)  # type: ignore[arg-type]
     dialogs_info = await svc.get_my_dialogs(phone)
@@ -261,13 +241,9 @@ async def _dialogs_delete(args, db, pool, *, channel_service_cls) -> None:
             print("Aborted.")
             return
 
-    result = await TelegramActionService(pool).delete_dialogs(phone=phone, dialogs=dialogs)
-    for channel_id, ok in result.results.items():
-        status = "deleted" if ok else "failed"
-        print(f"  {channel_id}: {status}")
-    deleted = result.success_count
-    failed = result.failed_count
-    print(f"\nDone: {deleted} deleted, {failed} failed.")
+    _print_dialog_results(
+        await TelegramActionService(pool).delete_dialogs(phone=phone, dialogs=dialogs), verb="deleted"
+    )
 
 
 async def _dialogs_join(args, db, pool) -> None:
@@ -406,8 +382,6 @@ async def _dialogs_forward(args, db, pool) -> None:
     if phone is None:
         return
     ids = _parse_message_ids(args)
-    if ids is None:
-        return
     if not _confirm_or_abort(
         args,
         f"Forward {len(ids)} message(s) from {args.from_chat} to {args.to_chat}: {ids}",
@@ -561,8 +535,6 @@ async def _dialogs_delete_message(args, db, pool) -> None:
     if phone is None:
         return
     ids = _parse_message_ids(args)
-    if ids is None:
-        return
     if not _confirm_or_abort(
         args,
         f"Delete {len(ids)} message(s) from {args.chat_id}: {ids}",

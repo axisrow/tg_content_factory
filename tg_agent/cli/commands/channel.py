@@ -19,6 +19,7 @@ from tg_agent.cli.commands.common import (
     _NEG_ID_POSITIONAL,
     apply_startup,
     cli_error,
+    requested_ids,
     resolve_channel,
     run_async,
 )
@@ -280,20 +281,20 @@ async def add_impl(config_path: str, *, identifier: str) -> None:
     try:
         _, pool = await runtime.init_pool(config, db)
         if not pool.clients:
-            logging.error("No connected accounts.")
-            return
+            cli_error(runtime.NO_ACCOUNTS_HINT)
         try:
             info = await pool.resolve_channel(identifier.strip())
         except RuntimeError as exc:
             if str(exc) == "no_client":
-                print("ERROR: Нет доступных аккаунтов Telegram.")
-                return
+                cli_error(runtime.NO_ACCOUNTS_HINT)
+            logging.warning("Could not resolve channel '%s': %s", identifier, exc)
             info = None
-        except Exception:
+        except Exception as exc:
+            logging.warning("Could not resolve channel '%s': %s", identifier, exc)
             info = None
         if not info:
-            print(f"Could not resolve channel: {identifier}")
-            return
+            # Nothing was added: a miss is reported as one (#1965).
+            cli_error(f"Could not resolve channel: {identifier}")
 
         existing = await db.get_channel_by_channel_id(int(info["channel_id"]))
         meta = await fetch_channel_meta(pool, int(info["channel_id"]), info.get("channel_type"))
@@ -471,8 +472,7 @@ async def reject_impl(config_path: str, *, identifier: str) -> None:
         pending = await db.repos.channels.list_pending_approval()
         ch = resolve_channel(pending, identifier)
         if not ch:
-            print(f"Channel '{identifier}' is not in the approval queue")
-            return
+            cli_error(f"Channel '{identifier}' is not in the approval queue")
         await db.repos.channels.reject_channel(ch.id, actor="cli", reason="channel reject")
         print(f"REJECTED: {ch.title} (pk={ch.id}) — removed from the approval queue")
     finally:
@@ -488,27 +488,28 @@ async def import_impl(config_path: str, *, source: str) -> None:
 
         identifiers = deduplicate_identifiers(identifiers)
         if not identifiers:
-            print("No identifiers found in source.")
-            return
+            cli_error("No identifiers found in source.")
 
         _, pool = await runtime.init_pool(config, db)
         if not pool.clients:
-            logging.error("No connected accounts.")
-            return
+            cli_error(runtime.NO_ACCOUNTS_HINT)
 
         existing = await db.get_channels()
         existing_ids = {ch.channel_id for ch in existing}
 
         added = skipped = failed = 0
+        no_account = False
         stats_channel_ids: list[int] = []
         for ident in identifiers:
             try:
                 info = await pool.resolve_channel(ident.strip())
             except RuntimeError as exc:
                 if str(exc) == "no_client":
-                    print("ERROR: Нет доступных аккаунтов Telegram. Импорт прерван.")
+                    # Nothing further can be resolved: the rest counts as failed.
                     failed += len(identifiers) - added - skipped - failed
+                    no_account = True
                     break
+                logging.warning("Failed to resolve '%s': %s", ident, exc)
                 info = None
             except Exception as exc:
                 logging.warning("Failed to resolve '%s': %s", ident, exc)
@@ -542,6 +543,10 @@ async def import_impl(config_path: str, *, source: str) -> None:
             f"\nTotal: {len(identifiers)}, Added: {added}, "
             f"Skipped: {skipped}, Failed: {failed}"
         )
+        if failed:
+            # The table stays on stdout; what was not imported fails the command (#1965).
+            reason = " — no connected account" if no_account else ""
+            cli_error(f"{failed} of {len(identifiers)} channel(s) could not be imported{reason}.")
     finally:
         if pool:
             await pool.disconnect_all()
@@ -589,8 +594,7 @@ async def stats_impl(config_path: str, *, all_channels: bool, identifier: str | 
     try:
         if all_channels:
             if max_channels is not None and max_channels <= 0:
-                print("--max-channels must be a positive integer")
-                return
+                cli_error("--max-channels must be a positive integer")
             if await db.get_active_stats_task():
                 print("A stats task is already active; not queueing a duplicate.")
                 return
@@ -626,8 +630,7 @@ async def stats_impl(config_path: str, *, all_channels: bool, identifier: str | 
                 )
             return
         if not identifier:
-            print("Specify a channel identifier or use --all")
-            return
+            cli_error("Specify a channel identifier or use --all")
         channels = await db.get_channels()
         ch = resolve_channel(channels, identifier)
         if not ch:
@@ -653,8 +656,7 @@ async def refresh_types_impl(config_path: str) -> None:
     try:
         _, pool = await runtime.init_pool(config, db)
         if not pool.clients:
-            logging.error("No connected accounts.")
-            return
+            cli_error(runtime.NO_ACCOUNTS_HINT)
         channels = await db.get_channels(active_only=True)
         null_type = [ch for ch in channels if ch.channel_type is None]
         print(f"Active channels to check: {len(channels)} (missing type: {len(null_type)})")
@@ -746,8 +748,7 @@ async def refresh_meta_impl(config_path: str, *, all_channels: bool, identifier:
     try:
         _, pool = await runtime.init_pool(config, db)
         if not pool.clients:
-            logging.error("No connected accounts.")
-            return
+            cli_error(runtime.NO_ACCOUNTS_HINT)
         if all_channels:
             # Refresh all active channels
             channels = await db.get_channels(active_only=True)
@@ -792,7 +793,7 @@ async def refresh_meta_impl(config_path: str, *, all_channels: bool, identifier:
             else:
                 print(f"Failed to fetch metadata for {ch.title}")
         else:
-            print("Please provide --all or a channel identifier")
+            cli_error("Please provide --all or a channel identifier")
     finally:
         if pool:
             await pool.disconnect_all()
@@ -992,8 +993,7 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
     try:
         _, pool = await runtime.init_pool(config, db)
         if not pool.clients:
-            logging.error("No connected accounts.")
-            return
+            cli_error(runtime.NO_ACCOUNTS_HINT)
         if all_channels:
             channels = await db.get_channels(active_only=True)
             # Terminal-stamped rows are deferred for the same window as the bulk
@@ -1013,8 +1013,7 @@ async def refresh_card_impl(config_path: str, *, all_channels: bool, identifier:
                 cli_error(f"Channel '{identifier}' not found")
             channels = [found]
         else:
-            print("Please provide --all or a channel identifier")
-            return
+            cli_error("Please provide --all or a channel identifier")
         print(f"Channels to refresh: {len(channels)}", flush=True)
         updated = partial_count = skipped = failed = 0
         owner_unavailable = 0
@@ -1117,21 +1116,10 @@ async def add_bulk_impl(config_path: str, *, phone: str, dialog_ids: str) -> Non
     try:
         _, pool = await runtime.init_pool(config, db)
         if not pool.clients:
-            logging.error("No connected accounts.")
-            return
+            cli_error(runtime.NO_ACCOUNTS_HINT)
         if phone not in pool.clients:
-            print(f"Account {phone} not connected.")
-            return
-        raw_ids = [i.strip() for i in dialog_ids.split(",") if i.strip()]
-        parsed_ids = []
-        for raw in raw_ids:
-            try:
-                parsed_ids.append(int(raw))
-            except ValueError:
-                print(f"Invalid dialog ID: {raw!r}, skipping.")
-        if not parsed_ids:
-            print("No valid dialog IDs provided.")
-            return
+            cli_error(f"Account {phone} not connected.")
+        parsed_ids = requested_ids([dialog_ids], cast=int, what="dialog ID")
         svc = ChannelService(db, pool, None)  # type: ignore[arg-type]
         dialogs_info = await svc.get_my_dialogs(phone)
         info_map = {d["channel_id"]: d for d in dialogs_info}
@@ -1172,6 +1160,11 @@ async def add_bulk_impl(config_path: str, *, phone: str, dialog_ids: str) -> Non
             context="cli channel add-bulk",
         )
         print(f"\nAdded: {added}, Skipped: {skipped}, Failed: {failed}")
+        if failed:
+            # The table stays on stdout; the ids that added nothing fail the command (#1965).
+            cli_error(
+                f"{failed} of {len(parsed_ids)} dialog id(s) are not in this account's dialogs."
+            )
     finally:
         if pool:
             await pool.disconnect_all()
@@ -1322,16 +1315,13 @@ async def probe_impl(
     try:
         _, pool = await runtime.init_pool(config, db)
         if not pool.clients:
-            print(runtime.NO_ACCOUNTS_HINT)
-            return
+            cli_error(runtime.NO_ACCOUNTS_HINT)
         phone = await resolve_default_phone(db, connected=set(pool.clients))
         if phone is None:
-            print("No connected accounts.")
-            return
+            cli_error(runtime.NO_ACCOUNTS_HINT)
         result = await pool.get_native_client_by_phone(phone)
         if result is None:
-            print(f"Client for {phone} unavailable (flood-wait or not connected).")
-            return
+            cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")
         client, _ = result
         peer = int(identifier) if identifier.lstrip("-").isdigit() else identifier
         entity = await pool.resolve_entity_with_warm(
@@ -1480,8 +1470,8 @@ async def _handoff_collect_to_worker(
     if result == "not_found":
         cli_error(f"Channel '{identifier}' not found")
     if result == "filtered":
-        print(f"Канал '{ch.title}' отфильтрован; снимите фильтр (`tg-agent filter toggle`).")
-        return
+        # Nothing was queued: a refusal with its reason (#1965).
+        cli_error(f"Канал '{ch.title}' отфильтрован; снимите фильтр (`tg-agent filter toggle`).")
 
     task = await _latest_task_for_channel(db, ch.channel_id)
     task_label = f" #{task.id}" if task else ""
@@ -1517,8 +1507,7 @@ async def _wait_for_task(db, task_id: int) -> None:
     while True:
         task = await db.get_collection_task(task_id)
         if task is None:
-            print(f"Задача #{task_id} исчезла из очереди.")
-            return
+            cli_error(f"Задача #{task_id} исчезла из очереди.")
 
         if task.note and task.note != last_note:
             last_note = task.note
@@ -1528,18 +1517,18 @@ async def _wait_for_task(db, task_id: int) -> None:
             if task.status == CollectionTaskStatus.COMPLETED:
                 print(f"Собрано {task.messages_collected} сообщений.")
             elif task.status == CollectionTaskStatus.FAILED:
-                print(f"Задача #{task_id} завершилась ошибкой: {task.error}")
+                cli_error(f"Задача #{task_id} завершилась ошибкой: {task.error}")
             else:
-                print(f"Задача #{task_id} отменена.")
+                cli_error(f"Задача #{task_id} отменена.")
             return
 
         if asyncio.get_running_loop().time() >= deadline:
-            print(
+            # `--wait` promised a finished collection; it did not get one (#1965).
+            cli_error(
                 f"Задача #{task_id} всё ещё в статусе '{task.status}' "
                 f"после {int(_HANDOFF_WAIT_TIMEOUT_SEC)}с ожидания; "
                 "она продолжит выполняться в воркере."
             )
-            return
 
         await asyncio.sleep(_HANDOFF_POLL_INTERVAL_SEC)
 
@@ -1569,8 +1558,7 @@ async def collect_impl(
     try:
         _, pool = await runtime.init_pool(config, db)
         if not pool.clients:
-            logging.error("No connected accounts.")
-            return
+            cli_error(runtime.NO_ACCOUNTS_HINT)
         channels = await db.get_channels()
         ch = resolve_channel(channels, identifier)
         if not ch:

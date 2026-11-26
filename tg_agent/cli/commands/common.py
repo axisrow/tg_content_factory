@@ -198,6 +198,35 @@ def cli_error(message: str, *, code: int = 1) -> NoReturn:
     raise typer.Exit(code)
 
 
+def split_ids(values) -> list[str]:
+    """Comma-separated id arguments as bare tokens."""
+    return [part.strip() for item in values for part in item.split(",") if part.strip()]
+
+
+def positive_id(raw: str) -> int:
+    """A message id: digits only."""
+    if not raw.isdigit():
+        raise ValueError(raw)
+    return int(raw)
+
+
+def requested_ids(values, *, cast, what: str) -> list[int]:
+    """The id arguments as ints — or a refusal of the whole list (#1965).
+
+    A token that does not parse refuses the request before any of it runs: a
+    destructive command must not execute half of a mistyped list.
+    """
+    ids: list[int] = []
+    for raw in split_ids(values):
+        try:
+            ids.append(cast(raw))
+        except ValueError:
+            cli_error(f"Invalid {what}: {raw!r}: nothing was done.")
+    if not ids:
+        cli_error(f"No valid {what}s provided.")
+    return ids
+
+
 def resolve_date_bounds(
     date_from: str | None, date_to: str | None
 ) -> tuple[str | None, str | None]:

@@ -264,9 +264,21 @@ async def batch_create_impl(
     await _run_with_services(config_path, _body)
 
 
+async def _auto_job_or_missing(s: _Services, job_id: int):
+    """The auto-upload job ``job_id``, or a refusal that names it (#1965)."""
+    job = await s.auto.get_job(job_id)
+    if not job:
+        cli_error(f"Auto job #{job_id} not found.")
+    return job
+
+
 async def publish_impl(config_path: str, *, batch_id: int) -> None:
     """Publish a held photo batch into the due queue."""
     async def _body(s: _Services) -> None:
+        # The service answers 0 for an unknown batch — the same as an empty
+        # one — so the batch is checked before any success is printed (#1965).
+        if await s.bundle.get_batch(batch_id) is None:
+            cli_error(f"Photo batch #{batch_id} not found.")
         published = await s.tasks.publish_batch(batch_id)
         print(f"Published photo batch #{batch_id}: items={published}")
     await _run_with_services(config_path, _body)
@@ -364,6 +376,7 @@ async def auto_update_impl(
 ) -> None:
     """Update an auto-upload job."""
     async def _body(s: _Services) -> None:
+        await _auto_job_or_missing(s, job_id)
         kwargs = {
             "folder_path": folder,
             "send_mode": PhotoSendMode(mode) if mode else None,
@@ -383,9 +396,7 @@ async def auto_update_impl(
 async def auto_toggle_impl(config_path: str, *, job_id: int) -> None:
     """Toggle an auto-upload job's active state."""
     async def _body(s: _Services) -> None:
-        job = await s.auto.get_job(job_id)
-        if not job:
-            cli_error("Auto job not found")
+        job = await _auto_job_or_missing(s, job_id)
         await s.auto.update_job(job_id, is_active=not job.is_active)
         print(f"Toggled auto job #{job_id} to {not job.is_active}")
     await _run_with_services(config_path, _body)
@@ -394,6 +405,7 @@ async def auto_toggle_impl(config_path: str, *, job_id: int) -> None:
 async def auto_delete_impl(config_path: str, *, job_id: int) -> None:
     """Delete an auto-upload job."""
     async def _body(s: _Services) -> None:
+        await _auto_job_or_missing(s, job_id)
         await s.auto.delete_job(job_id)
         print(f"Deleted auto job #{job_id}")
     await _run_with_services(config_path, _body)

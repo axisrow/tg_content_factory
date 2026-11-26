@@ -261,10 +261,11 @@ class TestChannelTagViaRun:
 
 class TestChannelImportNoIdentifiers:
     def test_import_empty_source(self, cli_env, capsys):
-        """Import with no identifiers prints 'No identifiers found'."""
+        """Import with no identifiers is a refused request (#1965)."""
 
-        run(_ns(channel_action="import", source=""))
-        assert "No identifiers found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit):
+            run(_ns(channel_action="import", source=""))
+        assert "No identifiers found" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -490,8 +491,9 @@ class TestChannelPendingList:
 
 class TestChannelReject:
     def test_not_in_queue(self, cli_env, capsys):
-        run(_ns(channel_action="reject", identifier="99999"))
-        assert "not in the approval queue" in capsys.readouterr().out
+        with pytest.raises(typer.Exit):
+            run(_ns(channel_action="reject", identifier="99999"))
+        assert "not in the approval queue" in capsys.readouterr().err
 
     def test_reject_deletes_row_and_journals(self, cli_env, tmp_path, capsys):
         _add_channel(cli_env, channel_id=620, title="RejectMe", approval_state="pending")

@@ -143,7 +143,10 @@ class TestCLIChannelExtended:
         ]
         from tg_agent.cli.commands.channel import run
 
-        run(_ns(channel_action="import", source="u1, u2, u3"))
+        # #1965: the table stays on stdout; the identifier that failed fails the command.
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(channel_action="import", source="u1, u2, u3"))
+        assert excinfo.value.exit_code == 1
         out = capsys.readouterr().out
         assert "Added: 1" in out
         assert "Skipped: 1" in out
@@ -276,18 +279,19 @@ class TestCLIChannelExtended:
         pool.resolve_channel.side_effect = RuntimeError("no_client")
         from tg_agent.cli.commands.channel import run
 
-        run(_ns(channel_action="add", identifier="@any"))
-        out = capsys.readouterr().out
-        assert "Нет доступных аккаунтов Telegram" in out
+        # #1965: the reason goes to stderr and the command exits 1.
+        with pytest.raises(typer.Exit):
+            run(_ns(channel_action="add", identifier="@any"))
+        assert "No connected accounts" in capsys.readouterr().err
 
     def test_add_general_error(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
         pool.resolve_channel.side_effect = Exception("boom")
         from tg_agent.cli.commands.channel import run
 
-        run(_ns(channel_action="add", identifier="@any"))
-        out = capsys.readouterr().out
-        assert "Could not resolve channel" in out
+        with pytest.raises(typer.Exit):
+            run(_ns(channel_action="add", identifier="@any"))
+        assert "Could not resolve channel" in capsys.readouterr().err
 
     def test_import_from_file(self, cli_env_with_mock_pool, capsys, tmp_path):
         db, pool = cli_env_with_mock_pool
@@ -309,9 +313,15 @@ class TestCLIChannelExtended:
         pool.resolve_channel.side_effect = RuntimeError("no_client")
         from tg_agent.cli.commands.channel import run
 
-        run(_ns(channel_action="import", source="@any"))
-        out = capsys.readouterr().out
-        assert "Нет доступных аккаунтов Telegram. Импорт прерван" in out
+        # #1965: the summary stays on stdout; the account is the reason, on stderr.
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(channel_action="import", source="@any"))
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "Failed: 1" in captured.out
+        assert (
+            "1 of 1 channel(s) could not be imported — no connected account." in captured.err
+        )
 
     def test_stats_unknown_identifier(self, cli_env, capsys):
         # A missing target is a failure: exit 1, the reason on stderr (#1933).
@@ -426,9 +436,9 @@ class TestCLIChannelExtended:
     def test_stats_no_identifier_error(self, cli_env_with_mock_pool, capsys):
         from tg_agent.cli.commands.channel import run
 
-        run(_ns(channel_action="stats", identifier=None, all=False))
-        out = capsys.readouterr().out
-        assert "Specify a channel identifier or use --all" in out
+        with pytest.raises(typer.Exit):
+            run(_ns(channel_action="stats", identifier=None, all=False))
+        assert "Specify a channel identifier or use --all" in capsys.readouterr().err
 
     def test_stats_not_found(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
