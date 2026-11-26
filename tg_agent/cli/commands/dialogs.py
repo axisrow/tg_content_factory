@@ -124,8 +124,17 @@ async def _dialogs_list(args, db, pool, *, channel_service_cls) -> None:
     svc = channel_service_cls(db, pool, None)  # type: ignore[arg-type]
     dialogs = await svc.get_my_dialogs(phone)
     if not dialogs:
-        print("No dialogs found.")
+        # The list is the dialog cache, not a live read (#1923): empty means the
+        # cache was never built for this account, not that it has no dialogs.
+        cli_error(
+            f"No cached dialogs for {phone}: the dialog cache was never built for this account. "
+            f"Build it with `dialogs refresh --phone {phone}`."
+        )
         return
+    # The rows are a snapshot; say how old, the same date `dialogs cache-status` shows.
+    cached_at = await db.repos.dialog_cache.get_cached_at(phone)
+    snapshot = f", snapshot of {cached_at:%Y-%m-%d %H:%M} UTC" if cached_at else ""
+    print(f"Cached dialogs for {phone}: {len(dialogs)}{snapshot}\n")
     fmt = "{:<12} {:<40} {:<20} {:<8}"
     print(fmt.format("Type", "Title", "Username", "In DB"))
     print("-" * 84)
@@ -736,7 +745,7 @@ async def _dialogs_transcribe(args, db, pool) -> None:
         print(result.get("error") or "Transcription failed.")
 
 
-def _print_dm_messages(messages: list[DialogMessage], fmt: str) -> None:
+def _print_dm_messages(messages: list[DialogMessage], fmt: str, *, limit: int | None = None) -> None:
     """Render live dialog history (`DialogMessage`, not the collector's `Message`).
 
     Mirrors `messages._print_messages`'s text/json/csv structure so `dialogs
@@ -773,7 +782,10 @@ def _print_dm_messages(messages: list[DialogMessage], fmt: str) -> None:
             ])
         print(buf.getvalue(), end="")
     else:
-        print(f"Total: {len(messages)} messages\n")
+        # "Total" only when the page came back short of the limit — a full page
+        # says nothing about the chat's size (#1923).
+        label = "Total" if limit is not None and len(messages) < limit else "Read"
+        print(f"{label}: {len(messages)} messages\n")
         for m in messages:
             date_str = m.date.strftime("%Y-%m-%d %H:%M") if m.date else "—"
             who = "you" if m.out else (m.sender_name or m.sender_id or "?")
@@ -799,7 +811,7 @@ async def _dialogs_read(args, db, pool) -> None:
             limit=args.limit,
             offset_id=args.offset_id,
         )
-        _print_dm_messages(result.messages, args.format)
+        _print_dm_messages(result.messages, args.format, limit=args.limit)
     except TelegramActionClientUnavailableError:
         cli_error(f"Client for {phone} unavailable.")
     except Exception as exc:
@@ -893,7 +905,14 @@ async def _dialogs_participants(args, db, pool) -> None:
                     ("@" + participant.username if getattr(participant, "username", None) else "")[:25],
                 )
             )
-        print(f"\nTotal: {len(participants)}")
+        if len(participants) < args.limit:
+            print(f"\nTotal: {len(participants)}")
+        else:
+            # A page that filled the limit says nothing about the chat's size (#1923).
+            print(
+                f"\nShowing {len(participants)} participants "
+                f"(--limit {args.limit} reached; the chat may have more)"
+            )
     except TelegramActionClientUnavailableError:
         cli_error(f"Client for {phone} unavailable.")
     except Exception as exc:

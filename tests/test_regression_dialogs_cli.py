@@ -144,9 +144,11 @@ class TestMyTelegramActions:
             new_callable=AsyncMock,
             return_value=[],
         ):
-            self._run_action("list", pool=pool, db=db)
-        out = capsys.readouterr().out
-        assert "No dialogs" in out
+            # No cached dialogs is an error naming the fix (#1923), not an empty list.
+            with pytest.raises(typer.Exit) as excinfo:
+                self._run_action("list", pool=pool, db=db)
+        assert excinfo.value.exit_code == 1
+        assert "dialogs refresh" in capsys.readouterr().err
 
     def test_list_no_accounts(self, capsys):
         pool = _make_pool_with_clients()
