@@ -96,6 +96,23 @@ def test_a_marked_channel_id_still_matches_its_row(cli_env, cli_db, capsys):
     assert "message_id=41" in _row(capsys)
 
 
+def test_a_comment_row_names_the_post_it_answers(cli_env, cli_db, capsys):
+    """#1946: a comment lives in the channel's discussion group; the row says so."""
+    asyncio.run(
+        cli_db.repos.sent_messages.record_many(
+            "+7001", -100123, [777], chat_type="comment", source="dialogs_send",
+            recipient="-100555", ref="42",
+        )
+    )
+
+    _sent()
+
+    out = _row(capsys)
+    assert "chat=-100123 type=comment" in out
+    assert "to=-100555" in out
+    assert "comment_on=42" in out
+
+
 def test_empty_registry_prints_placeholder(cli_env, cli_db, capsys):
     _sent()
 

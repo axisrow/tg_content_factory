@@ -244,7 +244,10 @@ search-query list | get | add | edit | delete | toggle | run | stats
   `dialogs_forward`, `dialogs_queue_forward`, `dm_draft`, `seeding`, `ping`,
   `agent`, `agent_forward`, `pipeline_publish`, `pipeline_forward`,
   `photo_publish`) — with the deletion status joined from the same local store
-  (`status=deleted=…` / `alive`).
+  (`status=deleted=…` / `alive`). A comment (`dialogs send --comment-to`) is
+  listed under the channel's discussion group — the chat its message id
+  belongs to — as `type=comment`, with `to=` the channel and `comment_on=` the
+  post it answers (#1946).
   Client reports = one call: filter by `--phone`/`--chat` (`--chat` takes a
   channel id in either form — bare or marked `-100…`, #1926)/`--date-from`/
   `--date-to`, `--format csv` for spreadsheets. No Telegram requests.
@@ -341,7 +344,11 @@ same chat (DM, group or channel — find the id via `messages read <chat> --limi
 that channel post — the recipient must be a channel, Telegram routes the text
 into its linked discussion group (use `messages read <channel> --limit N` or
 the collected store to find the post id first; `--comment-to` and `--reply-to`
-are mutually exclusive); `dialogs queue` (with the
+are mutually exclusive); the comment's message id belongs to that discussion
+group, so the echo names it (`Message sent to chat <group id> (comment on post
+#N …)`) — read the comment back by that group id, and leave `--chat` off
+`messages wait --message-id` (the registry row knows the chat; the channel's
+id would point it at the wrong one), #1946; `dialogs queue` (with the
 `status`, `cancel`, `clear-pending` subcommands) manages the send queue.
 `dialogs draft-save <chat> <text> [--parse-mode md|html|plain] [--reply-to N] [--no-webpage]`
 saves a draft to a chat's input box — nothing is sent to anyone; the user opens the chat

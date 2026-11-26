@@ -131,6 +131,24 @@ def test_a_registered_dm_send_still_matches_by_the_senders_phone(cli_env, cli_db
     assert "Deleted: message_id=41" in capsys.readouterr().out
 
 
+def test_a_registered_comment_is_judged_in_the_discussion_group(cli_env, cli_db, capsys):
+    """#1946: a comment's id lives in the channel's discussion group — the row's
+    chat is the group, and no `--chat` is needed to watch it."""
+    group, channel = -1001525693788, -1001525693799
+    asyncio.run(
+        cli_db.repos.sent_messages.record_many(
+            "+7001", group, [777], chat_type="comment", source="dialogs_send",
+            recipient=str(channel), ref="42",
+        )
+    )
+    _seed(cli_db, "+7002", group, 777)  # a peer saw the group's message go
+
+    _wait(777, phone="+7001")
+
+    out = capsys.readouterr().out
+    assert "Deleted: message_id=777 chat=-1001525693788 via=+7002" in out
+
+
 # --------------------------------------------------------------------------- #
 # incoming long-poll mode (#1871): settle debounce, chat filter, both producers
 # --------------------------------------------------------------------------- #

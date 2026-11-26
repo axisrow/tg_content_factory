@@ -377,7 +377,15 @@ async def _dialogs_send(args, db, pool) -> None:
             source="dialogs_send",
         )
         message_id = f" message_id={result.message_id}" if result.message_id is not None else ""
-        print(f"Message sent to {recipient}.{message_id} via {result.phone}")
+        if result.chat_id is not None:
+            # A comment lives in the channel's discussion group, not in the
+            # channel: the echo names the chat the message id belongs to (#1946).
+            print(
+                f"Message sent to chat {result.chat_id} "
+                f"(comment on post #{comment_to} in {recipient}).{message_id} via {result.phone}"
+            )
+        else:
+            print(f"Message sent to {recipient}.{message_id} via {result.phone}")
     except TelegramActionClientUnavailableError:
         cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")
     except (HandledFloodWaitError, TelegramRateLimitedError) as exc:

@@ -320,12 +320,13 @@ def test_cli_dialogs_send_no_client(cli_db, capsys):
     assert "unavailable" in err.lower()
 
 
-def test_cli_dialogs_send_comment_to_passes_the_post_id(cli_db, capsys):
-    """`dialogs send --comment-to` plumbs the post id into the service (#1903)."""
+def test_cli_dialogs_send_comment_to_echoes_the_landing_chat(cli_db, capsys):
+    """`dialogs send --comment-to` plumbs the post id into the service (#1903) and
+    names the chat the comment landed in — the discussion group, not the channel (#1946)."""
     pool = _mock_pool()
     with patch(
         "tg_agent.cli.commands.dialogs.TelegramActionService.send_message",
-        new=AsyncMock(return_value=SimpleNamespace(phone="+1234567890", message_id=7)),
+        new=AsyncMock(return_value=SimpleNamespace(phone="+1234567890", message_id=7, chat_id=-100222)),
     ) as fake_send:
         _run(
             _ns(dialogs_action="send", phone="+1234567890",
@@ -337,7 +338,9 @@ def test_cli_dialogs_send_comment_to_passes_the_post_id(cli_db, capsys):
     assert kwargs["recipient"] == "100111"
     assert kwargs["text"] == "comment text"
     out = capsys.readouterr().out
-    assert "sent" in out.lower()
+    assert "sent to chat -100222" in out
+    assert "post #55" in out
+    assert "message_id=7" in out
 
 
 def test_cli_dialogs_send_reply_to_passes_the_message_id(cli_db, capsys):
@@ -345,7 +348,7 @@ def test_cli_dialogs_send_reply_to_passes_the_message_id(cli_db, capsys):
     pool = _mock_pool()
     with patch(
         "tg_agent.cli.commands.dialogs.TelegramActionService.send_message",
-        new=AsyncMock(return_value=SimpleNamespace(phone="+1234567890", message_id=7)),
+        new=AsyncMock(return_value=SimpleNamespace(phone="+1234567890", message_id=7, chat_id=None)),
     ) as fake_send:
         _run(
             _ns(dialogs_action="send", phone="+1234567890",
