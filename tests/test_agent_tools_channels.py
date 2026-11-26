@@ -285,11 +285,31 @@ class TestCreateTagTool:
 
     @pytest.mark.anyio
     async def test_creates_tag(self, mock_db):
-        mock_db.repos.channels.create_tag = AsyncMock()
+        mock_db.repos.channels.create_tag = AsyncMock(return_value=True)
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["create_tag"]({"name": "newtag", "confirm": True})
         assert "создан" in _text(result)
         mock_db.repos.channels.create_tag.assert_called_once_with("newtag")
+
+    @pytest.mark.anyio
+    async def test_existing_tag_reports_it(self, mock_db):
+        """#1942: a duplicate is an idempotent no-op, reported as what it is."""
+        mock_db.repos.channels.create_tag = AsyncMock(return_value=False)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["create_tag"]({"name": "newtag", "confirm": True})
+        text = _text(result)
+        assert "уже существует" in text
+        assert "создан" not in text
+
+    @pytest.mark.anyio
+    async def test_empty_name_is_refused(self, mock_db):
+        """#1942: an empty name creates nothing — a refusal, not a "created" line."""
+        mock_db.repos.channels.create_tag = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["create_tag"]({"name": "   ", "confirm": True})
+        text = _text(result)
+        assert "обязателен" in text
+        mock_db.repos.channels.create_tag.assert_not_awaited()
 
 
 class TestDeleteTagTool:
@@ -301,11 +321,19 @@ class TestDeleteTagTool:
 
     @pytest.mark.anyio
     async def test_deletes_tag(self, mock_db):
-        mock_db.repos.channels.delete_tag = AsyncMock()
+        mock_db.repos.channels.delete_tag = AsyncMock(return_value=True)
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["delete_tag"]({"name": "oldtag", "confirm": True})
         assert "удалён" in _text(result)
         mock_db.repos.channels.delete_tag.assert_called_once_with("oldtag")
+
+    @pytest.mark.anyio
+    async def test_missing_tag_reports_it(self, mock_db):
+        """#1942: a delete that touched nothing is not a success."""
+        mock_db.repos.channels.delete_tag = AsyncMock(return_value=False)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["delete_tag"]({"name": "oldtag", "confirm": True})
+        assert "не найден" in _text(result)
 
 
 class TestSetChannelTagsTool:
