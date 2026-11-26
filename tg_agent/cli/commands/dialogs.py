@@ -1196,11 +1196,14 @@ async def _dialogs_queue(args, db, pool) -> None:
             for cmd in commands:
                 payload_phone = cmd.payload.get("phone") if isinstance(cmd.payload, dict) else None
                 run_after = cmd.run_after.isoformat() if cmd.run_after else "-"
+                # `status=failed` without its reason is a dead end for the
+                # operator: the text is in the row — print its first line (#1934).
+                error = f" error={str(cmd.error).splitlines()[0]}" if cmd.error else ""
                 print(
                     f"#{cmd.id} {cmd.command_type} status={cmd.status.value} "
                     # «unassigned», а не '-': команда без аккаунта в payload —
                     # наблюдаемое состояние, а не пустая клетка (#1581).
-                    f"phone={payload_phone or 'unassigned'} run_after={run_after}"
+                    f"phone={payload_phone or 'unassigned'} run_after={run_after}{error}"
                 )
     elif args.queue_action == "cancel":
         if not _confirm_or_abort(args, f"Cancel queue command #{args.command_id}"):
