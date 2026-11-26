@@ -101,6 +101,53 @@ async def test_photo_send_now_records_registry_rows(db, tmp_path, real_pool_harn
 
 
 @pytest.mark.anyio
+async def test_photo_send_now_scheduled_writes_no_registry_row(db, tmp_path, real_pool_harness_factory):
+    """#1944: a scheduled message is a cancel handle, not a delivered message — its
+    id lives in the scheduled id space, so nothing goes into the registry."""
+    from telethon import types
+
+    image = tmp_path / "one.jpg"
+    image.write_bytes(b"x")
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+7000",
+        client=FakeCliTelethonClient(
+            input_entity_resolver=lambda peer: types.PeerChannel(channel_id=1001),
+            # an album answers with a list, a single file with one message
+            send_file_side_effect=lambda entity, files, **kwargs: (
+                [SimpleNamespace(id=6), SimpleNamespace(id=7)]
+                if isinstance(files, (list, tuple))
+                else SimpleNamespace(id=6)
+            ),
+        ),
+    )
+    await harness.connect_account("+7000", session_string="s", is_primary=True)
+
+    service = PhotoPublishService(harness.pool, db=db)
+    schedule_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    album_ids = await service.send_now(
+        phone="+7000",
+        target_dialog_id=-1001,
+        file_paths=[str(image), str(image)],
+        send_mode=PhotoSendMode.ALBUM,
+        caption="cap",
+        schedule_at=schedule_at,
+    )
+    single_ids = await service.send_now(
+        phone="+7000",
+        target_dialog_id=-1001,
+        file_paths=[str(image)],
+        send_mode=PhotoSendMode.ALBUM,
+        caption="cap",
+        schedule_at=schedule_at,
+    )
+
+    assert album_ids == [6, 7]
+    assert single_ids == [6]
+    assert await db.execute_fetchall("SELECT message_id FROM sent_messages") == []
+
+
+@pytest.mark.anyio
 async def test_photo_task_schedule_send_passes_schedule(db, tmp_path, real_pool_harness_factory):
     image = tmp_path / "one.jpg"
     image.write_bytes(b"x")
