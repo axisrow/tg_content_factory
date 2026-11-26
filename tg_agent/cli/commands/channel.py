@@ -98,7 +98,13 @@ async def tag_list_impl(db) -> None:
 
 async def tag_add_impl(db, *, name: str) -> None:
     """``channel tag add`` — create a tag."""
-    await db.repos.channels.create_tag(name)
+    if not name.strip():
+        cli_error("Tag name is empty.")
+    if not await db.repos.channels.create_tag(name):
+        # INSERT OR IGNORE: the tag is already there — an idempotent no-op,
+        # reported as what it is (#1942).
+        print(f"Tag '{name}' already exists.")
+        return
     print(f"Tag '{name}' created.")
 
 

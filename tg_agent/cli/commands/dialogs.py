@@ -374,6 +374,8 @@ async def _dialogs_send(args, db, pool) -> None:
             silent=bool(getattr(args, "silent", False)),
             comment_to=comment_to,
             reply_to=reply_to,
+            parse_mode=getattr(args, "parse_mode", None),
+            verify_reply_to=True,
             source="dialogs_send",
         )
         message_id = f" message_id={result.message_id}" if result.message_id is not None else ""
@@ -392,6 +394,9 @@ async def _dialogs_send(args, db, pool) -> None:
         # Curated attribution (#1828): refusing RPC + delivery verdict + retry
         # deadline, so a resolve-side flood never reads as a send failure.
         cli_error(f"Send refused: {describe_rpc_failure(exc)}")
+    except TelegramActionMessageNotFoundError as exc:
+        # The reply target is not in the chat: nothing was sent (#1940).
+        cli_error(str(exc))
     except Exception as exc:
         cli_error(f"Error sending message: {exc}")
 
@@ -1203,11 +1208,14 @@ async def _dialogs_queue(args, db, pool) -> None:
             for cmd in commands:
                 payload_phone = cmd.payload.get("phone") if isinstance(cmd.payload, dict) else None
                 run_after = cmd.run_after.isoformat() if cmd.run_after else "-"
+                # `status=failed` without its reason is a dead end for the
+                # operator: the text is in the row — print its first line (#1934).
+                error = f" error={str(cmd.error).splitlines()[0]}" if cmd.error else ""
                 print(
                     f"#{cmd.id} {cmd.command_type} status={cmd.status.value} "
                     # «unassigned», а не '-': команда без аккаунта в payload —
                     # наблюдаемое состояние, а не пустая клетка (#1581).
-                    f"phone={payload_phone or 'unassigned'} run_after={run_after}"
+                    f"phone={payload_phone or 'unassigned'} run_after={run_after}{error}"
                 )
     elif args.queue_action == "cancel":
         if not _confirm_or_abort(args, f"Cancel queue command #{args.command_id}"):
@@ -1494,12 +1502,15 @@ def dialogs_send(
     reply_to: int | None = typer.Option(
         None, "--reply-to", help="Reply to this message ID within the same chat"
     ),
+    parse_mode: str | None = typer.Option(
+        None, "--parse-mode", help="Text markup: plain, md or html (default: md)"
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Send a direct message to a user or chat."""
     _run_dialogs(
         ctx, "send", recipient=recipient, text=text, phone=phone, silent=silent,
-        comment_to=comment_to, reply_to=reply_to, yes=yes,
+        comment_to=comment_to, reply_to=reply_to, parse_mode=parse_mode, yes=yes,
     )
 
 

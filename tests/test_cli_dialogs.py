@@ -358,8 +358,51 @@ def test_cli_dialogs_send_reply_to_passes_the_message_id(cli_db, capsys):
     kwargs = fake_send.call_args.kwargs
     assert kwargs["reply_to"] == 55
     assert kwargs["comment_to"] is None
+    assert kwargs["parse_mode"] is None
+    assert kwargs["verify_reply_to"] is True  # a CLI reply reads its target first (#1940)
     out = capsys.readouterr().out
     assert "sent" in out.lower()
+
+
+def test_cli_dialogs_send_reply_to_missing_target_exits_1(cli_db, capsys):
+    """#1940: a reply target that is not in the chat is a failure, not a sent message."""
+    from tg_agent.services.telegram_actions import TelegramActionMessageNotFoundError
+
+    pool = _mock_pool()
+    with patch(
+        "tg_agent.cli.commands.dialogs.TelegramActionService.send_message",
+        new=AsyncMock(
+            side_effect=TelegramActionMessageNotFoundError(
+                "Reply target #55 not found in 100111: nothing was sent."
+            )
+        ),
+    ):
+        with pytest.raises(typer.Exit) as excinfo:
+            _run(
+                _ns(dialogs_action="send", phone="+1234567890",
+                    recipient="100111", text="answering", reply_to=55, yes=True),
+                pool, cli_db,
+            )
+    assert excinfo.value.exit_code == 1
+    captured = capsys.readouterr()
+    assert "Reply target #55 not found" in captured.err
+    assert "nothing was sent" in captured.err
+    assert "Message sent" not in captured.out
+
+
+def test_cli_dialogs_send_parse_mode_passes_through(cli_db, capsys):
+    """`dialogs send --parse-mode` plumbs the markup choice into the service (#1937)."""
+    pool = _mock_pool()
+    with patch(
+        "tg_agent.cli.commands.dialogs.TelegramActionService.send_message",
+        new=AsyncMock(return_value=SimpleNamespace(phone="+1234567890", message_id=7)),
+    ) as fake_send:
+        _run(
+            _ns(dialogs_action="send", phone="+1234567890",
+                recipient="100111", text="a[0](x)", parse_mode="plain", yes=True),
+            pool, cli_db,
+        )
+    assert fake_send.call_args.kwargs["parse_mode"] == "plain"
 
 
 def test_cli_dialogs_send_reply_to_and_comment_to_are_refused(cli_db, capsys):

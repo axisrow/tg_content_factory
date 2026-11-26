@@ -491,6 +491,76 @@ class TestPhotoLoaderExitCodes:
             asyncio.run(photo_loader.auto_toggle_impl("config.yaml", job_id=5))
         _assert_exit(excinfo, capsys, "Auto job not found")
 
+    def test_send_partial_failure_names_what_went_out_and_exits_1(self, capsys):
+        """#1943: some files live, some failed — the report says which, and exits 1."""
+        from tg_agent.cli.commands import photo_loader
+
+        item = SimpleNamespace(
+            id=157,
+            status="completed",
+            error="partial send failure: [Errno 13] Permission denied: 'b.png'",
+            telegram_message_ids=[635],
+            file_paths=["a.png", "b.png"],
+        )
+
+        async def fake_run(config_path, body):
+            services = SimpleNamespace(
+                pool=None, tasks=SimpleNamespace(send_now=AsyncMock(return_value=item))
+            )
+            await body(services)
+
+        with pytest.raises(typer.Exit) as excinfo, patch.object(
+            photo_loader, "_run_with_services", new=fake_run
+        ):
+            asyncio.run(
+                photo_loader.send_impl("config.yaml", phone="+1", target="100", files=["a.png", "b.png"])
+            )
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "1 of 2 file(s) published, message ids [635]" in captured.err
+        assert "Permission denied" in captured.err
+        assert captured.out == ""
+
+    def test_send_clean_item_keeps_the_success_line(self, capsys):
+        from tg_agent.cli.commands import photo_loader
+
+        item = SimpleNamespace(id=7, status="completed", error=None)
+
+        async def fake_run(config_path, body):
+            services = SimpleNamespace(
+                pool=None, tasks=SimpleNamespace(send_now=AsyncMock(return_value=item))
+            )
+            await body(services)
+
+        with patch.object(photo_loader, "_run_with_services", new=fake_run):
+            asyncio.run(photo_loader.send_impl("config.yaml", phone="+1", target="100", files=["a.png"]))
+        assert "Sent photo item #7 status=completed" in capsys.readouterr().out
+
+    def test_items_listing_shows_the_stored_error(self, capsys):
+        """#1943: the reason of a partial send is the part a reader needs."""
+        from tg_agent.cli.commands import photo_loader
+
+        items = [
+            SimpleNamespace(
+                id=157, batch_id=124, phone="+1", target_dialog_id=100, status="completed",
+                error="partial send failure: boom",
+            ),
+            SimpleNamespace(
+                id=158, batch_id=124, phone="+1", target_dialog_id=100, status="cancelled", error=None
+            ),
+        ]
+
+        async def fake_run(config_path, body):
+            services = SimpleNamespace(tasks=SimpleNamespace(list_items=AsyncMock(return_value=items)))
+            await body(services)
+
+        with patch.object(photo_loader, "_run_with_services", new=fake_run):
+            asyncio.run(photo_loader.items_impl("config.yaml"))
+        partial, clean, *rest = capsys.readouterr().out.splitlines()
+        assert partial == "#157 batch=124 phone=+1 target=100 status=completed error=partial send failure: boom"
+        assert clean == "#158 batch=124 phone=+1 target=100 status=cancelled"
+        assert rest == []
+
 
 # ---------------------------------------------------------------------------
 # a missing target is a failure, not a no-op with exit 0 (#1933)
@@ -656,3 +726,9 @@ class TestMissingTargetExitCodes:
         ):
             asyncio.run(photo_loader.batch_cancel_impl("config.yaml", item_id=999))
         _assert_exit_clean(excinfo, capsys, "not cancelled")
+
+    def test_search_query_add_invalid_regex_exits_1(self, cli_env, capsys):
+        # A refused write is a failure, not a printed error with exit 0 (#1942).
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(search_query.add_impl("c", query="[", is_regex=True))
+        _assert_exit_clean(excinfo, capsys, "invalid regex")

@@ -209,7 +209,9 @@ search-query list | get | add | edit | delete | toggle | run | stats
   Each record carries `id`, `out` (own message), `addressed` (to the account:
   always in private chats unless own; in groups a @mention of the account or a
   reply to its message), `date` (ISO-8601), `sender` (`@username`/name/chat
-  title or null), `text`. Empty result = a clean empty envelope, not an error.
+  title or null), `reply_to` (the id of the message this one answers, or null
+  for a top-level message — #1938), `text`. Empty result = a clean empty
+  envelope, not an error.
   Composes with `dialogs send` (`… message_id=N via PHONE`): pass the sent id
   as `--after-id` to capture exactly the reply window.
 - `messages wait` answers "did a bot delete my sent message?" from the local
@@ -337,9 +339,16 @@ the local store (live read empty or failed) are labeled `(stored)` in the
 output header, and a failed live read exits 1 with the reason on stderr even
 when stored rows print (#1927).
 `dialogs send` posts a message to a chat by identifier (links render without a
-Telegram web preview); `--silent` sends without a notification sound (night or
+Telegram web preview); `--parse-mode plain|md|html` picks the text markup — the
+default is `md`, Telethon's Markdown (`**bold**`, `` `code` ``, `__italic__`,
+`[link](url)` are parsed), so pass `plain` for literal text such as code or a
+regex (#1937); `--silent` sends without a notification sound (night or
 scheduled posts); `--reply-to <message_id>` replies to a specific message in the
-same chat (DM, group or channel — find the id via `messages read <chat> --limit N`);
+same chat (DM, group or channel — find the id via `messages read <chat> --limit N`,
+and check the result with `messages read <chat> --live --format json`: the reply
+carries `reply_to`, #1938; a target that is not in the chat sends nothing and
+exits 1 — Telegram would otherwise drop the reply and post a plain message,
+#1940);
 `--comment-to <post_id>` turns the send into a comment under
 that channel post — the recipient must be a channel, Telegram routes the text
 into its linked discussion group (use `messages read <channel> --limit N` or

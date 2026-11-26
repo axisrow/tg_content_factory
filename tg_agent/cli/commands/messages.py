@@ -148,7 +148,9 @@ def _print_live_messages(collected: list, reaction_users_by_message_id: dict[int
         text = (msg.text or "").strip()
         reactions = format_message_reactions(msg)
         reaction_suffix = f" reactions: {reactions}" if reactions else ""
-        print(f"[{date_str}] #{msg.id}{sender}{reaction_suffix}")
+        reply_to = _live_reply_to(msg)
+        reply_suffix = f" reply to #{reply_to}" if reply_to else ""
+        print(f"[{date_str}] #{msg.id}{sender}{reply_suffix}{reaction_suffix}")
         if text:
             print(f"  {text[:500]}")
         media_name = type(msg.media).__name__ if msg.media else ""
@@ -177,6 +179,23 @@ def _live_sender_name(msg) -> str | None:
     return name or getattr(sender, "title", None) or None
 
 
+def _live_reply_to(msg) -> int | None:
+    """The message this one answers, or None for a top-level message (#1938).
+
+    In a forum every message carries the topic's root as its ``reply_to``:
+    ``forum_topic`` set and no ``reply_to_top_id`` — that header is a location,
+    not a reply. A reply inside the topic keeps ``forum_topic`` and moves the
+    root to ``reply_to_top_id``, so the answered message stays in
+    ``reply_to_msg_id`` (the split ``extract_topic_id`` makes for the store).
+    """
+    reply_to = getattr(msg, "reply_to", None)
+    if reply_to is None:
+        return None
+    if getattr(reply_to, "forum_topic", False) and not getattr(reply_to, "reply_to_top_id", None):
+        return None
+    return getattr(reply_to, "reply_to_msg_id", None)
+
+
 def _print_live_json(collected: list, *, has_more: bool, chat_type: str) -> None:
     """Live JSON envelope (#1872): records + the forward cursor.
 
@@ -201,6 +220,7 @@ def _print_live_json(collected: list, *, has_more: bool, chat_type: str) -> None
             "addressed": addressed,
             "date": msg.date.isoformat() if msg.date else None,
             "sender": _live_sender_name(msg),
+            "reply_to": _live_reply_to(msg),
             "text": msg.text if msg.text else None,
         })
     print(json.dumps({

@@ -230,8 +230,9 @@ def test_send_action(tmp_path, cli_init_patch, capsys):
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
+    # A clean item carries no error — only a partial send sets it (#1943).
     fake_task, fake_auto = _create_fake_services(
-        task_methods={"send_now": AsyncMock(return_value=MagicMock(id=1, status="sent"))}
+        task_methods={"send_now": AsyncMock(return_value=MagicMock(id=1, status="sent", error=None))}
     )
 
     with (

@@ -1223,15 +1223,18 @@ class ChannelsRepository:
         cur = await self._db.execute("SELECT name FROM tags ORDER BY name")
         return [row["name"] for row in await cur.fetchall()]
 
-    async def create_tag(self, name: str) -> None:
-        """Создать тег по имени (пустое игнорируется, дубликат — no-op через INSERT OR IGNORE)."""
+    async def create_tag(self, name: str) -> bool:
+        """Создать тег по имени; вернуть, был ли создан (пустое имя и дубликат — False, INSERT OR IGNORE) (#1942)."""
         assert self._database is not None, (
             "ChannelsRepository.create_tag requires a Database reference"
         )
         name = name.strip()
         if not name:
-            return
-        await self._database.execute_write("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
+            return False
+        cur = await self._database.execute_write(
+            "INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,)
+        )
+        return cur.rowcount > 0
 
     async def delete_tag(self, name: str) -> bool:
         """Удалить тег по имени (связи каналов с ним уходят каскадом по FK); вернуть, был ли тег (#1933)."""

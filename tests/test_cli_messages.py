@@ -489,9 +489,10 @@ def test_messages_read_live_rejects_csv_format(cli_env, capsys):
 # ---------------------------------------------------------------------------
 
 
-def _live_msg(i, *, text="m", out=False, mentioned=False, sender=None):
+def _live_msg(i, *, text="m", out=False, mentioned=False, sender=None, reply_to=None):
     return SimpleNamespace(
         id=i, date=NOW, sender=sender, text=text, media=None, out=out, mentioned=mentioned,
+        reply_to=reply_to,
     )
 
 
@@ -548,6 +549,40 @@ def test_messages_read_live_json_after_id_forward_cursor(cli_db, capsys):
     assert first["sender"] == "Ann"
     assert first["text"] == "first"
     assert first["date"] == NOW.isoformat()
+    assert first["reply_to"] is None  # a top-level message
+
+
+def test_messages_read_live_json_names_the_replied_message(cli_db, capsys):
+    """#1938: a reply carries its target; a forum topic's root is a location, not a reply."""
+    reply = SimpleNamespace(reply_to_msg_id=41, forum_topic=False)
+    in_topic = SimpleNamespace(reply_to_msg_id=900, forum_topic=True)
+    # A reply inside a topic keeps forum_topic; the topic's root moves to top_id.
+    in_topic_reply = SimpleNamespace(reply_to_msg_id=41, reply_to_top_id=900, forum_topic=True)
+    msgs = [_live_msg(5, text="question"), _live_msg(6, text="answer", reply_to=reply),
+            _live_msg(7, text="in topic", reply_to=in_topic),
+            _live_msg(8, text="answer in topic", reply_to=in_topic_reply)]
+    _, captured = _run_live_read(
+        cli_db, "@room", capsys=capsys, messages=msgs,
+        entity=TLUser(id=4242, first_name="Ann"),
+    )
+
+    recs = {m["id"]: m["reply_to"] for m in json.loads(captured.out)["messages"]}
+    assert recs == {5: None, 6: 41, 7: None, 8: 41}
+
+
+def test_messages_read_live_text_marks_the_replied_message(cli_db, capsys):
+    """#1938: the text header names the replied message, a top-level one stays as is."""
+    reply = SimpleNamespace(reply_to_msg_id=41, forum_topic=False)
+    msgs = [_live_msg(5, text="question"), _live_msg(6, text="answer", reply_to=reply)]
+    _, captured = _run_live_read(
+        cli_db, "@room", capsys=capsys, messages=msgs,
+        entity=TLUser(id=4242, first_name="Ann"), output_format="text",
+    )
+
+    headers = [line for line in captured.out.splitlines() if line.startswith("[")]
+    assert len(headers) == 2
+    assert headers[0].endswith("#5")
+    assert headers[1].endswith("#6 reply to #41")
 
 
 def test_messages_read_live_json_after_id_truncates_with_has_more(cli_db, capsys):
