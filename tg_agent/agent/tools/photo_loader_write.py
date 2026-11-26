@@ -282,7 +282,9 @@ def register_batch_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]
             auto_svc = photo_auto_upload_service(db, client_pool)
             items = await tasks_svc.run_due()
             jobs = await auto_svc.run_due()
-            return _text_response(f"Обработано: items={items}, auto_jobs={jobs}")
+            # A claimed item whose send failed is in `items`; say how many (#1969).
+            not_sent = f", не отправлено={tasks_svc.last_run_failed}" if tasks_svc.last_run_failed else ""
+            return _text_response(f"Обработано: items={items}, auto_jobs={jobs}{not_sent}")
         except Exception as exc:
             return _text_response(f"Ошибка обработки фото: {exc}")
 

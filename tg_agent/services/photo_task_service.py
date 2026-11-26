@@ -34,6 +34,9 @@ class PhotoTaskService:
     def __init__(self, bundle: PhotoLoaderBundle, publish: PhotoPublishService):
         self._bundle = bundle
         self._publish = publish
+        # The last run_due(): claimed items that were not sent, and why (#1969).
+        self.last_run_failed = 0
+        self.last_run_errors: list[str] = []
 
     def validate_files(self, file_paths: list[str]) -> list[str]:
         cleaned = [str(Path(path)) for path in file_paths if str(path).strip()]
@@ -362,6 +365,14 @@ class PhotoTaskService:
         item_id: int | None = None,
         on_progress: Callable[[int, int], None] | None = None,
     ) -> int:
+        """Claim and run due items; return how many were claimed.
+
+        A claimed item whose send failed is FAILED on its row and counted here
+        too; ``last_run_failed`` and ``last_run_errors`` say which ones, so no
+        caller reports a send that did not happen as work done (#1969).
+        """
+        self.last_run_failed = 0
+        self.last_run_errors = []
         now = datetime.now(timezone.utc)
         due_total = await self._bundle.count_due_items(now, item_id=item_id)
         if item_id is not None:
@@ -414,17 +425,20 @@ class PhotoTaskService:
             if item.batch_id:
                 await self._sync_batch_status(item.batch_id, last_run_at=now)
         except Exception as exc:
+            reason = error_text(exc)
+            self.last_run_errors.append(f"item #{item.id}: {reason}")
+            self.last_run_failed += 1
             await self._bundle.update_item(
                 item.id or 0,
                 status=PhotoBatchStatus.FAILED,
-                error=error_text(exc),
+                error=reason,
                 completed_at=now,
             )
             if item.batch_id:
                 await self._sync_batch_status(
                     item.batch_id,
                     last_run_at=now,
-                    fallback_error=error_text(exc),
+                    fallback_error=reason,
                 )
 
     async def cancel_item(self, item_id: int) -> bool:

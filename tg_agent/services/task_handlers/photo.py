@@ -34,6 +34,19 @@ class PhotoTaskHandler:
             return
         try:
             processed = await ctx.photo_task_service.run_due()
+            failed = ctx.photo_task_service.last_run_failed
+            if failed:
+                # A claimed item whose send failed is FAILED on its row; the task
+                # that ran it must not say COMPLETED — the content handlers' rule
+                # (audit #835/1). messages_collected counts what went out.
+                await ctx.tasks.update_collection_task(
+                    task.id,
+                    CollectionTaskStatus.FAILED,
+                    messages_collected=processed - failed,
+                    error=f"{failed} of {processed} due photo item(s) were not sent: "
+                    + "; ".join(ctx.photo_task_service.last_run_errors[:5]),
+                )
+                return
             await ctx.tasks.update_collection_task(
                 task.id,
                 CollectionTaskStatus.COMPLETED,

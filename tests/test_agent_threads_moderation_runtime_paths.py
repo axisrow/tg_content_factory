@@ -1853,6 +1853,7 @@ async def test_dispatcher_handle_photo_due_with_service():
     tasks_repo = _make_tasks_repo()
     photo_svc = MagicMock()
     photo_svc.run_due = AsyncMock(return_value=5)
+    photo_svc.last_run_failed = 0  # a run with every item sent (#1969)
     dispatcher = UnifiedDispatcher(
         collector=_make_collector(),
         channel_bundle=_make_channel_bundle(),

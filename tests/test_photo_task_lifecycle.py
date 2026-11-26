@@ -6,6 +6,7 @@ status with CANCELLED), and #835/4 (per-file send progress).
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -61,6 +62,48 @@ async def test_run_due_without_progress_callback_still_processes():
     svc = PhotoTaskService(bundle, publish)
 
     assert await svc.run_due() == 1
+    assert svc.last_run_failed == 0
+    assert svc.last_run_errors == []
+
+
+def _service_whose_second_send_fails():
+    bundle = MagicMock()
+    bundle.count_due_items = AsyncMock(return_value=2)
+    bundle.claim_next_due_item = AsyncMock(side_effect=[_due_item(1), _due_item(2), None])
+    bundle.update_item = AsyncMock()
+    publish = MagicMock()
+    publish.send_now = AsyncMock(side_effect=[[101], RuntimeError("send failed")])
+    return PhotoTaskService(bundle, publish), bundle
+
+
+@pytest.mark.anyio
+async def test_run_due_remembers_an_item_that_was_not_sent():
+    """#1969: a claimed item whose send failed is FAILED on its row; the run must
+    not hand that count to its callers as work done without saying so."""
+    svc, bundle = _service_whose_second_send_fails()
+
+    processed = await svc.run_due()
+
+    assert processed == 2
+    assert svc.last_run_failed == 1
+    assert svc.last_run_errors == ["item #2: send failed"]
+    assert bundle.update_item.await_args.kwargs["status"] == PhotoBatchStatus.FAILED
+
+
+@pytest.mark.anyio
+async def test_run_due_single_item_that_was_not_sent():
+    """#1969: `--item-id` path — the same accounting, the reason never empty."""
+    bundle = MagicMock()
+    bundle.count_due_items = AsyncMock(return_value=1)
+    bundle.claim_next_due_item = AsyncMock(return_value=_due_item(7))
+    bundle.update_item = AsyncMock()
+    publish = MagicMock()
+    publish.send_now = AsyncMock(side_effect=asyncio.TimeoutError())
+    svc = PhotoTaskService(bundle, publish)
+
+    assert await svc.run_due(item_id=7) == 1
+    assert svc.last_run_failed == 1
+    assert svc.last_run_errors == ["item #7: TimeoutError"]
 
 
 # ── 837#11: _sync_batch_status terminal handling ──────────────────────────────

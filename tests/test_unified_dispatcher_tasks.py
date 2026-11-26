@@ -186,9 +186,29 @@ async def test_photo_due_no_service():
 async def test_photo_due_success():
     pts = AsyncMock()
     pts.run_due = AsyncMock(return_value=5)
+    pts.last_run_failed = 0
     d = _dispatcher(photo_task_service=pts)
     await d._handle_photo_due(_task(CollectionTaskType.PHOTO_DUE))
-    assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.COMPLETED
+    call = d._tasks.update_collection_task.call_args
+    assert call[0][1] == CollectionTaskStatus.COMPLETED
+    assert call[1]["messages_collected"] == 5
+
+
+@pytest.mark.anyio
+async def test_photo_due_failed_sends_fail_the_task():
+    """#1969: a claimed item that was not sent must not leave a COMPLETED task —
+    the content handlers' rule (audit #835/1)."""
+    pts = AsyncMock()
+    pts.run_due = AsyncMock(return_value=5)
+    pts.last_run_failed = 2
+    pts.last_run_errors = ["item #7: send failed", "item #8: flood"]
+    d = _dispatcher(photo_task_service=pts)
+    await d._handle_photo_due(_task(CollectionTaskType.PHOTO_DUE))
+    call = d._tasks.update_collection_task.call_args
+    assert call[0][1] == CollectionTaskStatus.FAILED
+    assert call[1]["messages_collected"] == 3
+    assert "2 of 5 due photo item(s) were not sent" in call[1]["error"]
+    assert "item #7: send failed" in call[1]["error"]
 
 
 @pytest.mark.anyio
