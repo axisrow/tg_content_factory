@@ -272,6 +272,7 @@ class TestCLIAccount:
         out = capsys.readouterr().out
         assert phone1 in out
         assert phone2 not in out
+        assert init_pool_mock.await_args is not None
         assert init_pool_mock.await_args.kwargs == {"phones": (phone1,)}
 
     def test_info_no_connected_accounts(self, cli_env_with_pool, capsys):

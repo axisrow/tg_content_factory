@@ -18,7 +18,7 @@ import json
 import logging
 import sys
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import typer
 
@@ -64,7 +64,7 @@ async def _load_resolve_backoffs(db, *, now: datetime) -> dict[str, datetime]:
     return parse_resolve_backoff_setting(raw, now=now)
 
 
-async def _resolve_credentials(config, db, *, api_id: int | None, api_hash: str | None) -> tuple[int, str]:
+async def _resolve_credentials(config, db, *, api_id: int | None, api_hash: str | None) -> tuple[int, str | None]:
     api_id = api_id or config.telegram.api_id
     api_hash = api_hash or config.telegram.api_hash
     if api_id == 0 or not api_hash:
@@ -670,7 +670,7 @@ async def flood_clear_impl(config_path: str, *, phone: str) -> None:
             from tg_agent.gateway.catalog import project_catalog
 
             async with project_catalog(config, db) as catalog:
-                families = await catalog.client.clear_flood(await catalog.reference(acc.id))
+                families = await catalog.client.clear_flood(await catalog.reference(cast(int, acc.id)))
                 await catalog.refresh()
             print(f"Flood wait cleared for {phone}")
             for family in families:
@@ -793,7 +793,7 @@ def account_detach(ctx: typer.Context, phone: str = typer.Argument(...)) -> None
 
             client = await TelegramGatewayClient.from_config(config)
             try:
-                await ProjectAccountCatalog(db, client).detach(account.id)
+                await ProjectAccountCatalog(db, client).detach(cast(int, account.id))
             finally:
                 await client.close()
         finally:

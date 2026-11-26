@@ -81,7 +81,7 @@ def _build_pipeline_add_node_specs(node_specs_raw: list[str]) -> list:
 
 
 def _apply_pipeline_add_edges(args: requests.PipelineAddCommand, builder) -> None:
-    if getattr(args, "edge", None):
+    if args.edge:
         for edge_str in args.edge:
             from_id, _, to_id = edge_str.partition("->")
             if not to_id:
@@ -90,7 +90,7 @@ def _apply_pipeline_add_edges(args: requests.PipelineAddCommand, builder) -> Non
 
 
 def _apply_pipeline_add_node_configs(args: requests.PipelineAddCommand, builder) -> None:
-    if getattr(args, "node_configs", None):
+    if args.node_configs:
         import json as _json
 
         for nc_str in args.node_configs:
@@ -247,11 +247,9 @@ async def _pipeline_edit(args: requests.PipelineEditCommand, db, config, svc: Pi
                 args.interval if args.interval is not None else existing.generate_interval_minutes
             ),
             is_active=existing.is_active if args.active is None else args.active,
-            ab_num_variants=(
-                args.ab_variants if getattr(args, "ab_variants", None) is not None else existing.ab_num_variants
-            ),
+            ab_num_variants=(args.ab_variants if args.ab_variants is not None else existing.ab_num_variants),
             ab_auto_select=(
-                args.ab_auto_select if getattr(args, "ab_auto_select", None) is not None else existing.ab_auto_select
+                args.ab_auto_select if args.ab_auto_select is not None else existing.ab_auto_select
             ),
         )
     except PipelineValidationError as exc:

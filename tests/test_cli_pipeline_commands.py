@@ -21,32 +21,34 @@ _PIPELINE_INIT_DB_TARGET = "tg_agent.cli.commands.pipeline.runtime.init_db"
 @pytest.mark.anyio
 async def test_pipeline_edit_passes_explicit_dag_refs():
     from tg_agent.cli.commands.pipeline import _pipeline_edit
+    from tg_agent.cli.pipeline import requests as pipeline_requests
     from tg_agent.models import ContentPipeline
 
     svc = MagicMock()
-    svc.get = AsyncMock(return_value=ContentPipeline(name="DAG"))
+    svc.get = AsyncMock(return_value=ContentPipeline(name="DAG", generate_interval_minutes=60, ab_num_variants=1))
     svc.get_sources = AsyncMock(return_value=[])
     svc.get_targets = AsyncMock(return_value=[])
     svc.update = AsyncMock(return_value=True)
-    args = _ns(
-        id=1, name=None, prompt_template=None, source=[1002], target=["+100|78"],
-        llm_model=None, image_model=None, publish_mode=None,
-        generation_backend=None, interval=None, active=None,
-    )
+    # The typed command the dispatcher hands over; its A/B fields are left unset.
+    args = pipeline_requests.PipelineEditCommand(id=1, source=[1002], target=["+100|78"])
     await _pipeline_edit(args, None, None, svc)
     kwargs = svc.update.call_args.kwargs
     assert kwargs["dag_source_channel_ids"] == [1002]
     assert kwargs["dag_target_refs"] == [PipelineTargetRef(phone="+100", dialog_id=78)]
 
 
-def _read_pipeline_row(db_path: str, pipeline_id: int) -> dict | None:
-    """Read pipeline row using a fresh sqlite3 connection (handler closes aiosqlite)."""
+def _read_pipeline_row(db_path: str, pipeline_id: int) -> dict:
+    """Read pipeline row using a fresh sqlite3 connection (handler closes aiosqlite).
+
+    Every caller goes on to read a field, so a missing row fails here.
+    """
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
         cur = conn.execute("SELECT * FROM content_pipelines WHERE id = ?", (pipeline_id,))
         row = cur.fetchone()
-        return dict(row) if row else None
+        assert row is not None, f"pipeline id={pipeline_id} is not in {db_path}"
+        return dict(row)
     finally:
         conn.close()
 

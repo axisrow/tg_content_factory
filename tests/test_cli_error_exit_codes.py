@@ -16,6 +16,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1117,7 +1118,7 @@ class TestRefusedArgumentExitCodesWave2:
 
         pool = SimpleNamespace(clients={PHONE: object()}, disconnect_all=AsyncMock())
         publish_run = AsyncMock(return_value=[PublishResult(success=False, error="chat not found")])
-        services = SimpleNamespace(publish_service=lambda _db, _pool: SimpleNamespace(publish_run=publish_run))
+        services: Any = SimpleNamespace(publish_service=lambda _db, _pool: SimpleNamespace(publish_run=publish_run))
 
         async def body(db):
             svc = PipelineService(PipelineBundle.from_database(db))
