@@ -825,7 +825,11 @@ class TelegramActionService:
                 source=source,
                 ref=ref,
             )
-            return ForwardMessagesResult(phone=acquired_phone, count=len(ids), message_ids=forwarded_ids)
+            # `count` is what Telegram confirmed, as `message_ids` is — a caller
+            # that reports the requested count reports messages that may not exist (#1974).
+            return ForwardMessagesResult(
+                phone=acquired_phone, count=len(forwarded_ids), message_ids=forwarded_ids
+            )
 
     async def pin_message(
         self,

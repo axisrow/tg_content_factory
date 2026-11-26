@@ -757,6 +757,7 @@ async def test_forward_messages_records_one_row_per_forwarded_id(db):
     )
 
     assert result.message_ids == (1, 2)
+    assert result.count == 2
     rows = await db.execute_fetchall(
         "SELECT phone, chat_id, message_id, chat_type, text, source FROM sent_messages ORDER BY message_id"
     )
@@ -764,6 +765,20 @@ async def test_forward_messages_records_one_row_per_forwarded_id(db):
         ("+1", -1000000000556, 1, "channel", None, "dialogs_forward"),
         ("+1", -1000000000556, 2, "channel", None, "dialogs_forward"),
     ]
+
+
+@pytest.mark.anyio
+async def test_forward_messages_counts_the_confirmed_messages():
+    """#1974: `count` is what Telegram confirmed, as `message_ids` is — not what was asked for."""
+    client = AsyncMock()
+    client.forward_messages = AsyncMock(return_value=[SimpleNamespace(id=5)])
+
+    result = await TelegramActionService(_pool_with_client(client)).forward_messages(
+        phone="+1", from_chat="@src", to_chat="@dst", message_ids=[10, 20]
+    )
+
+    assert result.count == 1
+    assert result.message_ids == (5,)
 
 
 @pytest.mark.anyio

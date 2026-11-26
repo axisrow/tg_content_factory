@@ -202,12 +202,14 @@ def test_refresh_action_warns_on_partial_sweep(tmp_path, cli_init_patch, capsys)
             )
             mock_channel_service.return_value = mock_instance
 
-            run(_ns(photo_loader_action="refresh", phone="+100"))
+            # #1974: the line says the cache was not updated — the exit code agrees.
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(photo_loader_action="refresh", phone="+100"))
 
-    out = capsys.readouterr().out
-    assert "WARNING" in out
-    assert "not updated" in out
-    assert "Dialogs refreshed:" not in out
+    assert excinfo.value.exit_code == 1
+    captured = capsys.readouterr()
+    assert "not updated" in captured.err
+    assert "Dialogs refreshed:" not in captured.out
 
 
 def test_refresh_action_reports_success_on_complete_sweep(tmp_path, cli_init_patch, capsys):

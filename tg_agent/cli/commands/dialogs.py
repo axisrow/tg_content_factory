@@ -108,13 +108,13 @@ async def _dialogs_refresh(args, db, pool, *, channel_service_cls) -> None:
     svc = channel_service_cls(db, pool, None)  # type: ignore[arg-type]
     dialogs = await svc.get_my_dialogs(phone, refresh=True)
     if getattr(dialogs, "partial", False):
-        print(
-            f"WARNING: Обход диалогов завершился частично: сохранено "
+        # The line says the refresh has to be run again; the exit code agrees (#1974).
+        cli_error(
+            f"Обход диалогов завершился частично: сохранено "
             f"{getattr(dialogs, 'saved', 0)}, устаревшие записи не удалялись. "
             "Запустите обновление ещё раз, чтобы продолжить."
         )
-    else:
-        print(f"Dialogs refreshed: {len(dialogs)} total.")
+    print(f"Dialogs refreshed: {len(dialogs)} total.")
 
 
 async def _dialogs_list(args, db, pool, *, channel_service_cls) -> None:
@@ -378,16 +378,6 @@ async def _dialogs_send(args, db, pool) -> None:
             verify_reply_to=True,
             source="dialogs_send",
         )
-        message_id = f" message_id={result.message_id}" if result.message_id is not None else ""
-        if result.chat_id is not None:
-            # A comment lives in the channel's discussion group, not in the
-            # channel: the echo names the chat the message id belongs to (#1946).
-            print(
-                f"Message sent to chat {result.chat_id} "
-                f"(comment on post #{comment_to} in {recipient}).{message_id} via {result.phone}"
-            )
-        else:
-            print(f"Message sent to {recipient}.{message_id} via {result.phone}")
     except TelegramActionClientUnavailableError:
         cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")
     except (HandledFloodWaitError, TelegramRateLimitedError) as exc:
@@ -399,6 +389,26 @@ async def _dialogs_send(args, db, pool) -> None:
         cli_error(str(exc))
     except Exception as exc:
         cli_error(f"Error sending message: {exc}")
+    # Judged outside the handlers above: a refusal raised inside would be
+    # caught by `except Exception` and reported a second time.
+    if result.message_id is None:
+        # No id in Telegram's answer: the registry has no row for this send,
+        # so `messages sent` / `messages wait` cannot know it (#1974). Whether
+        # the message is in the chat is for the reader to check.
+        cli_error(
+            f"Delivery unconfirmed: Telegram answered without a message id for "
+            f"{recipient} via {result.phone}. Check the chat before retrying."
+        )
+    message_id = f" message_id={result.message_id}"
+    if result.chat_id is not None:
+        # A comment lives in the channel's discussion group, not in the
+        # channel: the echo names the chat the message id belongs to (#1946).
+        print(
+            f"Message sent to chat {result.chat_id} "
+            f"(comment on post #{comment_to} in {recipient}).{message_id} via {result.phone}"
+        )
+    else:
+        print(f"Message sent to {recipient}.{message_id} via {result.phone}")
 
 
 async def _dialogs_forward(args, db, pool) -> None:
@@ -421,16 +431,26 @@ async def _dialogs_forward(args, db, pool) -> None:
             message_ids=ids,
             source="dialogs_forward",
         )
-        id_suffix = ""
-        if fwd_result.message_ids:
-            id_suffix = " forwarded_ids=" + ",".join(str(i) for i in fwd_result.message_ids)
-        print(f"Forwarded {len(ids)} message(s) from {args.from_chat} to {args.to_chat}.{id_suffix}")
     except TelegramActionClientUnavailableError:
         cli_error(f"Client for {phone} unavailable (flood-wait or not connected).")
     except (HandledFloodWaitError, TelegramRateLimitedError) as exc:
         cli_error(f"Forward refused: {describe_rpc_failure(exc)}")
     except Exception as exc:
         cli_error(f"Error forwarding messages: {exc}")
+    # Judged outside the handlers above: a refusal raised inside would be
+    # caught by `except Exception` and reported a second time.
+    id_suffix = ""
+    if fwd_result.message_ids:
+        id_suffix = " forwarded_ids=" + ",".join(str(i) for i in fwd_result.message_ids)
+    if fwd_result.count < len(ids):
+        # Telegram's answer confirmed fewer messages than were asked for; the
+        # registry has rows for the confirmed ids only (#1974).
+        cli_error(
+            f"Forwarded {fwd_result.count} of {len(ids)} message(s) from "
+            f"{args.from_chat} to {args.to_chat}: the rest were not confirmed — "
+            f"check the chat before retrying them.{id_suffix}"
+        )
+    print(f"Forwarded {fwd_result.count} message(s) from {args.from_chat} to {args.to_chat}.{id_suffix}")
 
 
 async def _dialogs_edit_message(args, db, pool) -> None:

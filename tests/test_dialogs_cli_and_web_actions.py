@@ -195,22 +195,26 @@ class TestCliRefresh:
             _run_cli("refresh", pool, cli_db, {"phone": _PHONE})
         assert "Dialogs refreshed: 2 total." in capsys.readouterr().out
 
-    def test_refresh_partial_warns_instead_of_reporting_success(self, cli_db, capsys):
+    def test_refresh_partial_is_a_failure_with_its_numbers(self, cli_db, capsys):
+        """#1974: the line says the refresh has to be run again — the exit code agrees."""
         pool, _ = _mock_pool()
         partial_result = type("PartialDialogs", (list,), {"partial": True})([{"channel_id": 1}])
-        with patch(
-            "tg_agent.services.channel_service.ChannelService.get_my_dialogs",
-            new_callable=AsyncMock,
-            return_value=partial_result,
+        with (
+            patch(
+                "tg_agent.services.channel_service.ChannelService.get_my_dialogs",
+                new_callable=AsyncMock,
+                return_value=partial_result,
+            ),
+            pytest.raises(typer.Exit) as excinfo,
         ):
             _run_cli("refresh", pool, cli_db, {"phone": _PHONE})
-        out = capsys.readouterr().out
-        assert "WARNING" in out
-        # #1359: partial progress IS saved now, so the warning reports what was
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        # #1359: partial progress IS saved now, so the line reports what was
         # kept rather than claiming the cache went untouched.
-        assert "завершился частично" in out
-        assert "устаревшие записи не удалялись" in out
-        assert "Dialogs refreshed:" not in out
+        assert "завершился частично" in captured.err
+        assert "устаревшие записи не удалялись" in captured.err
+        assert "Dialogs refreshed:" not in captured.out
 
 
 class TestCliCacheClear:
@@ -276,6 +280,23 @@ class TestCliSend:
         assert "Message sent to @user. message_id=42" in out
         # The sending account rides along: `messages wait --phone` keys on it (deletion capture).
         assert f"via {_PHONE}" in out
+
+    def test_send_without_a_confirmed_id_is_not_a_sent_message(self, cli_db, capsys):
+        """#1974: no id in the answer — no registry row, so no `Message sent` with exit 0."""
+        pool, client = _mock_pool()
+        client.get_entity = AsyncMock(return_value=SimpleNamespace(id=123))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=123))
+        client.send_message = AsyncMock(return_value=None)
+        with pytest.raises(typer.Exit) as excinfo:
+            _run_cli("send", pool, cli_db, {"phone": _PHONE, "recipient": "@user", "text": "hello", "yes": True})
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "Delivery unconfirmed" in captured.err
+        # A blind retry would duplicate a message that did go out.
+        assert "Check the chat before retrying" in captured.err
+        # One reason, not a second "Error sending message" on top of it.
+        assert captured.err.count("\n") == 1
+        assert "Message sent" not in captured.out
 
     def test_send_abort(self, cli_db, capsys):
         pool, client = _mock_pool()
@@ -378,11 +399,34 @@ class TestCliForward:
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        client.forward_messages = AsyncMock()
+        client.forward_messages = AsyncMock(
+            return_value=[SimpleNamespace(id=11), SimpleNamespace(id=12)]
+        )
         _run_cli("forward", pool, cli_db, {
             "phone": _PHONE, "from_chat": "A", "to_chat": "B", "message_ids": ["1,2"], "yes": True,
         })
         assert "Forwarded 2 message(s)" in capsys.readouterr().out
+
+    def test_forward_with_an_unconfirmed_message_exits_1(self, cli_db, capsys):
+        """#1974: the echo counts what Telegram confirmed, not what was asked for."""
+        pool, client = _mock_pool()
+        client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_input_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.forward_messages = AsyncMock(return_value=[SimpleNamespace(id=11)])
+        with pytest.raises(typer.Exit) as excinfo:
+            _run_cli("forward", pool, cli_db, {
+                "phone": _PHONE, "from_chat": "A", "to_chat": "B", "message_ids": ["1,2"], "yes": True,
+            })
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert (
+            "Forwarded 1 of 2 message(s) from A to B: the rest were not confirmed" in captured.err
+        )
+        assert "check the chat before retrying" in captured.err
+        assert "forwarded_ids=11" in captured.err
+        # One reason, not a second "Error forwarding messages" on top of it.
+        assert captured.err.count("\n") == 1
+        assert "Forwarded" not in captured.out
 
     def test_forward_abort(self, cli_db, capsys):
         pool, _ = _mock_pool()

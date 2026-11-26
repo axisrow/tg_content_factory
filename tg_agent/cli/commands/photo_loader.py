@@ -202,14 +202,13 @@ async def refresh_impl(config_path: str, *, phone: str) -> None:
     async def _body(s: _Services) -> None:
         dialogs = await s.channel_service.get_my_dialogs(phone, refresh=True)
         if getattr(dialogs, "partial", False):
-            # Same silent success #1350 fixed on `dialogs refresh`: an incomplete
-            # sweep must not be reported as a refreshed cache (#1350).
-            print(
-                f"WARNING: Dialog refresh did not complete ({len(dialogs)} dialogs shown); "
-                "dialog_cache was not updated."
+            # An incomplete sweep did not refresh the cache (#1350): a failure
+            # with its numbers, not a warning the exit code hides (#1974).
+            cli_error(
+                f"Dialog refresh did not complete ({len(dialogs)} dialogs shown); "
+                "dialog_cache was not updated. Run the refresh again to continue."
             )
-        else:
-            print(f"Dialogs refreshed: {len(dialogs)} total.")
+        print(f"Dialogs refreshed: {len(dialogs)} total.")
     await _run_with_services(config_path, _body)
 
 
