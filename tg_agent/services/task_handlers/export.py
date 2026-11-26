@@ -24,6 +24,7 @@ from tg_agent.services.telegram_export_builder import (
     TelegramExportBuilder,
     offline_media_resolver,
 )
+from tg_agent.utils.errors import error_text
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ class ExportTaskHandler:
             await ctx.tasks.update_collection_task(task.id, CollectionTaskStatus.COMPLETED, note=note)
         except Exception as exc:  # noqa: BLE001 — surface any failure on the task row
             logger.exception("EXPORT task %s failed", task.id)
-            await ctx.tasks.update_collection_task(task.id, CollectionTaskStatus.FAILED, error=str(exc))
+            await ctx.tasks.update_collection_task(task.id, CollectionTaskStatus.FAILED, error=error_text(exc))
 
     async def _build_media_resolver(self, channel, messages, payload: ExportTaskPayload, target: str):
         """Pre-download media into the export tree, return a sync resolver + note.

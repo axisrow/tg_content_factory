@@ -53,6 +53,7 @@ from tg_agent.telegram.collector import Collector
 from tg_agent.telegram.collector_types import AllCollectionClientsFloodedError, NoActiveCollectionClientsError
 from tg_agent.telegram.notifier import Notifier
 from tg_agent.telegram.reactions import TelegramReactionInvalidError
+from tg_agent.utils.errors import error_text
 from tg_agent.utils.safe_logging import elapsed_ms, query_log_fields
 from tg_shared.auth import TelegramAuth
 
@@ -310,7 +311,7 @@ class TelegramCommandDispatcher(
             await self._update_command_safely(
                 command.id,
                 status=TelegramCommandStatus.FAILED,
-                error=str(exc),
+                error=error_text(exc),
                 result_payload={
                     "state": "invalid_reaction",
                     "emoji": command.payload.get("emoji"),
@@ -345,7 +346,7 @@ class TelegramCommandDispatcher(
             await self._update_command_safely(
                 command.id,
                 status=TelegramCommandStatus.FAILED,
-                error=str(exc),
+                error=error_text(exc),
                 payload=command.payload,
                 log_action="failed after dispatch error",
             )

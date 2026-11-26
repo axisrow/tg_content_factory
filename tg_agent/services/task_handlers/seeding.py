@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from tg_agent.models import CollectionTask, CollectionTaskStatus, CollectionTaskType
 from tg_agent.services.task_handlers.base import TaskHandlerContext
+from tg_agent.utils.errors import error_text
 
 
 class SeedingTaskHandler:
@@ -39,5 +40,5 @@ class SeedingTaskHandler:
             await ctx.tasks.update_collection_task(
                 task.id,
                 CollectionTaskStatus.FAILED,
-                error=str(exc)[:500],
+                error=error_text(exc),
             )

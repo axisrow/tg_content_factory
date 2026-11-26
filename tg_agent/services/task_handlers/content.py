@@ -10,6 +10,7 @@ from tg_agent.models import (
     ContentPublishTaskPayload,
 )
 from tg_agent.services.task_handlers.base import TaskHandlerContext, build_content_generation_service
+from tg_agent.utils.errors import error_text
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ class ContentTaskHandler:
             await ctx.tasks.update_collection_task(
                 task.id,
                 CollectionTaskStatus.FAILED,
-                error=str(exc)[:500],
+                error=error_text(exc),
             )
 
     async def handle_content_publish(self, task: CollectionTask) -> None:
@@ -229,5 +230,5 @@ class ContentTaskHandler:
             await ctx.tasks.update_collection_task(
                 task.id,
                 CollectionTaskStatus.FAILED,
-                error=str(exc)[:500],
+                error=error_text(exc),
             )

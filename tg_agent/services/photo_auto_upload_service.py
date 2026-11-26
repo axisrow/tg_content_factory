@@ -11,6 +11,7 @@ from tg_agent.database.bundles import PhotoLoaderBundle
 from tg_agent.models import PhotoAutoUploadJob, PhotoSendMode
 from tg_agent.services.photo_publish_service import PhotoPublishService
 from tg_agent.services.photo_task_service import IMAGE_EXTENSIONS
+from tg_agent.utils.errors import error_text
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +166,7 @@ class PhotoAutoUploadService:
                 job.folder_path,
                 len(files),
             )
-            await self._bundle.update_auto_job(job.id or 0, error=str(exc), last_run_at=now)
+            await self._bundle.update_auto_job(job.id or 0, error=error_text(exc), last_run_at=now)
             raise
 
     async def _collect_new_files(self, job: PhotoAutoUploadJob) -> list[str]:

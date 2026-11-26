@@ -14,6 +14,7 @@ from tg_agent.services.sent_registry import record_send
 from tg_agent.telegram.backends import adapt_transport_session
 from tg_agent.telegram.relay import RelayDeliveryUnconfirmedError
 from tg_agent.telegram.rpc_guard import describe_rpc_failure
+from tg_agent.utils.errors import error_text
 
 logger = logging.getLogger(__name__)
 
@@ -516,7 +517,7 @@ class PublishService:
             delivery_uncertain = True
             return PublishResult(
                 success=False,
-                error=str(exc),
+                error=error_text(exc),
                 uncertain=True,
                 phone=acquired_phone,
                 dialog_id=target.dialog_id,

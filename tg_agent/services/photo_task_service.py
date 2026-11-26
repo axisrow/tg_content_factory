@@ -13,6 +13,7 @@ from tg_agent.database.bundles import PhotoLoaderBundle
 from tg_agent.models import PhotoBatch, PhotoBatchItem, PhotoBatchStatus, PhotoSendMode
 from tg_agent.services.photo_publish_service import PhotoPublishService
 from tg_agent.utils.datetime import parse_required_schedule_datetime
+from tg_agent.utils.errors import error_text
 
 logger = logging.getLogger(__name__)
 
@@ -188,13 +189,13 @@ class PhotoTaskService:
                 await self._bundle.update_item(
                     item_id,
                     status=PhotoBatchStatus.FAILED,
-                    error=str(exc),
+                    error=error_text(exc),
                     completed_at=now,
                 )
                 await self._bundle.update_batch(
                     batch_id,
                     status=PhotoBatchStatus.FAILED,
-                    error=str(exc),
+                    error=error_text(exc),
                     last_run_at=now,
                 )
                 raise
@@ -284,12 +285,12 @@ class PhotoTaskService:
                 await self._bundle.update_item(
                     item_id,
                     status=PhotoBatchStatus.FAILED,
-                    error=str(exc),
+                    error=error_text(exc),
                 )
                 await self._bundle.update_batch(
                     batch_id,
                     status=PhotoBatchStatus.FAILED,
-                    error=str(exc),
+                    error=error_text(exc),
                 )
                 raise
         item = await self._bundle.get_item(item_id)
@@ -416,14 +417,14 @@ class PhotoTaskService:
             await self._bundle.update_item(
                 item.id or 0,
                 status=PhotoBatchStatus.FAILED,
-                error=str(exc),
+                error=error_text(exc),
                 completed_at=now,
             )
             if item.batch_id:
                 await self._sync_batch_status(
                     item.batch_id,
                     last_run_at=now,
-                    fallback_error=str(exc),
+                    fallback_error=error_text(exc),
                 )
 
     async def cancel_item(self, item_id: int) -> bool:

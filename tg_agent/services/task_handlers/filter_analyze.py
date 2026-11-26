@@ -13,6 +13,7 @@ from tg_agent.models import (
 )
 from tg_agent.services.filter_deletion_service import FilterDeletionService
 from tg_agent.services.task_handlers.base import TaskHandlerContext
+from tg_agent.utils.errors import error_text
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ class FilterAnalyzeTaskHandler:
         except Exception as exc:
             logger.exception("filter/analyze task %s failed", task_id)
             await ctx.tasks.update_collection_task(
-                task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500]
+                task_id, CollectionTaskStatus.FAILED, error=error_text(exc)
             )
             return
 
