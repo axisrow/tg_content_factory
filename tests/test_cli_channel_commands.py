@@ -342,9 +342,25 @@ class TestChannelListForImport:
         payload = json.loads(capsys.readouterr().out.strip())
         assert {d["channel_id"] for d in payload} == {111, 222}
 
-    def test_empty(self, capsys):
-        self._run(_ns(channel_action="list-for-import", json=False), dialogs=[])
-        assert "No dialogs found." in capsys.readouterr().out
+    def test_unbuilt_cache_is_a_refusal_naming_the_fix(self, capsys):
+        """#1977: the list is the dialog cache (#1923) — empty means it was never
+        built, not that the accounts have no dialogs."""
+        with pytest.raises(typer.Exit) as excinfo:
+            self._run(_ns(channel_action="list-for-import", json=False), dialogs=[])
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "dialog cache was never built" in captured.err
+        assert "dialogs refresh" in captured.err
+        assert captured.out == ""
+
+    def test_unbuilt_cache_in_json_keeps_an_empty_list_and_still_exits_1(self, capsys):
+        """#1977: a parser gets its array; the exit code and stderr still say why."""
+        with pytest.raises(typer.Exit) as excinfo:
+            self._run(_ns(channel_action="list-for-import", json=True), dialogs=[])
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert json.loads(captured.out) == []
+        assert "dialog cache was never built" in captured.err
 
 
 # ---------------------------------------------------------------------------

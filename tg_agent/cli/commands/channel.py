@@ -1186,13 +1186,20 @@ async def list_for_import_impl(config_path: str, *, as_json: bool) -> None:
         _, pool = await runtime.init_pool(config, db)
         svc = ChannelService(db, pool, None)  # type: ignore[arg-type]
         dialogs = await svc.get_dialogs_with_added_flags()
+        if not dialogs:
+            # The list is the dialog cache, not a live read (#1923): empty means
+            # the cache was never built, not that the accounts have no dialogs
+            # (#1977). A JSON reader still gets its array.
+            if as_json:
+                print("[]")
+            cli_error(
+                "No cached dialogs: the dialog cache was never built. "
+                "Build it with `dialogs refresh` (one account: `dialogs refresh --phone PHONE`)."
+            )
         if as_json:
             import json as _json
 
             print(_json.dumps(dialogs, ensure_ascii=False, default=str))
-            return
-        if not dialogs:
-            print("No dialogs found.")
             return
         fmt = "{:<15} {:<35} {:<20} {:<8} {:<12}"
         print(fmt.format("Channel ID", "Title", "Username", "Added", "Type"))

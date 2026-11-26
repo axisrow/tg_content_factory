@@ -175,6 +175,14 @@ async def dialogs_impl(config_path: str, *, phone: str) -> None:
     """List dialogs for an account."""
     async def _body(s: _Services) -> None:
         dialogs = await s.channel_service.get_my_dialogs(phone)
+        if not dialogs:
+            # The list is the dialog cache, not a live read (#1923): empty means
+            # the cache was never built for this account — silence with exit 0
+            # read as "this account has no dialogs" (#1977).
+            cli_error(
+                f"No cached dialogs for {phone}: the dialog cache was never built for "
+                f"this account. Build it with `photo-loader refresh --phone {phone}`."
+            )
         for dialog in dialogs:
             print(
                 f"{dialog['channel_id']:>14}  {dialog['channel_type']:<12} {dialog['title']}"
