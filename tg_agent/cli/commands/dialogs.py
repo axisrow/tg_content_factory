@@ -569,7 +569,7 @@ async def _dialogs_delete_message(args, db, pool) -> None:
     ):
         return
     try:
-        await TelegramActionService(pool).delete_messages(
+        await TelegramActionService(pool, db=db).delete_messages(
             phone=phone,
             chat_id=args.chat_id,
             message_ids=ids,

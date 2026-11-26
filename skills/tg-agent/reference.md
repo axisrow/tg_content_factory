@@ -225,7 +225,11 @@ search-query list | get | add | edit | delete | toggle | run | stats
   does not know: `--chat` (a channel id in either form — the bare id other
   output prints, or the marked `-100…` the store keeps, #1926)
   matches that chat strictly; with only `--phone` the chat-less DM shape is
-  demanded; with neither, any row for the id counts.
+  demanded; with neither, any row for the id counts. A deletion made by
+  `dialogs delete-message` is journaled at once for the deleting account
+  (#1950) — in Saved Messages and private chats Telegram reports it only in
+  the request's own answer, which the gateway's update loop never sees. The
+  store prunes deletions after 7 days.
 - **Incoming long-poll (`messages wait --chat …`, #1871):** one blocking call
   instead of a `messages read --live` polling loop — send X, then wait for the
   peer's reply. `--chat` takes a chat id / `@username` / phone, or `any` for

@@ -3,7 +3,8 @@
 One wrapper for the accounting rule — classify the chat, write the rows,
 never let a registry failure fail the send. TelegramActionService,
 PublishService and PhotoPublishService all route through it so the policy
-lives in exactly one place.
+lives in exactly one place. The same policy journals the deletions a
+process makes itself (:func:`record_deletion`, #1950).
 """
 
 from __future__ import annotations
@@ -53,4 +54,32 @@ async def record_send(
     except Exception:
         logger.warning(
             "sent_messages registry write failed for %d id(s)", len(message_ids), exc_info=True
+        )
+
+
+async def record_deletion(
+    db: Any,
+    *,
+    phone: str,
+    entity: Any,
+    message_ids: list[int],
+) -> None:
+    """Journal the deletions a process just made; never fails the caller.
+
+    In Saved Messages and private chats Telegram reports a deletion only
+    inside the answer to ``messages.deleteMessages`` — the gateway's update
+    loop never sees it — so the deleting process writes the row the gateway
+    would have (#1950). A channel deletion arrives as an update as well: both
+    name one row, and the store's unique index keeps it single.
+    """
+    if db is None or not message_ids:
+        return
+    try:
+        chat_id, _peer_type = chat_id_and_type(entity)
+        await db.repos.observed_deletions.record_many(
+            phone, chat_id, [int(message_id) for message_id in message_ids]
+        )
+    except Exception:
+        logger.warning(
+            "observed_deletions write failed for %d id(s)", len(message_ids), exc_info=True
         )

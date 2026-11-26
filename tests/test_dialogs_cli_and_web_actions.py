@@ -474,6 +474,30 @@ class TestCliDeleteMessage:
         })
         assert "Deleted 2 message(s)" in capsys.readouterr().out
 
+    async def test_delete_message_journals_the_deletion(self, db, capsys):
+        """#1950: the CLI hands its db to the service, so the deletion is journaled
+        for the deleting account — `messages sent` / `messages wait` stop
+        answering alive for a message the CLI removed itself."""
+        from telethon import types
+
+        from tg_agent.cli.commands.dialogs import _dialogs_delete_message
+
+        pool, client = _mock_pool()
+        self_peer = types.InputPeerSelf()
+        client.get_entity = AsyncMock(return_value=self_peer)
+        client.get_input_entity = AsyncMock(return_value=self_peer)
+        client.delete_messages = AsyncMock()
+
+        await _dialogs_delete_message(
+            cli_ns(dialogs_action="delete-message", phone=_PHONE, chat_id="me", message_ids=["9"], yes=True),
+            db,
+            pool,
+        )
+
+        assert "Deleted 1 message(s)" in capsys.readouterr().out
+        found = await db.repos.observed_deletions.lookup_deletion(9, phone=_PHONE)
+        assert found is not None and found[:2] == (_PHONE, None)
+
     def test_delete_message_no_valid_ids(self, cli_db, capsys):
         pool, _ = _mock_pool()
         _run_cli("delete-message", pool, cli_db, {

@@ -789,3 +789,107 @@ async def test_forward_messages_records_the_landing_peer_of_the_delivered_messag
         "SELECT chat_id, message_id, chat_type, recipient FROM sent_messages"
     )
     assert [tuple(row) for row in rows] == [(-1000000000557, 5, "channel", "557")]
+
+
+# --------------------------------------------------------------------------- #
+# deletion journal for the deletions this process makes (#1950)
+# --------------------------------------------------------------------------- #
+
+
+def _client_deleting_in(entity):
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value=entity)
+    client.get_input_entity = AsyncMock(return_value=entity)
+    client.delete_messages = AsyncMock()
+    return client
+
+
+@pytest.mark.anyio
+async def test_delete_messages_in_saved_messages_journals_the_deletion(db):
+    """Saved Messages reports a deletion only in the answer to the request — the
+    gateway's update loop never sees it. The deleting process writes the row
+    itself, in the shape ``messages wait`` reads for a registered send."""
+    from telethon import types
+
+    client = _client_deleting_in(types.InputPeerSelf())
+
+    result = await TelegramActionService(_pool_with_client(client), db=db).delete_messages(
+        phone="+1", chat_id="me", message_ids=[9, 10]
+    )
+
+    assert result.count == 2
+    rows = await db.execute_fetchall(
+        "SELECT phone, chat_id, message_id FROM observed_deletions ORDER BY message_id"
+    )
+    assert [tuple(row) for row in rows] == [("+1", None, 9), ("+1", None, 10)]
+    found = await db.repos.observed_deletions.lookup_deletion(9, phone="+1")
+    assert found is not None and found[:2] == ("+1", None)
+
+
+@pytest.mark.anyio
+async def test_delete_messages_in_a_channel_journals_the_marked_chat(db):
+    """A channel deletion is also pushed as an update: both reports name one
+    row, and the store's unique index keeps it single."""
+    from telethon import types
+
+    client = _client_deleting_in(types.PeerChannel(channel_id=555))
+    await TelegramActionService(_pool_with_client(client), db=db).delete_messages(
+        phone="+1", chat_id="@chat", message_ids=[777]
+    )
+
+    added_by_the_update = await db.repos.observed_deletions.record_many("+1", -1000000000555, [777])
+    rows = await db.execute_fetchall("SELECT phone, chat_id, message_id FROM observed_deletions")
+    assert added_by_the_update == 0
+    assert [tuple(row) for row in rows] == [("+1", -1000000000555, 777)]
+
+
+@pytest.mark.anyio
+async def test_a_failed_delete_journals_nothing(db):
+    from telethon import types
+
+    client = _client_deleting_in(types.InputPeerSelf())
+    client.delete_messages = AsyncMock(side_effect=RuntimeError("boom"))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await TelegramActionService(_pool_with_client(client), db=db).delete_messages(
+            phone="+1", chat_id="me", message_ids=[9]
+        )
+
+    rows = await db.execute_fetchall("SELECT message_id FROM observed_deletions")
+    assert rows == []
+
+
+@pytest.mark.anyio
+async def test_delete_messages_with_a_skipped_resolve_journals_nothing(db):
+    """A skipped resolve may hand a bare dialog id, which the store would class
+    as a DM (#1946) — no row beats a wrong row."""
+    client = _client_deleting_in(None)
+    client.get_entity = AsyncMock(side_effect=AssertionError("must not resolve"))
+    client.get_input_entity = client.get_entity
+
+    result = await TelegramActionService(_pool_with_client(client), db=db).delete_messages(
+        phone="+1", chat_id=555, message_ids=[7], resolve_entity=False
+    )
+
+    assert result.count == 1
+    client.delete_messages.assert_awaited_once_with(555, [7])
+    rows = await db.execute_fetchall("SELECT message_id FROM observed_deletions")
+    assert rows == []
+
+
+@pytest.mark.anyio
+async def test_delete_messages_journal_failure_never_breaks_the_delete():
+    from telethon import types
+
+    client = _client_deleting_in(types.InputPeerSelf())
+
+    class _BrokenDb:
+        repos = SimpleNamespace(
+            observed_deletions=SimpleNamespace(record_many=AsyncMock(side_effect=RuntimeError("db down")))
+        )
+
+    result = await TelegramActionService(_pool_with_client(client), db=_BrokenDb()).delete_messages(
+        phone="+1", chat_id="me", message_ids=[9]
+    )
+
+    assert result.count == 1

@@ -664,6 +664,29 @@ async def test_dialogs_delete_message():
     assert r["deleted"] == 2
 
 
+async def test_dialogs_delete_message_journals_the_deletion():
+    """#1950: the queued delete hands its db to the service — the deletion is
+    journaled for the deleting account, in the chat's shape."""
+    from telethon import types
+
+    peer = types.PeerChannel(channel_id=555)
+    pool = _mock_pool()
+    c = _client_mock()
+    c.get_entity = AsyncMock(return_value=peer)
+    c.get_input_entity = AsyncMock(return_value=peer)
+    c.delete_messages = AsyncMock()
+    pool.get_native_client_by_phone.return_value = (c, "+1")
+    record_many = AsyncMock()
+    db = _mock_db()
+    db.repos.observed_deletions.record_many = record_many
+    d = _dispatcher(db=db, pool=pool)
+
+    r = await d._handle_dialogs_delete_message({"phone": "+1", "chat_id": "@chat", "message_ids": [1, 2]})
+
+    assert r == {"phone": "+1", "deleted": 2}
+    record_many.assert_awaited_once_with("+1", -1000000000555, [1, 2])
+
+
 async def test_dialogs_forward():
     pool = _mock_pool()
     c = _client_mock()

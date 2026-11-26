@@ -340,7 +340,7 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if gate:
             return gate
         try:
-            await TelegramActionService(client_pool).delete_messages(
+            await TelegramActionService(client_pool, db=ctx.db).delete_messages(
                 phone=phone,
                 chat_id=chat_id,
                 message_ids=ids,
