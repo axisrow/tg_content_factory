@@ -210,6 +210,16 @@ async def send_impl(
             mode=mode,
             caption=caption,
         )
+        if item.error:
+            # Some files are live, some failed: the item is COMPLETED on purpose
+            # (#864), so the report says what went out — a caller must not rerun
+            # the whole batch and publish the live files twice (#1943).
+            sent_ids = item.telegram_message_ids or []
+            cli_error(
+                f"Photo item #{item.id}: {len(sent_ids)} of {len(item.file_paths)} file(s) "
+                f"published, message ids {sent_ids}; {item.error}. "
+                "The published files are live — rerun only the failed ones."
+            )
         print(f"Sent photo item #{item.id} status={item.status}")
     await _run_with_services(config_path, _body)
 
@@ -282,9 +292,11 @@ async def items_impl(config_path: str, *, batch_id: int | None = None, limit: in
         else:
             items = await s.tasks.list_items(limit=limit)
         for item in items:
+            # The stored reason of a partial send is the part a reader needs (#1943).
+            error = f" error={str(item.error).splitlines()[0]}" if item.error else ""
             print(
                 f"#{item.id} batch={item.batch_id or '-'} phone={item.phone} "
-                f"target={item.target_dialog_id} status={item.status}"
+                f"target={item.target_dialog_id} status={item.status}{error}"
             )
     await _run_with_services(config_path, _body)
 
