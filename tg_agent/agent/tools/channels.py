@@ -711,7 +711,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            await db.repos.channels.create_tag(name)
+            if not await db.repos.channels.create_tag(name):
+                # INSERT OR IGNORE: a duplicate is an idempotent no-op, reported as what it is (#1942).
+                return _text_response(f"Тег '{name}' уже существует.")
             return _text_response(f"Тег '{name}' создан.")
         except Exception as e:
             return _text_response(f"Ошибка создания тега: {e}")
@@ -736,7 +738,8 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            await db.repos.channels.delete_tag(name)
+            if not await db.repos.channels.delete_tag(name):
+                return _text_response(f"Тег '{name}' не найден.")
             return _text_response(f"Тег '{name}' удалён.")
         except Exception as e:
             return _text_response(f"Ошибка удаления тега: {e}")

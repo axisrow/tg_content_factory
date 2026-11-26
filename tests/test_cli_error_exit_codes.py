@@ -726,3 +726,9 @@ class TestMissingTargetExitCodes:
         ):
             asyncio.run(photo_loader.batch_cancel_impl("config.yaml", item_id=999))
         _assert_exit_clean(excinfo, capsys, "not cancelled")
+
+    def test_search_query_add_invalid_regex_exits_1(self, cli_env, capsys):
+        # A refused write is a failure, not a printed error with exit 0 (#1942).
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(search_query.add_impl("c", query="[", is_regex=True))
+        _assert_exit_clean(excinfo, capsys, "invalid regex")
