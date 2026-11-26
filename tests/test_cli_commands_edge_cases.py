@@ -555,9 +555,10 @@ class TestAccountFloodClear:
     def test_account_not_found(self, cli_env, capsys):
         from tg_agent.cli.commands.account import run
 
-        run(cli_ns(account_action="flood-clear", phone="+0000000000"))
-        out = capsys.readouterr().out
-        assert "not found" in out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(cli_ns(account_action="flood-clear", phone="+0000000000"))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_clear_flood(self, cli_env, capsys):
         from tg_agent.cli.commands.account import run

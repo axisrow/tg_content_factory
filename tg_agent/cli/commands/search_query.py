@@ -204,10 +204,10 @@ async def edit_impl(
                 ),
             )
         except ValidationError as e:
-            cli_error(str(e.errors()[0]["msg"]))
+            cli_error(f"Error: {e.errors()[0]['msg']}")
         except ValueError as e:
             # e.g. invalid regex pattern (#1607)
-            cli_error(str(e))
+            cli_error(f"Error: {e}")
         print(f"Updated search query id={query_id}")
         warning = await _chat_filter_warning(
             svc,

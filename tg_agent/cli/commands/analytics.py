@@ -414,15 +414,18 @@ async def channel_rate_impl(
         from tg_agent.services.channel_analysis_service import ChannelAnalysisService
         from tg_agent.services.provider_service import build_provider_service
 
+        # A channel the store does not know is a miss — not a channel without posts (#1951).
+        if await db.get_channel_by_channel_id(channel_id) is None:
+            cli_error(f"Channel {channel_id} not found")
+
         # build_provider_service snapshots os.environ once and loads DB
         # providers; the registry no longer reads env itself (#1050).
         provider_service = await build_provider_service(db, config)
         if not provider_service.has_providers():
-            print(
+            cli_error(
                 "LLM provider is not configured. Add one with `provider add` "
                 "or set an API key env var (e.g. OPENAI_API_KEY)."
             )
-            return
 
         # A mistyped --model must NOT silently fall back to the stub
         # provider and persist a meaningless verdict — fail loudly instead
@@ -430,8 +433,7 @@ async def channel_rate_impl(
         try:
             provider_callable = provider_service.resolve_provider_callable(model)
         except ValueError as exc:
-            print(str(exc))
-            return
+            cli_error(str(exc))
 
         svc = ChannelAnalysisService(db)
         # Guard against an empty channel before spending a provider call:
@@ -452,8 +454,7 @@ async def channel_rate_impl(
                 sample_size=sample_size,
             )
         except Exception as exc:  # provider/network/parse failure
-            print(f"Judge failed for channel {channel_id}: {exc}")
-            raise SystemExit(1) from exc
+            cli_error(f"Judge failed for channel {channel_id}: {exc}")
 
         name = rating.title or rating.username or str(rating.channel_id)
         print(f"Channel {rating.channel_id} ({name}):")

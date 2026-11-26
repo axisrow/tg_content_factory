@@ -273,6 +273,9 @@ async def _pipeline_auto_select(args: requests.PipelineAutoSelectCommand, db, co
     from tg_agent.services.provider_service import build_provider_service
     from tg_agent.services.quality_scoring_service import QualityScoringService
 
+    if await db.repos.generation_runs.get(args.run_id) is None:
+        # The service answers variant 0 for a run it cannot find — never a success (#1951).
+        cli_error(f"Run id={args.run_id} not found")
     provider_svc = await build_provider_service(db, config)
     quality_service = QualityScoringService(db, provider_service=provider_svc)
     ab_service = ABTestingService(db, provider_service=provider_svc, config=config)

@@ -527,8 +527,7 @@ async def delete_impl(config_path: str, *, account_id: int, notify_to: str | Non
         accounts = await db.get_account_summaries(active_only=False)
         acc = next((a for a in accounts if a.id == account_id), None)
         if not acc:
-            print(f"Account id={account_id} not found")
-            return
+            cli_error(f"Account id={account_id} not found")
         target_svc = NotificationTargetService(db)
         replacement = notify_to
         configured = await target_svc.get_configured_phone()
@@ -664,8 +663,7 @@ async def flood_clear_impl(config_path: str, *, phone: str) -> None:
         accounts = await db.get_account_summaries(active_only=False)
         acc = next((a for a in accounts if a.phone == phone), None)
         if not acc:
-            print(f"Account {phone} not found")
-            return
+            cli_error(f"Account {phone} not found")
         if isinstance(getattr(config, "gateway", None), dict) and config.gateway:
             # The shared gateway owns the timer; clearing only the local mirror
             # would be overwritten by the next catalog refresh (#1845).

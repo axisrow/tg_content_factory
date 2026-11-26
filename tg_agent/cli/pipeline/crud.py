@@ -130,7 +130,7 @@ async def _pipeline_add_from_nodes(
     args: requests.PipelineAddCommand,
     svc: PipelineService,
     node_specs_raw: list[str],
-) -> tuple[int | None, bool]:
+) -> int | None:
     import json as _json
 
     graph = _build_pipeline_add_graph(args, node_specs_raw)
@@ -159,13 +159,13 @@ async def _pipeline_add_from_nodes(
     # Activate if --inactive was not passed
     if not args.inactive and pipeline_id:
         await svc._bundle.set_active(pipeline_id, True)
-    return pipeline_id, True
+    return pipeline_id
 
 
 async def _pipeline_add_legacy(
     args: requests.PipelineAddCommand,
     svc: PipelineService,
-) -> tuple[int | None, bool]:
+) -> int | None:
     # Legacy mode: --prompt-template + --source + --target required
     if not args.prompt_template:
         cli_error("--prompt-template is required when --json-file/--node is not used")
@@ -187,14 +187,14 @@ async def _pipeline_add_legacy(
         ab_num_variants=getattr(args, "ab_variants", 1) or 1,
         ab_auto_select=getattr(args, "ab_auto_select", False),
     )
-    return pipeline_id, True
+    return pipeline_id
 
 
-async def _pipeline_add_pipeline(args: requests.PipelineAddCommand, svc: PipelineService) -> tuple[int | None, bool]:
+async def _pipeline_add_pipeline(args: requests.PipelineAddCommand, svc: PipelineService) -> int | None:
     json_file = getattr(args, "json_file", None)
     node_specs_raw = getattr(args, "node_specs", None)
     if json_file:
-        return await _pipeline_add_from_json(args, svc, json_file), True
+        return await _pipeline_add_from_json(args, svc, json_file)
     if node_specs_raw:
         # DAG mode: build graph from --node specs
         return await _pipeline_add_from_nodes(args, svc, node_specs_raw)
@@ -213,12 +213,10 @@ async def _pipeline_enqueue_run_after(args: requests.PipelineAddCommand, db, pip
 
 async def _pipeline_add(args: requests.PipelineAddCommand, db, config, svc: PipelineService) -> None:
     try:
-        pipeline_id, should_print = await _pipeline_add_pipeline(args, svc)
+        pipeline_id = await _pipeline_add_pipeline(args, svc)
     except PipelineValidationError as exc:
         cli_error(str(exc))
 
-    if not should_print:
-        return
     print(f"Added pipeline id={pipeline_id}: {args.name}")
     if getattr(args, "run_after", False):
         await _pipeline_enqueue_run_after(args, db, pipeline_id)

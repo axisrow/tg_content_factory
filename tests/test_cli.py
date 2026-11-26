@@ -93,8 +93,10 @@ class TestCLIAccount:
     def test_delete_not_found(self, cli_env, capsys):
         from tg_agent.cli.commands.account import run
 
-        run(_ns(account_action="delete", id=999))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(account_action="delete", id=999))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_delete_notification_account_with_notify_to(self, cli_env, capsys):
         pk = _add_account(cli_env, phone="+70001112233")
@@ -352,8 +354,10 @@ class TestCLIAccount:
     def test_flood_clear_not_found(self, cli_env, capsys):
         from tg_agent.cli.commands.account import run
 
-        run(_ns(account_action="flood-clear", phone="+19990000000"))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(account_action="flood-clear", phone="+19990000000"))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -805,11 +809,14 @@ class TestCLICollect:
         assert excinfo.value.exit_code == 1
         assert "No connected accounts" in capsys.readouterr().err
 
-    def test_sample_no_clients(self, cli_env_with_pool, capsys, caplog):
+    def test_sample_no_clients(self, cli_env_with_pool, capsys):
         from tg_agent.cli.commands.collect import run
 
-        run(_ns(collect_action="sample", channel_id=-100123, limit=5))
-        assert "No connected accounts" in caplog.text
+        # The same state as `collect` above: no account is a failure, not a logged no-op (#1951).
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(collect_action="sample", channel_id=-100123, limit=5))
+        assert excinfo.value.exit_code == 1
+        assert "No connected accounts" in capsys.readouterr().err
 
     def test_sample_returns_previews(self, cli_env_with_pool, capsys):
         from datetime import datetime, timezone

@@ -508,11 +508,25 @@ def _make_analysis_svc(*, rating=None, posts=("post",), classify_error=None):
     return analysis_svc
 
 
-def _run_rate(db, provider_svc, analysis_svc, **arg_overrides):
+def _run_rate(db, provider_svc, analysis_svc, *, missing_channel=False, **arg_overrides):
+    # The judge runs only for a channel the store knows; a miss is a failure (#1951).
+    db.get_channel_by_channel_id = AsyncMock(return_value=None if missing_channel else MagicMock())
     with _init_patches(db)[0], _init_patches(db)[1], \
          patch("tg_agent.services.provider_service.RuntimeProviderRegistry", return_value=provider_svc), \
          patch("tg_agent.services.channel_analysis_service.ChannelAnalysisService", return_value=analysis_svc):
         run(_rate_args(**arg_overrides))
+
+
+def test_channel_rate_missing_channel(capsys):
+    """A channel the store does not know is a miss — not a channel without posts (#1951)."""
+    db = make_cli_db()
+    provider_svc = _make_provider_svc()
+    analysis_svc = _make_analysis_svc(rating=None)
+    with pytest.raises(typer.Exit) as excinfo:
+        _run_rate(db, provider_svc, analysis_svc, missing_channel=True)
+    assert excinfo.value.exit_code == 1
+    assert "not found" in capsys.readouterr().err
+    analysis_svc.sample_posts.assert_not_awaited()
 
 
 def test_channel_rate_no_provider(capsys):
@@ -520,9 +534,10 @@ def test_channel_rate_no_provider(capsys):
     db = make_cli_db()
     provider_svc = _make_provider_svc(has_providers=False)
     analysis_svc = _make_analysis_svc(rating=None)
-    _run_rate(db, provider_svc, analysis_svc)
-    out = capsys.readouterr().out
-    assert "LLM provider is not configured" in out
+    with pytest.raises(typer.Exit) as excinfo:
+        _run_rate(db, provider_svc, analysis_svc)
+    assert excinfo.value.exit_code == 1
+    assert "LLM provider is not configured" in capsys.readouterr().err
     analysis_svc.classify_channel.assert_not_awaited()
 
 
@@ -533,9 +548,10 @@ def test_channel_rate_unknown_model_aborts(capsys):
         resolve_error=ValueError("Model/provider 'gpt-nope' is not registered. Available providers: cohere.")
     )
     analysis_svc = _make_analysis_svc(rating=None)
-    _run_rate(db, provider_svc, analysis_svc, model="gpt-nope")
-    out = capsys.readouterr().out
-    assert "not registered" in out
+    with pytest.raises(typer.Exit) as excinfo:
+        _run_rate(db, provider_svc, analysis_svc, model="gpt-nope")
+    assert excinfo.value.exit_code == 1
+    assert "not registered" in capsys.readouterr().err
     analysis_svc.classify_channel.assert_not_awaited()
     analysis_svc.sample_posts.assert_not_awaited()
 
@@ -553,17 +569,15 @@ def test_channel_rate_empty_channel_skips(capsys):
 
 def test_channel_rate_provider_failure_exits_nonzero(capsys):
     """A provider/network failure surfaces a readable error and exits non-zero."""
-    import pytest
-
     db = make_cli_db()
     provider_svc = _make_provider_svc()
     analysis_svc = _make_analysis_svc(classify_error=RuntimeError("boom: 503 from provider"))
-    with pytest.raises(SystemExit) as excinfo:
+    with pytest.raises(typer.Exit) as excinfo:
         _run_rate(db, provider_svc, analysis_svc)
-    assert excinfo.value.code == 1
-    out = capsys.readouterr().out
-    assert "Judge failed" in out
-    assert "boom: 503" in out
+    assert excinfo.value.exit_code == 1
+    err = capsys.readouterr().err
+    assert "Judge failed" in err
+    assert "boom: 503" in err
 
 
 def test_channel_rate_runs_judge(capsys):

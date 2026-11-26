@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
 from collections.abc import Callable
 
 import typer
@@ -116,7 +115,6 @@ async def collect_impl(
                 cli_error(f"Channel {channel_id} not found in DB")
             if channel.is_filtered:
                 cli_error(f"Channel {channel_id} is filtered and excluded from collection")
-                return
             try:
                 count = await collector.collect_single_channel(channel, full=full)
             except UsernameResolveFloodWaitDeferredError as exc:
@@ -172,8 +170,7 @@ async def collect_sample_impl(config_path: str, *, channel_id: int, limit: int =
     _, pool = await runtime.init_pool(config, db)
     try:
         if not pool.clients:
-            logging.error(runtime.NO_ACCOUNTS_HINT)
-            return
+            cli_error(runtime.NO_ACCOUNTS_HINT)
 
         collector = Collector(pool, db, config.scheduler)
 

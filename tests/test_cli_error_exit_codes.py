@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -589,12 +590,14 @@ def _assert_exit_clean(excinfo, capsys, fragment: str) -> None:
     assert captured.out == ""
 
 
-def _pipeline_driver(handler, command):
-    async def _run(db):
-        svc = PipelineService(PipelineBundle.from_database(db))
-        await handler(command, db, AppConfig(), svc)
+async def _drive(handler, command, db):
+    """Call a pipeline handler the way the dispatcher does: real store, real service."""
+    svc = PipelineService(PipelineBundle.from_database(db))
+    await handler(command, db, AppConfig(), svc)
 
-    return _run
+
+def _pipeline_driver(handler, command):
+    return partial(_drive, handler, command)
 
 
 class TestMissingTargetExitCodes:
@@ -783,15 +786,25 @@ def _scratch_run(body):
     return _run
 
 
-async def _drive(handler, command, db):
-    await handler(command, db, AppConfig(), PipelineService(PipelineBundle.from_database(db)))
+# A pipeline holding ``source_0``, ``llm_generate_0`` and ``publish_0`` in a row.
+DAG_GRAPH = {
+    "nodes": [
+        {"id": "source_0", "type": "source", "name": "source", "config": {}},
+        {"id": "llm_generate_0", "type": "llm_generate", "name": "llm_generate", "config": {"prompt_template": "x"}},
+        {"id": "publish_0", "type": "publish", "name": "publish", "config": {}},
+    ],
+    "edges": [
+        {"from": "source_0", "to": "llm_generate_0"},
+        {"from": "llm_generate_0", "to": "publish_0"},
+    ],
+}
 
 
-async def _seed_pipeline(db) -> int:
+async def _seed_pipeline(db, pipeline_json: dict | None = None) -> int:
     """A pipeline with no sources and no targets — ``import_json`` skips their validation."""
     svc = PipelineService(PipelineBundle.from_database(db))
     return await svc.import_json(
-        {"name": "P", "prompt_template": "x", "source_ids": [], "target_refs": [], "pipeline_json": {}}
+        {"name": "P", "prompt_template": "x", "source_ids": [], "target_refs": [], "pipeline_json": pipeline_json or {}}
     )
 
 
@@ -930,6 +943,14 @@ class TestMissingTargetExitCodesWave2:
                 id="pipeline select-variant",
             ),
             pytest.param(
+                # Never looked the run up: the service answered variant 0 for a missing one.
+                "Run id=999 not found",
+                _pipeline_driver(
+                    generation._pipeline_auto_select, pipeline_requests.PipelineAutoSelectCommand(run_id=999)
+                ),
+                id="pipeline auto-select",
+            ),
+            pytest.param(
                 "Pipeline id=999 not found",
                 _render(
                     lambda: responses.render_pipeline_show(pipeline_requests.PipelineShowCommand(id=999), None)
@@ -968,6 +989,16 @@ class TestMissingTargetExitCodesWave2:
                 "Account id=999 not found",
                 lambda db: account.toggle_impl("c", account_id=999),
                 id="account toggle",
+            ),
+            pytest.param(
+                "Account id=999 not found",
+                lambda db: account.delete_impl("c", account_id=999),
+                id="account delete",
+            ),
+            pytest.param(
+                f"Account {PHONE} not found",
+                lambda db: account.flood_clear_impl("c", phone=PHONE),
+                id="account flood-clear",
             ),
             pytest.param(
                 "Ping monitor #999 not found",
@@ -1171,6 +1202,43 @@ class TestRefusedArgumentExitCodesWave2:
                     )
                 )
         _assert_exit_clean(excinfo, capsys, "could not resolve")
+
+    @pytest.mark.parametrize(
+        ("handler", "command_of", "fragment"),
+        [
+            pytest.param(
+                graph._pipeline_node,
+                lambda pid: pipeline_requests.PipelineNodeAddCommand(pipeline_id=pid, node_spec="source:id=source_0"),
+                "Node 'source_0' already exists in pipeline id=",
+                id="node add with a taken id",
+            ),
+            pytest.param(
+                graph._pipeline_edge,
+                lambda pid: pipeline_requests.PipelineEdgeAddCommand(
+                    pipeline_id=pid, from_node="source_0", to_node="ghost"
+                ),
+                "Node 'ghost' not found in pipeline id=",
+                id="edge add with an unknown endpoint",
+            ),
+            pytest.param(
+                graph._pipeline_node,
+                lambda pid: pipeline_requests.PipelineNodeReplaceCommand(
+                    pipeline_id=pid, node_id="source_0", node_spec="publish:id=publish_0"
+                ),
+                "Node 'publish_0' already exists in pipeline id=",
+                id="node replace onto a taken id",
+            ),
+        ],
+    )
+    def test_graph_edit_names_what_was_wrong(self, cli_env, capsys, handler, command_of, fragment):
+        """A refused graph edit names the real reason — a node that exists is not "not found" (#1951)."""
+
+        async def body(db):
+            await _drive(handler, command_of(await _seed_pipeline(db, DAG_GRAPH)), db)
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(body(cli_env))
+        _assert_exit_clean(excinfo, capsys, fragment)
 
     def test_bulk_approve_with_every_id_missing(self, cli_env, capsys):
         driver = _pipeline_driver(

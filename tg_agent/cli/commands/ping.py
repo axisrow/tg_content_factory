@@ -54,11 +54,10 @@ async def create_impl(
         try:
             monitor_id = await db.repos.ping_monitors.create(monitor)
         except sqlite3.IntegrityError:
-            print(
+            cli_error(
                 f"Error: dialog {dialog_id} is already monitored for {phone} "
                 "(UNIQUE(phone, dialog_id))"
             )
-            raise typer.Exit(1) from None
         print(f"Created ping monitor #{monitor_id} (dialog {dialog_id}, every {days}d of silence)")
     finally:
         if pool is not None:

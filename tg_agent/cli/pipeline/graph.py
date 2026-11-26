@@ -22,15 +22,19 @@ def _find_filter_node(graph) -> PipelineNode | None:
     return next((node for node in graph.nodes if node.type == PipelineNodeType.FILTER), None)
 
 
-async def _touch_miss(svc: PipelineService, pipeline_id: int, what: str) -> str:
-    """Name what is missing when a node or edge operation touched nothing (#1951).
+async def _graph_or_miss(svc: PipelineService, pipeline_id: int):
+    """The pipeline's graph once a node or edge operation touched nothing (#1951).
 
-    The service answers ``False`` both for a pipeline that does not exist and
-    for a node/edge it does not hold; the caller is told which it was.
+    The service answers ``False`` for a pipeline that does not exist, for one
+    without a graph and for a node or edge it does not hold; the first two
+    name themselves here, and the caller names the rest.
     """
     if await svc.get(pipeline_id) is None:
-        return f"Pipeline id={pipeline_id} not found"
-    return f"{what} not found in pipeline id={pipeline_id}"
+        cli_error(f"Pipeline id={pipeline_id} not found")
+    graph = await svc.get_graph(pipeline_id)
+    if graph is None:
+        cli_error(f"Pipeline id={pipeline_id} has no graph")
+    return graph
 
 
 def _build_message_filter_config(args: requests.PipelineFilterSetCommand) -> dict:
@@ -208,7 +212,8 @@ async def _pipeline_node(
         if ok:
             print(f"Added node '{node_id}' to pipeline id={args.pipeline_id}")
         else:
-            cli_error(f"Pipeline id={args.pipeline_id} not found or has no graph")
+            await _graph_or_miss(svc, args.pipeline_id)
+            cli_error(f"Node '{node_id}' already exists in pipeline id={args.pipeline_id}")
 
     elif args.node_action == "replace":
         try:
@@ -221,14 +226,18 @@ async def _pipeline_node(
         if ok:
             print(f"Replaced node '{args.node_id}' in pipeline id={args.pipeline_id}")
         else:
-            cli_error(await _touch_miss(svc, args.pipeline_id, f"Node '{args.node_id}'"))
+            ids = {n.id for n in (await _graph_or_miss(svc, args.pipeline_id)).nodes}
+            if args.node_id not in ids:
+                cli_error(f"Node '{args.node_id}' not found in pipeline id={args.pipeline_id}")
+            cli_error(f"Node '{new_id}' already exists in pipeline id={args.pipeline_id}")
 
     elif args.node_action == "remove":
         ok = await svc.remove_node(args.pipeline_id, args.node_id)
         if ok:
             print(f"Removed node '{args.node_id}' from pipeline id={args.pipeline_id}")
         else:
-            cli_error(await _touch_miss(svc, args.pipeline_id, f"Node '{args.node_id}'"))
+            await _graph_or_miss(svc, args.pipeline_id)
+            cli_error(f"Node '{args.node_id}' not found in pipeline id={args.pipeline_id}")
 
 
 async def _pipeline_edge(
@@ -243,14 +252,17 @@ async def _pipeline_edge(
         if ok:
             print(f"Added edge {args.from_node} -> {args.to_node}")
         else:
-            cli_error(f"Pipeline id={args.pipeline_id} not found or has no graph")
+            ids = {n.id for n in (await _graph_or_miss(svc, args.pipeline_id)).nodes}
+            missing = next(n for n in (args.from_node, args.to_node) if n not in ids)
+            cli_error(f"Node '{missing}' not found in pipeline id={args.pipeline_id}")
 
     elif args.edge_action == "remove":
         ok = await svc.remove_edge(args.pipeline_id, args.from_node, args.to_node)
         if ok:
             print(f"Removed edge {args.from_node} -> {args.to_node}")
         else:
-            cli_error(await _touch_miss(svc, args.pipeline_id, f"Edge {args.from_node} -> {args.to_node}"))
+            await _graph_or_miss(svc, args.pipeline_id)
+            cli_error(f"Edge {args.from_node} -> {args.to_node} not found in pipeline id={args.pipeline_id}")
 
 
 async def _pipeline_graph(args: requests.PipelineGraphCommand, db, config, svc: PipelineService) -> None:
