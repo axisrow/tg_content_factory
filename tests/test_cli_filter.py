@@ -484,9 +484,11 @@ def test_filter_toggle_not_found(tmp_path, cli_init_patch, capsys):
         with cli_init_patch(db, _FILTER_INIT_DB_TARGET, fresh_database=True):
             from tg_agent.cli.commands.filter import run
 
-            run(_ns(filter_action="toggle", pk=999))
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(filter_action="toggle", pk=999))
+            assert excinfo.value.exit_code == 1
 
-        out = capsys.readouterr().out
+        out = capsys.readouterr().err
         assert "not found" in out
     finally:
         asyncio.run(db.close())
@@ -681,11 +683,13 @@ def test_filter_flag_not_found(tmp_path, cli_init_patch, capsys):
         with cli_init_patch(seed, _FILTER_INIT_DB_TARGET, fresh_database=True):
             from tg_agent.cli.commands.filter import run
 
-            run(_ns(filter_action="flag", pk=424242, set_flag="manual", unset_flag=None))
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(filter_action="flag", pk=424242, set_flag="manual", unset_flag=None))
+            assert excinfo.value.exit_code == 1
     finally:
         asyncio.run(seed.close())
 
-    assert "Channel pk=424242 not found." in capsys.readouterr().out
+    assert "Channel pk=424242 not found" in capsys.readouterr().err
 
 
 def test_filter_apply_whitelist_mode(tmp_path, cli_init_patch, capsys):

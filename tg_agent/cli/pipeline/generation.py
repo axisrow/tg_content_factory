@@ -6,6 +6,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from tg_agent.cli import runtime
+from tg_agent.cli.commands.common import cli_error
 
 if TYPE_CHECKING:
     from tg_agent.telegram.client_pool import ClientPool
@@ -43,8 +44,7 @@ async def _pipeline_run(
     services = services or default_services()
     pipeline = await svc.get(args.id)
     if pipeline is None:
-        print(f"Pipeline id={args.id} not found")
-        return None
+        cli_error(f"Pipeline id={args.id} not found")
     engine = services.search_engine(db)
 
     from tg_agent.services.provider_service import build_provider_service
@@ -95,8 +95,7 @@ async def _pipeline_generate(
     services = services or default_services()
     pipeline = await svc.get(args.id)
     if pipeline is None:
-        print(f"Pipeline id={args.id} not found")
-        return None
+        cli_error(f"Pipeline id={args.id} not found")
     # Per-run A/B overrides (issue #1068): --ab-variants / --auto-select
     # override the pipeline's stored A/B config for this single run only.
     ab_overrides: dict[str, object] = {}
@@ -160,8 +159,7 @@ async def _pipeline_generate_stream(
     services = services or default_services()
     pipeline = await svc.get(args.id)
     if pipeline is None:
-        print(f"Pipeline id={args.id} not found")
-        return
+        cli_error(f"Pipeline id={args.id} not found")
 
     from tg_agent.services.generation_service import GenerationService
     from tg_agent.services.provider_service import build_provider_service
@@ -239,8 +237,7 @@ async def _pipeline_generate_stream(
 async def _pipeline_runs(args: requests.PipelineRunsCommand, db, config, svc: PipelineService) -> None:
     pipeline = await svc.get(args.id)
     if pipeline is None:
-        print(f"Pipeline id={args.id} not found")
-        return
+        cli_error(f"Pipeline id={args.id} not found")
     runs = await db.repos.generation_runs.list_by_pipeline(args.id, limit=args.limit)
     return responses.render_pipeline_runs(args, runs)
 
@@ -267,8 +264,7 @@ async def _pipeline_select_variant(
     try:
         await ab_service.select_variant(args.run_id, args.index)
     except ValueError as exc:
-        print(f"Error: {exc}")
-        return
+        cli_error(str(exc))
     print(f"Selected variant {args.index} for run id={args.run_id}")
 
 

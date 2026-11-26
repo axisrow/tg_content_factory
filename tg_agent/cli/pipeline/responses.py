@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from tg_agent.cli.commands.common import cli_error
 from tg_agent.cli.pipeline import requests
 from tg_agent.services.pipeline_filters import normalize_filter_config
 from tg_agent.services.pipeline_result import result_kind_label
@@ -35,8 +36,7 @@ def _format_filter_config(config: dict) -> list[str]:
 def render_pipeline_show(args: requests.PipelineShowCommand, detail: Any) -> None:
     """Render the retrieved result without service or database operations."""
     if detail is None:
-        print(f"Pipeline id={args.id} not found")
-        return
+        cli_error(f"Pipeline id={args.id} not found")
     pipeline = detail["pipeline"]
     print(f"id={pipeline.id}")
     print(f"name={pipeline.name}")
@@ -110,8 +110,7 @@ def render_pipeline_list(items: Any) -> None:
 def render_pipeline_variants(ab_result: Any, args: requests.PipelineVariantsCommand) -> None:
     """Render the retrieved result without service or database operations."""
     if ab_result is None:
-        print(f"Run id={args.run_id} not found")
-        return
+        cli_error(f"Run id={args.run_id} not found")
     print(f"Run id={ab_result.run_id}: {len(ab_result.variants)} variant(s)")
     for variant in ab_result.variants:
         marker = " *selected*" if ab_result.selected_index == variant.index else ""
@@ -148,8 +147,7 @@ def render_pipeline_queue(args: requests.PipelineQueueCommand, runs: Any) -> Non
 def render_pipeline_moderation_view(args: requests.PipelineModerationViewCommand, run: Any) -> None:
     """Render the retrieved result without service or database operations."""
     if run is None:
-        print(f"Run id={args.run_id} not found")
-        return
+        cli_error(f"Run id={args.run_id} not found")
     print(f"Run id={run.id} (pipeline_id={run.pipeline_id})")
     print(f"Status: {run.status}")
     print(f"Moderation: {run.moderation_status}")
@@ -169,8 +167,7 @@ def render_pipeline_graph(graph: Any) -> None:
 def render_pipeline_run_show(args: requests.PipelineRunShowCommand, run: Any) -> None:
     """Render the retrieved result without service or database operations."""
     if run is None:
-        print(f"Run id={args.run_id} not found")
-        return
+        cli_error(f"Run id={args.run_id} not found")
     print(f"id={run.id}")
     print(f"pipeline_id={run.pipeline_id}")
     print(f"status={run.status}")

@@ -79,9 +79,9 @@ async def collect_impl(
                 if channel is None and await report_pending_approval(db, str(channel_id)):
                     return
                 if channel is None:
-                    print(f"Channel {channel_id} not found in DB")
+                    cli_error(f"Channel {channel_id} not found in DB")
                 elif channel.is_filtered:
-                    print(f"Channel {channel_id} is filtered and excluded from collection")
+                    cli_error(f"Channel {channel_id} is filtered and excluded from collection")
                 else:
                     await _handoff_collect_to_worker(
                         db, identifier=str(channel_id), full=full, wait=False
@@ -103,8 +103,7 @@ async def collect_impl(
     _, pool = await runtime.init_pool(config, db)
     try:
         if not pool.clients:
-            logging.error(runtime.NO_ACCOUNTS_HINT)
-            return
+            cli_error(runtime.NO_ACCOUNTS_HINT)
 
         collector = Collector(pool, db, config.scheduler)
 
@@ -114,10 +113,9 @@ async def collect_impl(
             if channel is None and await report_pending_approval(db, str(channel_id)):
                 return
             if not channel:
-                print(f"Channel {channel_id} not found in DB")
-                return
+                cli_error(f"Channel {channel_id} not found in DB")
             if channel.is_filtered:
-                print(f"Channel {channel_id} is filtered and excluded from collection")
+                cli_error(f"Channel {channel_id} is filtered and excluded from collection")
                 return
             try:
                 count = await collector.collect_single_channel(channel, full=full)

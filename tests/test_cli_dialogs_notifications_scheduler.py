@@ -1113,15 +1113,17 @@ class TestServeCommand:
 class TestCollectCommand:
     """Tests for collect CLI command."""
 
-    def test_collect_no_clients(self, cli_env_with_pool, caplog):
+    def test_collect_no_clients(self, cli_env_with_pool, capsys):
         """Test collect when no accounts connected."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {}
 
         from tg_agent.cli.commands.collect import run
 
-        run(_ns(channel_id=None, full=False))
-        assert "No connected accounts" in caplog.text
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(channel_id=None, full=False))
+        assert excinfo.value.exit_code == 1
+        assert "No connected accounts" in capsys.readouterr().err
 
     def test_collect_success(self, cli_env_with_pool, capsys):
         """Test collect enqueues channels."""

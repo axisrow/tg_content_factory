@@ -78,8 +78,10 @@ class TestCLIAccount:
     def test_toggle_not_found(self, cli_env, capsys):
         from tg_agent.cli.commands.account import run
 
-        run(_ns(account_action="toggle", id=999))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(account_action="toggle", id=999))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_delete(self, cli_env, capsys):
         pk = _add_account(cli_env)
@@ -794,11 +796,14 @@ class TestCLISearchQuery:
 
 
 class TestCLICollect:
-    def test_no_clients(self, cli_env_with_pool, capsys, caplog):
+    def test_no_clients(self, cli_env_with_pool, capsys):
         from tg_agent.cli.commands.collect import run
 
-        run(_ns(channel_id=None))
-        assert "No connected accounts" in caplog.text
+        # No account to collect with is a failure, not a logged no-op (#1951).
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(channel_id=None))
+        assert excinfo.value.exit_code == 1
+        assert "No connected accounts" in capsys.readouterr().err
 
     def test_sample_no_clients(self, cli_env_with_pool, capsys, caplog):
         from tg_agent.cli.commands.collect import run

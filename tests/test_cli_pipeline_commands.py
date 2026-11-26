@@ -302,8 +302,10 @@ class TestPipelineDelete:
 class TestPipelineShow:
     def test_not_found(self, cli_env, capsys):
 
-        run(_ns(pipeline_action="show", id=999))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="show", id=999))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -314,15 +316,19 @@ class TestPipelineShow:
 class TestPipelineRuns:
     def test_not_found(self, cli_env, capsys):
 
-        run(_ns(pipeline_action="runs", id=999, limit=10, status=None))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="runs", id=999, limit=10, status=None))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 class TestPipelineRunShow:
     def test_not_found(self, cli_env, capsys):
 
-        run(_ns(pipeline_action="run-show", run_id=999))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="run-show", run_id=999))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -333,15 +339,19 @@ class TestPipelineRunShow:
 class TestPipelineApprove:
     def test_not_found(self, cli_env, capsys):
 
-        run(_ns(pipeline_action="approve", run_id=999))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="approve", run_id=999))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 class TestPipelineReject:
     def test_not_found(self, cli_env, capsys):
 
-        run(_ns(pipeline_action="reject", run_id=999))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="reject", run_id=999))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -369,10 +379,14 @@ def _set_run_moderation(db_path: str, run_id: int, status: str) -> None:
 
 class TestPipelineBulkApprove:
     def test_not_found_run(self, cli_env, capsys):
-
-        run(_ns(pipeline_action="bulk-approve", run_ids=[998, 999]))
-        out = capsys.readouterr().out
-        assert "Bulk approved: 0/2" in out
+        # The summary stays on stdout; what was left undone fails the batch (#1951).
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="bulk-approve", run_ids=[998, 999]))
+        captured = capsys.readouterr()
+        assert excinfo.value.exit_code == 1
+        assert "Bulk approved: 0/2" in captured.out
+        assert "run id=998 not found" in captured.err
+        assert "run id=999 not found" in captured.err
 
     def test_approves_existing_runs(self, cli_env, capsys):
         rid1 = _create_pending_run(cli_env)
@@ -391,10 +405,15 @@ class TestPipelineBulkApprove:
         rid2 = _create_pending_run(cli_env)
         _set_run_moderation(cli_env._db_path, rid2, "published")
 
-        run(_ns(pipeline_action="bulk-approve", run_ids=[rid1, rid2, 999]))
-        out = capsys.readouterr().out
-        assert f"Run id={rid2} is publishing/published, skipping." in out
-        assert "Bulk approved: 1/3" in out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="bulk-approve", run_ids=[rid1, rid2, 999]))
+        captured = capsys.readouterr()
+        # The run the repo flipped counts; the published one and the missing id
+        # are named on stderr and fail the batch (#1951).
+        assert excinfo.value.exit_code == 1
+        assert "Bulk approved: 1/3" in captured.out
+        assert f"run id={rid2} is publishing/published" in captured.err
+        assert "run id=999 not found" in captured.err
         assert _read_run_moderation(cli_env._db_path, rid1) == "approved"
         assert _read_run_moderation(cli_env._db_path, rid2) == "published"
 
@@ -436,10 +455,13 @@ class TestPipelineBulkApprove:
 
 class TestPipelineBulkReject:
     def test_not_found_run(self, cli_env, capsys):
-
-        run(_ns(pipeline_action="bulk-reject", run_ids=[998, 999]))
-        out = capsys.readouterr().out
-        assert "Bulk rejected: 0/2" in out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="bulk-reject", run_ids=[998, 999]))
+        captured = capsys.readouterr()
+        assert excinfo.value.exit_code == 1
+        assert "Bulk rejected: 0/2" in captured.out
+        assert "run id=998 not found" in captured.err
+        assert "run id=999 not found" in captured.err
 
     def test_rejects_existing_runs(self, cli_env, capsys):
         rid1 = _create_pending_run(cli_env)
@@ -458,10 +480,12 @@ class TestPipelineBulkReject:
         rid2 = _create_pending_run(cli_env)
         _set_run_moderation(cli_env._db_path, rid2, "published")
 
-        run(_ns(pipeline_action="bulk-reject", run_ids=[rid1, rid2]))
-        out = capsys.readouterr().out
-        assert f"Run id={rid2} is publishing/published, skipping." in out
-        assert "Bulk rejected: 1/2" in out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="bulk-reject", run_ids=[rid1, rid2]))
+        captured = capsys.readouterr()
+        assert excinfo.value.exit_code == 1
+        assert "Bulk rejected: 1/2" in captured.out
+        assert f"run id={rid2} is publishing/published" in captured.err
         assert _read_run_moderation(cli_env._db_path, rid1) == "rejected"
         assert _read_run_moderation(cli_env._db_path, rid2) == "published"
 
@@ -474,8 +498,10 @@ class TestPipelineBulkReject:
 class TestPipelineQueue:
     def test_not_found(self, cli_env, capsys):
 
-        run(_ns(pipeline_action="queue", id=999, limit=10))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="queue", id=999, limit=10))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -486,63 +512,69 @@ class TestPipelineQueue:
 class TestPipelineAddLegacyErrors:
     def test_missing_prompt_template(self, cli_env, capsys):
 
-        run(_ns(
-            pipeline_action="add",
-            name="test",
-            json_file=None,
-            node_specs=None,
-            prompt_template=None,
-            source=[100],
-            target=["phone|123"],
-            llm_model=None,
-            image_model=None,
-            interval=60,
-            publish_mode="manual",
-            generation_backend="search",
-            inactive=False,
-            run_after=False,
-        ))
-        assert "--prompt-template is required" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(
+                pipeline_action="add",
+                name="test",
+                json_file=None,
+                node_specs=None,
+                prompt_template=None,
+                source=[100],
+                target=["phone|123"],
+                llm_model=None,
+                image_model=None,
+                interval=60,
+                publish_mode="manual",
+                generation_backend="search",
+                inactive=False,
+                run_after=False,
+            ))
+        assert excinfo.value.exit_code == 1
+        assert "--prompt-template is required" in capsys.readouterr().err
 
     def test_missing_source(self, cli_env, capsys):
 
-        run(_ns(
-            pipeline_action="add",
-            name="test",
-            json_file=None,
-            node_specs=None,
-            prompt_template="test prompt",
-            source=None,
-            target=["phone|123"],
-            llm_model=None,
-            image_model=None,
-            interval=60,
-            publish_mode="manual",
-            generation_backend="search",
-            inactive=False,
-            run_after=False,
-        ))
-        assert "--source is required" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(
+                pipeline_action="add",
+                name="test",
+                json_file=None,
+                node_specs=None,
+                prompt_template="test prompt",
+                source=None,
+                target=["phone|123"],
+                llm_model=None,
+                image_model=None,
+                interval=60,
+                publish_mode="manual",
+                generation_backend="search",
+                inactive=False,
+                run_after=False,
+            ))
+        assert excinfo.value.exit_code == 1
+        assert "--source is required" in capsys.readouterr().err
 
     def test_missing_target(self, cli_env, capsys):
 
-        run(_ns(
-            pipeline_action="add",
-            name="test",
-            json_file=None,
-            node_specs=None,
-            prompt_template="test prompt",
-            source=[100],
-            target=None,
-            llm_model=None,
-            image_model=None,
-            interval=60,
-            publish_mode="manual",
-            generation_backend="search",
-            inactive=False,
-            run_after=False,
-        ))
-        assert "--target is required" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(
+                pipeline_action="add",
+                name="test",
+                json_file=None,
+                node_specs=None,
+                prompt_template="test prompt",
+                source=[100],
+                target=None,
+                llm_model=None,
+                image_model=None,
+                interval=60,
+                publish_mode="manual",
+                generation_backend="search",
+                inactive=False,
+                run_after=False,
+            ))
+        assert excinfo.value.exit_code == 1
+        assert "--target is required" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -584,8 +616,10 @@ class TestPipelineDryRunCount:
 class TestPipelineGraph:
     def test_not_found(self, cli_env, capsys):
 
-        run(_ns(pipeline_action="graph", id=999))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="graph", id=999))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -1008,20 +1042,22 @@ class TestPipelineEdgeRW:
         db_path = _empty_db_path(tmp_path, "pipeline_edge_cycle.db")
         pid = _seed_pipeline_with_graph(db_path)
 
-        _pipeline_cli_run(
-            db_path,
-            cli_init_patch,
-            _pipeline_ns(
-                "edge",
-                pipeline_id=pid,
-                edge_action="add",
-                from_node="publish_0",
-                to_node="source_0",
-            ),
-        )
+        with pytest.raises(typer.Exit) as excinfo:
+            _pipeline_cli_run(
+                db_path,
+                cli_init_patch,
+                _pipeline_ns(
+                    "edge",
+                    pipeline_id=pid,
+                    edge_action="add",
+                    from_node="publish_0",
+                    to_node="source_0",
+                ),
+            )
+        assert excinfo.value.exit_code == 1
 
-        out = capsys.readouterr().out
-        assert "Error" in out
+        out = capsys.readouterr().err
+        assert "cycle" in out
         assert "Added edge" not in out
         # The back-edge must NOT be persisted — the graph stays acyclic.
         row = _read_pipeline_row(db_path, pid)
@@ -1079,15 +1115,17 @@ class TestPipelineExportRW:
         out_file = tmp_path / "exists.json"
         out_file.write_text("ORIGINAL", encoding="utf-8")
 
-        _pipeline_cli_run(
-            db_path,
-            cli_init_patch,
-            _pipeline_ns("export", id=pid, output=str(out_file), force=False),
-        )
+        with pytest.raises(typer.Exit) as excinfo:
+            _pipeline_cli_run(
+                db_path,
+                cli_init_patch,
+                _pipeline_ns("export", id=pid, output=str(out_file), force=False),
+            )
+        assert excinfo.value.exit_code == 1
 
         # File left untouched; user is told how to override.
         assert out_file.read_text(encoding="utf-8") == "ORIGINAL"
-        assert "already exists" in capsys.readouterr().out
+        assert "already exists" in capsys.readouterr().err
 
     def test_export_force_overwrites(self, tmp_path, cli_init_patch, capsys):
         db_path = _empty_db_path(tmp_path, "pipeline_export_force.db")
@@ -1148,8 +1186,10 @@ class _FakeGenerationService:
 
 class TestPipelineGenerateStream:
     def test_not_found(self, cli_env, capsys):
-        run(_gen_stream_ns(id=99999))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_gen_stream_ns(id=99999))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_streams_jsonlines_and_persists_run(self, tmp_path, cli_init_patch, capsys):
         db_path = _empty_db_path(tmp_path, "pipeline_gen_stream.db")
@@ -1494,14 +1534,16 @@ class TestPipelineVariantsCommands:
         pid = _seed_minimal_pipeline(db_path)
         run_id = _seed_run_with_variants(db_path, pid, ["base", "alt"])
 
-        _pipeline_cli_run(
-            db_path,
-            cli_init_patch,
-            _ns(pipeline_action="select-variant", run_id=run_id, index=9),
-        )
+        with pytest.raises(typer.Exit) as excinfo:
+            _pipeline_cli_run(
+                db_path,
+                cli_init_patch,
+                _ns(pipeline_action="select-variant", run_id=run_id, index=9),
+            )
+        assert excinfo.value.exit_code == 1
 
-        out = capsys.readouterr().out
-        assert "Error" in out and "Invalid variant index" in out
+        out = capsys.readouterr().err
+        assert "Invalid variant index" in out
         # generated_text untouched by the failed selection.
         _, generated = _read_run_status(db_path, run_id)
         assert generated == "base"

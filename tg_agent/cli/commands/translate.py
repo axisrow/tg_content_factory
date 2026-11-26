@@ -15,6 +15,7 @@ import typer
 from tg_agent.cli import runtime
 from tg_agent.cli.commands.common import (
     apply_startup,
+    cli_error,
     run_async,
 )
 
@@ -105,8 +106,7 @@ async def message_impl(config_path: str, *, message_id: int, target: str = "en")
     try:
         msg = await db.repos.messages.get_by_id(message_id)
         if msg is None:
-            print(f"Message id={message_id} not found.")
-            return
+            cli_error(f"Message id={message_id} not found")
         text = msg.text or ""
         if not text.strip():
             print("Message has no text to translate.")

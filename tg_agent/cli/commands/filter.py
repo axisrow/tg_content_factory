@@ -246,8 +246,7 @@ async def toggle_impl(config_path: str, *, pk: int) -> None:
     try:
         channel = await db.get_channel_by_pk(pk)
         if channel is None:
-            print(f"Channel pk={pk} not found.")
-            return
+            cli_error(f"Channel pk={pk} not found")
         new_state = not channel.is_filtered
         await db.set_channel_filtered(pk, new_state, origin="human", actor="cli")
         status = "filtered" if new_state else "unfiltered"
@@ -274,7 +273,7 @@ async def flag_impl(
     try:
         applied = await db.repos.channels.merge_filter_flag(pk, flag, add=action == "set")
         if applied is False:
-            print(f"Channel pk={pk} not found.")
+            cli_error(f"Channel pk={pk} not found")
         elif applied is None:
             print(f"Channel pk={pk}: flag '{flag}' was not set; nothing changed.")
         elif action == "set":

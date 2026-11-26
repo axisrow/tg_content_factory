@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pydantic.root_model  # noqa: F401
 import pytest
+import typer
 
 from tg_agent.cli import worker_handoff
 from tg_agent.config import AppConfig
@@ -290,10 +291,12 @@ def test_collect_channel_id_still_refuses_filtered_channel(collect_cli, capsys):
     ):
         from tg_agent.cli.commands.collect import collect_impl
 
-        asyncio.run(collect_impl("config.yaml", channel_id=5007, full=False))
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(collect_impl("config.yaml", channel_id=5007, full=False))
+        assert excinfo.value.exit_code == 1
 
     init_pool.assert_not_awaited()
-    assert "filtered" in capsys.readouterr().out
+    assert "filtered" in capsys.readouterr().err
     _ensure_db_open(db)
     assert asyncio.run(db.get_collection_tasks(limit=5)) == []
 
@@ -305,9 +308,11 @@ def test_collect_channel_id_unknown_channel(collect_cli, capsys):
     ):
         from tg_agent.cli.commands.collect import collect_impl
 
-        asyncio.run(collect_impl("config.yaml", channel_id=999999, full=False))
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(collect_impl("config.yaml", channel_id=999999, full=False))
+        assert excinfo.value.exit_code == 1
 
-    assert "not found in DB" in capsys.readouterr().out
+    assert "not found in DB" in capsys.readouterr().err
 
 
 def test_collect_enqueue_all_hands_off_when_serve_is_running(collect_cli, capsys):

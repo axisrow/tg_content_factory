@@ -5,6 +5,9 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+import typer
+
 from tests.helpers import cli_ns, fake_asyncio_run, make_cli_config, make_cli_db
 from tg_agent.cli.commands.analytics import run
 
@@ -343,8 +346,10 @@ def test_channel_not_found(capsys):
     mock_svc.get_channel_overview = AsyncMock(return_value=ov)
     with _init_patches(db)[0], _init_patches(db)[1], \
          patch("tg_agent.services.channel_analytics_service.ChannelAnalyticsService", return_value=mock_svc):
-        run(_args(analytics_action="channel", channel_id=999, days=30))
-    assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_args(analytics_action="channel", channel_id=999, days=30))
+        assert excinfo.value.exit_code == 1
+    assert "not found" in capsys.readouterr().err
 
 
 def test_channel_found(capsys):

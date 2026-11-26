@@ -260,11 +260,14 @@ search-query list | get | add | edit | delete | toggle | run | stats
   This holds repo-wide for `messages`/`dialogs`/`account`/`settings`/`provider`/
   `export`/`scheduler`/`filter`/`photo-loader` (and pre-existing `dm`/`export`
   checks). A command whose target is missing exits 1 in every audited group —
-  `channel`/`search-query`/`pipeline`/`ping`/`agent` included — and a delete or
-  rename that changed nothing says so instead of printing success (#1933); other
-  failures in those groups may still print-and-exit-0 — see issue #1486.
-  Known exception: `dialogs react` without `--emoji`/`--clear` still prints
-  its usage error to stdout and exits 2.
+  `channel`/`search-query`/`pipeline`/`ping`/`agent`/`collect`/`analytics`/
+  `translate` included — and a delete or rename that changed nothing says so
+  instead of printing success (#1933, #1951). A refused argument exits 1 the
+  same way — a bad node spec, an invalid regex, a missing required option — and
+  `pipeline bulk-approve|bulk-reject` exits 1 whenever a requested run was left
+  undone (the summary line stays on stdout, the skipped ids go to stderr).
+  Still print-and-exit-0: a failed generation itself — `pipeline run`/`generate`
+  answer `Generation failed: …` or `LLM provider is not configured` (#1952).
 - **Flood/throttle errors carry RPC attribution (#1828):** `dialogs
   send`/`forward`/`edit-message` refusals (and pipeline publish receipts)
   print one curated line — `local throttling by <budget>` (refused before any

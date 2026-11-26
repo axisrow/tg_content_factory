@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+import typer
+
 from tests.helpers import cli_ns, fake_asyncio_run, make_cli_config, make_cli_db
 from tg_agent.cli.commands.translate import run
 
@@ -115,8 +118,10 @@ def test_message_not_found(capsys):
     db = make_cli_db()
     db.repos.messages.get_by_id = AsyncMock(return_value=None)
     with _patches(db)[0], _patches(db)[1]:
-        run(_args(translate_action="message", message_id=999, target="en"))
-    assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_args(translate_action="message", message_id=999, target="en"))
+        assert excinfo.value.exit_code == 1
+    assert "not found" in capsys.readouterr().err
 
 
 def test_message_no_text(capsys):

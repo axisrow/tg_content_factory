@@ -99,9 +99,11 @@ def test_pipeline_show_not_found(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from tg_agent.cli.commands.pipeline import run
 
-        run(_ns(pipeline_action="show", id=999))
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="show", id=999))
+        assert excinfo.value.exit_code == 1
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "not found" in out
 
 
@@ -180,9 +182,11 @@ def test_pipeline_publish_not_found(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from tg_agent.cli.commands.pipeline import run
 
-        run(_ns(pipeline_action="publish", run_id=999))
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="publish", run_id=999))
+        assert excinfo.value.exit_code == 1
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "Run id=999 not found" in out
 
 
@@ -850,9 +854,16 @@ def test_pipeline_run_not_found(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from tg_agent.cli.commands.pipeline import run
 
-        run(_ns(pipeline_action="run", id=999, limit=10, max_tokens=256, temperature=0.7, preview=False, publish=False))
+        with pytest.raises(typer.Exit) as excinfo:
+            run(
+                _ns(
+                    pipeline_action="run", id=999, limit=10, max_tokens=256, temperature=0.7,
+                    preview=False, publish=False,
+                )
+            )
+        assert excinfo.value.exit_code == 1
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "not found" in out
 
 
@@ -903,9 +914,11 @@ def test_pipeline_runs_not_found(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from tg_agent.cli.commands.pipeline import run
 
-        run(_ns(pipeline_action="runs", id=999, limit=20, status=None))
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="runs", id=999, limit=20, status=None))
+        assert excinfo.value.exit_code == 1
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "not found" in out
 
 
@@ -953,9 +966,11 @@ def test_pipeline_queue_not_found(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from tg_agent.cli.commands.pipeline import run
 
-        run(_ns(pipeline_action="queue", id=999, limit=20))
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="queue", id=999, limit=20))
+        assert excinfo.value.exit_code == 1
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "not found" in out
 
 
@@ -999,9 +1014,11 @@ def test_pipeline_publish_no_clients(tmp_path, cli_init_patch, capsys):
     ):
         from tg_agent.cli.commands.pipeline import run
 
-        run(_ns(pipeline_action="publish", run_id=run_id))
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="publish", run_id=run_id))
+        assert excinfo.value.exit_code == 1
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "Нет доступных аккаунтов" in out
 
 
@@ -1014,9 +1031,11 @@ def test_pipeline_run_show_not_found(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from tg_agent.cli.commands.pipeline import run
 
-        run(_ns(pipeline_action="run-show", run_id=999))
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="run-show", run_id=999))
+        assert excinfo.value.exit_code == 1
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "not found" in out
 
 
@@ -1110,9 +1129,11 @@ def test_pipeline_approve_not_found(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from tg_agent.cli.commands.pipeline import run
 
-        run(_ns(pipeline_action="approve", run_id=999))
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="approve", run_id=999))
+        assert excinfo.value.exit_code == 1
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "not found" in out
 
 
@@ -1125,9 +1146,11 @@ def test_pipeline_reject_not_found(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from tg_agent.cli.commands.pipeline import run
 
-        run(_ns(pipeline_action="reject", run_id=999))
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="reject", run_id=999))
+        assert excinfo.value.exit_code == 1
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "not found" in out
 
 
@@ -1140,9 +1163,11 @@ def test_pipeline_generate_not_found(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from tg_agent.cli.commands.pipeline import run
 
-        run(_ns(pipeline_action="generate", id=999, model=None, max_tokens=256, temperature=0.7))
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="generate", id=999, model=None, max_tokens=256, temperature=0.7))
+        assert excinfo.value.exit_code == 1
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "not found" in out
 
 
@@ -1269,26 +1294,28 @@ def test_pipeline_add_dag_invalid_spec(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from tg_agent.cli.commands.pipeline import run
 
-        run(
-            _ns(
-                pipeline_action="add",
-                name="Bad",
-                prompt_template=None,
-                source=[1001],
-                target=None,
-                llm_model=None,
-                image_model=None,
-                publish_mode="moderated",
-                generation_backend="chain",
-                interval=60,
-                inactive=False,
-                node_specs=["nonexistent_type:x=1"],
-                edge=None,
-                node_configs=None,
+        with pytest.raises(typer.Exit) as excinfo:
+            run(
+                _ns(
+                    pipeline_action="add",
+                    name="Bad",
+                    prompt_template=None,
+                    source=[1001],
+                    target=None,
+                    llm_model=None,
+                    image_model=None,
+                    publish_mode="moderated",
+                    generation_backend="chain",
+                    interval=60,
+                    inactive=False,
+                    node_specs=["nonexistent_type:x=1"],
+                    edge=None,
+                    node_configs=None,
+                )
             )
-        )
+        assert excinfo.value.exit_code == 1
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "Invalid node spec" in out
 
 
@@ -1301,26 +1328,28 @@ def test_pipeline_add_legacy_requires_prompt_template(tmp_path, cli_init_patch, 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from tg_agent.cli.commands.pipeline import run
 
-        run(
-            _ns(
-                pipeline_action="add",
-                name="NoPrompt",
-                prompt_template=None,
-                source=[1001],
-                target=["+100|77"],
-                llm_model=None,
-                image_model=None,
-                publish_mode="moderated",
-                generation_backend="chain",
-                interval=60,
-                inactive=False,
-                node_specs=None,
-                edge=None,
-                node_configs=None,
+        with pytest.raises(typer.Exit) as excinfo:
+            run(
+                _ns(
+                    pipeline_action="add",
+                    name="NoPrompt",
+                    prompt_template=None,
+                    source=[1001],
+                    target=["+100|77"],
+                    llm_model=None,
+                    image_model=None,
+                    publish_mode="moderated",
+                    generation_backend="chain",
+                    interval=60,
+                    inactive=False,
+                    node_specs=None,
+                    edge=None,
+                    node_configs=None,
+                )
             )
-        )
+        assert excinfo.value.exit_code == 1
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "--prompt-template is required" in out
 
 
@@ -1703,27 +1732,29 @@ def test_pipeline_add_legacy_requires_source(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from tg_agent.cli.commands.pipeline import run
 
-        run(
-            _ns(
-                pipeline_action="add",
-                name="NoSource",
-                prompt_template="Summarize {source_messages}",
-                source=None,
-                target=["+100|77"],
-                llm_model=None,
-                image_model=None,
-                publish_mode="moderated",
-                generation_backend="chain",
-                interval=60,
-                inactive=False,
-                node_specs=None,
-                edge=None,
-                node_configs=None,
+        with pytest.raises(typer.Exit) as excinfo:
+            run(
+                _ns(
+                    pipeline_action="add",
+                    name="NoSource",
+                    prompt_template="Summarize {source_messages}",
+                    source=None,
+                    target=["+100|77"],
+                    llm_model=None,
+                    image_model=None,
+                    publish_mode="moderated",
+                    generation_backend="chain",
+                    interval=60,
+                    inactive=False,
+                    node_specs=None,
+                    edge=None,
+                    node_configs=None,
+                )
             )
-        )
+        assert excinfo.value.exit_code == 1
 
     asyncio.run(db.close())
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "--source is required" in out
 
 
@@ -1737,27 +1768,29 @@ def test_pipeline_add_legacy_requires_target(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from tg_agent.cli.commands.pipeline import run
 
-        run(
-            _ns(
-                pipeline_action="add",
-                name="NoTarget",
-                prompt_template="Summarize {source_messages}",
-                source=[1001],
-                target=None,
-                llm_model=None,
-                image_model=None,
-                publish_mode="moderated",
-                generation_backend="chain",
-                interval=60,
-                inactive=False,
-                node_specs=None,
-                edge=None,
-                node_configs=None,
+        with pytest.raises(typer.Exit) as excinfo:
+            run(
+                _ns(
+                    pipeline_action="add",
+                    name="NoTarget",
+                    prompt_template="Summarize {source_messages}",
+                    source=[1001],
+                    target=None,
+                    llm_model=None,
+                    image_model=None,
+                    publish_mode="moderated",
+                    generation_backend="chain",
+                    interval=60,
+                    inactive=False,
+                    node_specs=None,
+                    edge=None,
+                    node_configs=None,
+                )
             )
-        )
+        assert excinfo.value.exit_code == 1
 
     asyncio.run(db.close())
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "--target is required" in out
 
 

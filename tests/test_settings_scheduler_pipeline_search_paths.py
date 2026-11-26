@@ -288,21 +288,23 @@ class TestCLIPipelineAdd:
         with patch("tg_agent.cli.runtime.init_db", side_effect=_pipeline_fake_init_db(db_path)):
             from tg_agent.cli.commands.pipeline import run
 
-            run(_ns(
-                pipeline_action="add",
-                name="BadTarget",
-                prompt_template="Test {source_messages}",
-                source=[2001],
-                target=["bad_format_no_pipe"],
-                llm_model=None,
-                image_model=None,
-                publish_mode="moderated",
-                generation_backend="chain",
-                interval=60,
-                inactive=False,
-            ))
-        out = capsys.readouterr().out
-        assert "Error" in out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(
+                    pipeline_action="add",
+                    name="BadTarget",
+                    prompt_template="Test {source_messages}",
+                    source=[2001],
+                    target=["bad_format_no_pipe"],
+                    llm_model=None,
+                    image_model=None,
+                    publish_mode="moderated",
+                    generation_backend="chain",
+                    interval=60,
+                    inactive=False,
+                ))
+            assert excinfo.value.exit_code == 1
+        out = capsys.readouterr().err
+        assert "PHONE|DIALOG_ID" in out
 
     def test_add_pipeline_bad_dialog_id(self, tmp_path, capsys):
         """add with non-numeric dialog id prints error."""
@@ -311,21 +313,23 @@ class TestCLIPipelineAdd:
         with patch("tg_agent.cli.runtime.init_db", side_effect=_pipeline_fake_init_db(db_path)):
             from tg_agent.cli.commands.pipeline import run
 
-            run(_ns(
-                pipeline_action="add",
-                name="BadDialog",
-                prompt_template="Test {source_messages}",
-                source=[2001],
-                target=["+100|not_a_number"],
-                llm_model=None,
-                image_model=None,
-                publish_mode="moderated",
-                generation_backend="chain",
-                interval=60,
-                inactive=False,
-            ))
-        out = capsys.readouterr().out
-        assert "Error" in out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(
+                    pipeline_action="add",
+                    name="BadDialog",
+                    prompt_template="Test {source_messages}",
+                    source=[2001],
+                    target=["+100|not_a_number"],
+                    llm_model=None,
+                    image_model=None,
+                    publish_mode="moderated",
+                    generation_backend="chain",
+                    interval=60,
+                    inactive=False,
+                ))
+            assert excinfo.value.exit_code == 1
+        out = capsys.readouterr().err
+        assert "numeric" in out
 
 
 class TestCLIPipelineList:
@@ -382,8 +386,10 @@ class TestCLIPipelineShow:
         with patch("tg_agent.cli.runtime.init_db", side_effect=_pipeline_fake_init_db(db_path)):
             from tg_agent.cli.commands.pipeline import run
 
-            run(_ns(pipeline_action="show", id=999))
-        assert "not found" in capsys.readouterr().out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(pipeline_action="show", id=999))
+            assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_show_existing(self, tmp_path, capsys):
         """show for existing pipeline prints details."""

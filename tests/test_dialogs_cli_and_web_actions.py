@@ -924,15 +924,15 @@ class TestCliArchiveUnarchiveMarkRead:
 
     def test_react_missing_emoji_exits_nonzero(self, cli_db, capsys):
         pool, _ = _mock_pool()
-        with pytest.raises(SystemExit) as exc_info:
+        with pytest.raises(typer.Exit) as exc_info:
             _run_cli(
                 "react",
                 pool,
                 cli_db,
                 {"phone": _PHONE, "chat_id": "@ch", "message_id": 1, "emoji": None, "clear": False, "yes": True},
             )
-        assert exc_info.value.code == 2
-        assert "emoji is required unless --clear is used" in capsys.readouterr().out
+        assert exc_info.value.exit_code == 1
+        assert "emoji is required unless --clear is used" in capsys.readouterr().err
 
 
 class TestCliTopics:

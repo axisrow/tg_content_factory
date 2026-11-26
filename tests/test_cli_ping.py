@@ -178,7 +178,7 @@ def test_cli_update_unknown_monitor_exits(cli_db, capsys):
             cli_db,
             capsys,
         )
-    assert "not found" in capsys.readouterr().out
+    assert "not found" in capsys.readouterr().err
 
 
 def test_cli_delete_removes_monitor(cli_db, capsys):

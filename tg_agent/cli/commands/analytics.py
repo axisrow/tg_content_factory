@@ -12,6 +12,7 @@ from tg_agent.cli.commands.common import (
     AnalyticsGenre,
     AnalyticsUseful,
     apply_startup,
+    cli_error,
     resolve_date_bounds,
     run_async,
 )
@@ -306,8 +307,7 @@ async def channel_impl(config_path: str, *, channel_id: int, days: int) -> None:
         svc = ChannelAnalyticsService(db)
         ov = await svc.get_channel_overview(channel_id, days=days)
         if ov.title is None:
-            print(f"Channel {channel_id} not found.")
-            return
+            cli_error(f"Channel {channel_id} not found")
         print(f"Channel: {ov.title or ov.username or channel_id}")
         print(f"Username: {ov.username or '-'}")
         print(f"Subscribers: {ov.subscriber_count if ov.subscriber_count is not None else '-'}")

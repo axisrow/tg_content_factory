@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
+import typer
 
 from tg_agent.config import AppConfig
 from tg_agent.models import Channel, ChannelStats, Message
@@ -1160,12 +1161,14 @@ def test_cli_analytics_channel_not_found(cli_db, capsys):
         return config, cli_db
 
     with patch("tg_agent.cli.commands.analytics.runtime.init_db", side_effect=fake_init_db):
-        analytics_run(argparse.Namespace(
-            config="config.yaml",
-            analytics_action="channel",
-            channel_id=999999,
-            days=30,
-        ))
+        with pytest.raises(typer.Exit) as excinfo:
+            analytics_run(argparse.Namespace(
+                config="config.yaml",
+                analytics_action="channel",
+                channel_id=999999,
+                days=30,
+            ))
+        assert excinfo.value.exit_code == 1
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "not found" in out.lower()

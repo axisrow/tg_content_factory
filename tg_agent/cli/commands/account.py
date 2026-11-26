@@ -467,8 +467,7 @@ async def toggle_impl(config_path: str, *, account_id: int) -> None:
         accounts = await db.get_account_summaries(active_only=False)
         acc = next((a for a in accounts if a.id == account_id), None)
         if not acc:
-            print(f"Account id={account_id} not found")
-            return
+            cli_error(f"Account id={account_id} not found")
         new_state = not acc.is_active
         if isinstance(config.gateway, dict) and config.gateway:
             from tg_agent.gateway.catalog import ProjectAccountCatalog
@@ -503,10 +502,9 @@ async def set_primary_impl(config_path: str, *, account_id: int) -> None:
             print(f"Project account id={account_id} set as primary")
             return
         changed = await db.repos.accounts.set_account_primary(account_id)
-        if changed:
-            print(f"Account id={account_id} set as primary")
-        else:
-            print(f"Account id={account_id} not found")
+        if not changed:
+            cli_error(f"Account id={account_id} not found")
+        print(f"Account id={account_id} set as primary")
     finally:
         await db.close()
 

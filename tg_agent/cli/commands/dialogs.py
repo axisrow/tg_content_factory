@@ -603,8 +603,7 @@ async def _dialogs_react(args, db, pool) -> None:
     else:
         raw_emoji = args.emoji
         if not raw_emoji:
-            print("Error: emoji is required unless --clear is used.")
-            raise SystemExit(2)
+            cli_error("Error: emoji is required unless --clear is used.")
         try:
             emoji = normalize_outgoing_reaction_emoji(raw_emoji)
         except TelegramReactionInvalidError:

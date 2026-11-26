@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from tg_agent.cli import runtime
+from tg_agent.cli.commands.common import cli_error
 
 if TYPE_CHECKING:
     from tg_agent.telegram.client_pool import ClientPool
@@ -18,8 +19,7 @@ from tg_agent.services.pipeline_service import (
 async def _pipeline_queue(args: requests.PipelineQueueCommand, db, config, svc: PipelineService) -> None:
     pipeline = await svc.get(args.id)
     if pipeline is None:
-        print(f"Pipeline id={args.id} not found")
-        return
+        cli_error(f"Pipeline id={args.id} not found")
     runs = await db.repos.generation_runs.list_pending_moderation(
         pipeline_id=args.id,
         limit=args.limit,
@@ -47,8 +47,7 @@ async def _pipeline_moderation_view(
 async def _pipeline_approve(args: requests.PipelineApproveCommand, db, config, svc: PipelineService) -> None:
     run = await db.repos.generation_runs.get(args.run_id)
     if run is None:
-        print(f"Run id={args.run_id} not found")
-        return
+        cli_error(f"Run id={args.run_id} not found")
     await db.repos.generation_runs.set_moderation_status(args.run_id, "approved", origin="human", actor="cli")
     print(f"Approved run id={args.run_id}")
 
@@ -56,8 +55,7 @@ async def _pipeline_approve(args: requests.PipelineApproveCommand, db, config, s
 async def _pipeline_reject(args: requests.PipelineRejectCommand, db, config, svc: PipelineService) -> None:
     run = await db.repos.generation_runs.get(args.run_id)
     if run is None:
-        print(f"Run id={args.run_id} not found")
-        return
+        cli_error(f"Run id={args.run_id} not found")
     await db.repos.generation_runs.set_moderation_status(args.run_id, "rejected", origin="human", actor="cli")
     print(f"Rejected run id={args.run_id}")
 
@@ -67,14 +65,12 @@ async def _pipeline_resolve_unconfirmed(
 ) -> None:
     run = await db.repos.generation_runs.get(args.run_id)
     if run is None:
-        print(f"Run id={args.run_id} not found")
-        return
+        cli_error(f"Run id={args.run_id} not found")
     delivered = args.action == "delivered"
     ok = await db.repos.generation_runs.resolve_unconfirmed_target(args.run_id, args.target, delivered=delivered)
-    if ok:
-        print(f"Resolved unconfirmed target {args.target} as {args.action} for run id={args.run_id}")
-    else:
-        print(f"Target {args.target} is not unconfirmed for run id={args.run_id}")
+    if not ok:
+        cli_error(f"Target {args.target} is not unconfirmed for run id={args.run_id}")
+    print(f"Resolved unconfirmed target {args.target} as {args.action} for run id={args.run_id}")
 
 
 async def _bulk_moderate(
@@ -84,10 +80,11 @@ async def _bulk_moderate(
     # skip-missing behaviour), then flip them all in one transaction
     # so a mid-batch failure rolls back instead of half-applying.
     existing_ids: list[int] = []
+    missing_ids: list[int] = []
     for run_id in args.run_ids:
         run = await db.repos.generation_runs.get(run_id)
         if run is None:
-            print(f"  Run id={run_id} not found, skipping.")
+            missing_ids.append(run_id)
             continue
         existing_ids.append(run_id)
     skipped = await db.repos.generation_runs.set_moderation_status_bulk(
@@ -95,9 +92,13 @@ async def _bulk_moderate(
     )
     # An operator (human-origin) decision is refused only for runs already
     # publishing/published (#1234) — report them instead of counting them.
-    for run_id in skipped:
-        print(f"  Run id={run_id} is publishing/published, skipping.")
     print(f"Bulk {label}: {len(existing_ids) - len(skipped)}/{len(args.run_ids)}")
+    if missing_ids or skipped:
+        # The summary stays on stdout; what was left undone goes to stderr with
+        # exit 1, so a caller never takes a partial batch for a complete one (#1951).
+        reasons = [f"run id={run_id} not found" for run_id in missing_ids]
+        reasons += [f"run id={run_id} is publishing/published" for run_id in skipped]
+        cli_error(f"{len(reasons)} of {len(args.run_ids)} run(s) were not {label}: " + "; ".join(reasons))
 
 
 async def _pipeline_bulk_approve(args: requests.PipelineBulkApproveCommand, db, config, svc: PipelineService) -> None:
@@ -114,30 +115,29 @@ async def _pipeline_publish(
     services = services or default_services()
     run = await db.repos.generation_runs.get(args.run_id)
     if run is None:
-        print(f"Run id={args.run_id} not found")
-        return None
+        cli_error(f"Run id={args.run_id} not found")
     if run.pipeline_id is None:
-        print(f"Run id={args.run_id} has no pipeline")
-        return None
+        cli_error(f"Run id={args.run_id} has no pipeline")
 
     pipeline = await svc.get(run.pipeline_id)
     if pipeline is None:
-        print(f"Pipeline id={run.pipeline_id} not found")
-        return None
+        cli_error(f"Pipeline id={run.pipeline_id} not found")
 
     _, pool = await runtime.init_pool(config, db)
     if not pool.clients:
-        print("ERROR: Нет доступных аккаунтов Telegram.")
-        return pool
+        # The dispatcher disconnects only a pool a handler returns; a failure
+        # leaves by exception, so the pool is closed here.
+        await pool.disconnect_all()
+        cli_error("Нет доступных аккаунтов Telegram.")
 
     publish_service = services.publish_service(db, pool)
     results = await publish_service.publish_run(run, pipeline)
     if not results or not all(result.success for result in results):
-        print(f"Failed to publish run id={args.run_id}")
-        for result in results:
-            if not result.success:
-                print(f"  - {result.error or 'Unknown publish error'}")
-        return pool
+        failed = "\n".join(
+            f"  - {result.error or 'Unknown publish error'}" for result in results if not result.success
+        )
+        await pool.disconnect_all()
+        cli_error(f"Failed to publish run id={args.run_id}" + (f"\n{failed}" if failed else ""))
 
     print(f"Published run id={args.run_id} to {len(results)} target(s)")
     for r in results:

@@ -204,12 +204,10 @@ async def edit_impl(
                 ),
             )
         except ValidationError as e:
-            print(f"Error: {e.errors()[0]['msg']}")
-            return
+            cli_error(str(e.errors()[0]["msg"]))
         except ValueError as e:
             # e.g. invalid regex pattern (#1607)
-            print(f"Error: {e}")
-            return
+            cli_error(str(e))
         print(f"Updated search query id={query_id}")
         warning = await _chat_filter_warning(
             svc,
@@ -274,6 +272,9 @@ async def stats_impl(config_path: str, *, query_id: int, days: int = 30) -> None
     _, db = await runtime.init_db(config_path)
     try:
         svc = SearchQueryService(SearchQueryBundle.from_database(db))
+        if await svc.get(query_id) is None:
+            # A missing query must not read as a query without stats (#1951).
+            cli_error(f"Search query id={query_id} not found")
         stats = cast(list[SearchQueryDailyStat], await svc.get_daily_stats(query_id, days))
         if not stats:
             print("No stats found.")
