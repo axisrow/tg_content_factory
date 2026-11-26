@@ -1367,3 +1367,95 @@ class TestFilterMissExitCodes:
         assert excinfo.value.exit_code == 1
         assert "Purged messages from 1 channels" in captured.out
         assert "disk I/O error" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# a generation that did not happen is a failure (#1952)
+# ---------------------------------------------------------------------------
+
+
+class TestFailedGenerationExitCodes:
+    """`pipeline run|generate` printed why nothing was generated — and exited 0."""
+
+    @pytest.mark.parametrize(
+        ("handler", "command_of"),
+        [
+            pytest.param(
+                generation._pipeline_run,
+                lambda pid: pipeline_requests.PipelineRunCommand(id=pid),
+                id="pipeline run",
+            ),
+            pytest.param(
+                generation._pipeline_generate,
+                lambda pid: pipeline_requests.PipelineGenerateCommand(id=pid),
+                id="pipeline generate",
+            ),
+            pytest.param(
+                generation._pipeline_generate_stream,
+                lambda pid: pipeline_requests.PipelineGenerateStreamCommand(id=pid),
+                id="pipeline generate-stream",
+            ),
+        ],
+    )
+    def test_no_llm_provider_exits_1(self, cli_env, capsys, handler, command_of):
+        """Refused before a pool is opened."""
+        no_provider = AsyncMock(return_value=SimpleNamespace(has_providers=lambda: False))
+
+        async def body(db):
+            command = command_of(await _seed_pipeline(db, DAG_GRAPH))
+            svc = PipelineService(PipelineBundle.from_database(db))
+            with (
+                patch("tg_agent.services.provider_service.build_provider_service", new=no_provider),
+                patch(
+                    "tg_agent.cli.pipeline.generation.runtime.init_pool",
+                    new=AsyncMock(side_effect=AssertionError("pool opened")),
+                ) as init_pool,
+            ):
+                await handler(command, db, AppConfig(), svc)
+            init_pool.assert_not_called()
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(body(cli_env))
+        _assert_exit_clean(excinfo, capsys, "LLM provider is not configured")
+
+    @pytest.mark.parametrize(
+        ("handler", "command_of"),
+        [
+            pytest.param(
+                generation._pipeline_run,
+                lambda pid: pipeline_requests.PipelineRunCommand(id=pid),
+                id="pipeline run",
+            ),
+            pytest.param(
+                generation._pipeline_generate,
+                lambda pid: pipeline_requests.PipelineGenerateCommand(id=pid),
+                id="pipeline generate",
+            ),
+        ],
+    )
+    def test_a_failed_generation_exits_1_and_closes_the_pool(self, cli_env, capsys, handler, command_of):
+        """The pool is closed on the way out: the dispatcher disconnects only a pool a handler returns."""
+        pool = SimpleNamespace(disconnect_all=AsyncMock())
+        failing = SimpleNamespace(generate=AsyncMock(side_effect=RuntimeError("provider is down")))
+        with_provider = AsyncMock(return_value=SimpleNamespace(has_providers=lambda: True))
+
+        async def body(db):
+            command = command_of(await _seed_pipeline(db, DAG_GRAPH))
+            svc = PipelineService(PipelineBundle.from_database(db))
+            services = SimpleNamespace(
+                search_engine=lambda _db: object(),
+                generation_service=lambda *_args, **_kwargs: failing,
+            )
+            with (
+                patch("tg_agent.services.provider_service.build_provider_service", new=with_provider),
+                patch(
+                    "tg_agent.cli.pipeline.generation.runtime.init_pool",
+                    new=AsyncMock(return_value=(AppConfig(), pool)),
+                ),
+            ):
+                await handler(command, db, AppConfig(), svc, services=services)
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(body(cli_env))
+        _assert_exit_clean(excinfo, capsys, "Generation failed")
+        pool.disconnect_all.assert_awaited_once()

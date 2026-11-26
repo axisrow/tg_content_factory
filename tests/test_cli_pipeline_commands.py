@@ -1268,7 +1268,10 @@ class TestPipelineGenerateStream:
                 "tg_agent.services.generation_service.GenerationService",
                 _BreakingGenerationService,
             ):
-                run(_gen_stream_ns(id=pid))
+                # The error event is the report; the exit code says the same (#1952).
+                with pytest.raises(typer.Exit) as excinfo:
+                    run(_gen_stream_ns(id=pid))
+            assert excinfo.value.exit_code == 1
         finally:
             _close_db(db)
 
@@ -1276,6 +1279,49 @@ class TestPipelineGenerateStream:
         lines = [json.loads(ln) for ln in out.strip().splitlines() if ln.strip()]
         assert lines[-1]["event"] == "error"
         assert "done" not in {ln.get("event") for ln in lines}
+
+        run_id = _max_run_id(db_path)
+        assert run_id is not None
+        status, _ = _read_run_status(db_path, run_id)
+        assert status == "failed"
+
+    def test_a_raising_generator_ends_with_an_error_event_and_exit_1(self, tmp_path, cli_init_patch, capsys):
+        """The generic failure path: one error event, the run marked failed, exit 1 (#1952)."""
+
+        class _RaisingGenerationService:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def generate_stream(self, *args, **kwargs):
+                yield {"delta": "Hi", "generated_text": "Hi", "citations": []}
+                raise RuntimeError("provider is down")
+
+        db_path = _empty_db_path(tmp_path, "pipeline_gen_stream_raise.db")
+        pid = _seed_pipeline_with_graph(db_path, name="RaiseDAG")
+
+        provider = MagicMock()
+        provider.load_db_providers = AsyncMock()
+        provider.has_providers = MagicMock(return_value=True)
+        provider.get_provider_callable = MagicMock(return_value=AsyncMock())
+
+        db = _open_db(db_path)
+        try:
+            with cli_init_patch(db, _PIPELINE_INIT_DB_TARGET, fresh_database=True), patch(
+                "tg_agent.services.provider_service.RuntimeProviderRegistry",
+                return_value=provider,
+            ), patch(
+                "tg_agent.services.generation_service.GenerationService",
+                _RaisingGenerationService,
+            ):
+                with pytest.raises(typer.Exit) as excinfo:
+                    run(_gen_stream_ns(id=pid))
+            assert excinfo.value.exit_code == 1
+        finally:
+            _close_db(db)
+
+        out = capsys.readouterr().out
+        lines = [json.loads(ln) for ln in out.strip().splitlines() if ln.strip()]
+        assert lines[-1] == {"event": "error", "error": "provider is down"}
 
         run_id = _max_run_id(db_path)
         assert run_id is not None
@@ -1336,11 +1382,14 @@ class TestPipelineGenerateStream:
                 "tg_agent.services.provider_service.RuntimeProviderRegistry",
                 return_value=provider,
             ):
-                run(_gen_stream_ns(id=pid))
+                # A refusal is a failure (#1952).
+                with pytest.raises(typer.Exit) as excinfo:
+                    run(_gen_stream_ns(id=pid))
+            assert excinfo.value.exit_code == 1
         finally:
             _close_db(db)
 
-        assert "LLM provider is not configured" in capsys.readouterr().out
+        assert "LLM provider is not configured" in capsys.readouterr().err
         # No run should have been created.
         assert _max_run_id(db_path) is None
 
