@@ -76,6 +76,9 @@ class ImageGenerationService:
         self._adapters: dict[str, ImageAdapter] = {}
         self._s3: S3Store | None = None
         self._last_failure: ImageGenerationFailure | None = None
+        # Why the last search_models() answered nothing — None for a real
+        # "no matches" (#1961).
+        self._last_search_error: str | None = None
         # Optional opt-in rate-limit / daily cost cap (#814). None = unlimited
         # (the default), so generation behaves exactly as before unless an
         # operator enables production_limits in config.
@@ -186,6 +189,10 @@ class ImageGenerationService:
     def last_failure(self) -> ImageGenerationFailure | None:
         return self._last_failure
 
+    @property
+    def last_search_error(self) -> str | None:
+        return self._last_search_error
+
     # ── internals ──
 
     def _init_s3(self) -> None:
@@ -260,13 +267,18 @@ class ImageGenerationService:
 
         For OpenAI, ``refresh=True`` fetches the live model list from ``/v1/models``
         (filtered to image models) via the shared model-listing helper; otherwise the
-        static fallback catalog is returned.
+        static fallback catalog is returned. An empty list is a real "no matches"
+        only when ``last_search_error`` is None; a missing key or a failed request
+        is named there (#1961).
         """
         import aiohttp
+
+        self._last_search_error = None
 
         if provider == "replicate":
             token = api_key or os.environ.get("REPLICATE_API_TOKEN", "")
             if not token:
+                self._last_search_error = "REPLICATE_API_TOKEN is not set"
                 return []
             url = "https://api.replicate.com/v1/models"
             params = {}
@@ -278,6 +290,7 @@ class ImageGenerationService:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url, headers=headers, params=params, timeout=timeout) as resp:
                         if resp.status != 200:
+                            self._last_search_error = f"HTTP {resp.status} from {url}"
                             return []
                         data = await resp.json()
                         results = data.get("results", [])
@@ -293,13 +306,15 @@ class ImageGenerationService:
                         ]
                         models.sort(key=lambda m: m.get("run_count") or 0, reverse=True)
                         return models[:20]
-            except Exception:
+            except Exception as exc:
                 logger.warning("Failed to search Replicate models", exc_info=True)
+                self._last_search_error = f"{type(exc).__name__}: {exc}"
                 return []
 
         if provider == "huggingface":
             token = api_key or os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HUGGINGFACE_TOKEN", "")
             if not token:
+                self._last_search_error = "HUGGINGFACE_API_KEY is not set"
                 return []
             try:
                 from huggingface_hub import HfApi
@@ -326,8 +341,9 @@ class ImageGenerationService:
                     )
                 models.sort(key=lambda x: x.get("run_count") or 0, reverse=True)
                 return models[:20]
-            except Exception:
+            except Exception as exc:
                 logger.warning("Failed to search HuggingFace models", exc_info=True)
+                self._last_search_error = f"{type(exc).__name__}: {exc}"
                 return []
 
         # Static catalogs + live-refresh fetchers are declared per provider on

@@ -71,6 +71,8 @@ async def test_search_models_huggingface_no_token_returns_empty(monkeypatch):
 
     result = await svc.search_models("huggingface", query="flux", api_key="")
     assert result == []
+    # #1961: an empty answer says why — here the provider has no key.
+    assert svc.last_search_error == "HUGGINGFACE_API_KEY is not set"
 
 
 @pytest.mark.anyio
@@ -89,6 +91,7 @@ async def test_search_models_huggingface_exception_returns_empty():
     with patch.dict(sys.modules, {"huggingface_hub": mock_hf_module}):
         result = await svc.search_models("huggingface", query="test", api_key="hf_token")
         assert result == []
+        assert svc.last_search_error == "RuntimeError: API error"
 
 
 @pytest.mark.anyio
@@ -841,6 +844,37 @@ async def test_search_models_replicate_no_token(monkeypatch):
     svc = _make_clean_service()
     models = await svc.search_models("replicate", api_key="")
     assert models == []
+    assert svc.last_search_error == "REPLICATE_API_TOKEN is not set"
+
+
+@pytest.mark.anyio
+async def test_search_models_replicate_http_error_names_the_status(monkeypatch):
+    """#1961: a refused catalog request is not "no models" — the status is the reason."""
+
+    class _Resp:
+        status = 401
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def get(self, *args, **kwargs):
+            return _Resp()
+
+    monkeypatch.setattr("aiohttp.ClientSession", _Session)
+    svc = _make_clean_service()
+
+    assert await svc.search_models("replicate", api_key="bad-token") == []
+    assert svc.last_search_error == "HTTP 401 from https://api.replicate.com/v1/models"
 
 
 @pytest.mark.anyio
@@ -879,6 +913,7 @@ async def test_search_models_replicate_with_token(monkeypatch):
     models = await svc.search_models("replicate", api_key="fake-token")
     assert len(models) == 1
     assert models[0]["id"] == "testowner/test-model"
+    assert svc.last_search_error is None
 
 
 # === audit #835/11 explicit-provider routing + #836/4 S3 mirror ===

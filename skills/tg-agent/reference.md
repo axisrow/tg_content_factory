@@ -270,7 +270,9 @@ search-query list | get | add | edit | delete | toggle | run | stats
   answer `Generation failed: …` or `LLM provider is not configured` (#1952).
   `image generate` exits 1 — no provider configured, an empty prompt or a failed
   generation, with the reason on stderr; `image models` refuses an unknown
-  provider by name (#1961).
+  provider by name and exits 1 with the reason when the catalog could not be
+  fetched (a missing key, an HTTP error) — `No models found` is then a real
+  empty search (#1961).
 - **Flood/throttle errors carry RPC attribution (#1828):** `dialogs
   send`/`forward`/`edit-message` refusals (and pipeline publish receipts)
   print one curated line — `local throttling by <budget>` (refused before any

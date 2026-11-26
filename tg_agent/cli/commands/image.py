@@ -81,6 +81,10 @@ async def models_impl(config_path: str, *, provider: str, query: str = "", refre
         if image_provider_spec(provider) is None:
             cli_error(f"Unknown image provider: {provider}")
         models = await svc.search_models(provider, query or "", refresh=refresh)
+        if not models and svc.last_search_error:
+            # The catalog could not be fetched — a failure with its reason, not
+            # the same answer as a query with no matches (#1961).
+            cli_error(f"No models for provider={provider}: {svc.last_search_error}")
         if not models:
             print(f"No models found for provider={provider} query={query!r}")
             return

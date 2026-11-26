@@ -168,11 +168,30 @@ class TestCLIImageCommand:
         with patch("tg_agent.cli.commands.image.ImageGenerationService") as mock_svc_cls:
             svc = MagicMock()
             svc.search_models = AsyncMock(return_value=[])
+            svc.last_search_error = None  # a query with no matches
             mock_svc_cls.return_value = svc
 
             run(_run_ns(image_action="models", provider="replicate", query=""))
             out = capsys.readouterr().out
             assert "No models found" in out
+
+    def test_models_catalog_could_not_be_fetched(self, capsys):
+        """A catalog that could not be fetched is a failure with its reason — not
+        the same "No models found" as a query with no matches (#1961)."""
+        from tg_agent.cli.commands.image import run
+
+        with patch("tg_agent.cli.commands.image.ImageGenerationService") as mock_svc_cls:
+            svc = MagicMock()
+            svc.search_models = AsyncMock(return_value=[])
+            svc.last_search_error = "REPLICATE_API_TOKEN is not set"
+            mock_svc_cls.return_value = svc
+
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_run_ns(image_action="models", provider="replicate", query=""))
+            assert excinfo.value.exit_code == 1
+            captured = capsys.readouterr()
+            assert "No models for provider=replicate: REPLICATE_API_TOKEN is not set" in captured.err
+            assert "No models found" not in captured.out
 
     def test_models_unknown_provider(self, capsys):
         """An unknown provider is a refused argument (#1961), not an empty search."""
