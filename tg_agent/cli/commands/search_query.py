@@ -142,12 +142,10 @@ async def add_impl(
                 chat_filter=chats,
             )
         except ValidationError as e:
-            print(f"Error: {e.errors()[0]['msg']}")
-            return
+            cli_error(f"Error: {e.errors()[0]['msg']}")
         except ValueError as e:
             # e.g. invalid regex pattern (#1607)
-            print(f"Error: {e}")
-            return
+            cli_error(f"Error: {e}")
         print(f"Added search query id={sq_id}: {query}")
         warning = await _chat_filter_warning(svc, chats)
         if warning:

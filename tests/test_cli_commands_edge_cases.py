@@ -1534,7 +1534,8 @@ class TestSearchQueryAdd:
 
         with patch("tg_agent.cli.commands.search_query.runtime.init_db", side_effect=_make_coro((None, db))), \
              patch("tg_agent.cli.commands.search_query.SearchQueryService", return_value=svc_instance), \
-             patch("tg_agent.cli.commands.search_query.SearchQueryBundle") as mock_bundle_cls:
+             patch("tg_agent.cli.commands.search_query.SearchQueryBundle") as mock_bundle_cls, \
+             pytest.raises(typer.Exit) as excinfo:
             mock_bundle_cls.from_database.return_value = bundle
             run(cli_ns(
                 search_query_action="add",
@@ -1548,10 +1549,12 @@ class TestSearchQueryAdd:
                 max_length=None,
             ))
 
-        out = capsys.readouterr().out
-        assert "Error:" in out
-        assert "invalid regex" in out
-        assert "Added search query" not in out
+        # A refused write exits 1 with the reason on stderr (#1942).
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "Error:" in captured.err
+        assert "invalid regex" in captured.err
+        assert "Added search query" not in captured.out
         svc_instance.add.assert_awaited_once()
 
     def test_add_with_exclude_patterns(self, capsys):

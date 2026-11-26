@@ -14,7 +14,7 @@ import typer
 from tests.helpers import cli_add_channel as _add_channel
 from tests.helpers import cli_ns as _ns
 from tests.helpers import fake_asyncio_run, make_cli_config, make_cli_db
-from tg_agent.cli.commands.channel import _handle_tag, run, tag_get_impl, tag_set_impl
+from tg_agent.cli.commands.channel import _handle_tag, run, tag_add_impl, tag_get_impl, tag_set_impl
 from tg_agent.database import Database
 
 # ---------------------------------------------------------------------------
@@ -52,10 +52,37 @@ class TestHandleTag:
     async def test_add_tag(self, capsys):
         args = argparse.Namespace(tag_action="add", name="sports")
         db = MagicMock()
-        db.repos.channels.create_tag = AsyncMock()
+        db.repos.channels.create_tag = AsyncMock(return_value=True)
         await _handle_tag(args, db)
         assert "Tag 'sports' created." in capsys.readouterr().out
         db.repos.channels.create_tag.assert_awaited_once_with("sports")
+
+    @pytest.mark.anyio
+    async def test_add_existing_tag_reports_it(self, capsys):
+        """#1942: a duplicate is an idempotent no-op, reported as what it is."""
+        args = argparse.Namespace(tag_action="add", name="sports")
+        db = MagicMock()
+        db.repos.channels.create_tag = AsyncMock(return_value=False)
+        await _handle_tag(args, db)
+        out = capsys.readouterr().out
+        assert "Tag 'sports' already exists." in out
+        assert "created" not in out
+
+    @pytest.mark.anyio
+    async def test_add_empty_tag_name_exits_1(self, db, capsys):
+        """#1942: an empty name creates nothing — a refusal, not a "created" line."""
+        with pytest.raises(typer.Exit) as excinfo:
+            await tag_add_impl(db, name="   ")
+        assert excinfo.value.exit_code == 1
+        assert "empty" in capsys.readouterr().err
+
+    @pytest.mark.anyio
+    async def test_add_tag_twice_on_a_real_store(self, db, capsys):
+        """#1942: the repository reports whether the INSERT touched a row."""
+        await tag_add_impl(db, name="audit-tag")
+        await tag_add_impl(db, name="audit-tag")
+        out = capsys.readouterr().out.splitlines()
+        assert out == ["Tag 'audit-tag' created.", "Tag 'audit-tag' already exists."]
 
     @pytest.mark.anyio
     async def test_delete_tag(self, capsys):
