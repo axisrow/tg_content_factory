@@ -1251,3 +1251,91 @@ class TestRefusedArgumentExitCodesWave2:
         assert excinfo.value.exit_code == 1
         assert captured.out == "Bulk approved: 0/1\n"
         assert "run id=999 not found" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# third wave (#1955): the filter commands and the gateway account branches
+# ---------------------------------------------------------------------------
+
+_FILTER = "tg_agent.cli.commands.filter"
+
+
+async def _seed_channel(db, channel_id: int) -> int:
+    from tg_agent.models import Channel
+
+    return await db.add_channel(Channel(channel_id=channel_id, title="Scratch"))
+
+
+class TestFilterMissExitCodes:
+    """A filter command aimed at nothing, or at less of a list than it was given, fails (#1955).
+
+    None of these bodies is run against the real store: `purge` and `hard-delete` delete.
+    """
+
+    @pytest.mark.parametrize("pks", ["abc", "12,abc"])
+    def test_a_malformed_pks_list_is_refused_as_a_whole(self, cli_env, capsys, pks):
+        with patch(f"{_FILTER}.ChannelAnalyzer") as analyzer:
+            analyzer.return_value.reset_filters_for_pks = AsyncMock()
+            with pytest.raises(typer.Exit) as excinfo:
+                asyncio.run(filter_commands.reset_impl("c", pks=pks))
+        # The bad token is named, and the good one next to it is not acted on either.
+        _assert_exit_clean(excinfo, capsys, "Invalid pk(s) in --pks: abc")
+        analyzer.return_value.reset_filters_for_pks.assert_not_awaited()
+
+    def test_an_empty_pks_list_is_refused(self, cli_env, capsys):
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(filter_commands.reset_impl("c", pks=" , "))
+        _assert_exit_clean(excinfo, capsys, "No valid PKs provided")
+
+    @pytest.mark.parametrize(
+        ("impl", "kwargs"),
+        [
+            pytest.param(filter_commands.reset_impl, {}, id="filter reset"),
+            pytest.param(filter_commands.purge_impl, {"yes": False}, id="filter purge"),
+            pytest.param(filter_commands.hard_delete_impl, {"yes": False}, id="filter hard-delete"),
+        ],
+    )
+    def test_a_missing_pk_stops_the_command_before_anything_runs(self, cli_env, capsys, impl, kwargs):
+        """The one pk the store lacks is named; the prompt, the service and the analyzer never run."""
+        asyncio.run(cli_env.set_setting("agent_dev_mode_enabled", "1"))  # so `hard-delete` reaches the lookup
+        kept = asyncio.run(_seed_channel(cli_env, 4242))
+
+        with (
+            patch(f"{_FILTER}.sync_prompt", side_effect=AssertionError("prompted")) as prompt,
+            patch(f"{_FILTER}._build_deletion_service") as build,
+            patch(f"{_FILTER}.ChannelAnalyzer") as analyzer,
+        ):
+            analyzer.return_value.reset_filters_for_pks = AsyncMock()
+            with pytest.raises(typer.Exit) as excinfo:
+                asyncio.run(impl("c", pks=f"{kept},999", **kwargs))
+        _assert_exit_clean(excinfo, capsys, "Channel pk(s) not found: 999")
+        prompt.assert_not_called()
+        build.assert_not_called()
+        analyzer.return_value.reset_filters_for_pks.assert_not_awaited()
+
+    def test_purge_messages_names_a_missing_channel(self, cli_env, capsys):
+        with patch(f"{_FILTER}.sync_prompt", side_effect=AssertionError("prompted")) as prompt:
+            with pytest.raises(typer.Exit) as excinfo:
+                asyncio.run(filter_commands.purge_messages_impl("c", channel_id=999, yes=False))
+        _assert_exit_clean(excinfo, capsys, "Channel 999 not found")
+        prompt.assert_not_called()
+
+    def test_hard_delete_without_developer_mode_exits_1(self, cli_env, capsys):
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(filter_commands.hard_delete_impl("c", pks=None, yes=True))
+        _assert_exit_clean(excinfo, capsys, "requires developer mode")
+
+    def test_a_failed_channel_fails_the_purge(self, cli_env, capsys):
+        """The report keeps its `Errors` block on stdout; the command itself does not pass."""
+        from tg_agent.services.filter_deletion_service import PurgeResult
+
+        pk = asyncio.run(_seed_channel(cli_env, 4242))
+        result = PurgeResult(purged_count=1, purged_titles=["Scratch"], errors=["pk=7: disk I/O error"])
+        service = SimpleNamespace(purge_channels_by_pks=AsyncMock(return_value=result))
+        with patch(f"{_FILTER}._build_deletion_service", return_value=service):
+            with pytest.raises(typer.Exit) as excinfo:
+                asyncio.run(filter_commands.purge_impl("c", pks=str(pk), yes=True))
+        captured = capsys.readouterr()
+        assert excinfo.value.exit_code == 1
+        assert "Purged messages from 1 channels" in captured.out
+        assert "disk I/O error" in captured.err

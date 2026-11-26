@@ -54,6 +54,39 @@ def _parse_pks(raw: str) -> list[int]:
     return pks
 
 
+def _requested_pks(raw: str) -> list[int]:
+    """``--pks`` as a list — or a refusal of the whole list (#1955).
+
+    A token that is not a number used to be dropped in silence, and the command
+    ran on what was left of the list.
+    """
+    invalid = [
+        token
+        for token in (piece.strip() for piece in raw.split(","))
+        if token and not token.lstrip("+-").isdigit()
+    ]
+    if invalid:
+        cli_error(f"Invalid pk(s) in --pks: {', '.join(invalid)}")
+    pks = _parse_pks(raw)
+    if not pks:
+        cli_error("No valid PKs provided.")
+    return pks
+
+
+async def _name_missing_pks(db, pks: list[int]) -> None:
+    """A pk the store does not hold stops the command before anything is changed (#1955)."""
+    missing = [pk for pk in pks if await db.get_channel_by_pk(pk) is None]
+    if missing:
+        cli_error(f"Channel pk(s) not found: {', '.join(map(str, missing))}")
+
+
+def _fail_on_errors(result) -> None:
+    """A channel that failed fails the command; the report already listed it on stdout (#1955)."""
+    errors = getattr(result, "errors", None)
+    if isinstance(errors, (list, tuple)) and errors:
+        cli_error(f"{len(errors)} channel(s) failed: " + "; ".join(str(error) for error in errors))
+
+
 def _print_result(result, verb: str = "Purged") -> None:
     # Normalize to a concrete list first: a bare attribute access on some mocks/objects
     # yields a truthy non-list, which would otherwise print a bogus "Errors (0):" and
@@ -290,10 +323,8 @@ async def reset_impl(config_path: str, *, pks: str | None = None) -> None:
     try:
         analyzer = ChannelAnalyzer(db)
         if pks:
-            pk_list = _parse_pks(pks)
-            if not pk_list:
-                print("No valid PKs provided.")
-                return
+            pk_list = _requested_pks(pks)
+            await _name_missing_pks(db, pk_list)
             count = await analyzer.reset_filters_for_pks(
                 pk_list, origin="human", actor="cli"
             )
@@ -309,13 +340,10 @@ async def purge_impl(config_path: str, *, pks: str | None = None, yes: bool = Fa
     """Purge stored messages from filtered channels (confirmation unless --yes)."""
     _, db = await runtime.init_db(config_path)
     try:
-        svc = _build_deletion_service(db)
         pk_list: list[int] | None
         if pks:
-            pk_list = _parse_pks(pks)
-            if not pk_list:
-                print("No valid PKs provided.")
-                return
+            pk_list = _requested_pks(pks)
+            await _name_missing_pks(db, pk_list)
             scope = f"{len(pk_list)} selected channel(s)"
         else:
             pk_list = None
@@ -327,11 +355,13 @@ async def purge_impl(config_path: str, *, pks: str | None = None, yes: bool = Fa
             if confirm != "y":
                 print("Aborted.")
                 return
+        svc = _build_deletion_service(db)
         if pk_list is not None:
             result = await svc.purge_channels_by_pks(pk_list)
         else:
             result = await svc.purge_all_filtered()
         _print_result(result, "Purged messages from")
+        _fail_on_errors(result)
     finally:
         await db.close()
 
@@ -342,7 +372,11 @@ async def purge_messages_impl(config_path: str, *, channel_id: int, yes: bool = 
     try:
         channels = await db.get_channels()
         ch = next((c for c in channels if c.channel_id == channel_id), None)
-        title = ch.title if ch else str(channel_id)
+        if ch is None:
+            # Before the prompt: there is nothing to confirm for a channel the
+            # store does not hold (#1955).
+            cli_error(f"Channel {channel_id} not found")
+        title = ch.title or str(channel_id)
         if not yes:
             confirm = sync_prompt(
                 f"Delete all messages for channel {title} ({channel_id}) from DB? [y/N] "
@@ -362,17 +396,13 @@ async def hard_delete_impl(config_path: str, *, pks: str | None = None, yes: boo
     try:
         dev_mode = (await db.get_setting("agent_dev_mode_enabled") or "0") == "1"
         if not dev_mode:
-            print(
+            cli_error(
                 "Hard-delete requires developer mode. "
                 "Enable it in Settings → Developer mode."
             )
-            return
-        svc = _build_deletion_service(db)
         if pks:
-            pk_list = _parse_pks(pks)
-            if not pk_list:
-                print("No valid PKs provided.")
-                return
+            pk_list = _requested_pks(pks)
+            await _name_missing_pks(db, pk_list)
         else:
             channels = await db.get_channels_with_counts(
                 active_only=False,
@@ -382,6 +412,7 @@ async def hard_delete_impl(config_path: str, *, pks: str | None = None, yes: boo
             if not pk_list:
                 print("No filtered channels to delete.")
                 return
+        svc = _build_deletion_service(db)
         if not yes:
             confirm = sync_prompt(
                 f"Hard-delete {len(pk_list)} channel(s) from DB? "
@@ -396,6 +427,7 @@ async def hard_delete_impl(config_path: str, *, pks: str | None = None, yes: boo
                 return
         result = await svc.hard_delete_channels_by_pks(pk_list)
         _print_result(result, "Hard-deleted")
+        _fail_on_errors(result)
     finally:
         await db.close()
 

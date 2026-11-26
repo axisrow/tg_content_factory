@@ -362,6 +362,9 @@ def test_filter_purge_by_pks(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "filter_purge_pks.db")
     db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
+    # The command looks every requested pk up before it asks or purges (#1955).
+    for channel_id in (101, 102, 103):
+        asyncio.run(db.add_channel(Channel(channel_id=channel_id, title=f"Channel {channel_id}")))
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from tg_agent.cli.commands.filter import run
 
@@ -388,10 +391,12 @@ def test_filter_purge_invalid_pks(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from tg_agent.cli.commands.filter import run
 
-        run(_ns(filter_action="purge", pks="abc,def"))
+        # A token that is not a pk refuses the whole list (#1955).
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(filter_action="purge", pks="abc,def"))
 
-    out = capsys.readouterr().out
-    assert "No valid PKs provided" in out
+    assert excinfo.value.exit_code == 1
+    assert "Invalid pk(s) in --pks: abc, def" in capsys.readouterr().err
 
 
 def test_filter_hard_delete_requires_dev_mode(tmp_path, cli_init_patch, capsys):
@@ -402,10 +407,12 @@ def test_filter_hard_delete_requires_dev_mode(tmp_path, cli_init_patch, capsys):
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from tg_agent.cli.commands.filter import run
 
-        run(_ns(filter_action="hard-delete", pks=None, yes=False))
+        # Refused without developer mode — as a failure, not a printed note (#1955).
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(filter_action="hard-delete", pks=None, yes=False))
 
-    out = capsys.readouterr().out
-    assert "Hard-delete requires developer mode" in out
+    assert excinfo.value.exit_code == 1
+    assert "Hard-delete requires developer mode" in capsys.readouterr().err
 
 
 def test_filter_no_action(cli_init_patch, capsys):
@@ -514,6 +521,8 @@ def _run_hard_delete_with_prompt(tmp_path, cli_init_patch, db_name, typed):
     seed = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(seed.initialize())
     asyncio.run(seed.set_setting("agent_dev_mode_enabled", "1"))
+    # pk 1 must exist: the command looks every requested pk up first (#1955).
+    asyncio.run(seed.add_channel(Channel(channel_id=100, title="HardDeleteTarget")))
     asyncio.run(seed.close())
 
     captured = {}

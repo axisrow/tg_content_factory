@@ -456,6 +456,16 @@ async def list_impl(config_path: str) -> None:
         await db.close()
 
 
+async def _gateway_knows_account(config, db, account_id: int) -> bool:
+    """Is the id a project account, in a mirror refreshed from the gateway (#1955)?
+
+    The catalog answers a bare ``ValueError`` for an id it does not hold, which
+    reached the user as a traceback.
+    """
+    await runtime.refresh_gateway_catalog(config, db)
+    return any(account.id == account_id for account in await db.get_account_summaries(active_only=False))
+
+
 async def toggle_impl(config_path: str, *, account_id: int) -> None:
     """Toggle an account's active state."""
     config, db = await runtime.init_db(config_path)
@@ -491,6 +501,8 @@ async def set_primary_impl(config_path: str, *, account_id: int) -> None:
     config, db = await runtime.init_db(config_path)
     try:
         if isinstance(config.gateway, dict) and config.gateway:
+            if not await _gateway_knows_account(config, db, account_id):
+                cli_error(f"Account id={account_id} not found")
             from tg_agent.gateway.catalog import ProjectAccountCatalog
             from tg_agent.gateway.client import TelegramGatewayClient
 
@@ -514,6 +526,8 @@ async def delete_impl(config_path: str, *, account_id: int, notify_to: str | Non
     config, db = await runtime.init_db(config_path)
     try:
         if isinstance(config.gateway, dict) and config.gateway:
+            if not await _gateway_knows_account(config, db, account_id):
+                cli_error(f"Account id={account_id} not found")
             from tg_agent.gateway.catalog import ProjectAccountCatalog
             from tg_agent.gateway.client import TelegramGatewayClient
 
