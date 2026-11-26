@@ -93,6 +93,7 @@ async def test_translate_batch_skips_same_lang():
     ]
     results = await svc.translate_batch(messages, "en")
     assert results == []
+    assert svc.last_error is None  # nothing to translate is not a failure (#1964)
 
 
 # ── _parse_numbered_response ─────────────────────────────────────────
@@ -271,6 +272,7 @@ async def test_translate_message_skips_stub_default_provider():
 
     result = await svc.translate_message("text", "ru", "en")
     assert result is None
+    assert svc.last_error == "No LLM provider configured (only the stub default is available)"
 
 
 @pytest.mark.anyio
@@ -285,6 +287,7 @@ async def test_translate_message_exception_returns_none():
     svc = TranslationService(db=AsyncMock(), provider_service=mock_provider_service)
     result = await svc.translate_message("text", "ru", "en")
     assert result is None
+    assert svc.last_error == "API down"
 
 
 # ── translate_batch edge cases ──────────────────────────────────────
@@ -303,6 +306,7 @@ async def test_translate_batch_no_provider():
     msgs = [Message(id=1, channel_id=100, message_id=1, text="hi", detected_lang="ru", date=datetime.now(timezone.utc))]
     result = await svc.translate_batch(msgs, "en")
     assert result == []
+    assert svc.last_error == "No provider service configured for translation"
 
 
 @pytest.mark.anyio
@@ -319,6 +323,7 @@ async def test_translate_batch_skips_stub_default_provider():
     ]
     result = await svc.translate_batch(msgs, "en")
     assert result == []
+    assert svc.last_error == "No LLM provider configured (only the stub default is available)"
 
 
 @pytest.mark.anyio
@@ -335,6 +340,24 @@ async def test_translate_batch_provider_exception():
     ]
     result = await svc.translate_batch(msgs, "en")
     assert result == []
+    assert svc.last_error == "API error"
+
+
+@pytest.mark.anyio
+async def test_translate_batch_provider_exception_without_message_names_its_type():
+    """An empty str() of the exception is not an empty reason."""
+    mock_provider = AsyncMock(side_effect=RuntimeError())
+    mock_ps = MagicMock()
+    mock_ps.get_provider_callable.return_value = mock_provider
+    mock_ps._registry = {}
+
+    svc = TranslationService(db=AsyncMock(), provider_service=mock_ps)
+    msgs = [
+        Message(id=1, channel_id=100, message_id=1, text="Привет", detected_lang="ru", date=datetime.now(timezone.utc)),
+    ]
+    result = await svc.translate_batch(msgs, "en")
+    assert result == []
+    assert svc.last_error == "RuntimeError"
 
 
 @pytest.mark.anyio
@@ -351,6 +374,7 @@ async def test_translate_batch_provider_returns_none():
     ]
     result = await svc.translate_batch(msgs, "en")
     assert result == []
+    assert svc.last_error == "The provider returned an empty translation"
 
 
 # ── get_settings ────────────────────────────────────────────────────

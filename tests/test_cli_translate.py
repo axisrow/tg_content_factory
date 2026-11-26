@@ -119,6 +119,7 @@ class TestRun:
         mock_get.return_value = msgs
         svc = mock_trans_svc.return_value
         svc.translate_batch = AsyncMock(return_value=[(1, "hello"), (2, "world")])
+        svc.last_error = None
         from tg_agent.cli.commands.translate import run
         run(_ns(translate_action="run", target="en"))
         out = capsys.readouterr().out
@@ -134,10 +135,29 @@ class TestRun:
         mock_get.return_value = msgs
         svc = mock_trans_svc.return_value
         svc.translate_batch = AsyncMock(return_value=[])
+        svc.last_error = None
         from tg_agent.cli.commands.translate import run
         run(_ns(translate_action="run", target="en", source_filter="ru,de", limit=50))
         _, kwargs = mock_get.call_args
         assert kwargs.get("source_langs") == ["ru", "de"] or mock_get.call_args[1].get("source_langs") == ["ru", "de"]
+
+    @patch("tg_agent.services.translation_service.TranslationService")
+    @patch("tg_agent.services.provider_service.RuntimeProviderRegistry")
+    @patch("tg_agent.database.repositories.messages.MessagesRepository.get_untranslated_messages")
+    def test_run_provider_failed(self, mock_get, mock_prov_svc, mock_trans_svc, cli_env, capsys):
+        """#1964: a batch the provider did not translate is a failure, with the reason."""
+        _prep_prov_mock(mock_prov_svc)
+        mock_get.return_value = [SimpleNamespace(id=1), SimpleNamespace(id=2)]
+        svc = mock_trans_svc.return_value
+        svc.translate_batch = AsyncMock(return_value=[])
+        svc.last_error = "API down"
+        from tg_agent.cli.commands.translate import run
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(translate_action="run", target="en"))
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "Translated 0/2" in captured.out
+        assert "Translation failed: API down" in captured.err
 
     @patch("tg_agent.services.translation_service.TranslationService")
     @patch("tg_agent.services.provider_service.RuntimeProviderRegistry")
@@ -160,6 +180,7 @@ class TestRun:
         mock_get.return_value = msgs
         svc = mock_trans_svc.return_value
         svc.translate_batch = AsyncMock(return_value=[(1, "hello")])
+        svc.last_error = None
         from tg_agent.cli.commands.translate import run
         run(_ns(translate_action="run"))
         out = capsys.readouterr().out
@@ -191,9 +212,10 @@ class TestMessage:
     @patch("tg_agent.database.repositories.messages.MessagesRepository.get_by_id")
     def test_message_success(self, mock_get, mock_prov_svc, mock_trans_svc, mock_update, cli_env, capsys):
         _prep_prov_mock(mock_prov_svc)
-        mock_get.return_value = SimpleNamespace(id=1, text="Привет мир")
+        mock_get.return_value = SimpleNamespace(id=1, text="Привет мир", detected_lang="ru")
         svc = mock_trans_svc.return_value
         svc.translate_batch = AsyncMock(return_value=[(1, "Hello world")])
+        svc.last_error = None
         from tg_agent.cli.commands.translate import run
         run(_ns(translate_action="message", message_id=1, target="en"))
         out = capsys.readouterr().out
@@ -204,14 +226,41 @@ class TestMessage:
     @patch("tg_agent.services.provider_service.RuntimeProviderRegistry")
     @patch("tg_agent.database.repositories.messages.MessagesRepository.get_by_id")
     def test_message_translation_failed(self, mock_get, mock_prov_svc, mock_trans_svc, cli_env, capsys):
+        """#1964: the provider's reason goes to stderr and the command exits 1."""
         _prep_prov_mock(mock_prov_svc)
-        mock_get.return_value = SimpleNamespace(id=1, text="Some text here")
+        mock_get.return_value = SimpleNamespace(id=1, text="Some text here", detected_lang="ru")
         svc = mock_trans_svc.return_value
         svc.translate_batch = AsyncMock(return_value=[])
+        svc.last_error = "API down"
         from tg_agent.cli.commands.translate import run
-        run(_ns(translate_action="message", message_id=1))
-        out = capsys.readouterr().out
-        assert "Translation failed" in out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(translate_action="message", message_id=1))
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "Translation failed: API down" in captured.err
+        assert "Translation failed" not in captured.out
+
+    @patch("tg_agent.database.repositories.messages.MessagesRepository.get_by_id")
+    def test_message_language_not_detected(self, mock_get, cli_env, capsys):
+        """A message without a detected language cannot be translated: a miss, named (#1964)."""
+        mock_get.return_value = SimpleNamespace(id=1, text="Some text here", detected_lang=None)
+        from tg_agent.cli.commands.translate import run
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(translate_action="message", message_id=1))
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "not detected" in captured.err
+        assert "translate detect" in captured.err
+
+    @patch("tg_agent.database.repositories.messages.MessagesRepository.get_by_id")
+    def test_message_already_in_target(self, mock_get, cli_env, capsys):
+        """Nothing to do is not a failure (#1964)."""
+        mock_get.return_value = SimpleNamespace(id=1, text="Hello", detected_lang="en")
+        from tg_agent.cli.commands.translate import run
+        run(_ns(translate_action="message", message_id=1, target="en"))
+        captured = capsys.readouterr()
+        assert "Nothing to translate" in captured.out
+        assert captured.err == ""
 
     @patch("tg_agent.database.repositories.messages.MessagesRepository.update_translation", new_callable=AsyncMock)
     @patch("tg_agent.services.translation_service.TranslationService")
@@ -219,9 +268,10 @@ class TestMessage:
     @patch("tg_agent.database.repositories.messages.MessagesRepository.get_by_id")
     def test_message_with_custom_target(self, mock_get, mock_prov_svc, mock_trans_svc, mock_update, cli_env, capsys):
         _prep_prov_mock(mock_prov_svc)
-        mock_get.return_value = SimpleNamespace(id=1, text="Hello")
+        mock_get.return_value = SimpleNamespace(id=1, text="Hello", detected_lang="en")
         svc = mock_trans_svc.return_value
         svc.translate_batch = AsyncMock(return_value=[(1, "Hallo")])
+        svc.last_error = None
         from tg_agent.cli.commands.translate import run
         run(_ns(translate_action="message", message_id=1, target="de"))
         out = capsys.readouterr().out

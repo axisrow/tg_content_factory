@@ -100,6 +100,7 @@ def test_run_with_messages(capsys):
     mock_ps.load_db_providers = AsyncMock(return_value=0)
     mock_ts = MagicMock()
     mock_ts.translate_batch = AsyncMock(return_value=[(1, "translated text")])
+    mock_ts.last_error = None
     with _patches(db)[0], _patches(db)[1], \
          patch("tg_agent.services.provider_service.RuntimeProviderRegistry", return_value=mock_ps), \
          patch("tg_agent.services.translation_service.TranslationService", return_value=mock_ts):
@@ -142,6 +143,7 @@ def test_message_with_text(capsys):
     mock_ps.load_db_providers = AsyncMock(return_value=0)
     mock_ts = MagicMock()
     mock_ts.translate_batch = AsyncMock(return_value=[(1, "Hello world")])
+    mock_ts.last_error = None
     with _patches(db)[0], _patches(db)[1], \
          patch("tg_agent.services.provider_service.RuntimeProviderRegistry", return_value=mock_ps), \
          patch("tg_agent.services.translation_service.TranslationService", return_value=mock_ts):
@@ -152,6 +154,7 @@ def test_message_with_text(capsys):
 
 
 def test_message_translation_failed(capsys):
+    """#1964: the provider's reason goes to stderr and the command exits 1."""
     db = make_cli_db()
     msg = MagicMock(text="Привет")
     db.repos.messages.get_by_id = AsyncMock(return_value=msg)
@@ -159,8 +162,12 @@ def test_message_translation_failed(capsys):
     mock_ps.load_db_providers = AsyncMock(return_value=0)
     mock_ts = MagicMock()
     mock_ts.translate_batch = AsyncMock(return_value=[])
+    mock_ts.last_error = "API down"
     with _patches(db)[0], _patches(db)[1], \
          patch("tg_agent.services.provider_service.RuntimeProviderRegistry", return_value=mock_ps), \
          patch("tg_agent.services.translation_service.TranslationService", return_value=mock_ts):
-        run(_args(translate_action="message", message_id=1, target="en"))
-    assert "failed" in capsys.readouterr().out.lower()
+        with pytest.raises(typer.Exit):
+            run(_args(translate_action="message", message_id=1, target="en"))
+    captured = capsys.readouterr()
+    assert "failed: api down" in captured.err.lower()
+    assert "failed" not in captured.out.lower()
