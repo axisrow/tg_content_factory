@@ -271,9 +271,10 @@ search-query list | get | add | edit | delete | toggle | run | stats
   exits 1 before any prompt or deletion, and a channel that failed on the
   database exits 1 after its report (#1955).
   A generation that did not happen is a failure too: `pipeline run`/`generate`
-  exit 1 on a missing LLM provider or a failed generation, and
-  `pipeline generate-stream` ends a failed run with its `error` JSON line and
-  exit 1 (#1952).
+  exit 1 on a missing LLM provider or a failed generation;
+  `pipeline generate-stream` reports an unresolved source scope or a failed run
+  with its `error` JSON line, then exits 1; a missing LLM provider is refused
+  with a plain stderr line and exit 1 as well (#1952).
 - **Flood/throttle errors carry RPC attribution (#1828):** `dialogs
   send`/`forward`/`edit-message` refusals (and pipeline publish receipts)
   print one curated line — `local throttling by <budget>` (refused before any

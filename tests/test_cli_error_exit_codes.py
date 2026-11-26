@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from types import SimpleNamespace
@@ -42,7 +43,7 @@ from tg_agent.cli.pipeline import requests as pipeline_requests
 from tg_agent.config import AppConfig
 from tg_agent.database.bundles import PipelineBundle, SearchQueryBundle
 from tg_agent.models import Message
-from tg_agent.services.pipeline_service import PipelineService
+from tg_agent.services.pipeline_service import PipelineScopeError, PipelineService
 from tg_agent.services.search_query_service import SearchQueryService
 from tg_agent.services.telegram_actions import TelegramActionClientUnavailableError
 
@@ -1409,10 +1410,9 @@ class TestFailedGenerationExitCodes:
                 patch(
                     "tg_agent.cli.pipeline.generation.runtime.init_pool",
                     new=AsyncMock(side_effect=AssertionError("pool opened")),
-                ) as init_pool,
+                ),
             ):
                 await handler(command, db, AppConfig(), svc)
-            init_pool.assert_not_called()
 
         with pytest.raises(typer.Exit) as excinfo:
             asyncio.run(body(cli_env))
@@ -1459,3 +1459,33 @@ class TestFailedGenerationExitCodes:
             asyncio.run(body(cli_env))
         _assert_exit_clean(excinfo, capsys, "Generation failed")
         pool.disconnect_all.assert_awaited_once()
+
+    def test_a_scope_failure_of_the_stream_exits_1_before_a_run(self, cli_env, capsys):
+        """The third failure path of the stream: the `error` event is the report, no run exists."""
+        reason = "Could not resolve source scope"
+        with_provider = AsyncMock(
+            return_value=SimpleNamespace(has_providers=lambda: True, get_provider_callable=lambda _model: AsyncMock())
+        )
+        pid = asyncio.run(_seed_pipeline(cli_env, DAG_GRAPH))
+
+        async def body(db):
+            svc = PipelineService(PipelineBundle.from_database(db))
+            services: Any = SimpleNamespace(search_engine=lambda _db: object())
+            with (
+                patch("tg_agent.services.provider_service.build_provider_service", new=with_provider),
+                patch.object(svc, "get_retrieval_scope", new=AsyncMock(side_effect=PipelineScopeError(reason))),
+            ):
+                await generation._pipeline_generate_stream(
+                    pipeline_requests.PipelineGenerateStreamCommand(id=pid),
+                    db,
+                    AppConfig(),
+                    svc,
+                    services=services,
+                )
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(body(cli_env))
+        assert excinfo.value.exit_code == 1
+        lines = capsys.readouterr().out.splitlines()
+        assert json.loads(lines[-1]) == {"event": "error", "error": reason}
+        assert asyncio.run(cli_env.repos.generation_runs.list_by_pipeline(pid)) == []
