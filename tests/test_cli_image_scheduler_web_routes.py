@@ -68,7 +68,7 @@ class TestCLIImageCommand:
             assert "together" in out
 
     def test_generate_no_providers(self, capsys):
-        """generate action when no providers configured prints warning."""
+        """generate without a provider is a refusal (#1961): the hint on stderr, exit 1."""
         from tg_agent.cli.commands.image import run
 
         with patch("tg_agent.cli.commands.image.ImageGenerationService") as mock_svc_cls:
@@ -76,9 +76,13 @@ class TestCLIImageCommand:
             svc.is_available = AsyncMock(return_value=False)
             mock_svc_cls.return_value = svc
 
-            run(_run_ns(image_action="generate", model=None, prompt="a cat"))
-            out = capsys.readouterr().out
-            assert "No image providers configured" in out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_run_ns(image_action="generate", model=None, prompt="a cat"))
+
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "No image providers configured" in captured.err
+        assert "No image providers" not in captured.out
 
     def test_generate_success(self, capsys):
         """generate action prints result URL on success."""
@@ -95,7 +99,7 @@ class TestCLIImageCommand:
             assert "https://example.com/img.png" in out
 
     def test_generate_failure(self, capsys):
-        """generate action prints failure message when result is None."""
+        """generate without a result is a failure (#1961): exit 1, nothing about it on stdout."""
         from tg_agent.cli.commands.image import run
 
         with patch("tg_agent.cli.commands.image.ImageGenerationService") as mock_svc_cls:
@@ -105,12 +109,38 @@ class TestCLIImageCommand:
             svc.last_failure = None
             mock_svc_cls.return_value = svc
 
-            run(_run_ns(image_action="generate", model=None, prompt="a cat"))
-            out = capsys.readouterr().out
-            assert "Generation failed" in out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_run_ns(image_action="generate", model=None, prompt="a cat"))
+
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "Generation failed" in captured.err
+        assert "Generation failed" not in captured.out
+
+    def test_generate_failure_names_the_reason(self, capsys):
+        """The service knows why the generation failed; the CLI prints it (#1961)."""
+        from tg_agent.cli.commands.image import run
+        from tg_agent.services.image_generation_service import ImageGenerationFailure
+
+        with patch("tg_agent.cli.commands.image.ImageGenerationService") as mock_svc_cls:
+            svc = MagicMock()
+            svc.is_available = AsyncMock(return_value=True)
+            svc.generate = AsyncMock(return_value=None)
+            svc.last_failure = ImageGenerationFailure(
+                kind="error", provider="replicate", model=None, message="401 Unauthorized"
+            )
+            mock_svc_cls.return_value = svc
+
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_run_ns(image_action="generate", model=None, prompt="a cat"))
+
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "Generation failed: 401 Unauthorized" in captured.err
+        assert "Result:" not in captured.out
 
     def test_generate_timeout_failure(self, capsys):
-        """generate action prints actionable timeout message when the service reports timeout."""
+        """generate prints actionable timeout message when the service reports timeout."""
         from tg_agent.cli.commands.image import run
         from tg_agent.services.image_generation_service import ImageGenerationFailure
 
@@ -123,10 +153,13 @@ class TestCLIImageCommand:
             )
             mock_svc_cls.return_value = svc
 
-            run(_run_ns(image_action="generate", model="codex:gpt-5.4", prompt="a cat"))
-            out = capsys.readouterr().out
-            assert "Generation timed out for model=codex:gpt-5.4 after 180s" in out
-            assert "choose another image provider/model" in out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_run_ns(image_action="generate", model="codex:gpt-5.4", prompt="a cat"))
+
+        assert excinfo.value.exit_code == 1
+        err = capsys.readouterr().err
+        assert "Generation timed out for model=codex:gpt-5.4 after 180s" in err
+        assert "choose another image provider/model" in err
 
     def test_models_no_results(self, capsys):
         """models action with no results prints message."""
@@ -140,6 +173,23 @@ class TestCLIImageCommand:
             run(_run_ns(image_action="models", provider="replicate", query=""))
             out = capsys.readouterr().out
             assert "No models found" in out
+
+    def test_models_unknown_provider(self, capsys):
+        """An unknown provider is a refused argument (#1961), not an empty search."""
+        from tg_agent.cli.commands.image import run
+
+        with patch("tg_agent.cli.commands.image.ImageGenerationService") as mock_svc_cls:
+            svc = MagicMock()
+            svc.search_models = AsyncMock(return_value=[])
+            mock_svc_cls.return_value = svc
+
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_run_ns(image_action="models", provider="no-such-provider", query=""))
+
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert "Unknown image provider: no-such-provider" in captured.err
+        assert "No models found" not in captured.out
 
     def test_models_with_results(self, capsys):
         """models action prints model strings and descriptions."""

@@ -16,6 +16,7 @@ import typer
 from tg_agent.cli import runtime
 from tg_agent.cli.commands.common import (
     apply_startup,
+    cli_error,
     run_async,
 )
 from tg_agent.services.image_generation_service import ImageGenerationService
@@ -43,10 +44,13 @@ async def _build_image_service(db, config) -> ImageGenerationService:
 
 
 def _generation_failure_text(svc: ImageGenerationService) -> str:
+    """The reason the service recorded (#1961); the timeout wording as it is."""
     failure = svc.last_failure
-    if failure is not None and getattr(failure, "is_timeout", False):
+    if failure is None:
+        return "Generation failed — check logs"
+    if failure.is_timeout:
         return failure.user_message(lang="en")
-    return "Generation failed — check logs"
+    return f"Generation failed: {failure.message}"
 
 
 async def generate_impl(config_path: str, *, prompt: str, model: str | None = None) -> None:
@@ -55,23 +59,27 @@ async def generate_impl(config_path: str, *, prompt: str, model: str | None = No
     try:
         svc = await _build_image_service(db, config)
         if not await svc.is_available():
-            print("No image providers configured. Set REPLICATE_API_TOKEN or similar env var.")
-            return
+            cli_error("No image providers configured. Set REPLICATE_API_TOKEN or similar env var.")
         print(f"Generating image: model={model or 'default'}, prompt={prompt!r}")
         result = await svc.generate(model, prompt)
-        if result:
-            print(f"Result: {result}")
-        else:
-            print(_generation_failure_text(svc))
+        if not result:
+            cli_error(_generation_failure_text(svc))
+        print(f"Result: {result}")
     finally:
         await db.close()
 
 
 async def models_impl(config_path: str, *, provider: str, query: str = "", refresh: bool = False) -> None:
     """Search available models for *provider*."""
+    from tg_agent.services.image_provider_service import image_provider_spec
+
     config, db = await runtime.init_db(config_path)
     try:
         svc = await _build_image_service(db, config)
+        # A provider the spec table does not know is a refused argument, not
+        # an empty search (#1961).
+        if image_provider_spec(provider) is None:
+            cli_error(f"Unknown image provider: {provider}")
         models = await svc.search_models(provider, query or "", refresh=refresh)
         if not models:
             print(f"No models found for provider={provider} query={query!r}")

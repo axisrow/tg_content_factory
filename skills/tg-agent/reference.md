@@ -268,6 +268,9 @@ search-query list | get | add | edit | delete | toggle | run | stats
   undone (the summary line stays on stdout, the skipped ids go to stderr).
   Still print-and-exit-0: a failed generation itself — `pipeline run`/`generate`
   answer `Generation failed: …` or `LLM provider is not configured` (#1952).
+  `image generate` exits 1 — no provider configured, an empty prompt or a failed
+  generation, with the reason on stderr; `image models` refuses an unknown
+  provider by name (#1961).
 - **Flood/throttle errors carry RPC attribution (#1828):** `dialogs
   send`/`forward`/`edit-message` refusals (and pipeline publish receipts)
   print one curated line — `local throttling by <budget>` (refused before any

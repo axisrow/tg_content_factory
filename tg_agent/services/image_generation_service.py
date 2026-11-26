@@ -91,7 +91,14 @@ class ImageGenerationService:
     async def generate(self, model: str | None, text: str) -> str | None:
         """Generate an image for *text* using *model*.  Returns URL/path or ``None``."""
         self._last_failure = None
-        if not text or not self._adapters:
+        if not text:
+            # A None without a failure leaves the callers' "check logs"
+            # pointing at nothing (#1961).
+            self._last_failure = ImageGenerationFailure(
+                kind="no_prompt", provider=None, model=model, message="Prompt is empty", retryable=False,
+            )
+            return None
+        if not self._adapters:
             return None
         provider_name, model_id = self._parse_model_string(model)
         adapter = self._resolve_adapter(provider_name)

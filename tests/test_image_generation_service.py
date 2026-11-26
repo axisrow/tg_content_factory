@@ -195,6 +195,9 @@ async def test_generate_empty_text_returns_none():
     svc.register_adapter("fake", fake_adapter)
     result = await svc.generate("fake:m", "")
     assert result is None
+    # A None without a failure leaves "check logs" pointing at nothing (#1961).
+    assert svc.last_failure is not None
+    assert svc.last_failure.message == "Prompt is empty"
 
 
 @pytest.mark.anyio
