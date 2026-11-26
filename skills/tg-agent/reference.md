@@ -343,7 +343,9 @@ regex (#1937); `--silent` sends without a notification sound (night or
 scheduled posts); `--reply-to <message_id>` replies to a specific message in the
 same chat (DM, group or channel — find the id via `messages read <chat> --limit N`,
 and check the result with `messages read <chat> --live --format json`: the reply
-carries `reply_to`, #1938);
+carries `reply_to`, #1938; a target that is not in the chat sends nothing and
+exits 1 — Telegram would otherwise drop the reply and post a plain message,
+#1940);
 `--comment-to <post_id>` turns the send into a comment under
 that channel post — the recipient must be a channel, Telegram routes the text
 into its linked discussion group (use `messages read <channel> --limit N` or

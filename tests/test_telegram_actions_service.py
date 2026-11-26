@@ -302,6 +302,57 @@ async def test_send_message_reply_to_passes_through_to_the_client():
     client.send_message.assert_awaited_once_with(
         "entity", "answering", link_preview=False, reply_to=55
     )
+    # Unchecked by default: a caller that answers its own just-posted message
+    # does not pay a read per reply (#1940).
+    client.iter_messages.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_send_message_verified_reply_target_missing_sends_nothing():
+    """#1940: Telegram drops an unknown reply id and delivers a plain message —
+    a verified reply to a missing target sends nothing and names the target."""
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
+
+    async def _no_messages(entity, ids):
+        assert ids == 2147480000
+        return
+        yield  # pragma: no cover
+
+    client.iter_messages = MagicMock(return_value=_no_messages("entity", 2147480000))
+    pool = _pool_with_client(client)
+
+    with pytest.raises(TelegramActionMessageNotFoundError, match="Reply target #2147480000"):
+        await TelegramActionService(pool).send_message(
+            phone="+1", recipient="@chat", text="answering", reply_to=2147480000, verify_reply_to=True
+        )
+
+    client.send_message.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_send_message_verified_reply_target_present_sends_the_reply():
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
+    client.send_message = AsyncMock(return_value=SimpleNamespace(id=14))
+
+    async def _target(entity, ids):
+        assert ids == 55
+        yield SimpleNamespace(id=55)
+
+    client.iter_messages = MagicMock(return_value=_target("entity", 55))
+    pool = _pool_with_client(client)
+
+    result = await TelegramActionService(pool).send_message(
+        phone="+1", recipient="@chat", text="answering", reply_to=55, verify_reply_to=True
+    )
+
+    assert result.message_id == 14
+    client.send_message.assert_awaited_once_with(
+        "entity", "answering", link_preview=False, reply_to=55
+    )
 
 
 @pytest.mark.anyio
