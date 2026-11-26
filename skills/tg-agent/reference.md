@@ -257,6 +257,11 @@ search-query list | get | add | edit | delete | toggle | run | stats
   and exits 1 (parser usage errors exit 2); **stdout stays for results**.
   Empty-but-valid results ("No messages found.") are not failures — they print
   normally and exit 0. Branch on the exit code, not on parsing stdout text.
+  `image generate` exits 1 — no provider configured, an empty prompt or a failed
+  generation, with the reason on stderr; `image models` refuses an unknown
+  provider by name and exits 1 with the reason when the catalog could not be
+  fetched (a missing key, an HTTP error) — `No models found` is then a real
+  empty search (#1961).
   This holds repo-wide for `messages`/`dialogs`/`account`/`settings`/`provider`/
   `export`/`scheduler`/`filter`/`photo-loader` (and pre-existing `dm`/`export`
   checks). A command whose target is missing exits 1 in every audited group —
@@ -268,11 +273,6 @@ search-query list | get | add | edit | delete | toggle | run | stats
   undone (the summary line stays on stdout, the skipped ids go to stderr).
   Still print-and-exit-0: a failed generation itself — `pipeline run`/`generate`
   answer `Generation failed: …` or `LLM provider is not configured` (#1952).
-  `image generate` exits 1 — no provider configured, an empty prompt or a failed
-  generation, with the reason on stderr; `image models` refuses an unknown
-  provider by name and exits 1 with the reason when the catalog could not be
-  fetched (a missing key, an HTTP error) — `No models found` is then a real
-  empty search (#1961).
 - **Flood/throttle errors carry RPC attribution (#1828):** `dialogs
   send`/`forward`/`edit-message` refusals (and pipeline publish receipts)
   print one curated line — `local throttling by <budget>` (refused before any
