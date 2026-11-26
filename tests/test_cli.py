@@ -377,8 +377,11 @@ class TestCLIChannelDB:
     def test_toggle_not_found(self, cli_env, capsys):
         from tg_agent.cli.commands.channel import run
 
-        run(_ns(channel_action="toggle", identifier="99999"))
-        assert "not found" in capsys.readouterr().out
+        # A missing target is a failure: exit 1, the reason on stderr (#1933).
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(channel_action="toggle", identifier="99999"))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

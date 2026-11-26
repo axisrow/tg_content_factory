@@ -239,8 +239,7 @@ async def task_cancel_impl(config_path: str, *, task_id: int) -> None:
     try:
         ok = await db.repos.tasks.cancel_collection_task(task_id)
         if not ok:
-            print(f"Task {task_id} not found or already completed.")
-            return
+            cli_error(f"Task {task_id} not found or already completed.")
         command_id = await TelegramCommandService(db).enqueue(
             "collection.cancel_task",
             payload={"task_id": task_id},

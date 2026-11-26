@@ -6,6 +6,7 @@ import asyncio
 import os
 from typing import Callable, cast
 
+from tg_agent.cli.commands.common import cli_error
 from tg_agent.cli.pipeline import requests, responses
 from tg_agent.services.pipeline_refs import parse_pipeline_target_refs
 from tg_agent.services.pipeline_service import (
@@ -243,8 +244,7 @@ async def _pipeline_add(args: requests.PipelineAddCommand, db, config, svc: Pipe
 async def _pipeline_edit(args: requests.PipelineEditCommand, db, config, svc: PipelineService) -> None:
     existing = await svc.get(args.id)
     if existing is None:
-        print(f"Pipeline id={args.id} not found")
-        return
+        cli_error(f"Pipeline id={args.id} not found")
     current_sources = [source.channel_id for source in await svc.get_sources(args.id)]
     current_targets = [
         PipelineTargetRef(phone=target.phone, dialog_id=target.dialog_id) for target in await svc.get_targets(args.id)
@@ -277,21 +277,20 @@ async def _pipeline_edit(args: requests.PipelineEditCommand, db, config, svc: Pi
         print(f"Error: {exc}")
         return
     if not ok:
-        print(f"Pipeline id={args.id} not found")
-        return
+        cli_error(f"Pipeline id={args.id} not found")
     print(f"Updated pipeline id={args.id}")
 
 
 async def _pipeline_toggle(args: requests.PipelineToggleCommand, db, config, svc: PipelineService) -> None:
     ok = await svc.toggle(args.id)
     if not ok:
-        print(f"Pipeline id={args.id} not found")
-        return
+        cli_error(f"Pipeline id={args.id} not found")
     print(f"Toggled pipeline id={args.id}")
 
 
 async def _pipeline_delete(args: requests.PipelineDeleteCommand, db, config, svc: PipelineService) -> None:
-    await svc.delete(args.id)
+    if not await svc.delete(args.id):
+        cli_error(f"Pipeline id={args.id} not found")
     print(f"Deleted pipeline id={args.id}")
 
 
@@ -300,8 +299,7 @@ async def _pipeline_refinement_steps(
 ) -> None:
     pipeline = await svc.get(args.id)
     if pipeline is None:
-        print(f"Pipeline id={args.id} not found")
-        return
+        cli_error(f"Pipeline id={args.id} not found")
     if args.steps_json:
         import json
 
@@ -330,8 +328,7 @@ async def _pipeline_export(args: requests.PipelineExportCommand, db, config, svc
 
     data = await svc.export_json(args.id)
     if data is None:
-        print(f"Pipeline id={args.id} not found")
-        return
+        cli_error(f"Pipeline id={args.id} not found")
     output = json.dumps(data, ensure_ascii=False, indent=2)
     if args.output:
         if await asyncio.to_thread(os.path.exists, args.output) and not args.force:

@@ -23,6 +23,7 @@ import typer
 from tg_agent.cli import runtime
 from tg_agent.cli.commands.common import (
     apply_startup,
+    cli_error,
     run_async,
 )
 
@@ -342,7 +343,8 @@ async def thread_rename_impl(config_path: str, *, thread_id: int, title: str) ->
     """Rename an agent thread."""
     _, db = await runtime.init_db(config_path)
     try:
-        await db.rename_agent_thread(thread_id, title[:100])
+        if not await db.rename_agent_thread(thread_id, title[:100]):
+            cli_error(f"Тред #{thread_id} не найден.")
         print(f"Тред #{thread_id} переименован: {title[:100]}")
     finally:
         await db.close()

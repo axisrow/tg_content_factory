@@ -8,6 +8,7 @@ command id. Fake-first: real :memory: Database, no Telegram, no worker.
 from __future__ import annotations
 
 import pytest
+import typer
 
 from tg_agent.cli.commands import scheduler as scheduler_cmd
 from tg_agent.models import TelegramCommandStatus
@@ -73,10 +74,12 @@ async def test_task_cancel_flips_row_and_enqueues_interrupt(patch_init_db, capsy
 
 
 async def test_task_cancel_unknown_id_enqueues_nothing(patch_init_db, capsys):
-    await scheduler_cmd.task_cancel_impl("config.yaml", task_id=424242)
-    out = capsys.readouterr().out
+    # A missing target is a failure: exit 1, the reason on stderr (#1933).
+    with pytest.raises(typer.Exit) as excinfo:
+        await scheduler_cmd.task_cancel_impl("config.yaml", task_id=424242)
+    assert excinfo.value.exit_code == 1
+    assert "not found" in capsys.readouterr().err
 
-    assert "not found" in out
     assert (
         await patch_init_db.repos.telegram_commands.list_commands(
             command_type="collection.cancel_task"

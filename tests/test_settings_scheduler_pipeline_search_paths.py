@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
+import typer
 
 from tests.helpers import cli_ns as _ns
 from tg_agent.config import AppConfig
@@ -456,7 +457,7 @@ class TestCLIPipelineDeleteToggle:
         assert "Deleted pipeline" in out
 
     def test_toggle_not_found(self, tmp_path, capsys):
-        """toggle on missing pipeline prints 'not found'."""
+        """toggle on missing pipeline exits 1 with 'not found' on stderr (#1933)."""
         db_path = str(tmp_path / "toggle_nf7.db")
         db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
@@ -465,8 +466,10 @@ class TestCLIPipelineDeleteToggle:
         with patch("tg_agent.cli.runtime.init_db", side_effect=_pipeline_fake_init_db(db_path)):
             from tg_agent.cli.commands.pipeline import run
 
-            run(_ns(pipeline_action="toggle", id=999))
-        assert "not found" in capsys.readouterr().out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(pipeline_action="toggle", id=999))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_toggle_existing(self, tmp_path, capsys):
         """toggle on existing pipeline prints toggled message."""

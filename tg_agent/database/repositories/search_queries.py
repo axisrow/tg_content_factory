@@ -105,14 +105,15 @@ class SearchQueriesRepository:
             ),
         )
 
-    async def delete(self, sq_id: int) -> None:
-        """Удалить запрос вместе с его дневной статистикой (одной транзакцией)."""
+    async def delete(self, sq_id: int) -> bool:
+        """Удалить запрос вместе с его дневной статистикой (одной транзакцией); вернуть, был ли запрос (#1933)."""
         assert self._database is not None, (
             "SearchQueriesRepository.delete requires a Database reference"
         )
         async with self._database.transaction() as conn:
             await conn.execute("DELETE FROM search_query_stats WHERE query_id = ?", (sq_id,))
-            await conn.execute("DELETE FROM search_queries WHERE id = ?", (sq_id,))
+            cur = await conn.execute("DELETE FROM search_queries WHERE id = ?", (sq_id,))
+        return cur.rowcount > 0
 
     async def record_stat(self, query_id: int, match_count: int) -> None:
         """Записать число совпадений запроса за сегодня (одна запись на день — перезаписывает текущую)."""

@@ -14,7 +14,7 @@ import sqlite3
 import typer
 
 from tg_agent.cli import runtime, worker_handoff
-from tg_agent.cli.commands.common import apply_startup, run_async
+from tg_agent.cli.commands.common import apply_startup, cli_error, run_async
 from tg_agent.models import CollectionTaskType, PingMonitor
 from tg_agent.services.task_enqueuer import TaskEnqueuer
 
@@ -129,7 +129,8 @@ async def update_impl(
 async def delete_impl(config_path: str, *, monitor_id: int) -> None:
     _, db = await runtime.init_db(config_path)
     try:
-        await db.repos.ping_monitors.delete(monitor_id)
+        if not await db.repos.ping_monitors.delete(monitor_id):
+            cli_error(f"Ping monitor #{monitor_id} not found")
         print(f"Deleted ping monitor #{monitor_id}")
     finally:
         await db.close()

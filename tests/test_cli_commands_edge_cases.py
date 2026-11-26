@@ -923,11 +923,13 @@ class TestSchedulerTaskCancel:
         pool.disconnect_all = AsyncMock()
 
         with patch("tg_agent.cli.commands.scheduler.runtime.init_db", side_effect=_make_coro((config, db))), \
-             patch("tg_agent.cli.commands.scheduler.runtime.init_pool", side_effect=_make_coro((MagicMock(), pool))):
+             patch("tg_agent.cli.commands.scheduler.runtime.init_pool", side_effect=_make_coro((MagicMock(), pool))), \
+             pytest.raises(typer.Exit) as excinfo:
             run(cli_ns(scheduler_action="task-cancel", task_id=99))
 
-        out = capsys.readouterr().out
-        assert "not found" in out
+        # A missing target is a failure: exit 1, the reason on stderr (#1933).
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 class TestSchedulerClearPending:
@@ -1727,14 +1729,16 @@ class TestSearchQueryEdit:
 
         with patch("tg_agent.cli.commands.search_query.runtime.init_db", side_effect=_make_coro((None, db))), \
              patch("tg_agent.cli.commands.search_query.SearchQueryService", return_value=svc_instance), \
-             patch("tg_agent.cli.commands.search_query.SearchQueryBundle") as mock_bundle_cls:
+             patch("tg_agent.cli.commands.search_query.SearchQueryBundle") as mock_bundle_cls, \
+             pytest.raises(typer.Exit) as excinfo:
             mock_bundle_cls.from_database.return_value = bundle
             run(cli_ns(search_query_action="edit", id=999, query=None, interval=None,
                        regex=None, fts=None, notify=None, track_stats=None,
                        exclude_patterns=None, max_length=None))
 
-        out = capsys.readouterr().out
-        assert "not found" in out
+        # A missing target is a failure: exit 1, the reason on stderr (#1933).
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_edit_updates_fields(self, capsys):
         from tg_agent.cli.commands.search_query import run

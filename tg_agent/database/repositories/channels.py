@@ -1233,12 +1233,13 @@ class ChannelsRepository:
             return
         await self._database.execute_write("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
 
-    async def delete_tag(self, name: str) -> None:
-        """Удалить тег по имени (связи каналов с ним уходят каскадом по FK)."""
+    async def delete_tag(self, name: str) -> bool:
+        """Удалить тег по имени (связи каналов с ним уходят каскадом по FK); вернуть, был ли тег (#1933)."""
         assert self._database is not None, (
             "ChannelsRepository.delete_tag requires a Database reference"
         )
-        await self._database.execute_write("DELETE FROM tags WHERE name = ?", (name,))
+        cur = await self._database.execute_write("DELETE FROM tags WHERE name = ?", (name,))
+        return cur.rowcount > 0
 
     async def get_channel_tags(self, channel_pk: int) -> list[str]:
         """Имена тегов, присвоенных каналу (по его pk), по алфавиту."""

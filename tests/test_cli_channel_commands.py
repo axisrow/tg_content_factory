@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import typer
 
 from tests.helpers import cli_add_channel as _add_channel
 from tests.helpers import cli_ns as _ns
@@ -105,17 +106,21 @@ class TestHandleTag:
 
 class TestHandleTagMissingChannel:
     @pytest.mark.anyio
-    async def test_set_missing_pk_reports_not_found_no_traceback(self, db, capsys):
-        await tag_set_impl(db, pk=999, tags="ghost")
-        out = capsys.readouterr().out
-        assert "not found" in out
-        assert "pk=999" in out
+    async def test_set_missing_pk_exits_1_no_traceback(self, db, capsys):
+        # A missing target is a failure: exit 1, the reason on stderr (#1933).
+        with pytest.raises(typer.Exit) as excinfo:
+            await tag_set_impl(db, pk=999, tags="ghost")
+        assert excinfo.value.exit_code == 1
+        err = capsys.readouterr().err
+        assert "not found" in err
+        assert "pk=999" in err
 
     @pytest.mark.anyio
     async def test_get_missing_pk_is_not_found_not_no_tags(self, db, capsys):
-        await tag_get_impl(db, pk=999)
-        out = capsys.readouterr().out
-        assert "not found" in out
+        with pytest.raises(typer.Exit) as excinfo:
+            await tag_get_impl(db, pk=999)
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     @pytest.mark.anyio
     async def test_get_existing_pk_without_tags_is_not_not_found(self, db, capsys):
@@ -154,9 +159,11 @@ class TestChannelList:
 
 class TestChannelDelete:
     def test_delete_not_found(self, cli_env, capsys):
-
-        run(_ns(channel_action="delete", identifier="99999"))
-        assert "not found" in capsys.readouterr().out
+        # A missing target is a failure: exit 1, the reason on stderr (#1933).
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(channel_action="delete", identifier="99999"))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_delete_by_pk(self, cli_env, capsys):
 
@@ -181,9 +188,10 @@ class TestChannelDelete:
 
 class TestChannelToggle:
     def test_toggle_not_found(self, cli_env, capsys):
-
-        run(_ns(channel_action="toggle", identifier="99999"))
-        assert "not found" in capsys.readouterr().out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(channel_action="toggle", identifier="99999"))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_toggle_deactivates(self, cli_env, capsys):
 
@@ -209,12 +217,14 @@ class TestChannelTagViaRun:
         run(_ns(channel_action="tag", tag_action="add", name="testtag"))
         assert "Tag 'testtag' created." in capsys.readouterr().out
 
-    def test_tag_delete(self, cli_env, capsys):
+    def test_tag_delete_missing_exits_1(self, cli_env, capsys):
 
         # Can't chain run() calls since each closes the DB.
-        # Just test that delete doesn't crash with a non-existent tag.
-        run(_ns(channel_action="tag", tag_action="delete", name="nonexistent"))
-        assert "deleted" in capsys.readouterr().out
+        # A tag that does not exist is a miss, not a delete (#1933).
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(channel_action="tag", tag_action="delete", name="nonexistent"))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

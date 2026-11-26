@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # between pydantic v2 and mcp SDK when both are installed.
 import pydantic.root_model  # noqa: F401
 import pytest
+import typer
 from telethon_floodgate import FloodWaitInfo
 
 from tg_agent.config import AppConfig
@@ -313,12 +314,14 @@ class TestCLIChannelExtended:
         assert "Нет доступных аккаунтов Telegram. Импорт прерван" in out
 
     def test_stats_unknown_identifier(self, cli_env, capsys):
+        # A missing target is a failure: exit 1, the reason on stderr (#1933).
         with patch("tg_agent.cli.commands.channel.runtime.init_pool", AsyncMock()):
             from tg_agent.cli.commands.channel import run
 
-            run(_ns(channel_action="stats", identifier="99999", all=False))
-        out = capsys.readouterr().out
-        assert "Channel '99999' not found" in out
+            with pytest.raises(typer.Exit) as excinfo:
+                run(_ns(channel_action="stats", identifier="99999", all=False))
+        assert excinfo.value.exit_code == 1
+        assert "Channel '99999' not found" in capsys.readouterr().err
 
     def test_refresh_types_resolve_exception(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
@@ -431,23 +434,25 @@ class TestCLIChannelExtended:
         db, pool = cli_env_with_mock_pool
         from tg_agent.cli.commands.channel import run
 
-        run(
-            _ns(
-                channel_action="stats",
-                identifier="999",
-                all=False,
+        with pytest.raises(typer.Exit) as excinfo:
+            run(
+                _ns(
+                    channel_action="stats",
+                    identifier="999",
+                    all=False,
+                )
             )
-        )
-        out = capsys.readouterr().out
-        assert "not found" in out
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_collect_not_found(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
         from tg_agent.cli.commands.channel import run
 
-        run(_ns(channel_action="collect", identifier="999"))
-        out = capsys.readouterr().out
-        assert "not found" in out
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(channel_action="collect", identifier="999"))
+        assert excinfo.value.exit_code == 1
+        assert "not found" in capsys.readouterr().err
 
     def test_refresh_types_prefetch_error(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
