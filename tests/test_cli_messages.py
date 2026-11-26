@@ -556,15 +556,18 @@ def test_messages_read_live_json_names_the_replied_message(cli_db, capsys):
     """#1938: a reply carries its target; a forum topic's root is a location, not a reply."""
     reply = SimpleNamespace(reply_to_msg_id=41, forum_topic=False)
     in_topic = SimpleNamespace(reply_to_msg_id=900, forum_topic=True)
+    # A reply inside a topic keeps forum_topic; the topic's root moves to top_id.
+    in_topic_reply = SimpleNamespace(reply_to_msg_id=41, reply_to_top_id=900, forum_topic=True)
     msgs = [_live_msg(5, text="question"), _live_msg(6, text="answer", reply_to=reply),
-            _live_msg(7, text="in topic", reply_to=in_topic)]
+            _live_msg(7, text="in topic", reply_to=in_topic),
+            _live_msg(8, text="answer in topic", reply_to=in_topic_reply)]
     _, captured = _run_live_read(
         cli_db, "@room", capsys=capsys, messages=msgs,
         entity=TLUser(id=4242, first_name="Ann"),
     )
 
     recs = {m["id"]: m["reply_to"] for m in json.loads(captured.out)["messages"]}
-    assert recs == {5: None, 6: 41, 7: None}
+    assert recs == {5: None, 6: 41, 7: None, 8: 41}
 
 
 def test_messages_read_live_text_marks_the_replied_message(cli_db, capsys):

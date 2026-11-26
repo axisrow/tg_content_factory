@@ -183,10 +183,15 @@ def _live_reply_to(msg) -> int | None:
     """The message this one answers, or None for a top-level message (#1938).
 
     In a forum every message carries the topic's root as its ``reply_to``:
-    that header is a location, not a reply.
+    ``forum_topic`` set and no ``reply_to_top_id`` — that header is a location,
+    not a reply. A reply inside the topic keeps ``forum_topic`` and moves the
+    root to ``reply_to_top_id``, so the answered message stays in
+    ``reply_to_msg_id`` (the split ``extract_topic_id`` makes for the store).
     """
     reply_to = getattr(msg, "reply_to", None)
-    if reply_to is None or getattr(reply_to, "forum_topic", False):
+    if reply_to is None:
+        return None
+    if getattr(reply_to, "forum_topic", False) and not getattr(reply_to, "reply_to_top_id", None):
         return None
     return getattr(reply_to, "reply_to_msg_id", None)
 

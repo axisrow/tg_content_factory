@@ -342,8 +342,12 @@ async def test_send_message_plain_parse_mode_sends_the_text_verbatim():
     )
 
 
+@pytest.mark.parametrize(
+    ("parse_mode", "markup"),
+    [("html", "<b>bold</b> & plain"), ("md", "**bold** & plain")],
+)
 @pytest.mark.anyio
-async def test_send_message_html_parse_mode_sends_parsed_entities():
+async def test_send_message_markup_parse_mode_sends_parsed_entities(parse_mode, markup):
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value="entity")
     client.get_input_entity = AsyncMock(return_value="entity")
@@ -351,7 +355,7 @@ async def test_send_message_html_parse_mode_sends_parsed_entities():
     pool = _pool_with_client(client)
 
     await TelegramActionService(pool).send_message(
-        phone="+1", recipient="@u", text="<b>bold</b> & plain", parse_mode="html"
+        phone="+1", recipient="@u", text=markup, parse_mode=parse_mode
     )
 
     call = client.send_message.await_args
@@ -374,6 +378,10 @@ async def test_send_message_unknown_parse_mode_makes_no_request():
             phone="+1", recipient="@u", text="hi", parse_mode="rtf"
         )
 
+    # The text is parsed before the chat is resolved: a typo in the option
+    # costs no Telegram request.
+    client.get_entity.assert_not_awaited()
+    client.get_input_entity.assert_not_awaited()
     client.send_message.assert_not_awaited()
 
 
