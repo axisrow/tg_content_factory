@@ -29,6 +29,7 @@ from tg_agent.telegram.transcription import (
     marked_chat_id,
     transcribe_cached,
 )
+from tg_agent.telegram.utils import marked_peer_id
 from tg_agent.utils.introspection import explicit_pool_method
 from tg_agent.utils.sanitize import sanitize_user_content
 
@@ -88,6 +89,10 @@ class TelegramActionResult:
 class SendMessageResult:
     phone: str
     message_id: int | None
+    # Marked id of the chat the message landed in when Telegram rerouted it:
+    # a comment lands in the channel's linked discussion group (#1946). None
+    # for a send that landed where it was addressed.
+    chat_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -629,22 +634,31 @@ class TelegramActionService:
             # registry row must carry the group's chat: its id space owns the
             # message id and the deletion joins match on it (#1903 review).
             # recipient/text keep the channel context the caller asked for.
-            registry_entity = (
+            landed_peer = (
                 message.peer_id
                 if comment_to is not None and getattr(message, "peer_id", None) is not None
-                else entity
+                else None
             )
+            row_ref = ref
+            if comment_to is not None and row_ref is None:
+                # A comment row names the post it answers (#1946).
+                row_ref = str(comment_to)
             await record_send(
                 self._db,
                 phone=acquired_phone,
-                entity=registry_entity,
+                entity=landed_peer if landed_peer is not None else entity,
                 recipient=recipient,
                 message_ids=[message_id] if message_id is not None else [],
                 text=text,
                 source=source,
-                ref=ref,
+                ref=row_ref,
+                chat_type="comment" if landed_peer is not None else None,
             )
-            return SendMessageResult(phone=acquired_phone, message_id=message_id)
+            return SendMessageResult(
+                phone=acquired_phone,
+                message_id=message_id,
+                chat_id=marked_peer_id(landed_peer) if landed_peer is not None else None,
+            )
 
     async def edit_message(
         self,
@@ -794,10 +808,17 @@ class TelegramActionService:
             if not isinstance(forwarded, (list, tuple)):
                 forwarded = [forwarded] if forwarded is not None else []
             forwarded_ids = tuple(int(m.id) for m in forwarded if m is not None and hasattr(m, "id"))
+            # The row follows the delivered message (#1946): a caller that skips
+            # the resolve may hand a bare dialog id (the pipeline forward node),
+            # which the store would class as a DM.
+            landed_peer = next(
+                (getattr(m, "peer_id", None) for m in forwarded if getattr(m, "peer_id", None) is not None),
+                None,
+            )
             await record_send(
                 self._db,
                 phone=acquired_phone,
-                entity=to_entity,
+                entity=landed_peer if landed_peer is not None else to_entity,
                 recipient=to_chat,
                 message_ids=list(forwarded_ids),
                 text=None,

@@ -26,22 +26,25 @@ async def record_send(
     text: str | None,
     source: str,
     ref: str | None = None,
+    chat_type: str | None = None,
 ) -> None:
     """Registry rows for delivered messages; never fails the caller.
 
     No db handle (bare construction) or an empty id list (a send without a
     confirmed id — relay/timeout uncertainty) records nothing: an id-less
-    row could neither dedupe nor join the deletion store.
+    row could neither dedupe nor join the deletion store. ``chat_type``
+    overrides the class read off the entity — a comment lands in a
+    discussion group but is recorded as what it is (#1946).
     """
     if db is None or not message_ids:
         return
     try:
-        chat_id, chat_type = chat_id_and_type(entity)
+        chat_id, peer_type = chat_id_and_type(entity)
         await db.repos.sent_messages.record_many(
             phone,
             chat_id,
             [int(message_id) for message_id in message_ids],
-            chat_type=chat_type,
+            chat_type=chat_type or peer_type,
             source=source,
             recipient=str(recipient) if recipient is not None else None,
             text=text,

@@ -441,7 +441,9 @@ async def test_send_message_comment_to_records_the_discussion_group_chat(db):
     """#1903 review: the registry row joins the deletion store by chat, and a
     comment's id lives in the linked discussion group's id space — the row
     must carry the group's chat (message.peer_id), not the recipient channel,
-    while recipient keeps the channel context."""
+    while recipient keeps the channel context.
+    #1946: the row says it is a comment and names the post it answers; the
+    result carries the landing chat for the caller's echo."""
     from telethon import types
 
     channel_peer = types.PeerChannel(channel_id=555)
@@ -454,14 +456,15 @@ async def test_send_message_comment_to_records_the_discussion_group_chat(db):
     )
     pool = _pool_with_client(client)
 
-    await TelegramActionService(pool, db=db).send_message(
+    result = await TelegramActionService(pool, db=db).send_message(
         phone="+1", recipient="@chat", text="nice", comment_to=42, source="dialogs_send"
     )
 
     rows = await db.execute_fetchall(
-        "SELECT chat_id, chat_type, recipient FROM sent_messages"
+        "SELECT chat_id, chat_type, recipient, ref FROM sent_messages"
     )
-    assert [tuple(row) for row in rows] == [(-1000000002000, "channel", "@chat")]
+    assert [tuple(row) for row in rows] == [(-1000000002000, "comment", "@chat", "42")]
+    assert result.chat_id == -1000000002000
 
 
 @pytest.mark.anyio
@@ -709,6 +712,7 @@ async def test_send_message_without_db_skips_registry_and_does_not_crash():
     result = await TelegramActionService(pool).send_message(phone="+1", recipient="@u", text="hi")
 
     assert result.message_id == 7
+    assert result.chat_id is None  # a plain send lands where it was addressed (#1946)
 
 
 @pytest.mark.anyio
@@ -760,3 +764,28 @@ async def test_forward_messages_records_one_row_per_forwarded_id(db):
         ("+1", -1000000000556, 1, "channel", None, "dialogs_forward"),
         ("+1", -1000000000556, 2, "channel", None, "dialogs_forward"),
     ]
+
+
+@pytest.mark.anyio
+async def test_forward_messages_records_the_landing_peer_of_the_delivered_message(db):
+    """#1946: the pipeline forward node hands a bare dialog id and skips the
+    resolve — the store would class that id as a DM. The row follows the peer
+    of the delivered message."""
+    from telethon import types
+
+    client = AsyncMock()
+    client.forward_messages = AsyncMock(
+        return_value=[SimpleNamespace(id=5, peer_id=types.PeerChannel(channel_id=557))]
+    )
+    pool = _pool_with_client(client)
+
+    result = await TelegramActionService(pool, db=db).forward_messages(
+        phone="+1", from_chat=111, to_chat=557, message_ids=[9],
+        resolve_entities=False, source="pipeline_forward",
+    )
+
+    assert result.message_ids == (5,)
+    rows = await db.execute_fetchall(
+        "SELECT chat_id, message_id, chat_type, recipient FROM sent_messages"
+    )
+    assert [tuple(row) for row in rows] == [(-1000000000557, 5, "channel", "557")]

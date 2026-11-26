@@ -696,6 +696,9 @@ def _print_sent(rows: list[dict], fmt: str) -> None:
         detail = ""
         if row.get("recipient"):
             detail += f" to={row['recipient']}"
+        if row["chat_type"] == "comment" and row.get("ref"):
+            # A comment row keeps the post it answers in ref (#1946).
+            detail += f" comment_on={row['ref']}"
         text = (row.get("text") or "").strip()
         if text:
             detail += f"  {text[:200].replace(chr(10), ' ')}{'...' if len(text) > 200 else ''}"
