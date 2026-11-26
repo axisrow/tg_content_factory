@@ -567,6 +567,7 @@ class TelegramActionService:
         is_user: bool = False,
         silent: bool = False,
         comment_to: int | None = None,
+        parse_mode: str | None = None,
         source: str = "unknown",
         ref: str | None = None,
     ) -> SendMessageResult:
@@ -581,6 +582,13 @@ class TelegramActionService:
         # (#1903): the recipient is a channel and the text becomes a comment
         # under its post — Telethon resolves the linked discussion group
         # (GetDiscussionMessageRequest) and replies to the top message.
+        # parse_mode (#1937): omitted, the client's default Markdown parses
+        # the text; given, the text is parsed here and the client is told not
+        # to — `plain` sends it verbatim. Parsed before any Telegram request:
+        # an unknown mode raises here and costs no resolve.
+        entities: list | None = None
+        if parse_mode is not None:
+            text, entities = parse_outgoing_text(text, parse_mode)
         async with self._client(phone=phone, native=True) as (client, acquired_phone):
             entity = await self._resolve_entity(
                 client, phone=acquired_phone, identifier=recipient, is_user=is_user
@@ -592,6 +600,9 @@ class TelegramActionService:
                 options["silent"] = True
             if comment_to is not None:
                 options["comment_to"] = comment_to
+            if parse_mode is not None:
+                # An empty list is "provided": Telethon skips its own parsing.
+                options["formatting_entities"] = entities or []
             message = await client.send_message(entity, text, **options)
             message_id = getattr(message, "id", None)
             # A comment physically lands in the linked discussion group, so the

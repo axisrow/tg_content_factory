@@ -374,6 +374,7 @@ async def _dialogs_send(args, db, pool) -> None:
             silent=bool(getattr(args, "silent", False)),
             comment_to=comment_to,
             reply_to=reply_to,
+            parse_mode=getattr(args, "parse_mode", None),
             source="dialogs_send",
         )
         message_id = f" message_id={result.message_id}" if result.message_id is not None else ""
@@ -1486,12 +1487,15 @@ def dialogs_send(
     reply_to: int | None = typer.Option(
         None, "--reply-to", help="Reply to this message ID within the same chat"
     ),
+    parse_mode: str | None = typer.Option(
+        None, "--parse-mode", help="Text markup: plain, md or html (default: md)"
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Send a direct message to a user or chat."""
     _run_dialogs(
         ctx, "send", recipient=recipient, text=text, phone=phone, silent=silent,
-        comment_to=comment_to, reply_to=reply_to, yes=yes,
+        comment_to=comment_to, reply_to=reply_to, parse_mode=parse_mode, yes=yes,
     )
 
 

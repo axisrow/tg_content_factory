@@ -355,8 +355,24 @@ def test_cli_dialogs_send_reply_to_passes_the_message_id(cli_db, capsys):
     kwargs = fake_send.call_args.kwargs
     assert kwargs["reply_to"] == 55
     assert kwargs["comment_to"] is None
+    assert kwargs["parse_mode"] is None
     out = capsys.readouterr().out
     assert "sent" in out.lower()
+
+
+def test_cli_dialogs_send_parse_mode_passes_through(cli_db, capsys):
+    """`dialogs send --parse-mode` plumbs the markup choice into the service (#1937)."""
+    pool = _mock_pool()
+    with patch(
+        "tg_agent.cli.commands.dialogs.TelegramActionService.send_message",
+        new=AsyncMock(return_value=SimpleNamespace(phone="+1234567890", message_id=7)),
+    ) as fake_send:
+        _run(
+            _ns(dialogs_action="send", phone="+1234567890",
+                recipient="100111", text="a[0](x)", parse_mode="plain", yes=True),
+            pool, cli_db,
+        )
+    assert fake_send.call_args.kwargs["parse_mode"] == "plain"
 
 
 def test_cli_dialogs_send_reply_to_and_comment_to_are_refused(cli_db, capsys):

@@ -324,6 +324,68 @@ async def test_send_message_comment_to_passes_through_to_the_client():
 
 
 @pytest.mark.anyio
+async def test_send_message_plain_parse_mode_sends_the_text_verbatim():
+    """#1937: `plain` opts out of the client's Markdown — an empty entity list is
+    "provided", so nothing is parsed and the text goes out as written."""
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
+    client.send_message = AsyncMock(return_value=SimpleNamespace(id=11))
+    pool = _pool_with_client(client)
+
+    await TelegramActionService(pool).send_message(
+        phone="+1", recipient="@u", text="a[0](x) **y** <z>", parse_mode="plain"
+    )
+
+    client.send_message.assert_awaited_once_with(
+        "entity", "a[0](x) **y** <z>", link_preview=False, formatting_entities=[]
+    )
+
+
+@pytest.mark.parametrize(
+    ("parse_mode", "markup"),
+    [("html", "<b>bold</b> & plain"), ("md", "**bold** & plain")],
+)
+@pytest.mark.anyio
+async def test_send_message_markup_parse_mode_sends_parsed_entities(parse_mode, markup):
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
+    client.send_message = AsyncMock(return_value=SimpleNamespace(id=12))
+    pool = _pool_with_client(client)
+
+    await TelegramActionService(pool).send_message(
+        phone="+1", recipient="@u", text=markup, parse_mode=parse_mode
+    )
+
+    call = client.send_message.await_args
+    assert call.args[1] == "bold & plain"
+    assert [type(entity).__name__ for entity in call.kwargs["formatting_entities"]] == [
+        "MessageEntityBold"
+    ]
+
+
+@pytest.mark.anyio
+async def test_send_message_unknown_parse_mode_makes_no_request():
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value="entity")
+    client.get_input_entity = AsyncMock(return_value="entity")
+    client.send_message = AsyncMock(return_value=SimpleNamespace(id=13))
+    pool = _pool_with_client(client)
+
+    with pytest.raises(ValueError, match="parse_mode"):
+        await TelegramActionService(pool).send_message(
+            phone="+1", recipient="@u", text="hi", parse_mode="rtf"
+        )
+
+    # The text is parsed before the chat is resolved: a typo in the option
+    # costs no Telegram request.
+    client.get_entity.assert_not_awaited()
+    client.get_input_entity.assert_not_awaited()
+    client.send_message.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_send_message_comment_to_records_the_discussion_group_chat(db):
     """#1903 review: the registry row joins the deletion store by chat, and a
     comment's id lives in the linked discussion group's id space — the row
@@ -560,6 +622,29 @@ async def test_send_message_dm_shape_records_null_chat(db):
         "SELECT chat_id, chat_type, source FROM sent_messages"
     )
     assert [tuple(row) for row in rows] == [(None, "dm", "dm_draft")]
+
+
+@pytest.mark.anyio
+async def test_send_message_to_self_records_a_null_chat_row(db):
+    """#1936: Saved Messages resolves to the id-less InputPeerSelf — a DM row
+    with a NULL chat like any other private chat, not a failed registry write."""
+    from telethon import types
+
+    self_peer = types.InputPeerSelf()
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value=self_peer)
+    client.get_input_entity = AsyncMock(return_value=self_peer)
+    client.send_message = AsyncMock(return_value=SimpleNamespace(id=9))
+    pool = _pool_with_client(client)
+
+    await TelegramActionService(pool, db=db).send_message(
+        phone="+1", recipient="me", text="note", source="dialogs_send"
+    )
+
+    rows = await db.execute_fetchall(
+        "SELECT chat_id, chat_type, recipient FROM sent_messages"
+    )
+    assert [tuple(row) for row in rows] == [(None, "dm", "me")]
 
 
 @pytest.mark.anyio
