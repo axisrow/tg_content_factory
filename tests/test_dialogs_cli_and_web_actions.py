@@ -1194,3 +1194,40 @@ class TestDialogsQueueStatusLog:
         out = capsys.readouterr().out
         assert "phone=unassigned" in out
         assert "phone=-" not in out
+
+    async def test_failed_command_prints_its_error(self, db, capsys):
+        """#1934: `status=failed` without the stored reason is a dead end."""
+        from tg_agent.cli.commands.dialogs import _dialogs_queue
+        from tg_agent.models import TelegramCommand, TelegramCommandStatus
+
+        failed_id = await db.repos.telegram_commands.create_command(
+            TelegramCommand(command_type="dialogs.react", payload={"phone": "+1"})
+        )
+        await db.repos.telegram_commands.update_command(
+            failed_id,
+            status=TelegramCommandStatus.FAILED,
+            error="Invalid reaction provided (caused by SendReactionRequest)\nsecond line",
+        )
+        ok_id = await db.repos.telegram_commands.create_command(
+            TelegramCommand(command_type="dialogs.refresh", payload={"phone": "+1"})
+        )
+        await db.repos.telegram_commands.update_command(ok_id, status=TelegramCommandStatus.SUCCEEDED)
+
+        await _dialogs_queue(
+            cli_ns(
+                dialogs_action="queue",
+                queue_action="status",
+                command_type=None,
+                phone=None,
+                limit=20,
+            ),
+            db,
+            None,
+        )
+
+        rows = {line.split()[0]: line for line in capsys.readouterr().out.splitlines() if line.startswith("#")}
+        assert rows[f"#{failed_id}"] == (
+            f"#{failed_id} dialogs.react status=failed phone=+1 run_after=- "
+            "error=Invalid reaction provided (caused by SendReactionRequest)"
+        )
+        assert rows[f"#{ok_id}"] == f"#{ok_id} dialogs.refresh status=succeeded phone=+1 run_after=-"
