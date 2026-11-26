@@ -395,7 +395,7 @@ def test_cli_dialogs_send_parse_mode_passes_through(cli_db, capsys):
     pool = _mock_pool()
     with patch(
         "tg_agent.cli.commands.dialogs.TelegramActionService.send_message",
-        new=AsyncMock(return_value=SimpleNamespace(phone="+1234567890", message_id=7)),
+        new=AsyncMock(return_value=SimpleNamespace(phone="+1234567890", message_id=7, chat_id=None)),
     ) as fake_send:
         _run(
             _ns(dialogs_action="send", phone="+1234567890",
@@ -410,7 +410,7 @@ def test_cli_dialogs_send_reply_to_and_comment_to_are_refused(cli_db, capsys):
     pool = _mock_pool()
     with patch(
         "tg_agent.cli.commands.dialogs.TelegramActionService.send_message",
-        new=AsyncMock(return_value=SimpleNamespace(phone="+1234567890", message_id=7)),
+        new=AsyncMock(return_value=SimpleNamespace(phone="+1234567890", message_id=7, chat_id=None)),
     ) as fake_send:
         with pytest.raises(typer.Exit):
             _run(
