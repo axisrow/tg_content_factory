@@ -4,7 +4,7 @@ Fake-first: без живого Telegram — реальная ``Database(":memor
 через те же репозитории, что используют web/REST (#1579) и CLI. Приёмо-
 сдаточные доказательства: каждый tool возвращает реальное состояние журнала/
 черновиков/архива, а approve/reject/create реально мутируют ``dm_reply_drafts``
-(проверяется чтением БД после вызова), idempotent no-op на sending/sent.
+(проверяется чтением БД после вызова), idempotent no-op на sending/sent/unconfirmed.
 """
 
 from __future__ import annotations
