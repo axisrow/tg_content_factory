@@ -1343,6 +1343,7 @@ async def test_migrations_remaps_legacy_dialog_search_permission_key():
             "SELECT value FROM settings WHERE key = 'agent_tool_permissions' LIMIT 1"
         )
         row = await cur.fetchone()
+        assert row is not None
         data = json.loads(row["value"])
         assert legacy_key not in data
         assert data["search_dialogs"] is True
@@ -1391,6 +1392,7 @@ async def test_scheduler_start_with_task_enqueuer():
     )
     await mgr.start()
     assert mgr.is_running
+    assert mgr._scheduler is not None
     # photo_due and photo_auto jobs should be registered
     jobs = mgr._scheduler.get_jobs()
     job_ids = [j.id for j in jobs]
@@ -1448,8 +1450,9 @@ async def test_scheduler_trigger_background_idempotent():
     task1 = mgr._bg_task
     await mgr.trigger_background()
     task2 = mgr._bg_task
+    assert task1 is not None
     assert task1 is task2
-    await mgr._bg_task
+    await task1
 
 
 @pytest.mark.anyio
