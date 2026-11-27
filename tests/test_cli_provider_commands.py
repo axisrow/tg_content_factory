@@ -221,19 +221,30 @@ def test_probe_with_error(capsys):
     assert "OK" not in captured.out
 
 
-def test_probe_exception(capsys):
+@pytest.mark.parametrize(
+    ("exc", "reason"),
+    [
+        (RuntimeError("conn refused"), "conn refused"),
+        # An exception without a message still names a reason: the class name.
+        (TimeoutError(), "TimeoutError"),
+    ],
+    ids=["with a message", "without a message"],
+)
+def test_probe_exception(capsys, exc, reason):
     db = make_cli_db()
     cfg = _make_provider_config("openai")
     svc = _make_svc(
         load_provider_configs=AsyncMock(return_value=[cfg]),
-        refresh_models_for_provider=AsyncMock(side_effect=RuntimeError("conn refused")),
+        refresh_models_for_provider=AsyncMock(side_effect=exc),
     )
     with patch("tg_agent.cli.commands.provider.runtime.init_db", AsyncMock(return_value=(make_cli_config(), db))), \
          patch("tg_agent.cli.commands.provider.ProviderConfigService", return_value=svc), \
          patch("asyncio.run", fake_asyncio_run), \
          pytest.raises(typer.Exit):
         run(_args(provider_action="probe", name="openai"))
-    assert "FAIL" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert f"FAIL: {reason}" in captured.err
+    assert "OK" not in captured.out
 
 
 # ---------------------------------------------------------------------------
@@ -359,12 +370,21 @@ def test_test_all_counts_a_reported_error_as_failure(capsys):
     assert "1 of 1 provider(s) failed." in captured.err
 
 
-def test_test_all_with_failure(capsys):
+@pytest.mark.parametrize(
+    ("exc", "reason"),
+    [
+        (RuntimeError("conn err"), "conn err"),
+        # An exception without a message still fails the provider; the class name is the reason.
+        (TimeoutError(), "TimeoutError"),
+    ],
+    ids=["with a message", "without a message"],
+)
+def test_test_all_with_failure(capsys, exc, reason):
     db = make_cli_db()
     cfg = _make_provider_config("bad_provider")
     svc = _make_svc(
         load_provider_configs=AsyncMock(return_value=[cfg]),
-        refresh_models_for_provider=AsyncMock(side_effect=RuntimeError("conn err")),
+        refresh_models_for_provider=AsyncMock(side_effect=exc),
     )
     with patch("tg_agent.cli.commands.provider.runtime.init_db", AsyncMock(return_value=(make_cli_config(), db))), \
          patch("tg_agent.cli.commands.provider.ProviderConfigService", return_value=svc), \
@@ -373,5 +393,6 @@ def test_test_all_with_failure(capsys):
         run(_args(provider_action="test-all"))
     captured = capsys.readouterr()
     assert "FAIL" in captured.out
-    assert "bad_provider: conn err" in captured.err
+    assert "OK" not in captured.out
+    assert f"bad_provider: {reason}" in captured.err
     assert "failed." in captured.err

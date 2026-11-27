@@ -132,7 +132,7 @@ async def _refreshed_entry(
     try:
         entry = await svc.refresh_models_for_provider(name, cfg)
     except Exception as exc:
-        cli_error(f"FAIL: {exc}")
+        cli_error(f"FAIL: {str(exc) or type(exc).__name__}")
     if entry.error:
         cli_error(f"FAIL: {entry.error}")
     return entry
@@ -201,13 +201,15 @@ async def test_all_impl(config_path: str) -> None:
         failed = 0
         for cfg in configs:
             print(f"  {cfg.provider}...", end=" ", flush=True)
+            entry = None
             try:
                 entry = await svc.refresh_models_for_provider(cfg.provider, cfg)
                 # A failed live fetch is a failure too, not a warning (#1962).
                 reason = entry.error
             except Exception as exc:
-                reason = str(exc)
-            if reason:
+                # An exception without a message still fails the provider: the class name is the reason.
+                reason = str(exc) or type(exc).__name__
+            if entry is None or reason:
                 print("FAIL")
                 print(f"  {cfg.provider}: {reason}", file=sys.stderr)
                 failed += 1
