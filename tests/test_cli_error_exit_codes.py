@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from types import SimpleNamespace
@@ -42,7 +43,7 @@ from tg_agent.cli.pipeline import requests as pipeline_requests
 from tg_agent.config import AppConfig
 from tg_agent.database.bundles import PipelineBundle, SearchQueryBundle
 from tg_agent.models import Message
-from tg_agent.services.pipeline_service import PipelineService
+from tg_agent.services.pipeline_service import PipelineScopeError, PipelineService
 from tg_agent.services.search_query_service import SearchQueryService
 from tg_agent.services.telegram_actions import TelegramActionClientUnavailableError
 
@@ -1367,3 +1368,124 @@ class TestFilterMissExitCodes:
         assert excinfo.value.exit_code == 1
         assert "Purged messages from 1 channels" in captured.out
         assert "disk I/O error" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# a generation that did not happen is a failure (#1952)
+# ---------------------------------------------------------------------------
+
+
+class TestFailedGenerationExitCodes:
+    """`pipeline run|generate` printed why nothing was generated — and exited 0."""
+
+    @pytest.mark.parametrize(
+        ("handler", "command_of"),
+        [
+            pytest.param(
+                generation._pipeline_run,
+                lambda pid: pipeline_requests.PipelineRunCommand(id=pid),
+                id="pipeline run",
+            ),
+            pytest.param(
+                generation._pipeline_generate,
+                lambda pid: pipeline_requests.PipelineGenerateCommand(id=pid),
+                id="pipeline generate",
+            ),
+            pytest.param(
+                generation._pipeline_generate_stream,
+                lambda pid: pipeline_requests.PipelineGenerateStreamCommand(id=pid),
+                id="pipeline generate-stream",
+            ),
+        ],
+    )
+    def test_no_llm_provider_exits_1(self, cli_env, capsys, handler, command_of):
+        """Refused before a pool is opened."""
+        no_provider = AsyncMock(return_value=SimpleNamespace(has_providers=lambda: False))
+
+        async def body(db):
+            command = command_of(await _seed_pipeline(db, DAG_GRAPH))
+            svc = PipelineService(PipelineBundle.from_database(db))
+            with (
+                patch("tg_agent.services.provider_service.build_provider_service", new=no_provider),
+                patch(
+                    "tg_agent.cli.pipeline.generation.runtime.init_pool",
+                    new=AsyncMock(side_effect=AssertionError("pool opened")),
+                ),
+            ):
+                await handler(command, db, AppConfig(), svc)
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(body(cli_env))
+        _assert_exit_clean(excinfo, capsys, "LLM provider is not configured")
+
+    @pytest.mark.parametrize(
+        ("handler", "command_of"),
+        [
+            pytest.param(
+                generation._pipeline_run,
+                lambda pid: pipeline_requests.PipelineRunCommand(id=pid),
+                id="pipeline run",
+            ),
+            pytest.param(
+                generation._pipeline_generate,
+                lambda pid: pipeline_requests.PipelineGenerateCommand(id=pid),
+                id="pipeline generate",
+            ),
+        ],
+    )
+    def test_a_failed_generation_exits_1_and_closes_the_pool(self, cli_env, capsys, handler, command_of):
+        """The pool is closed on the way out: the dispatcher disconnects only a pool a handler returns."""
+        pool = SimpleNamespace(disconnect_all=AsyncMock())
+        failing = SimpleNamespace(generate=AsyncMock(side_effect=RuntimeError("provider is down")))
+        with_provider = AsyncMock(return_value=SimpleNamespace(has_providers=lambda: True))
+
+        async def body(db):
+            command = command_of(await _seed_pipeline(db, DAG_GRAPH))
+            svc = PipelineService(PipelineBundle.from_database(db))
+            services = SimpleNamespace(
+                search_engine=lambda _db: object(),
+                generation_service=lambda *_args, **_kwargs: failing,
+            )
+            with (
+                patch("tg_agent.services.provider_service.build_provider_service", new=with_provider),
+                patch(
+                    "tg_agent.cli.pipeline.generation.runtime.init_pool",
+                    new=AsyncMock(return_value=(AppConfig(), pool)),
+                ),
+            ):
+                await handler(command, db, AppConfig(), svc, services=services)
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(body(cli_env))
+        _assert_exit_clean(excinfo, capsys, "Generation failed")
+        pool.disconnect_all.assert_awaited_once()
+
+    def test_a_scope_failure_of_the_stream_exits_1_before_a_run(self, cli_env, capsys):
+        """The third failure path of the stream: the `error` event is the report, no run exists."""
+        reason = "Could not resolve source scope"
+        with_provider = AsyncMock(
+            return_value=SimpleNamespace(has_providers=lambda: True, get_provider_callable=lambda _model: AsyncMock())
+        )
+        pid = asyncio.run(_seed_pipeline(cli_env, DAG_GRAPH))
+
+        async def body(db):
+            svc = PipelineService(PipelineBundle.from_database(db))
+            services: Any = SimpleNamespace(search_engine=lambda _db: object())
+            with (
+                patch("tg_agent.services.provider_service.build_provider_service", new=with_provider),
+                patch.object(svc, "get_retrieval_scope", new=AsyncMock(side_effect=PipelineScopeError(reason))),
+            ):
+                await generation._pipeline_generate_stream(
+                    pipeline_requests.PipelineGenerateStreamCommand(id=pid),
+                    db,
+                    AppConfig(),
+                    svc,
+                    services=services,
+                )
+
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(body(cli_env))
+        assert excinfo.value.exit_code == 1
+        lines = capsys.readouterr().out.splitlines()
+        assert json.loads(lines[-1]) == {"event": "error", "error": reason}
+        assert asyncio.run(cli_env.repos.generation_runs.list_by_pipeline(pid)) == []

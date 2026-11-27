@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING
 
+import typer
+
 from tg_agent.cli import runtime
 from tg_agent.cli.commands.common import cli_error
 
@@ -18,6 +20,21 @@ from tg_agent.services.pipeline_service import (
     PipelineService,
     to_since_hours,
 )
+
+_NO_LLM_PROVIDER = (
+    "LLM provider is not configured. Add one with `tg-agent provider add` or set an API key "
+    "env var (e.g. OPENAI_API_KEY). Non-LLM pipelines run without a provider."
+)
+
+
+async def _close_pool(pool: ClientPool | None) -> None:
+    """Close a pool on the way out of a failure (#1952).
+
+    The dispatcher disconnects only a pool a handler returns; a failure leaves
+    by exception, so nothing else would close it.
+    """
+    if pool is not None:
+        await pool.disconnect_all()
 
 
 async def _generation_pool(config, db) -> ClientPool | None:
@@ -54,11 +71,7 @@ async def _pipeline_run(
     # providers; the registry no longer reads env itself (#1050).
     provider_service = await build_provider_service(db, config)
     if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
-        print(
-            "LLM provider is not configured. Add one with `tg-agent provider add` or set an API key "
-            "env var (e.g. OPENAI_API_KEY). Non-LLM pipelines run without a provider."
-        )
-        return None
+        cli_error(_NO_LLM_PROVIDER)
 
     pool = await _generation_pool(config, db)
     client_pool = pool
@@ -79,7 +92,8 @@ async def _pipeline_run(
         )
         responses.render_pipeline_run_result(args, run_obj)
     except Exception as exc:
-        print(f"Generation failed: {exc}")
+        await _close_pool(pool)
+        cli_error(f"Generation failed: {exc}")
 
     return pool
 
@@ -113,11 +127,7 @@ async def _pipeline_generate(
     # providers; the registry no longer reads env itself (#1050).
     provider_svc = await build_provider_service(db, config)
     if pipeline_needs_llm(pipeline) and not provider_svc.has_providers():
-        print(
-            "LLM provider is not configured. Add one with `tg-agent provider add` or set an API key "
-            "env var (e.g. OPENAI_API_KEY). Non-LLM pipelines run without a provider."
-        )
-        return None
+        cli_error(_NO_LLM_PROVIDER)
     pool = await _generation_pool(config, db)
     client_pool = pool
     agent_manager = None
@@ -143,7 +153,8 @@ async def _pipeline_generate(
         )
         responses.render_pipeline_generate_result(run)
     except Exception as exc:
-        print(f"Generation failed: {exc}")
+        await _close_pool(pool)
+        cli_error(f"Generation failed: {exc}")
 
     return pool
 
@@ -168,11 +179,7 @@ async def _pipeline_generate_stream(
     # providers; the registry no longer reads env itself (#1050).
     provider_service = await build_provider_service(db, config)
     if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
-        print(
-            "LLM provider is not configured. Add one with `tg-agent provider add` "
-            "or set an API key env var (e.g. OPENAI_API_KEY)."
-        )
-        return
+        cli_error(_NO_LLM_PROVIDER)
     if not pipeline_needs_llm(pipeline):
         print("Pipeline has no LLM nodes; nothing to stream.")
         return
@@ -186,11 +193,12 @@ async def _pipeline_generate_stream(
         scope = await svc.get_retrieval_scope(pipeline)
     except PipelineScopeError as exc:
         responses.emit_json_line({"event": "error", "error": str(exc)})
-        return
+        raise typer.Exit(1) from None
 
     run_id = await db.repos.generation_runs.create_run(pipeline.id, pipeline.prompt_template)
     await db.repos.generation_runs.set_status(run_id, "running")
     last = None
+    failed = False
     try:
         async for update in gen.generate_stream(
             query=scope.query,
@@ -217,21 +225,27 @@ async def _pipeline_generate_stream(
         if last and last.get("stream_error"):
             await db.repos.generation_runs.set_status(run_id, "failed", metadata={"stream_error": last["stream_error"]})
             responses.emit_json_line({"event": "error", "error": last["stream_error"]})
-            return
-        final_text = last.get("generated_text") if last else ""
-        metadata = {"citations": last.get("citations", []) if last else []}
-        await db.repos.generation_runs.save_result(run_id, final_text, metadata)
-        await db.repos.generation_runs.set_status(run_id, "completed")
-        responses.emit_json_line({"event": "done", "run_id": run_id})
+            failed = True
+        else:
+            final_text = last.get("generated_text") if last else ""
+            metadata = {"citations": last.get("citations", []) if last else []}
+            await db.repos.generation_runs.save_result(run_id, final_text, metadata)
+            await db.repos.generation_runs.set_status(run_id, "completed")
+            responses.emit_json_line({"event": "done", "run_id": run_id})
     except Exception as exc:
         await db.repos.generation_runs.set_status(run_id, "failed")
         responses.emit_json_line({"event": "error", "error": str(exc)})
+        failed = True
     except BaseException:
         # Ctrl+C raises CancelledError (a BaseException, not Exception in
         # py3.11), which would otherwise leave the run stuck in "running".
         # Mirror the web handler: mark failed, then re-raise to abort. (#737)
         await db.repos.generation_runs.set_status(run_id, "failed")
         raise
+    if failed:
+        # The error line is the report of a JSON-Lines stream; the exit code
+        # says the same to a caller that only branches on it (#1952).
+        raise typer.Exit(1)
 
 
 async def _pipeline_runs(args: requests.PipelineRunsCommand, db, config, svc: PipelineService) -> None:

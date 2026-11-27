@@ -1211,10 +1211,11 @@ def test_pipeline_generate_exception(tmp_path, cli_init_patch, capsys):
     ):
         from tg_agent.cli.commands.pipeline import run
 
-        run(_ns(pipeline_action="generate", id=pipeline_id, model=None, max_tokens=256, temperature=0.7))
-
-    out = capsys.readouterr().out
-    assert "Generation failed" in out
+        # A failed generation is a failure of the command (#1952).
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(pipeline_action="generate", id=pipeline_id, model=None, max_tokens=256, temperature=0.7))
+    assert excinfo.value.exit_code == 1
+    assert "Generation failed" in capsys.readouterr().err
 
 
 def test_pipeline_list_empty(tmp_path, cli_init_patch, capsys):
