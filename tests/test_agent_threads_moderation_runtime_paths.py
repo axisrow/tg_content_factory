@@ -718,6 +718,8 @@ def _make_photo_services():
     photo_task_svc.list_batches = AsyncMock(return_value=[])
     photo_task_svc.list_items = AsyncMock(return_value=[])
     photo_task_svc.run_due = AsyncMock(return_value=5)
+    # What a run with every item sent leaves behind (#1969).
+    photo_task_svc.last_run_failed = 0
     photo_task_svc.cancel_item = AsyncMock(return_value=True)
 
     auto_upload_svc = MagicMock()
@@ -881,6 +883,7 @@ class TestRunPhotoDue:
         text = _text(result)
         assert "items=3" in text
         assert "auto_jobs=1" in text
+        assert "не отправлено" not in text
 
     @pytest.mark.anyio
     async def test_exception(self, mock_db):

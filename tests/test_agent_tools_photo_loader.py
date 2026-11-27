@@ -62,6 +62,8 @@ def _make_photo_services():
     photo_task_svc.create_batch = AsyncMock(return_value=99)
     photo_task_svc.publish_batch = AsyncMock(return_value=1)
     photo_task_svc.run_due = AsyncMock(return_value=3)
+    # What a run with every item sent leaves behind (#1969).
+    photo_task_svc.last_run_failed = 0
 
     auto_upload_svc = MagicMock()
     auto_upload_svc.list_jobs = AsyncMock(return_value=[])
@@ -763,6 +765,22 @@ class TestRunPhotoDue:
         text = _text(result)
         assert "items=3" in text
         assert "auto_jobs=2" in text
+        assert "не отправлено" not in text
+
+    @pytest.mark.anyio
+    async def test_names_the_items_that_were_not_sent(self, mock_db):
+        """#1969: a claimed item whose send failed is in `items`; the receipt says so."""
+        photo_task_svc, auto_upload_svc = _make_photo_services()
+        photo_task_svc.last_run_failed = 1
+        mock_pool, _ = _make_mock_pool()
+
+        with _photo_ctx(photo_task_svc, auto_upload_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["run_photo_due"]({"confirm": True})
+        text = _text(result)
+        assert "items=3" in text
+        assert "auto_jobs=2" in text
+        assert "не отправлено=1" in text
 
     @pytest.mark.anyio
     async def test_dry_run_previews_without_send_or_confirm(self, mock_db):
