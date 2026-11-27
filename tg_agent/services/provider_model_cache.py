@@ -217,7 +217,9 @@ class ProviderModelCacheMixin:
                 compatibility=existing_entry.compatibility,
             )
         except Exception as exc:
-            live_error = str(exc)
+            # An exception without a message still leaves a reason: the class name.
+            # The provider commands fail the fetch on this text (#1962).
+            live_error = str(exc) or type(exc).__name__
             logger.warning(
                 "Provider model refresh failed for %s: %s", provider_name, exc, exc_info=True
             )

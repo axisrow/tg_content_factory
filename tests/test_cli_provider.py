@@ -434,3 +434,40 @@ def test_test_all_real_service_reads_db_and_refreshes_zai_models(cli_db, capsys,
     assert "Testing 1 provider(s)" in out
     assert "zai... OK (1 models)" in out
     assert fetched == [f"{ZAI_GENERAL_BASE_URL}/models"]
+
+
+@pytest.mark.parametrize(
+    ("provider_action", "name", "reason_line"),
+    [
+        ("probe", "openai", "FAIL: TimeoutError"),
+        ("refresh", "openai", "FAIL: TimeoutError"),
+        ("test-all", None, "openai: TimeoutError"),
+    ],
+)
+def test_real_service_messageless_fetch_failure_fails_the_command(
+    cli_db, capsys, monkeypatch, provider_action, name, reason_line
+):
+    """#1962: the service stores str(exc) as the reason. A live fetch that dies
+    without a message must still fail the command that confirms the connection."""
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-cli-secret"
+    _save_real_cli_provider_config(cli_db, config, _make_cfg("openai"))
+
+    async def fetch_without_message(_self, url: str, headers: dict[str, str] | None = None):
+        raise TimeoutError()
+
+    async def fake_init_db(_config_path: str):
+        cmd_db = Database(cli_db._db_path)
+        await cmd_db.initialize()
+        return config, cmd_db
+
+    monkeypatch.setattr(ProviderConfigService, "_fetch_json", fetch_without_message)
+    with patch("tg_agent.cli.commands.provider.runtime.init_db", side_effect=fake_init_db):
+        from tg_agent.cli.commands.provider import run
+
+        with pytest.raises(typer.Exit):
+            run(_ns(provider_action=provider_action, name=name))
+
+    captured = capsys.readouterr()
+    assert reason_line in captured.err
+    assert "OK" not in captured.out

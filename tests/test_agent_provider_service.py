@@ -122,14 +122,23 @@ async def test_save_provider_configs_preserves_encrypted_secret_after_decrypt_fa
     assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
+@pytest.mark.parametrize(
+    ("exc", "reason"),
+    [
+        (RuntimeError("upstream unavailable"), "upstream unavailable"),
+        # An exception without a message still leaves a reason: the class name.
+        (TimeoutError(), "TimeoutError"),
+    ],
+    ids=["with a message", "without a message"],
+)
 @pytest.mark.anyio
-async def test_refresh_models_uses_static_cache_on_live_fetch_failure(db, monkeypatch):
+async def test_refresh_models_uses_static_cache_on_live_fetch_failure(db, monkeypatch, exc, reason):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
     service = ProviderConfigService(db, config)
 
     async def _broken_fetch(spec, cfg):
-        raise RuntimeError("upstream unavailable")
+        raise exc
 
     monkeypatch.setattr(service, "_fetch_live_models", _broken_fetch)
 
@@ -137,8 +146,11 @@ async def test_refresh_models_uses_static_cache_on_live_fetch_failure(db, monkey
 
     assert entry.source == "static cache"
     assert entry.models
+    # Never empty: the provider commands fail the fetch on this text (#1962).
+    assert entry.error == reason
     saved = json.loads(await db.get_setting(MODEL_CACHE_SETTINGS_KEY) or "{}")
     assert saved["openai"]["source"] == "static cache"
+    assert saved["openai"]["error"] == reason
 
 
 @pytest.mark.anyio
