@@ -2305,10 +2305,13 @@ async def test_channels_collect_stats_ok():
     assert r["collected"] is True
 
 
-# --- _handle_channels_collect_stats: collector returns None ---
+# --- _handle_channels_collect_stats: collector stored nothing ---
 
 
-async def test_channels_collect_stats_empty():
+async def test_channels_collect_stats_nothing_stored_fails_the_command():
+    """#1973: the collector answers None when nothing was stored — no available
+    account, a resolve deferral, a failed lookup. The queue shows the status and
+    the error field only, so `collected: False` under SUCCEEDED read as work done."""
     from tg_agent.models import Channel
 
     db = _mock_db()
@@ -2317,8 +2320,8 @@ async def test_channels_collect_stats_empty():
     collector = MagicMock()
     collector.collect_channel_stats = AsyncMock(return_value=None)
     d = _dispatcher(db=db, collector=collector)
-    r = await d._handle_channels_collect_stats({"channel_pk": 1})
-    assert r["collected"] is False
+    with pytest.raises(RuntimeError, match="stats_not_collected"):
+        await d._handle_channels_collect_stats({"channel_pk": 1})
 
 
 # --- _handle_channels_add_identifier: no meta ---

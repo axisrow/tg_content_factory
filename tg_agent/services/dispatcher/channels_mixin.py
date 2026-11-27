@@ -62,7 +62,16 @@ class ChannelsCommandsMixin(_Base):
         if channel is None:
             raise RuntimeError("channel_not_found")
         result = await self._collector.collect_channel_stats(channel)
-        return {"channel_id": channel.channel_id, "collected": bool(result)}
+        if not result:
+            # The collector answers None when nothing was stored — no available
+            # account, a resolve deferral, a failed lookup. The queue shows the
+            # status and this error only: `collected: False` under SUCCEEDED
+            # read as work done (#1973).
+            raise RuntimeError(
+                "stats_not_collected: no available account, or the channel did not "
+                "resolve — see the worker log"
+            )
+        return {"channel_id": channel.channel_id, "collected": True}
 
     async def _handle_channels_refresh_types(self, payload: dict[str, Any]) -> dict[str, Any]:
         channels = await self._db.get_channels(active_only=True)
