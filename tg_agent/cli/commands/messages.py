@@ -538,7 +538,12 @@ async def messages_wait_incoming_impl(
                         "wait.messages",
                         phone=phone,
                         chat_id=target_chat_id,
-                        timeout_sec=timeout + settle_sec + 5.0,
+                        # An owner on the burst contract (#1981) follows the two
+                        # deadlines; timeout_sec is the one fixed window an
+                        # older owner still understands.
+                        first_wait_sec=timeout,
+                        settle_sec=settle_sec,
+                        timeout_sec=timeout + settle_sec + incoming_wait.RELAY_GRACE_SEC,
                     )
                 except asyncio.CancelledError:
                     raise
