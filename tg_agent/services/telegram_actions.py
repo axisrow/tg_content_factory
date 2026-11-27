@@ -18,7 +18,7 @@ from telethon_floodgate import (
 
 from tg_agent.database import Database
 from tg_agent.models import MessagesResult
-from tg_agent.services.sent_registry import record_send
+from tg_agent.services.sent_registry import record_deletion, record_send
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.telegram.dm_history import read_dialog_history
 from tg_agent.telegram.outgoing_text import parse_outgoing_text, unparse_outgoing_html
@@ -296,8 +296,9 @@ class TelegramActionService:
     def __init__(self, pool: ClientPool, db: Database | None = None):
         self._pool = pool
         # When present, every successful send/forward lands one row in the
-        # sent-messages registry (#1893); None keeps bare constructions
-        # (tests, ad-hoc use) legal without an account.
+        # sent-messages registry (#1893), and every resolved delete its rows in
+        # the deletion journal (#1950); None keeps bare constructions (tests,
+        # ad-hoc use) legal without an account.
         self._db = db
 
     @staticmethod
@@ -776,6 +777,15 @@ class TelegramActionService:
             )
             ids = [int(value) for value in message_ids]
             await client.delete_messages(entity, ids)
+            # In Saved Messages and private chats the deletion travels only in
+            # this request's answer — no update reaches the gateway's capture —
+            # so the deleting process journals it (#1950). A skipped resolve
+            # may hand a bare dialog id, which the store would class as a DM
+            # (#1946): no row beats a wrong row.
+            if resolve_entity:
+                await record_deletion(
+                    self._db, phone=acquired_phone, entity=entity, message_ids=ids
+                )
             return CountActionResult(phone=acquired_phone, count=len(ids))
 
     async def forward_messages(

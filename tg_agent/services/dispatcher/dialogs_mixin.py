@@ -156,7 +156,7 @@ class DialogsCommandsMixin(_Base):
         return {"phone": result.phone, "drafts": result.drafts}
 
     async def _handle_dialogs_delete_message(self, payload: dict[str, Any]) -> dict[str, Any]:
-        result = await TelegramActionService(self._pool).delete_messages(
+        result = await TelegramActionService(self._pool, db=self._db).delete_messages(
             phone=str(payload["phone"]),
             chat_id=payload["chat_id"],
             message_ids=[int(value) for value in payload["message_ids"]],

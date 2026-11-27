@@ -228,7 +228,11 @@ search-query list | get | add | edit | delete | toggle | run | stats
   does not know: `--chat` (a channel id in either form — the bare id other
   output prints, or the marked `-100…` the store keeps, #1926)
   matches that chat strictly; with only `--phone` the chat-less DM shape is
-  demanded; with neither, any row for the id counts.
+  demanded; with neither, any row for the id counts. A deletion made by
+  `dialogs delete-message` is journaled at once for the deleting account
+  (#1950) — in Saved Messages and private chats Telegram reports it only in
+  the request's own answer, which the gateway's update loop never sees. The
+  store prunes deletions after 7 days.
 - **Incoming long-poll (`messages wait --chat …`, #1871):** one blocking call
   instead of a `messages read --live` polling loop — send X, then wait for the
   peer's reply. `--chat` takes a chat id / `@username` / phone, or `any` for
@@ -249,7 +253,12 @@ search-query list | get | add | edit | delete | toggle | run | stats
   `dialogs_forward`, `dialogs_queue_forward`, `dm_draft`, `seeding`, `ping`,
   `agent`, `agent_forward`, `pipeline_publish`, `pipeline_forward`,
   `photo_publish`) — with the deletion status joined from the same local store
-  (`status=deleted=…` / `alive`). A comment (`dialogs send --comment-to`) is
+  (`status=deleted=…` / `alive`). `alive` only means the store holds no
+  deletion for the row: a delete requested on the connection of the session
+  owner in Saved Messages or a private chat is not pushed to the update loop
+  (`dialogs delete-message`, the agent tool and the queued command journal
+  theirs, #1950), and a real deletion reads `alive` again once the 7-day
+  prune has dropped it. A comment (`dialogs send --comment-to`) is
   listed under the channel's discussion group — the chat its message id
   belongs to — as `type=comment`, with `to=` the channel and `comment_on=` the
   post it answers (#1946).

@@ -544,6 +544,26 @@ class TestDeleteMessage:
         text = _text(result)
         assert "Удалено" in text
 
+    @pytest.mark.anyio
+    async def test_with_confirm_journals_the_deletion(self, mock_db):
+        """#1950: the tool hands its db to the service — the deletion is journaled."""
+        from telethon import types
+
+        mock_pool, mock_client = _make_mock_pool()
+        mock_pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+79001234567"))
+        self_peer = types.InputPeerSelf()
+        mock_client.get_entity = AsyncMock(return_value=self_peer)
+        mock_client.get_input_entity = AsyncMock(return_value=self_peer)
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        record_many = AsyncMock()
+        mock_db.repos = MagicMock(observed_deletions=SimpleNamespace(record_many=record_many))
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        await handlers["delete_message"](
+            {"phone": "+79001234567", "chat_id": "me", "message_ids": "1,2", "confirm": True}
+        )
+
+        record_many.assert_awaited_once_with("+79001234567", None, [1, 2])
+
 
 class TestForwardMessages:
     @pytest.mark.anyio

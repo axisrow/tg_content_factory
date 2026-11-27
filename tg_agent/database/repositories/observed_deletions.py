@@ -1,7 +1,10 @@
 """Repository for message deletions observed by the session owner.
 
 The gateway journals a ``kind: "deleted"`` event the moment Telegram reports
-messages gone; the event consumer fans the ids out here. The store answers one
+messages gone; the event consumer fans the ids out here. A deletion a process
+makes itself in a chat that reports it only in the request's answer (Saved
+Messages, private chats) is written by the deleting path
+(``services.sent_registry.record_deletion``, #1950). The store answers one
 question — "was this message id deleted, and when" — without polling history:
 send paths need not record anything, the lookup goes by (phone, message_id).
 """
@@ -21,7 +24,8 @@ _RETENTION_DAYS = 7
 
 
 class ObservedDeletionsRepository:
-    """Record and query Telegram deletion updates seen on live connections."""
+    """Record and query Telegram deletions: updates seen on live connections
+    and the ones a process made itself."""
 
     def __init__(
         self,
