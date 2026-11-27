@@ -90,6 +90,13 @@ class PhotoCommandsMixin(_Base):
                     for preview in previews
                 ],
             }
-        items = await self._photo_task_service().run_due()
+        # One service instance: the failed count belongs to the run that just happened.
+        tasks = self._photo_task_service()
+        items = await tasks.run_due()
         jobs = await self._photo_auto_upload_service().run_due()
-        return {"processed_items": items, "processed_jobs": jobs}
+        # failed_items: claimed items that were not sent (#1969) — not work done.
+        return {
+            "processed_items": items,
+            "failed_items": tasks.last_run_failed,
+            "processed_jobs": jobs,
+        }

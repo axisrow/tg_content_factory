@@ -255,6 +255,10 @@ def _create_fake_services(task_methods=None, auto_methods=None):
     """Create fake service classes with proper __init__."""
 
     class FakePhotoTaskService:
+        # What a run with every item sent leaves behind (#1969).
+        last_run_failed = 0
+        last_run_errors: list[str] = []
+
         def __init__(self, *args, **kwargs):
             pass
 
@@ -653,6 +657,43 @@ def test_run_due_action(tmp_path, cli_init_patch, capsys):
     out = capsys.readouterr().out
     assert "items=5" in out
     assert "auto_jobs=2" in out
+
+
+def test_run_due_action_names_the_items_that_were_not_sent(tmp_path, cli_init_patch, capsys):
+    """#1969: a claimed item whose send failed is not reported as processed."""
+    db_path = str(tmp_path / "photo_run_due_failed.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _setup_photo_db(db)
+
+    async def fake_init_pool(_config, _db):
+        pool = MagicMock()
+        pool.disconnect_all = AsyncMock()
+        return MagicMock(), pool
+
+    fake_task, fake_auto = _create_fake_services(
+        task_methods={"run_due": AsyncMock(return_value=2)},
+        auto_methods={"run_due": AsyncMock(return_value=0)},
+    )
+    fake_task.last_run_failed = 1
+    fake_task.last_run_errors = ["item #9: send failed"]
+
+    with (
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
+        patch("tg_agent.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
+        patch("tg_agent.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("tg_agent.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
+        pytest.raises(typer.Exit) as excinfo,
+    ):
+        from tg_agent.cli.commands.photo_loader import run
+
+        run(_ns(photo_loader_action="run-due"))
+
+    assert excinfo.value.exit_code == 1
+    captured = capsys.readouterr()
+    assert "items=2" in captured.out
+    assert "failed=1" in captured.out
+    assert "1 of 2 due photo item(s) were not sent: item #9: send failed" in captured.err
 
 
 def test_run_due_action_prints_progress(tmp_path, cli_init_patch, capsys):

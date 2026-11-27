@@ -81,6 +81,7 @@ def mock_photo_task_service():
     """Mock PhotoTaskService."""
     service = MagicMock()
     service.run_due = AsyncMock(return_value=5)
+    service.last_run_failed = 0  # a run with every item sent (#1969)
     return service
 
 

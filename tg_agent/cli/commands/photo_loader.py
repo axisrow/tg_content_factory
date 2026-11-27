@@ -448,6 +448,9 @@ async def run_due_impl(config_path: str, *, item_id: int | None = None, dry_run:
         item_progress, item_state = _make_progress_printer("photo item")
         items = await s.tasks.run_due(item_id=item_id, on_progress=item_progress)
         _print_progress_summary("photo items", items, item_state)
+        # A claimed item whose send failed is FAILED on its row; it is counted
+        # in `items`, so the count of those is printed and fails the command (#1969).
+        failed, failed_errors = s.tasks.last_run_failed, list(s.tasks.last_run_errors)
         jobs = 0
         if item_id is None:
             auto_progress, auto_state = _make_progress_printer("auto job")
@@ -455,7 +458,12 @@ async def run_due_impl(config_path: str, *, item_id: int | None = None, dry_run:
             assert isinstance(processed, int)  # non-dry-run returns a count
             jobs = processed
             _print_progress_summary("auto jobs", jobs, auto_state)
-        print(f"Processed due photo items={items} auto_jobs={jobs}")
+        print(f"Processed due photo items={items} auto_jobs={jobs} failed={failed}")
+        if failed:
+            cli_error(
+                f"{failed} of {items} due photo item(s) were not sent: "
+                + "; ".join(failed_errors[:5])
+            )
     await _run_with_services(config_path, _body)
 
 

@@ -1685,6 +1685,7 @@ async def test_photo_run_due():
     d = _dispatcher(db=db, pool=pool)
     mock_task_svc = MagicMock()
     mock_task_svc.run_due = AsyncMock(return_value=3)
+    mock_task_svc.last_run_failed = 0
     mock_auto_svc = MagicMock()
     mock_auto_svc.run_due = AsyncMock(return_value=1)
     with patch.object(type(d), "_photo_task_service", return_value=mock_task_svc), \
@@ -1692,6 +1693,23 @@ async def test_photo_run_due():
         r = await d._handle_photo_run_due({})
     assert r["processed_items"] == 3
     assert r["processed_jobs"] == 1
+    assert r["failed_items"] == 0
+
+
+async def test_photo_run_due_reports_items_that_were_not_sent():
+    """#1969: the receipt says how many claimed items were not sent."""
+    db = _mock_db()
+    pool = _mock_pool()
+    d = _dispatcher(db=db, pool=pool)
+    mock_task_svc = MagicMock()
+    mock_task_svc.run_due = AsyncMock(return_value=3)
+    mock_task_svc.last_run_failed = 2
+    mock_auto_svc = MagicMock()
+    mock_auto_svc.run_due = AsyncMock(return_value=1)
+    with patch.object(type(d), "_photo_task_service", return_value=mock_task_svc), \
+         patch.object(type(d), "_photo_auto_upload_service", return_value=mock_auto_svc):
+        r = await d._handle_photo_run_due({})
+    assert r == {"processed_items": 3, "failed_items": 2, "processed_jobs": 1}
 
 
 async def test_photo_run_due_dry_run_returns_plan_without_sending():

@@ -718,6 +718,8 @@ def _make_photo_services():
     photo_task_svc.list_batches = AsyncMock(return_value=[])
     photo_task_svc.list_items = AsyncMock(return_value=[])
     photo_task_svc.run_due = AsyncMock(return_value=5)
+    # What a run with every item sent leaves behind (#1969).
+    photo_task_svc.last_run_failed = 0
     photo_task_svc.cancel_item = AsyncMock(return_value=True)
 
     auto_upload_svc = MagicMock()
@@ -881,6 +883,7 @@ class TestRunPhotoDue:
         text = _text(result)
         assert "items=3" in text
         assert "auto_jobs=1" in text
+        assert "не отправлено" not in text
 
     @pytest.mark.anyio
     async def test_exception(self, mock_db):
@@ -1340,6 +1343,7 @@ async def test_migrations_remaps_legacy_dialog_search_permission_key():
             "SELECT value FROM settings WHERE key = 'agent_tool_permissions' LIMIT 1"
         )
         row = await cur.fetchone()
+        assert row is not None
         data = json.loads(row["value"])
         assert legacy_key not in data
         assert data["search_dialogs"] is True
@@ -1388,6 +1392,7 @@ async def test_scheduler_start_with_task_enqueuer():
     )
     await mgr.start()
     assert mgr.is_running
+    assert mgr._scheduler is not None
     # photo_due and photo_auto jobs should be registered
     jobs = mgr._scheduler.get_jobs()
     job_ids = [j.id for j in jobs]
@@ -1445,8 +1450,9 @@ async def test_scheduler_trigger_background_idempotent():
     task1 = mgr._bg_task
     await mgr.trigger_background()
     task2 = mgr._bg_task
+    assert task1 is not None
     assert task1 is task2
-    await mgr._bg_task
+    await task1
 
 
 @pytest.mark.anyio
@@ -1853,6 +1859,7 @@ async def test_dispatcher_handle_photo_due_with_service():
     tasks_repo = _make_tasks_repo()
     photo_svc = MagicMock()
     photo_svc.run_due = AsyncMock(return_value=5)
+    photo_svc.last_run_failed = 0  # a run with every item sent (#1969)
     dispatcher = UnifiedDispatcher(
         collector=_make_collector(),
         channel_bundle=_make_channel_bundle(),
