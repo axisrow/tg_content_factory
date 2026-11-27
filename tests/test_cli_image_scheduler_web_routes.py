@@ -208,7 +208,80 @@ class TestCLIImageCommand:
         assert excinfo.value.exit_code == 1
         captured = capsys.readouterr()
         assert "Unknown image provider: no-such-provider" in captured.err
+        assert "Available: together, huggingface, openai, replicate, codex" in captured.err
         assert "No models found" not in captured.out
+
+    def test_models_searches_with_the_key_stored_in_the_db(self, capsys, monkeypatch):
+        """A provider configured only through the DB is searched with its stored key: the
+        catalog is listed, not refused as "… is not set" (review of #1961)."""
+        import aiohttp
+
+        from tg_agent.cli.commands.image import run
+        from tg_agent.services.image_provider_service import ImageProviderConfig
+
+        monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+        requests = []
+
+        class _Resp:
+            status = 200
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def json(self):
+                return {"results": [{"owner": "o", "name": "flux", "description": "d", "run_count": 1}]}
+
+        class _Session:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def get(self, url, **kwargs):
+                requests.append(kwargs["headers"])
+                return _Resp()
+
+        monkeypatch.setattr(aiohttp, "ClientSession", _Session)
+        with patch("tg_agent.services.image_provider_service.ImageProviderService") as provider_svc_cls:
+            provider_svc_cls.return_value.load_provider_configs = AsyncMock(
+                return_value=[ImageProviderConfig(provider="replicate", api_key="db-token")]
+            )
+            provider_svc_cls.return_value.build_adapters = MagicMock(return_value={})
+            run(_run_ns(image_action="models", provider="replicate", query=""))
+
+        assert requests == [{"Authorization": "Bearer db-token"}]
+        assert "replicate:o/flux" in capsys.readouterr().out
+
+    def test_models_refresh_searches_with_the_key_stored_in_the_db(self, capsys, monkeypatch):
+        """`--refresh` asks the live list with the stored key instead of skipping it (review of #1961)."""
+        from tg_agent.cli.commands.image import run
+        from tg_agent.services.image_generation_service import ImageGenerationService
+        from tg_agent.services.image_provider_service import ImageProviderConfig
+
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        asked = []
+
+        async def _fake_fetch(api_key):
+            asked.append(api_key)
+            return [{"id": "gpt-image-9", "model_string": "openai:gpt-image-9", "description": "live", "run_count": 0}]
+
+        monkeypatch.setattr(ImageGenerationService, "_fetch_openai_image_models", staticmethod(_fake_fetch))
+        with patch("tg_agent.services.image_provider_service.ImageProviderService") as provider_svc_cls:
+            provider_svc_cls.return_value.load_provider_configs = AsyncMock(
+                return_value=[ImageProviderConfig(provider="openai", api_key="db-token")]
+            )
+            provider_svc_cls.return_value.build_adapters = MagicMock(return_value={})
+            run(_run_ns(image_action="models", provider="openai", query="", refresh=True))
+
+        assert asked == ["db-token"]
+        assert "openai:gpt-image-9" in capsys.readouterr().out
 
     def test_models_with_results(self, capsys):
         """models action prints model strings and descriptions."""

@@ -72,7 +72,7 @@ async def test_search_models_huggingface_no_token_returns_empty(monkeypatch):
     result = await svc.search_models("huggingface", query="flux", api_key="")
     assert result == []
     # #1961: an empty answer says why — here the provider has no key.
-    assert svc.last_search_error == "HUGGINGFACE_API_KEY is not set"
+    assert svc.last_search_error == "HUGGINGFACE_API_KEY or HUGGINGFACE_TOKEN is not set"
 
 
 @pytest.mark.anyio

@@ -314,7 +314,7 @@ class ImageGenerationService:
         if provider == "huggingface":
             token = api_key or os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HUGGINGFACE_TOKEN", "")
             if not token:
-                self._last_search_error = "HUGGINGFACE_API_KEY is not set"
+                self._last_search_error = "HUGGINGFACE_API_KEY or HUGGINGFACE_TOKEN is not set"
                 return []
             try:
                 from huggingface_hub import HfApi
