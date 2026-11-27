@@ -377,6 +377,45 @@ async def test_translate_batch_provider_returns_none():
     assert svc.last_error == "The provider returned an empty translation"
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("answer", ["Hello world", "**1:** Hello", "   "])
+async def test_translate_batch_answer_without_numbered_lines_is_a_failure(answer):
+    """A non-empty answer that matched none of the messages is not "nothing to translate" (#1964)."""
+    mock_provider = AsyncMock(return_value=answer)
+    mock_ps = MagicMock()
+    mock_ps.get_provider_callable.return_value = mock_provider
+    mock_ps._registry = {}
+
+    svc = TranslationService(db=AsyncMock(), provider_service=mock_ps)
+    msgs = [
+        Message(id=1, channel_id=100, message_id=1, text="Привет", detected_lang="ru", date=datetime.now(timezone.utc)),
+    ]
+    result = await svc.translate_batch(msgs, "en")
+    assert result == []
+    assert svc.last_error == "The provider returned an answer without the expected numbered translations"
+
+
+@pytest.mark.anyio
+async def test_translate_batch_partial_answer_is_a_success():
+    """The lines that parsed are kept without an error; the rest is selected again next run."""
+    mock_provider = AsyncMock(return_value="1: Hello")
+    mock_ps = MagicMock()
+    mock_ps.get_provider_callable.return_value = mock_provider
+    mock_ps._registry = {}
+
+    svc = TranslationService(db=AsyncMock(), provider_service=mock_ps)
+    msgs = [
+        Message(id=1, channel_id=100, message_id=1, text="Привет", detected_lang="ru", date=datetime.now(timezone.utc)),
+        Message(
+            id=2, channel_id=100, message_id=2, text="Доброе утро",
+            detected_lang="ru", date=datetime.now(timezone.utc),
+        ),
+    ]
+    results = await svc.translate_batch(msgs, "en")
+    assert results == [(1, "Hello")]
+    assert svc.last_error is None
+
+
 # ── get_settings ────────────────────────────────────────────────────
 
 

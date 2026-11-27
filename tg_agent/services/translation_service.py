@@ -30,6 +30,7 @@ MAX_TRANSLATE_INPUT_CHARS = 8000
 NO_PROVIDER_SERVICE = "No provider service configured for translation"
 ONLY_STUB_PROVIDER = "No LLM provider configured (only the stub default is available)"
 EMPTY_TRANSLATION_ANSWER = "The provider returned an empty translation"
+UNPARSED_TRANSLATION_ANSWER = "The provider returned an answer without the expected numbered translations"
 
 
 class TranslationService:
@@ -186,7 +187,10 @@ class TranslationService:
         for i, m in enumerate(to_translate):
             if i in translations and m.id is not None:
                 output.append((m.id, translations[i]))
-
+        if not output:
+            # An answer that matched none of the messages sent. A partial one is
+            # a success: the rows it left are selected again next run.
+            self.last_error = UNPARSED_TRANSLATION_ANSWER
         return output
 
     @staticmethod

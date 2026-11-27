@@ -10,6 +10,7 @@ import typer
 from tests.helpers import cli_ns as _ns
 from tg_agent.config import AppConfig
 from tg_agent.database import Database
+from tg_agent.services.translation_service import UNPARSED_TRANSLATION_ANSWER
 
 
 @pytest.fixture
@@ -239,6 +240,23 @@ class TestMessage:
         captured = capsys.readouterr()
         assert "Translation failed: API down" in captured.err
         assert "Translation failed" not in captured.out
+
+    @patch("tg_agent.database.repositories.messages.MessagesRepository.update_translation", new_callable=AsyncMock)
+    @patch("tg_agent.services.provider_service.build_provider_service", new_callable=AsyncMock)
+    @patch("tg_agent.database.repositories.messages.MessagesRepository.get_by_id")
+    def test_message_answer_not_numbered(self, mock_get, mock_build, mock_update, cli_env, capsys):
+        """The real service on an answer that parsed to nothing: a failure, not "Nothing to translate" (#1964)."""
+        provider = AsyncMock(return_value="Hello world")
+        mock_build.return_value = SimpleNamespace(get_provider_callable=lambda _name: provider, _registry={})
+        mock_get.return_value = SimpleNamespace(id=1, text="Привет", detected_lang="ru")
+        from tg_agent.cli.commands.translate import run
+        with pytest.raises(typer.Exit) as excinfo:
+            run(_ns(translate_action="message", message_id=1))
+        assert excinfo.value.exit_code == 1
+        captured = capsys.readouterr()
+        assert f"Translation failed: {UNPARSED_TRANSLATION_ANSWER}" in captured.err
+        assert "Nothing to translate" not in captured.out
+        mock_update.assert_not_awaited()
 
     @patch("tg_agent.database.repositories.messages.MessagesRepository.get_by_id")
     def test_message_language_not_detected(self, mock_get, cli_env, capsys):

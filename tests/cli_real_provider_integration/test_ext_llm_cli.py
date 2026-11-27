@@ -242,7 +242,9 @@ def test_translate_message(tmp_path: Path, provider_tmp_env: tuple[Path, Path]) 
     config_path, db_path = provider_tmp_env
     extra_env = {"ZAI_API_KEY": _ZAI_KEY}
 
-    # Seed a channel and a message directly into the DB
+    # Seed a channel and a message directly into the DB. The language is the
+    # canonical 'detected_lang' column: translate message refuses a row whose
+    # language is not detected (#1964), so the row has to carry one.
     with closing(sqlite3.connect(db_path)) as conn:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS channels ("
@@ -257,12 +259,12 @@ def test_translate_message(tmp_path: Path, provider_tmp_env: tuple[Path, Path]) 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS messages ("
             "id INTEGER PRIMARY KEY, channel_id INTEGER, message_id INTEGER, "
-            "text TEXT, date TEXT, lang TEXT, UNIQUE(channel_id, message_id))"
+            "text TEXT, date TEXT, detected_lang TEXT, UNIQUE(channel_id, message_id))"
         )
         conn.execute(
-            "INSERT OR IGNORE INTO messages (channel_id, message_id, text, date) "
-            "VALUES (?, ?, ?, ?)",
-            (100001, 1, "Привет мир", "2024-01-01T00:00:00"),
+            "INSERT OR IGNORE INTO messages (channel_id, message_id, text, date, detected_lang) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (100001, 1, "Привет мир", "2024-01-01T00:00:00", "ru"),
         )
         conn.commit()
 
@@ -284,7 +286,8 @@ def test_translate_message(tmp_path: Path, provider_tmp_env: tuple[Path, Path]) 
         extra_env=extra_env,
     )
     combined = result.stdout + result.stderr
-    # Accept either a successful translation or a graceful "no key configured" exit
+    # A translation that did not happen exits 1 (#1964): no provider, a failed
+    # provider call or an answer without the numbered line all fail here.
     assert result.returncode == 0, (
         f"translate message returned non-zero:\n{combined}"
     )

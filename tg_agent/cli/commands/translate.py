@@ -128,9 +128,6 @@ async def message_impl(config_path: str, *, message_id: int, target: str = "en")
         results = await svc.translate_batch([msg], target, provider_name=provider_name, model=model)
         if svc.last_error:
             cli_error(f"Translation failed: {svc.last_error}")
-        if not results:
-            print("Nothing to translate.")
-            return
         _, translated = results[0]
         await db.repos.messages.update_translation(message_id, target, translated)
         print(f"Original:\n  {text[:500]}\n")
