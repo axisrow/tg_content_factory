@@ -176,6 +176,13 @@ async def dialogs_impl(config_path: str, *, phone: str) -> None:
     async def _body(s: _Services) -> None:
         dialogs = await s.channel_service.get_my_dialogs(phone)
         if not dialogs:
+            # The cache read is an exact match on the phone, so a phone that is
+            # not a connected account (a typo, a missing `+`) reads empty too —
+            # and its refresh builds nothing. Answer as `dialogs list` does.
+            if not s.pool.clients:
+                cli_error("No connected accounts.")
+            if phone not in s.pool.clients:
+                cli_error(f"Account {phone} not connected.")
             # The list is the dialog cache, not a live read (#1923): empty means
             # the cache was never built for this account — silence with exit 0
             # read as "this account has no dialogs" (#1977).

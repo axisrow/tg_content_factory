@@ -118,9 +118,22 @@ def test_dialogs_action(tmp_path, cli_init_patch, capsys):
     assert "Test Channel" in out
 
 
-def test_dialogs_action_with_an_unbuilt_cache_is_a_refusal(tmp_path, cli_init_patch, capsys):
+@pytest.mark.parametrize(
+    ("clients", "reason"),
+    [
+        ({}, "No connected accounts."),
+        ({"+200": object()}, "Account +100 not connected."),
+        ({"+100": object()}, "dialog cache was never built"),
+    ],
+)
+def test_dialogs_action_with_an_empty_cache_names_the_reason(
+    tmp_path, cli_init_patch, capsys, clients, reason
+):
     """#1977: the list is the dialog cache (#1923) — before any refresh it is empty,
-    and silence with exit 0 reads as "this account has no dialogs"."""
+    and silence with exit 0 reads as "this account has no dialogs". The cache read is
+    an exact match on the phone, so a phone that is not a connected account reads
+    empty too: it gets the `dialogs list` refusal, not a fix that cannot build
+    anything."""
     db_path = str(tmp_path / "photo_dialogs_empty.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
@@ -128,6 +141,7 @@ def test_dialogs_action_with_an_unbuilt_cache_is_a_refusal(tmp_path, cli_init_pa
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
+        pool.clients = clients
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
@@ -147,8 +161,9 @@ def test_dialogs_action_with_an_unbuilt_cache_is_a_refusal(tmp_path, cli_init_pa
 
     assert excinfo.value.exit_code == 1
     captured = capsys.readouterr()
-    assert "dialog cache was never built" in captured.err
-    assert "photo-loader refresh" in captured.err
+    assert reason in captured.err
+    # The unbuilt-cache text and its fix are named for a real account only.
+    assert ("photo-loader refresh" in captured.err) == ("+100" in clients)
     assert captured.out == ""
 
 

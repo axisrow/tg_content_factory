@@ -350,7 +350,12 @@ class TestChannelListForImport:
         assert excinfo.value.exit_code == 1
         captured = capsys.readouterr()
         assert "dialog cache was never built" in captured.err
-        assert "dialogs refresh" in captured.err
+        # A bare `dialogs refresh` builds the primary account only: this list reads
+        # every account, so the fix it names is per account.
+        assert (
+            "Build it with `dialogs refresh --phone PHONE` for each account (phones: `account list`)."
+            in captured.err
+        )
         assert captured.out == ""
 
     def test_unbuilt_cache_in_json_keeps_an_empty_list_and_still_exits_1(self, capsys):

@@ -1192,9 +1192,11 @@ async def list_for_import_impl(config_path: str, *, as_json: bool) -> None:
             # (#1977). A JSON reader still gets its array.
             if as_json:
                 print("[]")
+            # `dialogs refresh` builds one account (`--phone` defaults to the
+            # primary one) and nothing refreshes every account at once.
             cli_error(
                 "No cached dialogs: the dialog cache was never built. "
-                "Build it with `dialogs refresh` (one account: `dialogs refresh --phone PHONE`)."
+                "Build it with `dialogs refresh --phone PHONE` for each account (phones: `account list`)."
             )
         if as_json:
             import json as _json
