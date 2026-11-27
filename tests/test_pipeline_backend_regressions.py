@@ -29,7 +29,7 @@ from tg_agent.services.pipeline_templates_builtin import get_builtin_templates
 from tg_agent.services.provider_service import RuntimeProviderRegistry
 from tg_agent.services.publish_service import PublishService
 from tg_agent.services.task_enqueuer import TaskEnqueuer
-from tg_agent.services.telegram_actions import TelegramActionService
+from tg_agent.services.telegram_actions import ForwardMessagesResult, TelegramActionService
 
 pytestmark = [pytest.mark.anyio, pytest.mark.aiosqlite_serial]
 
@@ -131,6 +131,9 @@ async def test_forward_retry_delivers_only_to_previously_failed_target(db):
         if kwargs["to_chat"] == 222 and fail_second:
             raise RuntimeError("Temporary Telegram failure")
         delivered.append(kwargs["to_chat"])
+        # What the service returns for a delivered forward: the handler reads
+        # the confirmed ids before it logs the message as forwarded (#1981).
+        return ForwardMessagesResult(phone=kwargs["phone"], count=1, message_ids=(500 + kwargs["to_chat"],))
 
     actions = AsyncMock(spec=TelegramActionService)
     actions.forward_messages.side_effect = forward
