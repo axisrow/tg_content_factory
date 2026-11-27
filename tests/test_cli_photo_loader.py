@@ -167,12 +167,13 @@ def test_dialogs_action_with_an_empty_cache_names_the_reason(
     assert captured.out == ""
 
 
-def test_refresh_action_warns_on_partial_sweep(tmp_path, cli_init_patch, capsys):
-    """A partial refresh must not be reported as a refreshed cache (#1350).
+def test_refresh_action_fails_on_partial_sweep(tmp_path, cli_init_patch, capsys):
+    """A partial refresh exits 1 and says what it saved, not "refreshed" (#1350, #1974).
 
     `dialogs refresh` was taught to honour the flag; this second CLI surface
     printed "Dialogs refreshed: N total." unconditionally, reproducing the exact
-    silent success on `photo-loader refresh`.
+    silent success on `photo-loader refresh`. The line counts the rows the sweep
+    wrote (#1359), not the dialogs it handed back.
     """
     from tg_agent.telegram.pool_dialogs import DialogFetchResult
 
@@ -195,20 +196,26 @@ def test_refresh_action_warns_on_partial_sweep(tmp_path, cli_init_patch, capsys)
         with patch("tg_agent.cli.commands.photo_loader.ChannelService") as mock_channel_service:
             mock_instance = MagicMock()
             mock_instance.get_my_dialogs = AsyncMock(
+                # A dead sweep hands back the old snapshot: one dialog held,
+                # no row written by this fetch.
                 return_value=DialogFetchResult(
                     [{"channel_id": 100, "channel_type": "channel", "title": "Test Channel"}],
                     partial=True,
+                    saved=0,
                 )
             )
             mock_channel_service.return_value = mock_instance
 
-            # #1974: the line says the cache was not updated — the exit code agrees.
+            # #1974: the line says to run the refresh again — the exit code agrees.
             with pytest.raises(typer.Exit) as excinfo:
                 run(_ns(photo_loader_action="refresh", phone="+100"))
 
     assert excinfo.value.exit_code == 1
     captured = capsys.readouterr()
-    assert "not updated" in captured.err
+    assert (
+        "Dialog refresh did not complete: 0 dialog(s) saved to dialog_cache, "
+        "stale entries were kept. Run the refresh again to continue." in captured.err
+    )
     assert "Dialogs refreshed:" not in captured.out
 
 
