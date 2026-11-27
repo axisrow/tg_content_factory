@@ -653,9 +653,13 @@ class RelayServer:
                     return
                 item = normalize_incoming(phone, event)
                 if item is not None:
-                    await peer.push(PUSH_KIND, **item.as_item())
+                    # Re-armed at the match itself, before its push: send holds
+                    # the peer lock and a writer.drain() (up to 30 s), and a tail
+                    # counted after the push expires while it is still in flight —
+                    # the burst after it is lost, the #1981 symptom again.
                     if tail_sec is not None:
                         hold_until = clock() + tail_sec
+                    await peer.push(PUSH_KIND, **item.as_item())
             except Exception:
                 logger.exception("relay: wait.messages handler failed for %s", mask_phone(phone))
 
