@@ -76,6 +76,16 @@ def register_send_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
                 mode=mode,
                 caption=caption,
             )
+            if result.error:
+                # Some files are live, some failed: the item is COMPLETED on
+                # purpose (#864). Say what went out, or the whole list is rerun
+                # and the live files are published twice (#1981).
+                sent_ids = result.telegram_message_ids or []
+                return _text_response(
+                    f"Фото отправлены не все: {len(sent_ids)} из {len(result.file_paths)} файл(ов), "
+                    f"id сообщений {sent_ids}; {result.error}. "
+                    "Отправленные уже в чате — повтори только оставшиеся."
+                )
             return _text_response(f"Фото отправлены. Item id={result.id}, status={result.status}")
         except Exception as exc:
             return _text_response(f"Ошибка отправки фото: {exc}")
@@ -125,6 +135,16 @@ def register_send_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
                 schedule_at=schedule_at,
                 caption=caption,
             )
+            if result.error:
+                # What is scheduled is already queued on Telegram: a retry of
+                # the whole list queues it twice. Name it and the way back (#1981).
+                queued_ids = result.telegram_message_ids or []
+                return _text_response(
+                    f"Фото запланированы не все: {len(queued_ids)} из {len(result.file_paths)} файл(ов), "
+                    f"id сообщений {queued_ids}; {result.error}. "
+                    f"Запланированные уже в очереди Telegram — перед повтором отмени их: "
+                    f"cancel_photo_item item_id={result.id}."
+                )
             return _text_response(f"Фото запланированы на {schedule_at}. Item id={result.id}")
         except Exception as exc:
             return _text_response(f"Ошибка планирования фото: {exc}")

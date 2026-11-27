@@ -53,6 +53,15 @@ class PhotoCommandsMixin(_Base):
             mode=str(payload.get("mode", "separate")),
             caption=payload.get("caption"),
         )
+        if item.error:
+            # Some files are live, some were not sent: the item is COMPLETED on
+            # purpose (#864), and the command must not read as a full success —
+            # a retry of the whole request publishes the live files twice (#1981).
+            sent_ids = item.telegram_message_ids or []
+            raise RuntimeError(
+                f"{len(item.file_paths) - len(sent_ids)} of {len(item.file_paths)} photo file(s) "
+                f"were not sent: {item.error} (message ids {sent_ids} are live — do not resend them)"
+            )
         return {"item_id": item.id, "batch_id": item.batch_id}
 
     async def _handle_photo_schedule_send(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -68,6 +77,15 @@ class PhotoCommandsMixin(_Base):
             schedule_at=parse_required_schedule_datetime(str(payload["schedule_at"])),
             caption=payload.get("caption"),
         )
+        if item.error:
+            # What is scheduled is already queued on Telegram; the command
+            # fails naming it and the item that can take it back (#1981).
+            queued_ids = item.telegram_message_ids or []
+            raise RuntimeError(
+                f"{len(item.file_paths) - len(queued_ids)} of {len(item.file_paths)} photo file(s) "
+                f"were not scheduled: {item.error} "
+                f"(message ids {queued_ids} are queued on Telegram — cancel item #{item.id} before retrying)"
+            )
         return {"item_id": item.id, "batch_id": item.batch_id}
 
     async def _handle_photo_run_due(self, payload: dict[str, Any]) -> dict[str, Any]:

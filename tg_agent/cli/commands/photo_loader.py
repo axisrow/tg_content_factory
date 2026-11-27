@@ -259,6 +259,17 @@ async def schedule_send_impl(
             schedule_at=_parse_schedule_at(at),
             caption=caption,
         )
+        if item.error:
+            # Some files are already queued on Telegram: a caller that reruns
+            # the whole request schedules them twice. Name what is queued and
+            # the item that takes it back (#1981).
+            queued_ids = item.telegram_message_ids or []
+            cli_error(
+                f"Photo item #{item.id}: {len(queued_ids)} of {len(item.file_paths)} file(s) "
+                f"scheduled, message ids {queued_ids}; {item.error}. "
+                f"The scheduled files are queued on Telegram — cancel item #{item.id} "
+                "before retrying them."
+            )
         print(f"Scheduled photo item #{item.id} status={item.status}")
     await _run_with_services(config_path, _body)
 

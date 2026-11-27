@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -54,9 +55,11 @@ def _make_photo_services():
     send_result = MagicMock()
     send_result.id = 42
     send_result.status = "pending"
+    send_result.error = None  # only a partial send sets it (#864)
     photo_task_svc.send_now = AsyncMock(return_value=send_result)
     schedule_result = MagicMock()
     schedule_result.id = 7
+    schedule_result.error = None
     photo_task_svc.schedule_send = AsyncMock(return_value=schedule_result)
     photo_task_svc.cancel_item = AsyncMock(return_value=True)
     photo_task_svc.create_batch = AsyncMock(return_value=99)
@@ -286,6 +289,36 @@ class TestSendPhotosNow:
         text = _text(result)
         assert "Фото отправлены" in text
 
+    @pytest.mark.anyio
+    async def test_partial_send_names_what_went_out(self, mock_db):
+        """#1981: a COMPLETED-with-error item is one file that never went out."""
+        photo_task_svc, auto_upload_svc = _make_photo_services()
+        photo_task_svc.send_now = AsyncMock(
+            return_value=SimpleNamespace(
+                id=7,
+                status=PhotoBatchStatus.COMPLETED,
+                telegram_message_ids=[501],
+                file_paths=["a.jpg", "b.png"],
+                error="partial send failure: [Errno 13] Permission denied: 'b.png'",
+            )
+        )
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+
+        with (
+            _photo_ctx(photo_task_svc, auto_upload_svc),
+            patch("tg_agent.services.photo_task_service.PhotoTarget"),
+        ):
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["send_photos_now"](
+                {"phone": "+79001234567", "target": "12345", "file_paths": "a.jpg,b.png", "confirm": True}
+            )
+        text = _text(result)
+        assert "1 из 2" in text
+        assert "501" in text
+        assert "Permission denied" in text
+        assert "Фото отправлены." not in text
+
 
 class TestSchedulePhotos:
     @pytest.mark.anyio
@@ -328,6 +361,42 @@ class TestSchedulePhotos:
             )
         text = _text(result)
         assert "запланированы" in text
+
+    @pytest.mark.anyio
+    async def test_partial_schedule_names_what_is_queued(self, mock_db):
+        """#1981: one file was never scheduled; retrying all of it queues the rest twice."""
+        photo_task_svc, auto_upload_svc = _make_photo_services()
+        photo_task_svc.schedule_send = AsyncMock(
+            return_value=SimpleNamespace(
+                id=7,
+                telegram_message_ids=[501],
+                file_paths=["a.jpg", "b.png"],
+                error="partial schedule failure: flood wait",
+            )
+        )
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+
+        with (
+            _photo_ctx(photo_task_svc, auto_upload_svc),
+            patch("tg_agent.services.photo_task_service.PhotoTarget"),
+        ):
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["schedule_photos"](
+                {
+                    "phone": "+79001234567",
+                    "target": "12345",
+                    "file_paths": "a.jpg,b.png",
+                    "schedule_at": "2025-01-01T10:00:00",
+                    "confirm": True,
+                }
+            )
+        text = _text(result)
+        assert "1 из 2" in text
+        assert "501" in text
+        assert "flood wait" in text
+        assert "cancel_photo_item" in text and "item_id=7" in text
+        assert "Фото запланированы на" not in text
 
     @pytest.mark.anyio
     async def test_me_target_is_resolved_not_int_cast(self, mock_db):

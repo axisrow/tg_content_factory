@@ -7,6 +7,7 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1654,7 +1655,7 @@ async def test_photo_send_now():
     pool = _mock_pool()
     d = _dispatcher(db=db, pool=pool)
     mock_svc = MagicMock()
-    mock_item = MagicMock(id=1, batch_id=10)
+    mock_item = MagicMock(id=1, batch_id=10, error=None, file_paths=["/img.jpg"])
     mock_svc.send_now = AsyncMock(return_value=mock_item)
     with patch.object(type(d), "_photo_task_service", return_value=mock_svc):
         r = await d._handle_photo_send_now({
@@ -1664,12 +1665,34 @@ async def test_photo_send_now():
     assert r["item_id"] == 1
 
 
+async def test_photo_send_now_partial_send_is_not_a_success():
+    """#1981: `photo.send_now` answered `succeeded` while one file was never sent."""
+    db = _mock_db()
+    pool = _mock_pool()
+    d = _dispatcher(db=db, pool=pool)
+    mock_svc = MagicMock()
+    mock_svc.send_now = AsyncMock(
+        return_value=SimpleNamespace(
+            id=1, batch_id=10, error="partial send failure: boom",
+            telegram_message_ids=[501], file_paths=["/a.jpg", "/b.jpg"],
+        )
+    )
+    with (
+        patch.object(type(d), "_photo_task_service", return_value=mock_svc),
+        pytest.raises(RuntimeError, match=r"1 of 2 photo file\(s\) were not sent: .*boom.*\[501\]"),
+    ):
+        await d._handle_photo_send_now({
+            "phone": "+1", "target_dialog_id": -100, "file_paths": ["/a.jpg", "/b.jpg"],
+            "mode": "separate",
+        })
+
+
 async def test_photo_schedule_send():
     db = _mock_db()
     pool = _mock_pool()
     d = _dispatcher(db=db, pool=pool)
     mock_svc = MagicMock()
-    mock_item = MagicMock(id=2, batch_id=20)
+    mock_item = MagicMock(id=2, batch_id=20, error=None, file_paths=["/img.jpg"])
     mock_svc.schedule_send = AsyncMock(return_value=mock_item)
     with patch.object(type(d), "_photo_task_service", return_value=mock_svc):
         r = await d._handle_photo_schedule_send({
@@ -1677,6 +1700,30 @@ async def test_photo_schedule_send():
             "schedule_at": "2026-06-01T00:00:00",
         })
     assert r["item_id"] == 2
+
+
+async def test_photo_schedule_send_partial_schedule_is_not_a_success():
+    """#1981: what is already queued on Telegram must be named before a retry."""
+    db = _mock_db()
+    pool = _mock_pool()
+    d = _dispatcher(db=db, pool=pool)
+    mock_svc = MagicMock()
+    mock_svc.schedule_send = AsyncMock(
+        return_value=SimpleNamespace(
+            id=2, batch_id=20, error="partial schedule failure: flood",
+            telegram_message_ids=[501], file_paths=["/a.jpg", "/b.jpg"],
+        )
+    )
+    with (
+        patch.object(type(d), "_photo_task_service", return_value=mock_svc),
+        pytest.raises(
+            RuntimeError, match=r"1 of 2 photo file\(s\) were not scheduled: .*flood.*\[501\].*item #2"
+        ),
+    ):
+        await d._handle_photo_schedule_send({
+            "phone": "+1", "target_dialog_id": -100, "file_paths": ["/a.jpg", "/b.jpg"],
+            "schedule_at": "2026-06-01T00:00:00",
+        })
 
 
 async def test_photo_run_due():
