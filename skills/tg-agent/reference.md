@@ -251,11 +251,11 @@ search-query list | get | add | edit | delete | toggle | run | stats
   `agent`, `agent_forward`, `pipeline_publish`, `pipeline_forward`,
   `photo_publish`) — with the deletion status joined from the same local store
   (`status=deleted=…` / `alive`). `alive` only means the store holds no
-  deletion for the row: an own delete in Saved Messages or a private chat made
-  outside this tool (another Telegram client — `dialogs delete-message`, the
-  agent tool and the queued command journal theirs, #1950) never reaches the
-  capture, and a real deletion reads `alive` again once the 7-day prune has
-  dropped it. A comment (`dialogs send --comment-to`) is
+  deletion for the row: a delete requested on the connection of the session
+  owner in Saved Messages or a private chat is not pushed to the update loop
+  (`dialogs delete-message`, the agent tool and the queued command journal
+  theirs, #1950), and a real deletion reads `alive` again once the 7-day
+  prune has dropped it. A comment (`dialogs send --comment-to`) is
   listed under the channel's discussion group — the chat its message id
   belongs to — as `type=comment`, with `to=` the channel and `comment_on=` the
   post it answers (#1946).
