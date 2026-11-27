@@ -25,6 +25,13 @@ TRANSLATION_AUTO_ON_COLLECT = "translation_auto_on_collect"
 # translate-subsystem refactor the audit recommends.
 MAX_TRANSLATE_INPUT_CHARS = 8000
 
+# Why a translation call answered nothing (#1964) — the callers report these
+# instead of a bare "failed"; None means there was nothing to translate.
+NO_PROVIDER_SERVICE = "No provider service configured for translation"
+ONLY_STUB_PROVIDER = "No LLM provider configured (only the stub default is available)"
+EMPTY_TRANSLATION_ANSWER = "The provider returned an empty translation"
+UNPARSED_TRANSLATION_ANSWER = "The provider returned an answer without the expected numbered translations"
+
 
 class TranslationService:
     """Language detection and LLM-powered translation for messages."""
@@ -36,6 +43,7 @@ class TranslationService:
     ) -> None:
         self._db = db
         self._provider_service = provider_service
+        self.last_error: str | None = None
 
     # ── language detection ───────────────────────────────────────────
 
@@ -66,16 +74,19 @@ class TranslationService:
 
         Skips translation when source_lang == target_lang.
         """
+        self.last_error = None
         if source_lang == target_lang:
             return None
         if not self._provider_service:
-            logger.warning("No provider service configured for translation")
+            logger.warning(NO_PROVIDER_SERVICE)
+            self.last_error = NO_PROVIDER_SERVICE
             return None
 
         provider = self._provider_service.get_provider_callable(provider_name)
         # Reject stub default provider to prevent storing garbage translations
         if provider is self._provider_service._registry.get("default"):
             logger.warning("Translation skipped: only stub default provider available")
+            self.last_error = ONLY_STUB_PROVIDER
             return None
 
         # Untrusted Telegram content entering the LLM prompt (#1546)
@@ -87,10 +98,15 @@ class TranslationService:
         )
         try:
             result = await provider(prompt=prompt, model=model, max_tokens=2048, temperature=0.1)
-            return result.strip() if result else None
-        except Exception:
+        except Exception as exc:
             logger.exception("Translation failed for text (%.40s...)", text[:40] if text else "")
+            self.last_error = str(exc) or type(exc).__name__
             return None
+        translated = result.strip() if result else ""
+        if not translated:
+            self.last_error = EMPTY_TRANSLATION_ANSWER
+            return None
+        return translated
 
     # ── batch translation ───────────────────────────────────────────
 
@@ -105,7 +121,11 @@ class TranslationService:
 
         Returns list of (message_db_id, translated_text).
         """
-        if not messages or not self._provider_service:
+        self.last_error = None
+        if not messages:
+            return []
+        if not self._provider_service:
+            self.last_error = NO_PROVIDER_SERVICE
             return []
 
         # Filter out messages where source == target
@@ -147,15 +167,18 @@ class TranslationService:
         provider = self._provider_service.get_provider_callable(provider_name)
         if provider is self._provider_service._registry.get("default"):
             logger.warning("Batch translation skipped: only stub default provider available")
+            self.last_error = ONLY_STUB_PROVIDER
             return []
 
         try:
             result = await provider(prompt=prompt, model=model, max_tokens=4096, temperature=0.1)
-        except Exception:
+        except Exception as exc:
             logger.exception("Batch translation failed")
+            self.last_error = str(exc) or type(exc).__name__
             return []
 
         if not result:
+            self.last_error = EMPTY_TRANSLATION_ANSWER
             return []
 
         # Parse numbered response
@@ -164,7 +187,10 @@ class TranslationService:
         for i, m in enumerate(to_translate):
             if i in translations and m.id is not None:
                 output.append((m.id, translations[i]))
-
+        if not output:
+            # An answer that matched none of the messages sent. A partial one is
+            # a success: the rows it left are selected again next run.
+            self.last_error = UNPARSED_TRANSLATION_ANSWER
         return output
 
     @staticmethod

@@ -311,6 +311,13 @@ search-query list | get | add | edit | delete | toggle | run | stats
   `pipeline generate-stream` reports an unresolved source scope or a failed run
   with its `error` JSON line, then exits 1; a missing LLM provider is refused
   with a plain stderr line and exit 1 as well (#1952).
+  A translation that did not happen is a failure too: `translate message` and
+  `translate run` exit 1 with the reason on stderr — no LLM provider, a failed
+  provider call, an empty answer or one without the numbered lines; the
+  `Translated k/N` count of `translate run` stays on stdout. `translate message`
+  refuses a message whose language is not detected (exit 1, run `translate
+  detect` first) and answers a message already in the target language with
+  `Nothing to translate`, exit 0 (#1964).
 - **Flood/throttle errors carry RPC attribution (#1828):** `dialogs
   send`/`forward`/`edit-message` refusals (and pipeline publish receipts)
   print one curated line — `local throttling by <budget>` (refused before any

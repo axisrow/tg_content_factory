@@ -93,6 +93,9 @@ async def run_impl(
         for msg_id, translated in results:
             await db.repos.messages.update_translation(msg_id, target, translated)
         print(f"Translated {len(results)}/{len(msgs)} messages.")
+        if svc.last_error:
+            # The count stays on stdout; why the batch was not translated goes to stderr (#1964).
+            cli_error(f"Translation failed: {svc.last_error}")
     finally:
         await db.close()
 
@@ -111,6 +114,11 @@ async def message_impl(config_path: str, *, message_id: int, target: str = "en")
         if not text.strip():
             print("Message has no text to translate.")
             return
+        if not msg.detected_lang:
+            cli_error(f"Message id={message_id} language is not detected: run `translate detect` first.")
+        if msg.detected_lang == target:
+            print(f"Nothing to translate: the message is already in {target}.")
+            return
 
         provider_name = await db.get_setting("translation_provider")
         model = await db.get_setting("translation_model")
@@ -118,13 +126,12 @@ async def message_impl(config_path: str, *, message_id: int, target: str = "en")
         svc = TranslationService(db, provider_service=provider_service)
 
         results = await svc.translate_batch([msg], target, provider_name=provider_name, model=model)
-        if results:
-            _, translated = results[0]
-            await db.repos.messages.update_translation(message_id, target, translated)
-            print(f"Original:\n  {text[:500]}\n")
-            print(f"Translated ({target}):\n  {translated[:500]}")
-        else:
-            print("Translation failed.")
+        if svc.last_error:
+            cli_error(f"Translation failed: {svc.last_error}")
+        _, translated = results[0]
+        await db.repos.messages.update_translation(message_id, target, translated)
+        print(f"Original:\n  {text[:500]}\n")
+        print(f"Translated ({target}):\n  {translated[:500]}")
     finally:
         await db.close()
 
