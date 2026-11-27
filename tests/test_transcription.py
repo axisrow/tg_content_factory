@@ -362,6 +362,16 @@ async def test_telegram_engine_premium_rpc_error_is_actionable(monkeypatch):
     assert result == {"status": "premium_required"}
 
 
+async def test_telegram_engine_error_names_a_message_less_exception(monkeypatch):
+    client = SimpleNamespace(
+        get_me=AsyncMock(return_value=SimpleNamespace(premium=True)),
+        get_input_entity=AsyncMock(return_value=PeerChannel(555)),
+    )
+    monkeypatch.setattr(transcription, "transcribe_audio_raw", AsyncMock(side_effect=RuntimeError()))
+    result = await transcription._transcribe_via_telegram(client, "@ch", _voice_msg())
+    assert result == {"status": "error", "error": "RuntimeError"}
+
+
 def test_is_premium_rpc_error_matches_message():
     class PremiumRpcError(Exception):
         message = "A PREMIUM subscription is required"

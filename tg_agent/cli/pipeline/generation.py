@@ -20,6 +20,7 @@ from tg_agent.services.pipeline_service import (
     PipelineService,
     to_since_hours,
 )
+from tg_agent.utils.errors import error_text
 
 _NO_LLM_PROVIDER = (
     "LLM provider is not configured. Add one with `tg-agent provider add` or set an API key "
@@ -192,7 +193,7 @@ async def _pipeline_generate_stream(
     try:
         scope = await svc.get_retrieval_scope(pipeline)
     except PipelineScopeError as exc:
-        responses.emit_json_line({"event": "error", "error": str(exc)})
+        responses.emit_json_line({"event": "error", "error": error_text(exc)})
         raise typer.Exit(1) from None
 
     run_id = await db.repos.generation_runs.create_run(pipeline.id, pipeline.prompt_template)
@@ -234,7 +235,7 @@ async def _pipeline_generate_stream(
             responses.emit_json_line({"event": "done", "run_id": run_id})
     except Exception as exc:
         await db.repos.generation_runs.set_status(run_id, "failed")
-        responses.emit_json_line({"event": "error", "error": str(exc)})
+        responses.emit_json_line({"event": "error", "error": error_text(exc)})
         failed = True
     except BaseException:
         # Ctrl+C raises CancelledError (a BaseException, not Exception in

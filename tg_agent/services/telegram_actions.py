@@ -30,6 +30,7 @@ from tg_agent.telegram.transcription import (
     transcribe_cached,
 )
 from tg_agent.telegram.utils import marked_peer_id
+from tg_agent.utils.errors import error_text
 from tg_agent.utils.introspection import explicit_pool_method
 from tg_agent.utils.sanitize import sanitize_user_content
 
@@ -1279,7 +1280,7 @@ class TelegramActionService:
                     await update_channel_username(channel, requested_username, **update_kwargs)
                     channel_username = requested_username
                 except Exception as exc:
-                    username_error = str(exc)
+                    username_error = error_text(exc)
                     logger.warning(
                         "Could not set username %r for new channel id=%s",
                         requested_username,

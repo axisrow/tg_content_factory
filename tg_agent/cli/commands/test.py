@@ -389,7 +389,7 @@ async def _check_get_stats(db) -> CheckResult:
         parts = ", ".join(f"{k}={v}" for k, v in stats.items())
         return CheckResult("get_stats", Status.PASS, parts)
     except Exception as exc:
-        return CheckResult("get_stats", Status.FAIL, str(exc))
+        return CheckResult("get_stats", Status.FAIL, _format_exception(exc))
 
 
 async def _check_account_list(db) -> CheckResult:
@@ -397,7 +397,7 @@ async def _check_account_list(db) -> CheckResult:
         accounts = await db.get_accounts()
         return CheckResult("account_list", Status.PASS, f"{len(accounts)} accounts")
     except Exception as exc:
-        return CheckResult("account_list", Status.FAIL, str(exc))
+        return CheckResult("account_list", Status.FAIL, _format_exception(exc))
 
 
 async def _check_channel_list(db) -> CheckResult:
@@ -405,7 +405,7 @@ async def _check_channel_list(db) -> CheckResult:
         channels = await db.get_channels_with_counts()
         return CheckResult("channel_list", Status.PASS, f"{len(channels)} channels")
     except Exception as exc:
-        return CheckResult("channel_list", Status.FAIL, str(exc))
+        return CheckResult("channel_list", Status.FAIL, _format_exception(exc))
 
 
 async def _check_notification_queries(db) -> CheckResult:
@@ -415,7 +415,7 @@ async def _check_notification_queries(db) -> CheckResult:
             return CheckResult("notification_queries", Status.SKIP, "No notification queries")
         return CheckResult("notification_queries", Status.PASS, f"{len(queries)} queries")
     except Exception as exc:
-        return CheckResult("notification_queries", Status.FAIL, str(exc))
+        return CheckResult("notification_queries", Status.FAIL, _format_exception(exc))
 
 
 async def _check_local_search(db) -> CheckResult:
@@ -424,7 +424,7 @@ async def _check_local_search(db) -> CheckResult:
         total_display = f"{page.total}+" if page.has_more else str(page.total)
         return CheckResult("local_search", Status.PASS, f"Query OK ({total_display} results)")
     except Exception as exc:
-        return CheckResult("local_search", Status.FAIL, str(exc))
+        return CheckResult("local_search", Status.FAIL, _format_exception(exc))
 
 
 async def _check_collection_tasks(db) -> CheckResult:
@@ -432,7 +432,7 @@ async def _check_collection_tasks(db) -> CheckResult:
         tasks = await db.get_collection_tasks(limit=5)
         return CheckResult("collection_tasks", Status.PASS, f"{len(tasks)} tasks")
     except Exception as exc:
-        return CheckResult("collection_tasks", Status.FAIL, str(exc))
+        return CheckResult("collection_tasks", Status.FAIL, _format_exception(exc))
 
 
 async def _check_recent_searches(db) -> CheckResult:
@@ -442,7 +442,7 @@ async def _check_recent_searches(db) -> CheckResult:
             return CheckResult("recent_searches", Status.SKIP, "No search history")
         return CheckResult("recent_searches", Status.PASS, f"{len(searches)} entries")
     except Exception as exc:
-        return CheckResult("recent_searches", Status.FAIL, str(exc))
+        return CheckResult("recent_searches", Status.FAIL, _format_exception(exc))
 
 
 async def _check_pipeline_list(db: Database) -> CheckResult:
@@ -450,7 +450,7 @@ async def _check_pipeline_list(db: Database) -> CheckResult:
         pipelines = await db.repos.content_pipelines.get_all()
         return CheckResult("pipeline_list", Status.PASS, f"{len(pipelines)} pipelines")
     except Exception as exc:
-        return CheckResult("pipeline_list", Status.FAIL, str(exc))
+        return CheckResult("pipeline_list", Status.FAIL, _format_exception(exc))
 
 
 async def _check_notification_bot(db: Database) -> CheckResult:
@@ -459,7 +459,7 @@ async def _check_notification_bot(db: Database) -> CheckResult:
         detail = f"{count} configured" if count else "none configured"
         return CheckResult("notification_bot", Status.PASS, detail)
     except Exception as exc:
-        return CheckResult("notification_bot", Status.FAIL, str(exc))
+        return CheckResult("notification_bot", Status.FAIL, _format_exception(exc))
 
 
 async def _check_photo_tasks(db: Database) -> CheckResult:
@@ -467,7 +467,7 @@ async def _check_photo_tasks(db: Database) -> CheckResult:
         batches = await db.repos.photo_loader.list_batches()
         return CheckResult("photo_tasks", Status.PASS, f"{len(batches)} batches")
     except Exception as exc:
-        return CheckResult("photo_tasks", Status.FAIL, str(exc))
+        return CheckResult("photo_tasks", Status.FAIL, _format_exception(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -522,7 +522,7 @@ async def _run_write_db_copy_check(
         )
         return copy_db, tmp_path
     except Exception as exc:
-        results.append(CheckResult("write_db_copy", Status.FAIL, str(exc)))
+        results.append(CheckResult("write_db_copy", Status.FAIL, _format_exception(exc)))
         return None, None
 
 
@@ -552,7 +552,7 @@ async def _run_account_toggle_check(copy_db: Database, results: list[CheckResult
                 )
             )
     except Exception as exc:
-        results.append(CheckResult("account_toggle", Status.FAIL, str(exc)))
+        results.append(CheckResult("account_toggle", Status.FAIL, _format_exception(exc)))
 
 
 async def _run_search_query_add_check(copy_db: Database, results: list[CheckResult]):
@@ -575,7 +575,7 @@ async def _run_search_query_add_check(copy_db: Database, results: list[CheckResu
             )
         )
     except Exception as exc:
-        results.append(CheckResult("search_query_add", Status.FAIL, str(exc)))
+        results.append(CheckResult("search_query_add", Status.FAIL, _format_exception(exc)))
     return sq_repo, added_sq_id
 
 
@@ -595,7 +595,7 @@ async def _run_search_query_toggle_check(sq_repo, added_sq_id: int | None, resul
                 )
             )
         except Exception as exc:
-            results.append(CheckResult("search_query_toggle", Status.FAIL, str(exc)))
+            results.append(CheckResult("search_query_toggle", Status.FAIL, _format_exception(exc)))
     else:
         results.append(
             CheckResult("search_query_toggle", Status.SKIP, "search_query_add failed"),
@@ -618,7 +618,7 @@ async def _run_search_query_delete_check(sq_repo, added_sq_id: int | None, resul
                 )
             )
         except Exception as exc:
-            results.append(CheckResult("search_query_delete", Status.FAIL, str(exc)))
+            results.append(CheckResult("search_query_delete", Status.FAIL, _format_exception(exc)))
     else:
         results.append(
             CheckResult("search_query_delete", Status.SKIP, "search_query_add failed"),
@@ -649,7 +649,7 @@ async def _run_channel_toggle_check(copy_db: Database, results: list[CheckResult
                 )
             )
     except Exception as exc:
-        results.append(CheckResult("channel_toggle", Status.FAIL, str(exc)))
+        results.append(CheckResult("channel_toggle", Status.FAIL, _format_exception(exc)))
 
 
 async def _run_filter_apply_check(copy_db: Database, results: list[CheckResult]) -> None:
@@ -665,7 +665,7 @@ async def _run_filter_apply_check(copy_db: Database, results: list[CheckResult])
             )
         )
     except Exception as exc:
-        results.append(CheckResult("filter_apply", Status.FAIL, str(exc)))
+        results.append(CheckResult("filter_apply", Status.FAIL, _format_exception(exc)))
 
 
 async def _run_filter_reset_check(copy_db: Database, results: list[CheckResult]) -> None:
@@ -674,7 +674,7 @@ async def _run_filter_reset_check(copy_db: Database, results: list[CheckResult])
         await analyzer.reset_filters()
         results.append(CheckResult("filter_reset", Status.PASS, "Filters cleared"))
     except Exception as exc:
-        results.append(CheckResult("filter_reset", Status.FAIL, str(exc)))
+        results.append(CheckResult("filter_reset", Status.FAIL, _format_exception(exc)))
 
 
 async def _run_write_cleanup_check(tmp_path: str | None, results: list[CheckResult]) -> None:
@@ -683,7 +683,7 @@ async def _run_write_cleanup_check(tmp_path: str | None, results: list[CheckResu
             await asyncio.to_thread(_unlink_and_verify_removed, tmp_path)
         results.append(CheckResult("write_cleanup", Status.PASS, "Temp DB removed"))
     except Exception as exc:
-        results.append(CheckResult("write_cleanup", Status.FAIL, str(exc)))
+        results.append(CheckResult("write_cleanup", Status.FAIL, _format_exception(exc)))
 
 
 async def _run_write_mutation_checks(copy_db: Database, results: list[CheckResult]) -> None:
@@ -926,7 +926,7 @@ async def _run_tg_db_copy_step(state: TelegramLiveCheckState) -> bool:
         state.results.append(CheckResult("tg_db_copy", Status.PASS, f"Copied to {state.tmp_path}"))
         return True
     except Exception as exc:
-        state.results.append(CheckResult("tg_db_copy", Status.FAIL, str(exc)))
+        state.results.append(CheckResult("tg_db_copy", Status.FAIL, _format_exception(exc)))
         return False
 
 
@@ -1309,7 +1309,7 @@ async def _cleanup_telegram(pool, copy_db, tmp_path, results) -> None:
             await asyncio.to_thread(_unlink_if_exists, tmp_path)
         results.append(CheckResult("tg_cleanup", Status.PASS, "Resources released"))
     except Exception as exc:
-        results.append(CheckResult("tg_cleanup", Status.FAIL, str(exc)))
+        results.append(CheckResult("tg_cleanup", Status.FAIL, _format_exception(exc)))
 
 
 # ---------------------------------------------------------------------------
