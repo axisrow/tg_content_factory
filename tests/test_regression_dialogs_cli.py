@@ -217,13 +217,15 @@ class TestMyTelegramActions:
     def test_forward_action(self, capsys):
         pool = _make_pool_with_clients()
         mock_client = AsyncMock()
+        # Telegram confirms both requested messages (#1974: the echo counts these).
+        mock_client.forward_messages = AsyncMock(return_value=[MagicMock(id=11), MagicMock(id=12)])
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
         self._run_action(
             "forward", pool=pool,
             extra_args={"from_chat": "@a", "to_chat": "@b", "message_ids": ["1,2"]},
         )
         out = capsys.readouterr().out
-        assert "forwarded" in out.lower()
+        assert "forwarded 2 message(s)" in out.lower()
 
     def test_forward_no_valid_ids(self, capsys):
         pool = _make_pool_with_clients()

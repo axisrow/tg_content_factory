@@ -699,6 +699,19 @@ async def test_dialogs_forward():
     assert r["forwarded"] == 1
 
 
+async def test_dialogs_forward_counts_the_confirmed_messages():
+    """#1974: the receipt says how many messages Telegram confirmed, not how many were asked for."""
+    pool = _mock_pool()
+    c = _client_mock()
+    c.forward_messages = AsyncMock(return_value=[MagicMock(id=9)])
+    pool.get_native_client_by_phone.return_value = (c, "+1")
+    d = _dispatcher(pool=pool)
+    r = await d._handle_dialogs_forward_messages({
+        "phone": "+1", "from_chat": -100, "to_chat": -200, "message_ids": [1, 2],
+    })
+    assert r["forwarded"] == 1
+
+
 async def test_dialogs_react_clear_passes_none_emoji_instead_of_normalizing_empty_string():
     """`clear: True` must clear the reaction (emoji=None), not error out.
 

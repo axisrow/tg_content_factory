@@ -218,7 +218,12 @@ search-query list | get | add | edit | delete | toggle | run | stats
   for a top-level message — #1938), `text`. Empty result = a clean empty
   envelope, not an error.
   Composes with `dialogs send` (`… message_id=N via PHONE`): pass the sent id
-  as `--after-id` to capture exactly the reply window.
+  as `--after-id` to capture exactly the reply window. A delivery the registry
+  cannot know is a failure, not a sent message: `dialogs send` whose answer
+  carries no message id and `dialogs forward` that confirms fewer messages than
+  were asked for exit 1 (`Delivery unconfirmed: …`, `Forwarded 1 of 2
+  message(s)…`) with nothing on stdout; `dialogs refresh` and `photo-loader
+  refresh` whose sweep did not finish exit 1 with what was kept (#1974).
 - `messages wait` answers "did a bot delete my sent message?" from the local
   deletion store (the gateway records Telegram deletion updates as they arrive)
   — it makes **no Telegram requests**. Pair it with `dialogs send`, which now
