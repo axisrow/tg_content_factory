@@ -16,6 +16,7 @@ import typer
 from tg_agent.cli import runtime
 from tg_agent.cli.commands.common import (
     apply_startup,
+    cli_error,
     run_async,
 )
 from tg_agent.services.image_generation_service import ImageGenerationService
@@ -42,11 +43,31 @@ async def _build_image_service(db, config) -> ImageGenerationService:
     return ImageGenerationService()
 
 
+async def _db_provider_key(db, config, provider: str) -> str:
+    """The API key stored for *provider* in the DB settings, or ``""``.
+
+    ``image models`` searches with the key ``image generate`` uses: a provider
+    configured only through the DB leaves no env var for ``search_models`` to
+    fall back to, and the live catalogs would report it as having no token.
+    """
+    try:
+        from tg_agent.services.image_provider_service import ImageProviderService
+
+        configs = await ImageProviderService(db, config).load_provider_configs()
+    except Exception:
+        logger.warning("Failed to load image providers from DB", exc_info=True)
+        return ""
+    return next((cfg.api_key.strip() for cfg in configs if cfg.provider == provider), "")
+
+
 def _generation_failure_text(svc: ImageGenerationService) -> str:
+    """The reason the service recorded (#1961); the timeout wording as it is."""
     failure = svc.last_failure
-    if failure is not None and getattr(failure, "is_timeout", False):
+    if failure is None:
+        return "Generation failed — check logs"
+    if failure.is_timeout:
         return failure.user_message(lang="en")
-    return "Generation failed — check logs"
+    return f"Generation failed: {failure.message}"
 
 
 async def generate_impl(config_path: str, *, prompt: str, model: str | None = None) -> None:
@@ -55,24 +76,34 @@ async def generate_impl(config_path: str, *, prompt: str, model: str | None = No
     try:
         svc = await _build_image_service(db, config)
         if not await svc.is_available():
-            print("No image providers configured. Set REPLICATE_API_TOKEN or similar env var.")
-            return
+            cli_error("No image providers configured. Set REPLICATE_API_TOKEN or similar env var.")
         print(f"Generating image: model={model or 'default'}, prompt={prompt!r}")
         result = await svc.generate(model, prompt)
-        if result:
-            print(f"Result: {result}")
-        else:
-            print(_generation_failure_text(svc))
+        if not result:
+            cli_error(_generation_failure_text(svc))
+        print(f"Result: {result}")
     finally:
         await db.close()
 
 
 async def models_impl(config_path: str, *, provider: str, query: str = "", refresh: bool = False) -> None:
     """Search available models for *provider*."""
+    from tg_agent.services.image_provider_service import IMAGE_PROVIDER_ORDER, image_provider_spec
+
     config, db = await runtime.init_db(config_path)
     try:
         svc = await _build_image_service(db, config)
-        models = await svc.search_models(provider, query or "", refresh=refresh)
+        # A provider the spec table does not know is a refused argument, not
+        # an empty search (#1961).
+        if image_provider_spec(provider) is None:
+            cli_error(f"Unknown image provider: {provider}\nAvailable: {', '.join(IMAGE_PROVIDER_ORDER)}")
+        models = await svc.search_models(
+            provider, query or "", refresh=refresh, api_key=await _db_provider_key(db, config, provider)
+        )
+        if not models and svc.last_search_error:
+            # The catalog could not be fetched — a failure with its reason, not
+            # the same answer as a query with no matches (#1961).
+            cli_error(f"No models for provider={provider}: {svc.last_search_error}")
         if not models:
             print(f"No models found for provider={provider} query={query!r}")
             return
