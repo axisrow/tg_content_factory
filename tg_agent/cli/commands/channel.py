@@ -52,6 +52,7 @@ from tg_agent.telegram.collector import (
 )
 from tg_agent.telegram.collector_resolve import TRANSIENT_REVIEW_REASONS
 from tg_agent.telegram.collector_types import ChannelCollectionTerminalError
+from tg_agent.utils.errors import error_text
 from tg_agent.utils.json import safe_json_dumps
 
 
@@ -1647,14 +1648,14 @@ async def collect_impl(
                 f"(retry in {exc.retry_after_sec}s)"
             )
         except ChannelCollectionTerminalError as exc:
-            await db.update_collection_task(task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500])
+            await db.update_collection_task(task_id, CollectionTaskStatus.FAILED, error=error_text(exc))
             await stamp_terminal_verdict(db, ch, exc)
             cli_error(f"Channel {ch.channel_id} cannot be collected: {exc}")
         except Exception as exc:
             await db.update_collection_task(
                 task_id,
                 CollectionTaskStatus.FAILED,
-                error=str(exc)[:500],
+                error=error_text(exc),
             )
             raise
     finally:

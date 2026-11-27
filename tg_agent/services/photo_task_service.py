@@ -13,6 +13,7 @@ from tg_agent.database.bundles import PhotoLoaderBundle
 from tg_agent.models import PhotoBatch, PhotoBatchItem, PhotoBatchStatus, PhotoSendMode
 from tg_agent.services.photo_publish_service import PhotoPublishService
 from tg_agent.utils.datetime import parse_required_schedule_datetime
+from tg_agent.utils.errors import error_text
 
 logger = logging.getLogger(__name__)
 
@@ -173,13 +174,13 @@ class PhotoTaskService:
                     item_id,
                     status=PhotoBatchStatus.COMPLETED,
                     telegram_message_ids=list(accumulated),
-                    error=f"partial send failure: {exc}",
+                    error=f"partial send failure: {error_text(exc)}",
                     completed_at=now,
                 )
                 await self._bundle.update_batch(
                     batch_id,
                     status=PhotoBatchStatus.COMPLETED,
-                    error=f"partial send failure: {exc}",
+                    error=f"partial send failure: {error_text(exc)}",
                     last_run_at=now,
                 )
             else:
@@ -188,13 +189,13 @@ class PhotoTaskService:
                 await self._bundle.update_item(
                     item_id,
                     status=PhotoBatchStatus.FAILED,
-                    error=str(exc),
+                    error=error_text(exc),
                     completed_at=now,
                 )
                 await self._bundle.update_batch(
                     batch_id,
                     status=PhotoBatchStatus.FAILED,
-                    error=str(exc),
+                    error=error_text(exc),
                     last_run_at=now,
                 )
                 raise
@@ -276,7 +277,7 @@ class PhotoTaskService:
                     item_id,
                     status=PhotoBatchStatus.SCHEDULED,
                     telegram_message_ids=list(accumulated),
-                    error=f"partial schedule failure: {exc}",
+                    error=f"partial schedule failure: {error_text(exc)}",
                 )
             else:
                 # Nothing was scheduled — failing with no ids is correct; raise so
@@ -284,12 +285,12 @@ class PhotoTaskService:
                 await self._bundle.update_item(
                     item_id,
                     status=PhotoBatchStatus.FAILED,
-                    error=str(exc),
+                    error=error_text(exc),
                 )
                 await self._bundle.update_batch(
                     batch_id,
                     status=PhotoBatchStatus.FAILED,
-                    error=str(exc),
+                    error=error_text(exc),
                 )
                 raise
         item = await self._bundle.get_item(item_id)
@@ -416,14 +417,14 @@ class PhotoTaskService:
             await self._bundle.update_item(
                 item.id or 0,
                 status=PhotoBatchStatus.FAILED,
-                error=str(exc),
+                error=error_text(exc),
                 completed_at=now,
             )
             if item.batch_id:
                 await self._sync_batch_status(
                     item.batch_id,
                     last_run_at=now,
-                    fallback_error=str(exc),
+                    fallback_error=error_text(exc),
                 )
 
     async def cancel_item(self, item_id: int) -> bool:
@@ -454,7 +455,7 @@ class PhotoTaskService:
                     item_id,
                     exc_info=True,
                 )
-                await self._bundle.update_item(item_id, error=f"unschedule failed: {exc}")
+                await self._bundle.update_item(item_id, error=f"unschedule failed: {error_text(exc)}")
                 return False
         cancelled = await self._bundle.cancel_item(item_id)
         if cancelled and item is not None and item.batch_id:

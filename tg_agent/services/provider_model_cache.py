@@ -18,6 +18,7 @@ from tg_agent.agent.provider_registry import (
     provider_spec,
 )
 from tg_agent.services.provider_model_compatibility import ProviderModelCompatibilityRecord
+from tg_agent.utils.errors import error_text
 from tg_agent.utils.json import safe_json_dumps
 
 if TYPE_CHECKING:
@@ -219,7 +220,7 @@ class ProviderModelCacheMixin:
         except Exception as exc:
             # An exception without a message still leaves a reason: the class name.
             # The provider commands fail the fetch on this text (#1962).
-            live_error = str(exc) or type(exc).__name__
+            live_error = error_text(exc)
             logger.warning(
                 "Provider model refresh failed for %s: %s", provider_name, exc, exc_info=True
             )

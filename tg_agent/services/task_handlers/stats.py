@@ -15,6 +15,7 @@ from tg_agent.models import (
 )
 from tg_agent.services.task_handlers.base import TaskHandlerContext
 from tg_agent.telegram.collector import AllStatsClientsFloodedError, NoActiveStatsClientsError
+from tg_agent.utils.errors import error_text
 
 logger = logging.getLogger(__name__)
 
@@ -385,5 +386,5 @@ class StatsTaskHandler:
             await ctx.tasks.update_collection_task(
                 task_id,
                 CollectionTaskStatus.FAILED,
-                error=str(exc)[:500],
+                error=error_text(exc),
             )

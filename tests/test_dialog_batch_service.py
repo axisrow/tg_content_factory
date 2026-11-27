@@ -27,6 +27,22 @@ async def test_batch_resume_and_concurrent_run_are_idempotent(db):
 
 
 @pytest.mark.anyio
+async def test_failed_item_records_the_reason(db):
+    """#1968: the item's reason names an executor exception that carries no message."""
+    service = DialogBatchService(db.repos.dialog_batch)
+    batch_id = await service.create(phone="+1", op_type="delete", dialogs=[(1, "channel")])
+
+    async def execute(_item):
+        raise asyncio.TimeoutError()
+
+    operation = await service.run(batch_id, execute)
+
+    assert operation.status == DialogBatchStatus.FAILED
+    items = await db.repos.dialog_batch.list_items(batch_id)
+    assert [(item.status, item.error) for item in items] == [(DialogBatchStatus.FAILED, "TimeoutError")]
+
+
+@pytest.mark.anyio
 async def test_run_cancellation_cancels_executor(db):
     service = DialogBatchService(db.repos.dialog_batch)
     batch_id = await service.create(phone="+1", op_type="delete", dialogs=[(1, "channel")])

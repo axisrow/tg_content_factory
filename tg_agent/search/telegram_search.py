@@ -15,6 +15,7 @@ from tg_agent.search.transformers import TelegramMessageTransformer
 from tg_agent.telegram.backends import adapt_transport_session
 from tg_agent.telegram.client_pool import ClientPool
 from tg_agent.utils.datetime import normalize_utc
+from tg_agent.utils.errors import error_text
 from tg_agent.utils.safe_logging import elapsed_ms, mask_phone, query_log_fields
 
 try:
@@ -432,7 +433,7 @@ class TelegramSearch:
                 messages=[],
                 total=0,
                 query=query,
-                error=f"Ошибка поиска в Telegram: {exc}",
+                error=f"Ошибка поиска в Telegram: {error_text(exc)}",
             )
         finally:
             await self._pool.release_client(phone)

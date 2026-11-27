@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
@@ -229,20 +230,25 @@ async def test_run_job_album_fallback_to_separate(service, bundle, tmp_path):
     assert call_kwargs["send_mode"] == PhotoSendMode.SEPARATE
 
 
-async def test_run_job_error_records(service, bundle, tmp_path):
+@pytest.mark.parametrize(
+    ("exc", "error"),
+    [(RuntimeError("send failed"), "send failed"), (asyncio.TimeoutError(), "TimeoutError")],
+)
+async def test_run_job_error_records(service, bundle, tmp_path, exc, error):
+    """The job's error field says why it failed — also for an exception that
+    carries no message (#1968): an empty error is the value a success stores."""
     job = _make_job(folder_path=str(tmp_path))
     bundle.get_auto_job.return_value = job
     bundle.has_sent_auto_file.return_value = False
-    service._publish.send_now.side_effect = RuntimeError("send failed")
+    service._publish.send_now.side_effect = exc
 
     (tmp_path / "fail.jpg").write_bytes(b"\xff\xd8\xff")
 
-    with pytest.raises(RuntimeError, match="send failed"):
+    with pytest.raises(type(exc)):
         await service.run_job(1)
 
-    # Error should be recorded
-    error_calls = [c for c in bundle.update_auto_job.call_args_list if c[1].get("error")]
-    assert len(error_calls) > 0
+    recorded = [c[1]["error"] for c in bundle.update_auto_job.call_args_list if c[1].get("error")]
+    assert recorded == [error]
 
 
 # --- run_job dry-run ---

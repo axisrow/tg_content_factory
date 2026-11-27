@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from tg_agent.database.repositories.dialog_batch import DialogBatchRepository
 from tg_agent.models import DialogBatchItem, DialogBatchOperation, DialogBatchStatus
+from tg_agent.utils.errors import error_text
 
 DialogExecutor = Callable[[DialogBatchItem], Awaitable[None]]
 
@@ -119,7 +120,9 @@ class DialogBatchService:
                         await asyncio.gather(execution, return_exceptions=True)
                         raise
                     except Exception as exc:
-                        await self._repo.update_item(item.id, DialogBatchStatus.FAILED, str(exc), owner)  # type: ignore[arg-type]
+                        await self._repo.update_item(  # type: ignore[arg-type]
+                            item.id, DialogBatchStatus.FAILED, error=error_text(exc), owner=owner
+                        )
                     else:
                         await self._repo.update_item(item.id, DialogBatchStatus.COMPLETED, owner=owner)  # type: ignore[arg-type]
                     finally:

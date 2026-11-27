@@ -1931,15 +1931,23 @@ async def test_run_loop_success_persists_unwrapped_result_and_payload_update():
     assert kwargs["log_action"] == "succeeded"
 
 
-async def test_run_loop_marks_failure_with_error_and_payload():
-    """Generic dispatch failure: FAILED with str(exc), original payload kept."""
+@pytest.mark.parametrize(
+    ("exc", "error"),
+    [(RuntimeError("boom"), "boom"), (asyncio.TimeoutError(), "TimeoutError")],
+)
+async def test_run_loop_marks_failure_with_error_and_payload(exc, error):
+    """Generic dispatch failure: FAILED with the reason, original payload kept.
+
+    #1968: an exception raised without a message is stored by its class name,
+    not as an empty reason.
+    """
     from tg_agent.models import TelegramCommand, TelegramCommandStatus
 
     db = _mock_db()
     cmd = TelegramCommand(id=23, command_type="dialogs.cache_clear", payload={"k": "v"})
     db.repos.telegram_commands.claim_next_command = AsyncMock(return_value=cmd)
     d = _dispatcher(db=db, pool=_mock_pool())
-    d._dispatch = AsyncMock(side_effect=RuntimeError("boom"))
+    d._dispatch = AsyncMock(side_effect=exc)
 
     async def _update_and_stop(*args, **kwargs):
         d._stop_event.set()
@@ -1952,7 +1960,7 @@ async def test_run_loop_marks_failure_with_error_and_payload():
 
     kwargs = update_safely.await_args.kwargs
     assert kwargs["status"] == TelegramCommandStatus.FAILED
-    assert kwargs["error"] == "boom"
+    assert kwargs["error"] == error
     assert kwargs["payload"] == {"k": "v"}
     assert kwargs["log_action"] == "failed after dispatch error"
 

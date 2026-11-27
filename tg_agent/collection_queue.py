@@ -30,6 +30,7 @@ from tg_agent.telegram.collector import (
     UsernameResolveRateLimitedError,
 )
 from tg_agent.telegram.collector_types import ChannelCollectionTerminalError, unknown_tl_type_note
+from tg_agent.utils.errors import error_text
 
 logger = logging.getLogger(__name__)
 
@@ -978,14 +979,14 @@ class CollectionQueue:
                 return CollectionFailureOutcome()
             self._retried_tasks.discard(task_id)
             await self._update_task_status_shutdown_safe(
-                task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
+                task_id, CollectionTaskStatus.FAILED, error=error_text(exc),
             )
             logger.exception("Collection failed for channel %d (reconnect failed)", channel.channel_id)
             return CollectionFailureOutcome()
         self._retried_tasks.discard(task_id)
         tl_note = unknown_tl_type_note(exc)
         await self._update_task_status_shutdown_safe(
-            task_id, CollectionTaskStatus.FAILED, error=tl_note or str(exc)[:500]
+            task_id, CollectionTaskStatus.FAILED, error=tl_note or error_text(exc)
         )
         if tl_note:
             # Retry pass still applies: Telegram serves new types unevenly across its servers.

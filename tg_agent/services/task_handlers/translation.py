@@ -4,6 +4,7 @@ import logging
 
 from tg_agent.models import CollectionTask, CollectionTaskStatus, CollectionTaskType, TranslateBatchTaskPayload
 from tg_agent.services.task_handlers.base import TaskHandlerContext
+from tg_agent.utils.errors import error_text
 
 logger = logging.getLogger(__name__)
 
@@ -153,5 +154,5 @@ class TranslationTaskHandler:
             await ctx.tasks.update_collection_task(
                 task.id,
                 CollectionTaskStatus.FAILED,
-                error=str(exc)[:500],
+                error=error_text(exc),
             )

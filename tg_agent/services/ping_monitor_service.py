@@ -22,6 +22,7 @@ from tg_agent.database.repositories.ping_monitors import PingMonitorRepository
 from tg_agent.models import PingMonitor
 from tg_agent.services.telegram_actions import TelegramActionService
 from tg_agent.utils.datetime import normalize_utc
+from tg_agent.utils.errors import error_text
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,7 @@ class PingMonitorService:
                     monitor.dialog_id,
                 )
                 await self._repo.update(
-                    monitor.id or 0, error=str(exc), last_checked_at=now
+                    monitor.id or 0, error=error_text(exc), last_checked_at=now
                 )
                 continue
             checked += 1

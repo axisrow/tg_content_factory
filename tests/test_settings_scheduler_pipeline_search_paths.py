@@ -984,10 +984,17 @@ class TestPhotoTaskServiceSendNow:
                (call_kwargs.args and PhotoBatchStatus.FAILED in str(call_kwargs))
 
     @pytest.mark.anyio
-    async def test_send_now_separate_partial_failure_keeps_published_ids(self, tmp_path):
+    @pytest.mark.parametrize(
+        ("exc", "reason"),
+        [(RuntimeError("file 2 failed"), "file 2 failed"), (asyncio.TimeoutError(), "TimeoutError")],
+    )
+    async def test_send_now_separate_partial_failure_keeps_published_ids(self, tmp_path, exc, reason):
         """Regression (#864 review): an immediate SEPARATE send that publishes file 1 then fails
         on file 2 must persist file 1's id and NOT raise. Raising makes the CLI/agent/UI report
-        failure, the user reruns, and file 1 is published a second time (duplicate)."""
+        failure, the user reruns, and file 1 is published a second time (duplicate).
+
+        The stored reason names the cause also for an exception without a message (#1968):
+        some files are already live, so the operator must see why the rest are not."""
         from tg_agent.services.photo_task_service import PhotoTarget, PhotoTaskService
 
         img = tmp_path / "photo.jpg"
@@ -1008,7 +1015,7 @@ class TestPhotoTaskServiceSendNow:
         async def _send_now(*, file_paths, on_file_sent=None, **_kwargs):
             if on_file_sent is not None:
                 await on_file_sent(file_paths[0], [42])
-            raise RuntimeError("file 2 failed")
+            raise exc
 
         publish = MagicMock()
         publish.send_now = AsyncMock(side_effect=_send_now)
@@ -1028,7 +1035,8 @@ class TestPhotoTaskServiceSendNow:
         last = bundle.update_item.call_args_list[-1].kwargs
         assert last.get("status") == PhotoBatchStatus.COMPLETED
         assert last.get("telegram_message_ids") == [42]
-        assert "partial send failure" in (last.get("error") or "")
+        assert last.get("error") == f"partial send failure: {reason}"
+        assert bundle.update_batch.call_args_list[-1].kwargs["error"] == f"partial send failure: {reason}"
         # The batch must NOT be marked FAILED — that would prompt a duplicate retry.
         for call in bundle.update_batch.call_args_list:
             assert call.kwargs.get("status") != PhotoBatchStatus.FAILED
@@ -1096,12 +1104,18 @@ class TestPhotoTaskServiceScheduleSend:
             )
 
     @pytest.mark.anyio
-    async def test_schedule_send_separate_partial_failure_keeps_scheduled_with_ids(self, tmp_path):
+    @pytest.mark.parametrize(
+        ("exc", "reason"),
+        [(RuntimeError("file 2 failed"), "file 2 failed"), (asyncio.TimeoutError(), "TimeoutError")],
+    )
+    async def test_schedule_send_separate_partial_failure_keeps_scheduled_with_ids(self, tmp_path, exc, reason):
         """Regression (#864 review): in SEPARATE mode, if file 1 is scheduled server-side and
         file 2 fails, the item must stay SCHEDULED with file 1's id (cancellable) — never
         FAILED-with-no-ids, which would strand a queued post with no cancel handle (ghost publish).
         And partial success must NOT raise: raising makes the dispatcher/CLI report the schedule as
-        FAILED, so the user retries and schedules a duplicate while the first stays queued."""
+        FAILED, so the user retries and schedules a duplicate while the first stays queued.
+
+        The stored reason names the cause also for an exception without a message (#1968)."""
         from tg_agent.services.photo_task_service import PhotoTarget, PhotoTaskService
 
         img = tmp_path / "photo.jpg"
@@ -1123,7 +1137,7 @@ class TestPhotoTaskServiceScheduleSend:
         async def _send_now(*, file_paths, on_file_sent=None, **_kwargs):
             if on_file_sent is not None:
                 await on_file_sent(file_paths[0], [100])
-            raise RuntimeError("file 2 failed")
+            raise exc
 
         publish = MagicMock()
         publish.send_now = AsyncMock(side_effect=_send_now)
@@ -1144,7 +1158,7 @@ class TestPhotoTaskServiceScheduleSend:
         last = bundle.update_item.call_args_list[-1].kwargs
         assert last.get("status") == PhotoBatchStatus.SCHEDULED
         assert last.get("telegram_message_ids") == [100]
-        assert "partial schedule failure" in (last.get("error") or "")
+        assert last.get("error") == f"partial schedule failure: {reason}"
         # The batch must NOT be force-marked FAILED while a post is still scheduled & cancellable.
         for call in bundle.update_batch.call_args_list:
             assert call.kwargs.get("status") != PhotoBatchStatus.FAILED

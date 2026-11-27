@@ -39,6 +39,7 @@ from tg_agent.services.seeding_composer import (
     compute_chat_statistics,
     load_chat_messages,
 )
+from tg_agent.utils.errors import error_text
 
 if TYPE_CHECKING:
     from tg_agent.database.facade import Database
@@ -63,11 +64,6 @@ _RESTART_ERROR_TEXT = (
     "воркер перезапущен во время отправки; исход RPC неизвестен — "
     "сверь чат вручную и перепланируй осознанно"
 )
-
-
-def _error_text(exc: Exception) -> str:
-    """Текст для error_text: пустой str() исключения подменяется классом."""
-    return str(exc).strip()[:500] or type(exc).__name__
 
 
 async def validate_schedule_rails(
@@ -250,7 +246,7 @@ class SeedingPublisherService:
             await self._db.repos.seeding.set_message_status(
                 msg.id,
                 SeedingMessageStatus.FAILED,
-                error_text=_error_text(exc),
+                error_text=error_text(exc),
             )
             return False
         await self._db.repos.seeding.set_message_status(
