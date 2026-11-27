@@ -465,7 +465,7 @@ The file is read on this machine.
 dm status
 dm journal list [--limit N] [--offset N]
 dm archive list [--phone P] [--chat-id ID] [--limit N]
-dm drafts list [--status draft|approved|rejected|sending|sent] [--limit N]
+dm drafts list [--status draft|approved|rejected|sending|sent|unconfirmed] [--limit N]
 dm drafts create <incoming-dm-id> --text TEXT [--phone P] [--chat-id ID]
 dm drafts approve <id>
 dm drafts reject <id>
@@ -493,7 +493,10 @@ same approved draft dedupe into one queued command). `create` reads
 phone/chat from the 24h incoming-DM journal by id; pass `--phone`/`--chat-id`
 explicitly if the journal row was already pruned; creating a draft marks the
 journal row processed. Approve after send is a no-op — a delivered draft
-cannot be re-queued.
+cannot be re-queued. A send Telegram answered without a message id ends in
+`unconfirmed`, not `sent`: the command fails with the reason, the draft is
+never sent again, and `dm drafts send` on it exits 1 asking you to check the
+chat (#1981).
 
 ## seeding — chat seeding composer + publisher (epic #1751; composer #1756, publisher #1757)
 

@@ -384,6 +384,38 @@ async def test_handler_missing_draft_raises(db):
         await dispatcher._dispatch("dm.send_reply", {"draft_id": 999})
 
 
+async def test_handler_without_a_message_id_leaves_the_draft_unconfirmed(db):
+    """#1981: `sent` means the worker got a message id. A send Telegram did not
+    confirm is its own terminal state — named, and never sent again."""
+    draft_id = await _make_draft(db, status="approved")
+    send_message = AsyncMock(return_value=_send_result_mock("+10000000001", None))
+    dispatcher = TelegramCommandDispatcher(db, _mock_pool())
+
+    with _patched_action(send_message), pytest.raises(RuntimeError, match="draft_delivery_unconfirmed"):
+        await dispatcher._dispatch("dm.send_reply", {"draft_id": draft_id})
+
+    draft = await db.repos.dm_reply_drafts.get(draft_id)
+    assert draft.status == "unconfirmed"
+    assert draft.sent_message_id is None
+    # A repeat of the command fails the same way instead of answering `already_sent`.
+    with _patched_action(send_message), pytest.raises(RuntimeError, match="draft_unconfirmed"):
+        await dispatcher._dispatch("dm.send_reply", {"draft_id": draft_id})
+    send_message.assert_awaited_once()
+
+
+async def test_unconfirmed_draft_is_terminal(db):
+    """No decision and no claim reopens it: the reply may already be in the chat."""
+    drafts = db.repos.dm_reply_drafts
+    draft_id = await _make_draft(db, status="sending")
+
+    assert await drafts.mark_unconfirmed(draft_id) is True
+    for decision in ("approved", "rejected"):
+        assert await drafts.decide(draft_id, decision) is False
+    assert await drafts.claim_for_send(draft_id) is False
+    assert await drafts.release_claim(draft_id) is False
+    assert (await drafts.get(draft_id)).status == "unconfirmed"
+
+
 # --------------------------------------------------------------------------- #
 # CLI: только очередь, никакой прямой отправки
 # --------------------------------------------------------------------------- #
@@ -460,6 +492,23 @@ def test_cli_send_guards_statuses(cli_db, capsys):
     out = _run_dm_impl(lambda: dm_cli.send_impl("cfg", draft_id=draft_id), cli_db, capsys)
     assert "уже отправлен" in out
     assert len(_commands(cli_db)) == 1
+
+
+def test_cli_send_refuses_an_unconfirmed_draft(cli_db, capsys):
+    """#1981: a send Telegram never confirmed is not «уже отправлен» — the
+    operator is told to look at the chat, and nothing is enqueued."""
+    draft_id = asyncio.run(_make_draft(cli_db, status="sending"))
+    _reopen(cli_db)
+    asyncio.run(cli_db.repos.dm_reply_drafts.mark_unconfirmed(draft_id))
+
+    with pytest.raises(typer.Exit) as excinfo:
+        _run_dm_impl(lambda: dm_cli.send_impl("cfg", draft_id=draft_id), cli_db, capsys)
+
+    assert excinfo.value.exit_code == 1
+    captured = capsys.readouterr()
+    assert "без подтверждения" in captured.err
+    assert "без подтверждения" not in captured.out
+    assert _commands(cli_db) == []
 
 
 def test_cli_approve_is_idempotent_report(cli_db, capsys):

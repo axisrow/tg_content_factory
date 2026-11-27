@@ -641,7 +641,8 @@ class ForwardHandler(BaseNodeHandler):
                     # every target still receives the message within this run.
                     if (message.channel_id, message.message_id) in processed_ids:
                         continue
-                    await _perform_telegram_action(action_service, services, node_id, "forward_messages", message,
+                    result = await _perform_telegram_action(
+                        action_service, services, node_id, "forward_messages", message,
                         phone=phone,
                         from_chat=message.channel_id,
                         to_chat=dialog_id,
@@ -651,6 +652,21 @@ class ForwardHandler(BaseNodeHandler):
                         collapse_single_message_id=True,
                         source="pipeline_forward",
                     )
+                    if not result.message_ids:
+                        # Telethon answers a forward whose Updates carry no message
+                        # with None instead of raising. Nothing confirms a delivery
+                        # then: the message is neither counted nor logged as
+                        # forwarded, so the next run tries it again instead of
+                        # skipping it for good (#1981).
+                        context.record_error(
+                            node_id=node_id,
+                            code="forward_unconfirmed",
+                            detail=(
+                                f"Telegram returned no message for channel_id={message.channel_id} "
+                                f"message_id={message.message_id} forwarded to dialog_id={dialog_id}"
+                            ),
+                        )
+                        continue
                     increment_action_count(context, "forward")
                     if dedup_repo is not None:
                         await dedup_repo.log_action(

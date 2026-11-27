@@ -188,11 +188,11 @@ def register(db, client_pool, embedding_service, **kwargs):
             changed = await db.repos.dm_reply_drafts.decide(int(draft_id), decision)
             if changed:
                 return _text_response(f"Черновик #{draft_id}: {draft.status} → {decision}.")
-            # Идемпотентный no-op: терминальные sending/sent решением владельца
-            # назад не переводятся — двойная отправка исключена.
+            # Идемпотентный no-op: терминальные sending/sent/unconfirmed решением
+            # владельца назад не переводятся — двойная отправка исключена.
             return _text_response(
                 f"Черновик #{draft_id} остался в статусе '{draft.status}' "
-                "(решения не применяются к sending/sent)."
+                "(решения не применяются к sending/sent/unconfirmed)."
             )
         except Exception as e:
             return _text_response(f"Ошибка решения по черновику: {e}")

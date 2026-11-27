@@ -395,9 +395,10 @@ DmCatchupMode = Literal["full", "journal_only", "ignore"]
 DM_CATCHUP_SETTING_KEY = "dm_catchup"
 
 # Статусы черновика ответа на DM (#1429) — по образцу generation_runs
-# (status-машина в докстринге DmReplyDraftsRepository.claim_for_send).
-DM_REPLY_DRAFT_STATUSES = ("draft", "approved", "rejected", "sending", "sent")
-DmReplyDraftStatus = Literal["draft", "approved", "rejected", "sending", "sent"]
+# (status-машина в докстринге DmReplyDraftsRepository). ``unconfirmed`` (#1981) —
+# отправка, которую Telegram не подтвердил id: терминальный, как ``sent``.
+DM_REPLY_DRAFT_STATUSES = ("draft", "approved", "rejected", "sending", "sent", "unconfirmed")
+DmReplyDraftStatus = Literal["draft", "approved", "rejected", "sending", "sent", "unconfirmed"]
 
 
 class DmReplyDraft(BaseModel):
