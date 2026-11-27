@@ -731,6 +731,7 @@ def test_run_due_action_with_item_id_skips_auto_jobs(tmp_path, cli_init_patch, c
     assert "items=1" in out
     assert "auto_jobs=0" in out
     run_due.assert_awaited_once()
+    assert run_due.await_args is not None
     assert run_due.await_args.kwargs["item_id"] == 77
     assert callable(run_due.await_args.kwargs["on_progress"])
     auto_run_due.assert_not_awaited()
