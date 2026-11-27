@@ -25,6 +25,7 @@ from tg_agent.models import (
 )
 from tg_agent.services.pipeline_filters import normalize_filter_config
 from tg_agent.services.pipeline_llm_requirements import get_dag_source_channel_ids, pipeline_needs_llm
+from tg_agent.utils.errors import error_text
 
 logger = logging.getLogger(__name__)
 
@@ -820,7 +821,7 @@ class PipelineService:
             return {"ok": True, "pipeline_json": _json.loads(new_graph.to_json())}
         except Exception as exc:
             logger.warning("edit_via_llm failed for pipeline_id=%s: %s", pipeline_id, exc, exc_info=True)
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": error_text(exc)}
 
     # ------------------------------------------------------------------
     # Graph CRUD operations

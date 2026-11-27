@@ -5,6 +5,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, overload
 
+from tg_agent.utils.errors import error_text
+
 ReactionItem = dict[str, str | int]
 ReactionUserItem = dict[str, str | int]
 DEFAULT_REACTION_USERS_LIMIT = 20
@@ -288,7 +290,7 @@ async def fetch_message_reaction_users(
             fetch_message_reaction_users_raw,
         )
     except ImportError as exc:
-        return ReactionUsersResult([], unavailable=str(exc))
+        return ReactionUsersResult([], unavailable=error_text(exc))
 
     try:
         if isinstance(client, TelegramTransportSession):
@@ -306,7 +308,7 @@ async def fetch_message_reaction_users(
     except Exception as exc:
         if exc.__class__.__name__ == "FloodWaitError":
             raise
-        return ReactionUsersResult([], unavailable=str(exc))
+        return ReactionUsersResult([], unavailable=error_text(exc))
 
     items = extract_reaction_users(result)
     total = _coerce_count(getattr(result, "count", len(items)))

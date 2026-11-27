@@ -4,14 +4,19 @@ An exception raised without a message — ``asyncio.TimeoutError()``, a bare
 ``RuntimeError()`` — has an empty ``str()``. Every failure path that stores the
 exception's text goes through :func:`tg_agent.utils.errors.error_text`, and the
 convention test below holds the rule a linter can check: inside an
-``except ... as exc`` handler, ``exc`` reaches a reason keyword (``error=``,
-``error_text=``, ``fallback_error=``) only through ``error_text(exc)`` — not as
-``str(exc)`` however wrapped or sliced, not interpolated into an f-string, and
-not through a local assigned either of those.
+``except ... as exc`` handler, ``exc`` reaches a reason name only through
+``error_text(exc)`` — not as ``str(exc)`` however wrapped or sliced, not
+interpolated into an f-string, and not through a local assigned either of
+those.
+
+A reason name is a reason keyword (``error=``, ``error_text=``,
+``fallback_error=``, and the result fields ``unavailable=``/``username_error=``
+— #1982) or a dict-literal key of the same names (an event payload such as
+``{"error": str(exc)}`` — #1982).
 
 Not seen, by design: a reason passed positionally (``update_item(id, FAILED,
-text, owner)`` — pass ``error=``), a dict key (``{"error": str(exc)}``), and a
-helper that takes the exception as a parameter.
+text, owner)`` — pass ``error=``), and a helper that takes the exception as a
+parameter.
 """
 from __future__ import annotations
 
@@ -26,7 +31,7 @@ import pytest
 from tg_agent.utils.errors import error_text
 
 _PACKAGE = pathlib.Path(__file__).resolve().parents[1] / "tg_agent"
-_REASON_KEYWORDS = {"error", "error_text", "fallback_error"}
+_REASON_KEYWORDS = {"error", "error_text", "fallback_error", "unavailable", "username_error"}
 
 
 def test_error_text_is_the_message():
@@ -73,7 +78,7 @@ def _takes_text_raw(expr: ast.AST, name: str) -> bool:
 
 
 def _raw_reason_lines(handler: ast.ExceptHandler) -> list[int]:
-    """Lines of ``handler`` where its bound exception reaches a reason keyword raw."""
+    """Lines of ``handler`` where its bound exception reaches a reason name raw."""
     name = handler.name
     if name is None:
         return []
@@ -89,12 +94,28 @@ def _raw_reason_lines(handler: ast.ExceptHandler) -> list[int]:
     return [
         node.lineno
         for node in ast.walk(handler)
-        if isinstance(node, ast.Call)
-        for keyword in node.keywords
-        if keyword.arg in _REASON_KEYWORDS
-        and (
-            _takes_text_raw(keyword.value, name)
-            or (isinstance(keyword.value, ast.Name) and keyword.value.id in tainted)
+        if (
+            isinstance(node, ast.Call)
+            and any(
+                keyword.arg in _REASON_KEYWORDS
+                and (
+                    _takes_text_raw(keyword.value, name)
+                    or (isinstance(keyword.value, ast.Name) and keyword.value.id in tainted)
+                )
+                for keyword in node.keywords
+            )
+        )
+        or (
+            isinstance(node, ast.Dict)
+            and any(
+                isinstance(key, ast.Constant)
+                and key.value in _REASON_KEYWORDS
+                and (
+                    _takes_text_raw(value, name)
+                    or (isinstance(value, ast.Name) and value.id in tainted)
+                )
+                for key, value in zip(node.keys, node.values, strict=False)  # ponytail: AST builds them in lockstep
+            )
         )
     ]
 
@@ -131,6 +152,10 @@ _RED = {
     "local-branch": (
         "error = describe(exc) if isinstance(exc, ValueError) else str(exc)\nupdate(1, error=error)"
     ),
+    "dict-key": "report({'event': 'error', 'error': str(exc)})",
+    "dict-key-local": "error = str(exc)\nreport({'error': error})",
+    "result-field": "return ReactionUsersResult([], unavailable=str(exc))",
+    "result-field-local": "username_error = str(exc)\nreturn Result(username_error=username_error)",
 }
 
 
@@ -147,6 +172,9 @@ _GREEN = {
     "other-name-in-f-string": "update(1, error=f'channel {channel_id} not found')",
     "not-a-reason-keyword": "update(1, note=f'failed: {exc}')",
     "raw-text-not-stored": "message = str(exc)\nlog(message)",
+    "dict-key-helper": "report({'event': 'error', 'error': error_text(exc)})",
+    "dict-key-other-value": "report({'status': 'error', 'error': 'gone'})",
+    "result-field-helper": "return ReactionUsersResult([], unavailable=error_text(exc))",
 }
 
 

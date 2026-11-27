@@ -48,6 +48,7 @@ import httpx
 
 from tg_agent.database import Database
 from tg_agent.telegram.backends import transcribe_audio_raw
+from tg_agent.utils.errors import error_text
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -370,7 +371,7 @@ async def _transcribe_via_telegram(cl, entity, msg) -> dict:
     except Exception as e:
         if is_premium_rpc_error(e):
             return {"status": "premium_required"}
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": error_text(e)}
 
     attempts = 0
     while getattr(result, "pending", False) and attempts < _POLL_ATTEMPTS:
@@ -379,7 +380,7 @@ async def _transcribe_via_telegram(cl, entity, msg) -> dict:
         try:
             result = await transcribe_audio_raw(cl, peer, msg.id)
         except Exception as e:
-            return {"status": "error", "error": str(e)}
+            return {"status": "error", "error": error_text(e)}
 
     if getattr(result, "pending", False):
         return {"status": "pending"}
@@ -399,7 +400,7 @@ async def _download_audio(cl, msg, limit: Optional[int], cfg=None):
     try:
         data = await cl.download_media(msg, file=bytes)
     except Exception as e:
-        return None, {"status": "error", "error": f"download failed: {e}"}
+        return None, {"status": "error", "error": f"download failed: {error_text(e)}"}
     if not data:
         return None, {"status": "error", "error": "empty media download"}
     # The declared size can be missing or stale; the bytes in hand cannot.
@@ -451,7 +452,7 @@ async def _transcribe_via_openai_compatible(cl, msg, cfg: HttpEngineConfig) -> d
         resp.raise_for_status()
         payload = resp.json()
     except Exception as e:
-        return {"status": "error", "error": f"{cfg.engine} request failed: {e}"}
+        return {"status": "error", "error": f"{cfg.engine} request failed: {error_text(e)}"}
     finally:
         del data
 
@@ -528,7 +529,7 @@ async def _transcribe_via_whisper(cl, msg) -> dict:
                 _run_whisper, bytes(data), _whisper_settings(), language
             )
     except Exception as e:
-        return {"status": "error", "error": f"whisper failed: {e}"}
+        return {"status": "error", "error": f"whisper failed: {error_text(e)}"}
     finally:
         del data
 

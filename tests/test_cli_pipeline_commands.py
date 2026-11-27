@@ -1328,6 +1328,45 @@ class TestPipelineGenerateStream:
         status, _ = _read_run_status(db_path, run_id)
         assert status == "failed"
 
+    def test_a_message_less_failure_names_the_class_in_the_error_event(self, tmp_path, cli_init_patch, capsys):
+        """An exception with no message (empty str()) still names itself in the
+        error event (#1982) — the payload is never an empty string."""
+
+        class _SilentGenerationService:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def generate_stream(self, *args, **kwargs):
+                yield {"delta": "Hi", "generated_text": "Hi", "citations": []}
+                raise asyncio.TimeoutError()
+
+        db_path = _empty_db_path(tmp_path, "pipeline_gen_stream_silent_raise.db")
+        pid = _seed_pipeline_with_graph(db_path, name="SilentRaiseDAG")
+
+        provider = MagicMock()
+        provider.load_db_providers = AsyncMock()
+        provider.has_providers = MagicMock(return_value=True)
+        provider.get_provider_callable = MagicMock(return_value=AsyncMock())
+
+        db = _open_db(db_path)
+        try:
+            with cli_init_patch(db, _PIPELINE_INIT_DB_TARGET, fresh_database=True), patch(
+                "tg_agent.services.provider_service.RuntimeProviderRegistry",
+                return_value=provider,
+            ), patch(
+                "tg_agent.services.generation_service.GenerationService",
+                _SilentGenerationService,
+            ):
+                with pytest.raises(typer.Exit) as excinfo:
+                    run(_gen_stream_ns(id=pid))
+            assert excinfo.value.exit_code == 1
+        finally:
+            _close_db(db)
+
+        out = capsys.readouterr().out
+        lines = [json.loads(ln) for ln in out.strip().splitlines() if ln.strip()]
+        assert lines[-1] == {"event": "error", "error": "TimeoutError"}
+
     def test_cancellation_marks_run_failed(self, tmp_path, cli_init_patch, capsys):
         """Ctrl+C raises CancelledError (a BaseException, not Exception). The run
         must be flipped to "failed" and the exception re-raised, not left dangling
