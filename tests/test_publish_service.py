@@ -842,8 +842,13 @@ async def test_publish_service_with_reply_to():
 
 
 @pytest.mark.anyio
-async def test_publish_service_general_exception():
-    """General exception during publishing produces error result."""
+@pytest.mark.parametrize(
+    ("exc", "error"),
+    [(ValueError("unexpected error"), "unexpected error"), (RuntimeError(), "RuntimeError")],
+)
+async def test_publish_service_general_exception(exc, error):
+    """General exception during publishing produces an error result that says why —
+    also for an exception raised without a message (#1968)."""
     db = FakeDB()
     db.repos.content_pipelines.set_targets(
         [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
@@ -851,7 +856,7 @@ async def test_publish_service_general_exception():
 
     class ExceptionPool(FakeClientPool):
         async def get_client_by_phone(self, phone, *, wait_for_flood=False):
-            raise ValueError("unexpected error")
+            raise exc
 
     pool = ExceptionPool(should_succeed=True)
     service = PublishService(db, pool)
@@ -868,7 +873,7 @@ async def test_publish_service_general_exception():
 
     assert len(results) == 1
     assert results[0].success is False
-    assert "unexpected error" in results[0].error
+    assert results[0].error == error
 
 
 @pytest.mark.anyio

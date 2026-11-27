@@ -174,13 +174,13 @@ class PhotoTaskService:
                     item_id,
                     status=PhotoBatchStatus.COMPLETED,
                     telegram_message_ids=list(accumulated),
-                    error=f"partial send failure: {exc}",
+                    error=f"partial send failure: {error_text(exc)}",
                     completed_at=now,
                 )
                 await self._bundle.update_batch(
                     batch_id,
                     status=PhotoBatchStatus.COMPLETED,
-                    error=f"partial send failure: {exc}",
+                    error=f"partial send failure: {error_text(exc)}",
                     last_run_at=now,
                 )
             else:
@@ -277,7 +277,7 @@ class PhotoTaskService:
                     item_id,
                     status=PhotoBatchStatus.SCHEDULED,
                     telegram_message_ids=list(accumulated),
-                    error=f"partial schedule failure: {exc}",
+                    error=f"partial schedule failure: {error_text(exc)}",
                 )
             else:
                 # Nothing was scheduled — failing with no ids is correct; raise so
@@ -455,7 +455,7 @@ class PhotoTaskService:
                     item_id,
                     exc_info=True,
                 )
-                await self._bundle.update_item(item_id, error=f"unschedule failed: {exc}")
+                await self._bundle.update_item(item_id, error=f"unschedule failed: {error_text(exc)}")
                 return False
         cancelled = await self._bundle.cancel_item(item_id)
         if cancelled and item is not None and item.batch_id:

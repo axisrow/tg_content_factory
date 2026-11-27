@@ -22,6 +22,7 @@ from tg_agent.cli.commands.common import (
 )
 from tg_agent.services.agent_provider_service import ProviderConfigService
 from tg_agent.services.provider_model_cache import ProviderModelCacheEntry
+from tg_agent.utils.errors import error_text
 
 
 async def list_impl(config_path: str) -> None:
@@ -132,7 +133,7 @@ async def _refreshed_entry(
     try:
         entry = await svc.refresh_models_for_provider(name, cfg)
     except Exception as exc:
-        cli_error(f"FAIL: {str(exc) or type(exc).__name__}")
+        cli_error(f"FAIL: {error_text(exc)}")
     if entry.error:
         cli_error(f"FAIL: {entry.error}")
     return entry
@@ -208,7 +209,7 @@ async def test_all_impl(config_path: str) -> None:
                 reason = entry.error
             except Exception as exc:
                 # An exception without a message still fails the provider: the class name is the reason.
-                reason = str(exc) or type(exc).__name__
+                reason = error_text(exc)
             if entry is None or reason:
                 print("FAIL")
                 print(f"  {cfg.provider}: {reason}", file=sys.stderr)

@@ -535,7 +535,7 @@ class PublishService:
             # else keeps its plain message.
             error = describe_rpc_failure(e) if isinstance(
                 e, (HandledFloodWaitError, TelegramRateLimitedError)
-            ) else str(e)
+            ) else error_text(e)
             return PublishResult(success=False, error=error)
         finally:
             if acquired_phone is not None:

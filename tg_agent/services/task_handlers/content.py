@@ -88,7 +88,7 @@ class ContentTaskHandler:
                     await ctx.tasks.update_collection_task(
                         task.id,
                         CollectionTaskStatus.FAILED,
-                        error=f"Generation ok but publish failed: {pub_exc!s:.400}",
+                        error=f"Generation ok but publish failed: {error_text(pub_exc)}"[:500],
                     )
                     return
                 # publish_run() does not raise on delivery errors (no client,
