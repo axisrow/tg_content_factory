@@ -122,14 +122,23 @@ async def test_save_provider_configs_preserves_encrypted_secret_after_decrypt_fa
     assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
+@pytest.mark.parametrize(
+    ("exc", "reason"),
+    [
+        (RuntimeError("upstream unavailable"), "upstream unavailable"),
+        # An exception without a message still leaves a reason: the class name.
+        (TimeoutError(), "TimeoutError"),
+    ],
+    ids=["with a message", "without a message"],
+)
 @pytest.mark.anyio
-async def test_refresh_models_uses_static_cache_on_live_fetch_failure(db, monkeypatch):
+async def test_refresh_models_uses_static_cache_on_live_fetch_failure(db, monkeypatch, exc, reason):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
     service = ProviderConfigService(db, config)
 
     async def _broken_fetch(spec, cfg):
-        raise RuntimeError("upstream unavailable")
+        raise exc
 
     monkeypatch.setattr(service, "_fetch_live_models", _broken_fetch)
 
@@ -137,8 +146,11 @@ async def test_refresh_models_uses_static_cache_on_live_fetch_failure(db, monkey
 
     assert entry.source == "static cache"
     assert entry.models
+    # Never empty: the provider commands fail the fetch on this text (#1962).
+    assert entry.error == reason
     saved = json.loads(await db.get_setting(MODEL_CACHE_SETTINGS_KEY) or "{}")
     assert saved["openai"]["source"] == "static cache"
+    assert saved["openai"]["error"] == reason
 
 
 @pytest.mark.anyio
@@ -892,6 +904,7 @@ async def test_fetch_live_models_http_error_fallback_to_static(db, monkeypatch):
     from tg_agent.agent.provider_registry import provider_spec
 
     spec = provider_spec("openai")
+    assert spec is not None
 
     # _fetch_live_models raises exception, refresh_models_for_provider catches it
     with pytest.raises(aiohttp.ClientError):
@@ -921,6 +934,7 @@ async def test_fetch_live_models_success_updates_cache(db, monkeypatch):
     from tg_agent.agent.provider_registry import provider_spec
 
     spec = provider_spec("openai")
+    assert spec is not None
     models = await service._fetch_live_models(spec, cfg)
 
     assert "gpt-4.1" in models
@@ -1425,6 +1439,7 @@ async def test_zai_fetch_models_http_error_propagates(db, monkeypatch):
     monkeypatch.setattr(service, "_fetch_json", _failing_fetch)
 
     spec = provider_spec("zai")
+    assert spec is not None
     with pytest.raises(ConnectionError, match="API unreachable"):
         await service._fetch_live_models(spec, cfg)
 
@@ -1451,6 +1466,7 @@ async def test_zai_fetch_models_empty_response(db, monkeypatch):
     monkeypatch.setattr(service, "_fetch_json", _empty_fetch)
 
     spec = provider_spec("zai")
+    assert spec is not None
     models = await service._fetch_live_models(spec, cfg)
     assert models == []
 
@@ -1477,5 +1493,6 @@ async def test_zai_fetch_models_missing_api_key(db, monkeypatch):
     monkeypatch.setattr(service, "_fetch_json", _fake_empty_fetch)
 
     spec = provider_spec("zai")
+    assert spec is not None
     models = await service._fetch_live_models(spec, cfg)
     assert models == []

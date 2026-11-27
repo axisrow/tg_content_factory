@@ -221,10 +221,13 @@ class TestProbe:
         entry = _make_entry("openai", models=["gpt-4"], error="rate limited")
         svc.refresh_models_for_provider = AsyncMock(return_value=entry)
         from tg_agent.cli.commands.provider import run
-        run(_ns(provider_action="probe", name="openai"))
-        out = capsys.readouterr().out
-        assert "WARN" in out
-        assert "rate limited" in out
+        # #1962: the live fetch failed — the cached list is no confirmed connection.
+        with pytest.raises(typer.Exit):
+            run(_ns(provider_action="probe", name="openai"))
+        captured = capsys.readouterr()
+        assert "FAIL: rate limited" in captured.err
+        assert "OK" not in captured.out
+        assert "rate limited" not in captured.out
 
     @patch("tg_agent.cli.commands.provider.ProviderConfigService")
     def test_probe_failure(self, mock_svc, cli_env, capsys):
@@ -281,11 +284,14 @@ class TestRefresh:
         }
         svc.refresh_all_models = AsyncMock(return_value=results)
         from tg_agent.cli.commands.provider import run
-        run(_ns(provider_action="refresh", name=None))
-        out = capsys.readouterr().out
-        assert "openai" in out
-        assert "groq" in out
-        assert "WARN" in out
+        # #1962: the table stays on stdout; the provider that did not refresh fails the run.
+        with pytest.raises(typer.Exit):
+            run(_ns(provider_action="refresh", name=None))
+        captured = capsys.readouterr()
+        assert "openai: 1 models — OK" in captured.out
+        assert "groq: 1 models — FAILED" in captured.out
+        assert "groq: quota" in captured.err
+        assert "1 of 2 provider(s) failed." in captured.err
 
 
 class TestTestAll:
@@ -305,13 +311,34 @@ class TestTestAll:
         cfg2 = _make_cfg("groq")
         svc.load_provider_configs = AsyncMock(return_value=[cfg1, cfg2])
         entry_ok = _make_entry("openai", models=["gpt-4"])
-        entry_warn = _make_entry("groq", models=["llama3"], error="slow")
-        svc.refresh_models_for_provider = AsyncMock(side_effect=[entry_ok, entry_warn])
+        entry_also_ok = _make_entry("groq", models=["llama3"])
+        svc.refresh_models_for_provider = AsyncMock(side_effect=[entry_ok, entry_also_ok])
         from tg_agent.cli.commands.provider import run
         run(_ns(provider_action="test-all"))
-        out = capsys.readouterr().out
-        assert "OK" in out
-        assert "WARN" in out
+        captured = capsys.readouterr()
+        assert captured.out.count("OK (1 models)") == 2  # both providers
+        assert "FAIL" not in captured.out
+        assert captured.err == ""
+
+    @patch("tg_agent.cli.commands.provider.ProviderConfigService")
+    def test_test_all_reported_error_is_a_failure(self, mock_svc, cli_env, capsys):
+        """#1962: the service answers a failed live fetch with the cached list and
+        the reason — that provider failed, like one that raised."""
+        svc = mock_svc.return_value
+        cfg1 = _make_cfg("openai")
+        cfg2 = _make_cfg("groq")
+        svc.load_provider_configs = AsyncMock(return_value=[cfg1, cfg2])
+        entry_ok = _make_entry("openai", models=["gpt-4"])
+        entry_failed = _make_entry("groq", models=["llama3"], source="static cache", error="slow")
+        svc.refresh_models_for_provider = AsyncMock(side_effect=[entry_ok, entry_failed])
+        from tg_agent.cli.commands.provider import run
+        with pytest.raises(typer.Exit):
+            run(_ns(provider_action="test-all"))
+        captured = capsys.readouterr()
+        assert "openai... OK (1 models)" in captured.out
+        assert "groq... FAIL" in captured.out
+        assert "groq: slow" in captured.err
+        assert "1 of 2 provider(s) failed." in captured.err
 
     @patch("tg_agent.cli.commands.provider.ProviderConfigService")
     def test_test_all_failure(self, mock_svc, cli_env, capsys):
@@ -407,3 +434,40 @@ def test_test_all_real_service_reads_db_and_refreshes_zai_models(cli_db, capsys,
     assert "Testing 1 provider(s)" in out
     assert "zai... OK (1 models)" in out
     assert fetched == [f"{ZAI_GENERAL_BASE_URL}/models"]
+
+
+@pytest.mark.parametrize(
+    ("provider_action", "name", "reason_line"),
+    [
+        ("probe", "openai", "FAIL: TimeoutError"),
+        ("refresh", "openai", "FAIL: TimeoutError"),
+        ("test-all", None, "openai: TimeoutError"),
+    ],
+)
+def test_real_service_messageless_fetch_failure_fails_the_command(
+    cli_db, capsys, monkeypatch, provider_action, name, reason_line
+):
+    """#1962: the service stores str(exc) as the reason. A live fetch that dies
+    without a message must still fail the command that confirms the connection."""
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-cli-secret"
+    _save_real_cli_provider_config(cli_db, config, _make_cfg("openai"))
+
+    async def fetch_without_message(_self, url: str, headers: dict[str, str] | None = None):
+        raise TimeoutError()
+
+    async def fake_init_db(_config_path: str):
+        cmd_db = Database(cli_db._db_path)
+        await cmd_db.initialize()
+        return config, cmd_db
+
+    monkeypatch.setattr(ProviderConfigService, "_fetch_json", fetch_without_message)
+    with patch("tg_agent.cli.commands.provider.runtime.init_db", side_effect=fake_init_db):
+        from tg_agent.cli.commands.provider import run
+
+        with pytest.raises(typer.Exit):
+            run(_ns(provider_action=provider_action, name=name))
+
+    captured = capsys.readouterr()
+    assert reason_line in captured.err
+    assert "OK" not in captured.out
