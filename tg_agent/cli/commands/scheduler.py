@@ -171,6 +171,26 @@ async def stop_impl(config_path: str) -> None:
         await db.close()
 
 
+# The scheduler's fixed job ids (tg_agent/scheduler/service.py); the per-record
+# families are sq_<search query id> and content_generate_<pipeline id>.
+_FIXED_JOB_IDS = frozenset(
+    {"collect_all", "photo_due", "photo_auto", "ping_due", "warm_all_dialogs"}
+)
+
+
+async def _known_job_id(db, job_id: str) -> bool:
+    """Is ``job_id`` a job the scheduler can have at all?"""
+    if job_id in _FIXED_JOB_IDS:
+        return True
+    for prefix, repo in (("sq_", "search_queries"), ("content_generate_", "content_pipelines")):
+        if job_id.startswith(prefix):
+            record_id = job_id.removeprefix(prefix)
+            if not record_id.isdigit():
+                return False
+            return await getattr(db.repos, repo).get_by_id(int(record_id)) is not None
+    return False
+
+
 async def job_toggle_impl(config_path: str, *, job_id: str) -> None:
     """Toggle a scheduler job enabled/disabled."""
     _, db = await runtime.init_db(config_path)
@@ -179,6 +199,10 @@ async def job_toggle_impl(config_path: str, *, job_id: str) -> None:
         # content_generate_ id so toggling it disables the real job, not a dead key.
         if job_id.startswith("pipeline_run_"):
             job_id = "content_generate_" + job_id.removeprefix("pipeline_run_")
+        # Any id used to be accepted: a junk setting was written and success
+        # printed for a job that does not exist (#1965).
+        if not await _known_job_id(db, job_id):
+            cli_error(f"Unknown job_id '{job_id}'.")
         key = f"scheduler_job_disabled:{job_id}"
         current = await db.repos.settings.get_setting(key)
         new_disabled = current != "1"

@@ -27,23 +27,28 @@ def _stop_managed_server(config_path: str, notice: str, *, force: bool = False) 
     PID-file candidates (#1698): a daemon keeps its launch-time store path
     across a store switch, so stop/restart probe all of them and terminate
     whichever is alive. UNMANAGED/TIMEOUT exit non-zero (#1714: a daemon
-    owned by another project is never signalled — provenance is printed;
-    ``stop --force`` is the explicit operator escape hatch).
+    owned by another project is never signalled — its provenance is printed
+    to stderr, #1965; ``stop --force`` is the explicit operator escape hatch).
     """
     candidates = pid_file_candidates(config_path)
     try:
         print(notice)
         outcomes = [stop_server(path, force=force) for path in candidates]
     except ProcessControlError as exc:
-        print(str(exc))
+        print(str(exc), file=sys.stderr)
         sys.exit(1)
     if all(outcome.result is StopResult.NOT_RUNNING for outcome in outcomes):
         paths = ", ".join(str(path) for path in candidates)
         print(f"Server is not running (no PID file: {paths}).")
         return
+    # A refusal is a reason, not a result: stderr, exit 1.
+    refused = [
+        outcome for outcome in outcomes
+        if outcome.result in (StopResult.UNMANAGED, StopResult.TIMEOUT)
+    ]
     for outcome in outcomes:
-        print(outcome.message)
-    if any(outcome.result in (StopResult.UNMANAGED, StopResult.TIMEOUT) for outcome in outcomes):
+        print(outcome.message, file=sys.stderr if outcome in refused else sys.stdout)
+    if refused:
         sys.exit(1)
 
 

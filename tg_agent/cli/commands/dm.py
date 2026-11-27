@@ -14,7 +14,7 @@ from typing import Literal
 import typer
 
 from tg_agent.cli import runtime
-from tg_agent.cli.commands.common import apply_startup, run_async
+from tg_agent.cli.commands.common import apply_startup, cli_error, run_async
 from tg_agent.services.telegram_command_service import TelegramCommandService
 from tg_agent.telegram.dm_catchup import (
     DmCatchupSettingsError,
@@ -65,11 +65,10 @@ async def create_impl(
                 target_phone = target_phone or journal.phone
                 target_chat_id = target_chat_id or journal.chat_id
         if not target_phone or target_chat_id is None:
-            print(
+            cli_error(
                 f"Не найдена запись журнала incoming_dms #{incoming_dm_id} "
                 "(TTL 24ч) — укажите --phone и --chat-id явно."
             )
-            raise typer.Exit(1)
         draft_id, created = await db.repos.dm_reply_drafts.create_draft(
             incoming_dm_id=incoming_dm_id,
             phone=target_phone,
@@ -101,8 +100,7 @@ async def decide_impl(
     try:
         draft = await db.repos.dm_reply_drafts.get(draft_id)
         if draft is None:
-            print(f"Черновик #{draft_id} не найден.")
-            raise typer.Exit(1)
+            cli_error(f"Черновик #{draft_id} не найден.")
         changed = await db.repos.dm_reply_drafts.decide(draft_id, decision)
         if changed:
             print(f"Черновик #{draft_id}: {draft.status} → {decision}.")
@@ -123,8 +121,7 @@ async def send_impl(config_path: str, *, draft_id: int) -> None:
     try:
         draft = await db.repos.dm_reply_drafts.get(draft_id)
         if draft is None:
-            print(f"Черновик #{draft_id} не найден.")
-            raise typer.Exit(1)
+            cli_error(f"Черновик #{draft_id} не найден.")
         if draft.status == "sent":
             print(
                 f"Черновик #{draft_id} уже отправлен "
@@ -132,11 +129,10 @@ async def send_impl(config_path: str, *, draft_id: int) -> None:
             )
             return
         if draft.status != "approved":
-            print(
+            cli_error(
                 f"Черновик #{draft_id} в статусе '{draft.status}' — "
                 "перед отправкой нужен апрув: dm drafts approve."
             )
-            raise typer.Exit(1)
         command_id = await TelegramCommandService(db).enqueue(
             "dm.send_reply",
             # phone в payload (#1581): generic queue log печатает аккаунт.
@@ -197,8 +193,7 @@ async def status_impl(config_path: str) -> None:
         try:
             settings = await load_dm_catchup_settings(db)
         except DmCatchupSettingsError as exc:
-            print(f"Catch-up settings INVALID: {exc}")
-            raise typer.Exit(1) from exc
+            cli_error(f"Catch-up settings INVALID: {exc}")
         print(
             f"Catch-up settings: Mode: {settings.mode}, "
             f"staleness: {settings.staleness_sec}s, "

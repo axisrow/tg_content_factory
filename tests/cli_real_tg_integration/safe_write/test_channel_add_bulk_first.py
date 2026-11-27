@@ -9,6 +9,10 @@ We reuse channel_id (numeric) from live_channel: the add-bulk handler's
 `info_map` is keyed by channel_id (see
 tg_agent/cli/commands/channel.py:391), not by Telethon dialog.id, so this is
 the correct value to pass.
+
+An id missing from the account's dialogs adds nothing and exits 1 (#1965).
+That outcome is not a pass: the insert this test is about was never reached,
+so the test checks the exit code and skips.
 """
 import pytest
 
@@ -28,12 +32,14 @@ def test_channel_add_bulk_idempotent_first(run_cli, assert_cli_ok, live_phone, l
         channel_id,
         timeout=180,
     )
+    if "not found in dialogs" in result.stdout:
+        assert result.returncode == 1, f"a miss must exit 1, got: {result.returncode}"
+        assert "1 of 1 dialog id(s) are not in this account's dialogs." in result.stderr
+        pytest.skip("the live channel is not in the primary account's dialogs")
     assert_cli_ok(result)
     combined = result.stdout + result.stderr
     # First-time channel will say "Added"; already-known channel will say
     # "SKIP ... already exists". Either is a legitimate idempotent outcome.
-    assert (
-        "Added" in combined
-        or "already exists" in combined
-        or "not found in dialogs" in combined
-    ), f"unexpected `channel add-bulk` output: {combined!r}"
+    assert "Added" in combined or "already exists" in combined, (
+        f"unexpected `channel add-bulk` output: {combined!r}"
+    )

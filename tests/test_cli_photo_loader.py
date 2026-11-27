@@ -416,6 +416,11 @@ def test_publish_action(tmp_path, cli_init_patch, capsys):
         patch("tg_agent.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
         patch("tg_agent.cli.commands.photo_loader.PhotoTaskService", fake_task),
         patch("tg_agent.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
+        # The batch is checked before any success is printed (#1965).
+        patch(
+            "tg_agent.cli.commands.photo_loader.PhotoLoaderBundle.from_database",
+            return_value=MagicMock(get_batch=AsyncMock(return_value=MagicMock(id=3))),
+        ),
     ):
         from tg_agent.cli.commands.photo_loader import run
 
@@ -791,7 +796,12 @@ def test_auto_delete_action(tmp_path, cli_init_patch, capsys):
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
-    fake_task, fake_auto = _create_fake_services(auto_methods={"delete_job": AsyncMock(return_value=None)})
+    fake_task, fake_auto = _create_fake_services(
+        auto_methods={
+            "get_job": AsyncMock(return_value=MagicMock(id=1, is_active=True)),
+            "delete_job": AsyncMock(return_value=None),
+        }
+    )
 
     with (
         cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
@@ -847,7 +857,12 @@ def test_auto_update_action(tmp_path, cli_init_patch, capsys):
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
-    fake_task, fake_auto = _create_fake_services(auto_methods={"update_job": AsyncMock(return_value=None)})
+    fake_task, fake_auto = _create_fake_services(
+        auto_methods={
+            "get_job": AsyncMock(return_value=MagicMock(id=1, is_active=True)),
+            "update_job": AsyncMock(return_value=None),
+        }
+    )
 
     with (
         cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),

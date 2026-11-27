@@ -93,13 +93,17 @@ class TestCLIChannelStats:
         with patch("tg_agent.cli.runtime.init_pool", init_pool):
             from tg_agent.cli.commands.channel import run
 
-            run(_ns(channel_action="stats", identifier=None, all=False))
+            # #1965: the request is refused — stderr, exit 1.
+            with pytest.raises(typer.Exit):
+                run(_ns(channel_action="stats", identifier=None, all=False))
         init_pool.assert_not_awaited()
-        assert "Specify" in capsys.readouterr().out
+        captured = capsys.readouterr()
+        assert "Specify" in captured.err
+        assert captured.out == ""
 
     @pytest.mark.aiosqlite_serial
     def test_stats_no_identifier_and_no_all(self, cli_env, capsys):
-        """stats without --all and without identifier prints usage hint."""
+        """stats without --all and without identifier is a refused request (#1965)."""
         fake_pool = AsyncMock()
         fake_pool.clients = {"+1": MagicMock()}
         fake_pool.disconnect_all = AsyncMock()
@@ -112,8 +116,11 @@ class TestCLIChannelStats:
         with patch("tg_agent.cli.runtime.init_pool", side_effect=_init_pool):
             from tg_agent.cli.commands.channel import run
 
-            run(_ns(channel_action="stats", identifier=None, all=False))
-        assert "Specify" in capsys.readouterr().out
+            with pytest.raises(typer.Exit):
+                run(_ns(channel_action="stats", identifier=None, all=False))
+        captured = capsys.readouterr()
+        assert "Specify" in captured.err
+        assert captured.out == ""
 
     @pytest.mark.aiosqlite_serial
     def test_stats_all(self, cli_env, capsys):
@@ -196,12 +203,16 @@ class TestCLIChannelStats:
 
 class TestCLIChannelRefreshTypes:
     @pytest.mark.aiosqlite_serial
-    def test_refresh_types_no_clients(self, cli_env, caplog):
+    def test_refresh_types_no_clients(self, cli_env, capsys):
         with patch("tg_agent.cli.runtime.init_pool", side_effect=_fake_init_pool_no_clients()):
             from tg_agent.cli.commands.channel import run
 
-            run(_ns(channel_action="refresh-types"))
-        assert "No connected accounts" in caplog.text
+            # #1965: the reason goes to stderr and the command exits 1.
+            with pytest.raises(typer.Exit):
+                run(_ns(channel_action="refresh-types"))
+        captured = capsys.readouterr()
+        assert "No connected accounts" in captured.err
+        assert captured.out == ""
 
     @pytest.mark.aiosqlite_serial
     def test_refresh_types_no_channels(self, cli_env, capsys):
@@ -227,16 +238,20 @@ class TestCLIChannelRefreshTypes:
 
 class TestCLIChannelRefreshMeta:
     @pytest.mark.aiosqlite_serial
-    def test_refresh_meta_no_clients(self, cli_env, caplog):
+    def test_refresh_meta_no_clients(self, cli_env, capsys):
         with patch("tg_agent.cli.runtime.init_pool", side_effect=_fake_init_pool_no_clients()):
             from tg_agent.cli.commands.channel import run
 
-            run(_ns(channel_action="refresh-meta", all=False, identifier=None))
-        assert "No connected accounts" in caplog.text
+            # #1965: the reason goes to stderr and the command exits 1.
+            with pytest.raises(typer.Exit):
+                run(_ns(channel_action="refresh-meta", all=False, identifier=None))
+        captured = capsys.readouterr()
+        assert "No connected accounts" in captured.err
+        assert captured.out == ""
 
     @pytest.mark.aiosqlite_serial
     def test_refresh_meta_no_identifier_no_all(self, cli_env, capsys):
-        """refresh-meta without --all or identifier prints usage hint."""
+        """refresh-meta without --all or identifier is a refused request (#1965)."""
         fake_pool = AsyncMock()
         fake_pool.clients = {"+1": MagicMock()}
         fake_pool.disconnect_all = AsyncMock()
@@ -249,8 +264,11 @@ class TestCLIChannelRefreshMeta:
         with patch("tg_agent.cli.runtime.init_pool", side_effect=_init_pool):
             from tg_agent.cli.commands.channel import run
 
-            run(_ns(channel_action="refresh-meta", all=False, identifier=None))
-        assert "Please provide" in capsys.readouterr().out
+            with pytest.raises(typer.Exit):
+                run(_ns(channel_action="refresh-meta", all=False, identifier=None))
+        captured = capsys.readouterr()
+        assert "Please provide" in captured.err
+        assert captured.out == ""
 
     @pytest.mark.aiosqlite_serial
     def test_refresh_meta_identifier_not_found(self, cli_env, capsys):

@@ -297,8 +297,10 @@ async def test_collect_all_stats(db):
 
 
 def test_cli_channel_stats_no_args(cli_init_patch, capsys):
-    """Calling `channel stats` without identifier or --all should not crash."""
+    """Calling `channel stats` without identifier or --all is refused, not a crash (#1965)."""
     from unittest.mock import AsyncMock, MagicMock, patch
+
+    import typer
 
     from tg_agent.cli.commands import channel as channel_cmd
 
@@ -315,6 +317,7 @@ def test_cli_channel_stats_no_args(cli_init_patch, capsys):
     with (
         cli_init_patch(mock_db, "tg_agent.cli.runtime.init_db"),
         patch("tg_agent.cli.runtime.init_pool", fake_init_pool),
+        pytest.raises(typer.Exit) as excinfo,
     ):
         asyncio.run(
             channel_cmd.stats_impl(
@@ -322,5 +325,7 @@ def test_cli_channel_stats_no_args(cli_init_patch, capsys):
             )
         )
 
+    assert excinfo.value.exit_code == 1
     captured = capsys.readouterr()
-    assert "Specify a channel identifier or use --all" in captured.out
+    assert "Specify a channel identifier or use --all" in captured.err
+    assert captured.out == ""

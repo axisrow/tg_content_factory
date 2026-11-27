@@ -369,10 +369,11 @@ class TestCliForward:
 
     def test_forward_no_valid_ids(self, cli_db, capsys):
         pool, _ = _mock_pool()
-        _run_cli("forward", pool, cli_db, {
-            "phone": _PHONE, "from_chat": "A", "to_chat": "B", "message_ids": ["abc"], "yes": True,
-        })
-        assert "No valid message IDs" in capsys.readouterr().out
+        with pytest.raises(typer.Exit):
+            _run_cli("forward", pool, cli_db, {
+                "phone": _PHONE, "from_chat": "A", "to_chat": "B", "message_ids": ["abc"], "yes": True,
+            })
+        assert "Invalid message ID: 'abc'" in capsys.readouterr().err
 
     def test_forward_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
@@ -500,10 +501,11 @@ class TestCliDeleteMessage:
 
     def test_delete_message_no_valid_ids(self, cli_db, capsys):
         pool, _ = _mock_pool()
-        _run_cli("delete-message", pool, cli_db, {
-            "phone": _PHONE, "chat_id": "@ch", "message_ids": ["abc"], "yes": True,
-        })
-        assert "No valid message IDs" in capsys.readouterr().out
+        with pytest.raises(typer.Exit):
+            _run_cli("delete-message", pool, cli_db, {
+                "phone": _PHONE, "chat_id": "@ch", "message_ids": ["abc"], "yes": True,
+            })
+        assert "Invalid message ID: 'abc'" in capsys.readouterr().err
 
     def test_delete_message_abort(self, cli_db, capsys):
         pool, _ = _mock_pool()
@@ -1119,24 +1121,27 @@ class TestCliLeave:
 
     def test_leave_invalid_ids(self, cli_db, capsys):
         pool, _ = _mock_pool()
-        _run_cli("leave", pool, cli_db, {
-            "phone": _PHONE, "dialog_ids": ["abc"], "yes": True,
-        })
-        out = capsys.readouterr().out
-        assert "No valid dialog IDs" in out
+        with pytest.raises(typer.Exit):
+            _run_cli("leave", pool, cli_db, {
+                "phone": _PHONE, "dialog_ids": ["abc"], "yes": True,
+            })
+        assert "Invalid dialog ID: 'abc'" in capsys.readouterr().err
 
     def test_leave_partial_invalid_ids(self, cli_db, capsys):
+        """#1965: a typo in one id refuses the whole request — nothing is left."""
         pool, _ = _mock_pool()
         pool.leave_channels = AsyncMock(return_value={-100111: True})
         with (
             patch(_SVC_DIALOGS, new_callable=AsyncMock, return_value=_FAKE_DIALOGS),
+            pytest.raises(typer.Exit),
         ):
             _run_cli("leave", pool, cli_db, {
                 "phone": _PHONE, "dialog_ids": ["-100111,abc"], "yes": True,
             })
-        out = capsys.readouterr().out
-        assert "Invalid dialog ID" in out
-        assert "1 left" in out
+        pool.leave_channels.assert_not_awaited()
+        captured = capsys.readouterr()
+        assert "Invalid dialog ID" in captured.err
+        assert "1 left" not in captured.out
 
     def test_leave_no_accounts(self, cli_db, capsys):
         pool, _ = _mock_pool(clients={})

@@ -722,12 +722,12 @@ class TestSchedulerJobToggle:
 
         with patch("tg_agent.cli.commands.scheduler.runtime.init_db", side_effect=_make_coro((config, db))), \
              patch("tg_agent.cli.commands.scheduler.runtime.init_pool", side_effect=_make_coro((MagicMock(), pool))):
-            run(cli_ns(scheduler_action="job-toggle", job_id="my_job"))
+            run(cli_ns(scheduler_action="job-toggle", job_id="collect_all"))
 
         out = capsys.readouterr().out
         assert "enabled" in out
         db.repos.settings.record_setting_decision.assert_awaited_once_with(
-            "scheduler_job_disabled:my_job", "0", origin="human", actor="cli"
+            "scheduler_job_disabled:collect_all", "0", origin="human", actor="cli"
         )
 
     def test_toggle_disables_job(self, capsys):
@@ -749,12 +749,12 @@ class TestSchedulerJobToggle:
 
         with patch("tg_agent.cli.commands.scheduler.runtime.init_db", side_effect=_make_coro((config, db))), \
              patch("tg_agent.cli.commands.scheduler.runtime.init_pool", side_effect=_make_coro((MagicMock(), pool))):
-            run(cli_ns(scheduler_action="job-toggle", job_id="test_job"))
+            run(cli_ns(scheduler_action="job-toggle", job_id="collect_all"))
 
         out = capsys.readouterr().out
         assert "disabled" in out
         db.repos.settings.record_setting_decision.assert_awaited_once_with(
-            "scheduler_job_disabled:test_job", "1", origin="human", actor="cli"
+            "scheduler_job_disabled:collect_all", "1", origin="human", actor="cli"
         )
 
 
