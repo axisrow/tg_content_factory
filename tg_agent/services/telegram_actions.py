@@ -296,8 +296,9 @@ class TelegramActionService:
     def __init__(self, pool: ClientPool, db: Database | None = None):
         self._pool = pool
         # When present, every successful send/forward lands one row in the
-        # sent-messages registry (#1893); None keeps bare constructions
-        # (tests, ad-hoc use) legal without an account.
+        # sent-messages registry (#1893), and every resolved delete its rows in
+        # the deletion journal (#1950); None keeps bare constructions (tests,
+        # ad-hoc use) legal without an account.
         self._db = db
 
     @staticmethod
