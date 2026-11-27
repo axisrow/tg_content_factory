@@ -118,6 +118,55 @@ def test_dialogs_action(tmp_path, cli_init_patch, capsys):
     assert "Test Channel" in out
 
 
+@pytest.mark.parametrize(
+    ("clients", "reason"),
+    [
+        ({}, "No connected accounts."),
+        ({"+200": object()}, "Account +100 not connected."),
+        ({"+100": object()}, "dialog cache was never built"),
+    ],
+)
+def test_dialogs_action_with_an_empty_cache_names_the_reason(
+    tmp_path, cli_init_patch, capsys, clients, reason
+):
+    """#1977: the list is the dialog cache (#1923) — before any refresh it is empty,
+    and silence with exit 0 reads as "this account has no dialogs". The cache read is
+    an exact match on the phone, so a phone that is not a connected account reads
+    empty too: it gets the `dialogs list` refusal, not a fix that cannot build
+    anything."""
+    db_path = str(tmp_path / "photo_dialogs_empty.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _setup_photo_db(db)
+
+    async def fake_init_pool(_config, _db):
+        pool = MagicMock()
+        pool.clients = clients
+        pool.disconnect_all = AsyncMock()
+        return MagicMock(), pool
+
+    with (
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
+        patch("tg_agent.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
+        patch("tg_agent.cli.commands.photo_loader.ChannelService") as mock_channel_service,
+        pytest.raises(typer.Exit) as excinfo,
+    ):
+        mock_instance = MagicMock()
+        mock_instance.get_my_dialogs = AsyncMock(return_value=[])
+        mock_channel_service.return_value = mock_instance
+
+        from tg_agent.cli.commands.photo_loader import run
+
+        run(_ns(photo_loader_action="dialogs", phone="+100"))
+
+    assert excinfo.value.exit_code == 1
+    captured = capsys.readouterr()
+    assert reason in captured.err
+    # The unbuilt-cache text and its fix are named for a real account only.
+    assert ("photo-loader refresh" in captured.err) == ("+100" in clients)
+    assert captured.out == ""
+
+
 def test_refresh_action_warns_on_partial_sweep(tmp_path, cli_init_patch, capsys):
     """A partial refresh must not be reported as a refreshed cache (#1350).
 
