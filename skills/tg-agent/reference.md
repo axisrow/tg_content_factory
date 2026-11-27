@@ -143,6 +143,9 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
   rows — the stored username now points at someone else's channel; fix the username
   (any verified meta write clears the stamp), deactivate via `channel review-confirm`,
   or wait out the window (one probe attempt). A successful collection clears the stamp.
+  `review-confirm` acts only on a row of `review-list` or `review-list --terminal`, and
+  `review-keep` only on a row of `review-list`: for any other channel they exit 1 and
+  change nothing (#1979).
 - `channel add <identifier>` — manual add of a channel that is already in the approval
   queue approves it (human origin, journaled): the explicit add IS the operator's
   decision (#1701). A fresh add creates the row approved, by @username or numeric ID alike.
