@@ -551,19 +551,40 @@ class TestCLIChannelRefusals:
         assert excinfo.value.exit_code == 1
         assert fragment in capsys.readouterr().err
 
-    def test_collect_on_a_filtered_channel_names_the_filter(self, cli_env, capsys):
+    def test_collect_on_a_filtered_channel_is_still_queued(self, cli_env, capsys):
+        """An explicit ``channel collect`` forces the channel: the task is queued,
+        nothing on stderr, exit 0 — only ``collect --channel-id`` refuses a filtered
+        channel. Real service, no mock: the refusal this replaces could not be
+        reached (#1965 review)."""
         from tg_agent.cli.commands import channel
-        from tg_agent.services.collection_service import CollectionService
 
         pk = _add_channel(cli_env, channel_id=300, title="Filtered")
         asyncio.run(cli_env.set_channel_filtered(pk, True, origin="human"))
-        with (
-            patch.object(CollectionService, "enqueue_channel_by_pk", AsyncMock(return_value="filtered")),
-            pytest.raises(typer.Exit) as excinfo,
-        ):
-            asyncio.run(channel._handoff_collect_to_worker(cli_env, identifier="300", full=False, wait=False))
+        asyncio.run(channel._handoff_collect_to_worker(cli_env, identifier="300", full=False, wait=False))
+        captured = capsys.readouterr()
+        assert "поставлена в очередь воркера ('Filtered')" in captured.out
+        assert captured.err == ""
+        tasks = asyncio.run(cli_env.get_collection_tasks(limit=50))
+        assert [task.channel_id for task in tasks] == [300]
+
+    def test_add_bulk_names_the_ids_that_are_not_in_the_dialogs(
+        self, cli_env, pool_with_client, capsys
+    ):
+        from tg_agent.cli.commands.channel import add_bulk_impl
+
+        pool_with_client.fetch_channel_meta = AsyncMock(return_value=None)
+        asyncio.run(
+            cli_env.repos.dialog_cache.replace_dialogs(
+                "+70001112233",
+                [{"channel_id": 1, "title": "One", "username": None, "channel_type": "channel"}],
+            )
+        )
+        with pytest.raises(typer.Exit) as excinfo:
+            asyncio.run(add_bulk_impl("config.yaml", phone="+70001112233", dialog_ids="1,2"))
         assert excinfo.value.exit_code == 1
-        assert "отфильтрован" in capsys.readouterr().err
+        captured = capsys.readouterr()
+        assert "Added: 1, Skipped: 0, Failed: 1" in captured.out
+        assert "1 of 2 dialog id(s) are not in this account's dialogs." in captured.err
 
     @pytest.mark.parametrize(
         ("task", "fragment"),

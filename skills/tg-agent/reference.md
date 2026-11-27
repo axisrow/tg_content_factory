@@ -115,6 +115,8 @@ filter analyze | apply | reset | precheck | suspects | toggle | flag | purge | p
 - `channel collect <channel-id-or-username>` — incremental collection for one channel; the
   identifier argument is required (there is no interactive selection). One-off; exit when
   done. With a live daemon the channel is queued to the daemon's collection queue.
+  A filtered channel is collected as well — an explicit collect is the operator's
+  decision; `collect --channel-id` refuses a filtered channel instead.
   A pending-approval identifier is reported as such with the approve/reject commands
   instead of the misleading "not found" (#1701). Without a daemon, a terminal verdict
   (vacant or reoccupied username, unknown id) — here and in `collect --channel-id` —
@@ -265,7 +267,7 @@ search-query list | get | add | edit | delete | toggle | run | stats
   instead of printing success (#1933, #1951). So does a command with no
   connected account (`channel add|import|refresh-types|refresh-meta|refresh-card|
   add-bulk|collect|probe`), a missing `photo-loader publish` batch or auto job,
-  and an unknown `scheduler job-toggle --job-id` (#1965). In `channel`, a target
+  and an unknown `scheduler job-toggle <job-id>` (#1965). In `channel`, a target
   that does not resolve, `reject` outside the approval queue, `stats` /
   `refresh-meta` / `refresh-card` without a target, an import or add-bulk that
   left requested ids undone (the table stays on stdout) and `collect --wait` on

@@ -1461,6 +1461,9 @@ async def _handoff_collect_to_worker(
             return
         cli_error(f"Channel '{identifier}' not found")
 
+    # force=True: an explicit collect is the operator's decision, so a filtered
+    # channel is queued here too. Only `collect --channel-id` refuses it, before
+    # the hand-off — the service's "filtered" answer never reaches this code.
     service = CollectionService(ChannelBundle.from_database(db), None, collection_queue=None)
     result = await service.enqueue_channel_by_pk(ch.id, force=True, full=full)
 
@@ -1469,9 +1472,6 @@ async def _handoff_collect_to_worker(
         return
     if result == "not_found":
         cli_error(f"Channel '{identifier}' not found")
-    if result == "filtered":
-        # Nothing was queued: a refusal with its reason (#1965).
-        cli_error(f"Канал '{ch.title}' отфильтрован; снимите фильтр (`tg-agent filter toggle`).")
 
     task = await _latest_task_for_channel(db, ch.channel_id)
     task_label = f" #{task.id}" if task else ""
