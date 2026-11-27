@@ -904,6 +904,7 @@ async def test_fetch_live_models_http_error_fallback_to_static(db, monkeypatch):
     from tg_agent.agent.provider_registry import provider_spec
 
     spec = provider_spec("openai")
+    assert spec is not None
 
     # _fetch_live_models raises exception, refresh_models_for_provider catches it
     with pytest.raises(aiohttp.ClientError):
@@ -933,6 +934,7 @@ async def test_fetch_live_models_success_updates_cache(db, monkeypatch):
     from tg_agent.agent.provider_registry import provider_spec
 
     spec = provider_spec("openai")
+    assert spec is not None
     models = await service._fetch_live_models(spec, cfg)
 
     assert "gpt-4.1" in models
@@ -1437,6 +1439,7 @@ async def test_zai_fetch_models_http_error_propagates(db, monkeypatch):
     monkeypatch.setattr(service, "_fetch_json", _failing_fetch)
 
     spec = provider_spec("zai")
+    assert spec is not None
     with pytest.raises(ConnectionError, match="API unreachable"):
         await service._fetch_live_models(spec, cfg)
 
@@ -1463,6 +1466,7 @@ async def test_zai_fetch_models_empty_response(db, monkeypatch):
     monkeypatch.setattr(service, "_fetch_json", _empty_fetch)
 
     spec = provider_spec("zai")
+    assert spec is not None
     models = await service._fetch_live_models(spec, cfg)
     assert models == []
 
@@ -1489,5 +1493,6 @@ async def test_zai_fetch_models_missing_api_key(db, monkeypatch):
     monkeypatch.setattr(service, "_fetch_json", _fake_empty_fetch)
 
     spec = provider_spec("zai")
+    assert spec is not None
     models = await service._fetch_live_models(spec, cfg)
     assert models == []
