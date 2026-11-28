@@ -506,6 +506,31 @@ def test_history_calibration_stops_a_collector_burst_before_telegram() -> None:
     assert gate.try_acquire("+7001", "history") == 0.0
 
 
+def test_history_hour_is_not_capped_by_the_resolve_sustained_tier() -> None:
+    """#1991: the calibrated burst guards a history call; the hour does not.
+
+    Every gate bucket inherits the username-resolve sustained tier of the
+    package (60 calls an hour, floodgate #26). At the calibrated pace that is
+    one minute of collection and 59 minutes of refusal per account: 246-248
+    runs an hour for four accounts in the daemon log of 2026-11-26..28, each
+    account one fetch a minute. The pool's history spec turns the tier off.
+    """
+    from tg_agent.telegram.client_pool import ClientPool
+
+    clock = _Clock()
+    gate = TelegramRateLimitGate(
+        category_limits={"history": HISTORY_CALIBRATED_SPEC}, time_func=clock
+    )
+    for _ in range(75):  # the calibrated pace for seventy-five minutes
+        for _ in range(HISTORY_CALIBRATED_SPEC.max_calls):
+            assert gate.try_acquire("+7001", "history") == 0.0
+        clock.now += HISTORY_CALIBRATED_SPEC.window_sec
+
+    # The pool's own gate is built from that spec.
+    pool_gate = ClientPool(MagicMock(api_id=1, api_hash="h"), MagicMock())._rate_limit_gate
+    assert pool_gate._limiters["history"]._sustained_calls is None
+
+
 # --- physical page accounting across supported read iterators (#1827) -------
 
 

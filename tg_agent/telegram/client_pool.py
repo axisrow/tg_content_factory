@@ -111,7 +111,18 @@ logger = logging.getLogger(__name__)
 # had no flood signal in the logs and keep the package defaults pending a
 # larger sample.  Keep in sync with the package default; drop the override
 # once a released telethon-floodgate ships this value (#1418).
-HISTORY_CALIBRATED_SPEC = RateLimitSpec(max_calls=24, window_sec=30.0)
+#
+# No sustained hour (#1991): the burst above is the calibrated guard of a
+# history call.  Every gate bucket also inherits the package's sustained
+# tier — 60 calls an hour, the username-resolve calibration (floodgate #26) —
+# which at this pace is one minute of collection and 59 minutes of refusal
+# per account.  The daemon log of 2026-11-26..28 shows exactly that: 246-248
+# runs an hour for four accounts and about 10,000 refusals an hour.  Turning
+# the tier off leaves history with what #1418 calibrated; the two deep floods
+# on record were username resolves, not history reads.
+HISTORY_CALIBRATED_SPEC = RateLimitSpec(
+    max_calls=24, window_sec=30.0, sustained_max_calls=None, sustained_window_sec=None
+)
 
 # Process-wide outgoing ceiling (#1417).  The per-account
 # gate buckets above are independent, so N accounts can fire N synchronized
