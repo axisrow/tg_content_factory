@@ -42,6 +42,14 @@ class DmCommandsMixin(_Base):
         # mark_sent и признанием команды): черновик уже доставлен.
         if draft.status == "sent":
             return {"draft_id": draft_id, "already_sent": True}
+        if draft.status == "unconfirmed":
+            # A send Telegram never confirmed (#1981): the reply may be in the
+            # chat, so it is not sent again — and the command does not read as
+            # a delivered one either.
+            raise RuntimeError(
+                f"draft_unconfirmed: draft #{draft_id} was sent without a confirmed message id; "
+                "check the chat — it is not sent again"
+            )
         if draft.status == "rejected":
             raise RuntimeError("draft_rejected")
         # Атомарный клейм: второй конкурентный потребитель получает False —
@@ -83,6 +91,16 @@ class DmCommandsMixin(_Base):
                     "next_available_at_utc": retry_at.isoformat(),
                 },
             ) from exc
+        if result.message_id is None:
+            # Telegram answered without a message id (#1981). `sent` claims a
+            # delivered message; the reply may or may not be in the chat, so the
+            # draft ends in its own terminal state — never sent again, and the
+            # command fails instead of reporting a delivery nobody confirmed.
+            await drafts.mark_unconfirmed(draft_id)
+            raise RuntimeError(
+                f"draft_delivery_unconfirmed: draft #{draft_id} was not confirmed by Telegram "
+                "(no message id in the answer); check the chat — it is not sent again"
+            )
         marked = await drafts.mark_sent(draft_id, result.message_id)
         return {
             "draft_id": draft_id,

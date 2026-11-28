@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from telethon import TelegramClient, types
+from telethon.sessions import MemorySession
 
 from tests.helpers import make_pipeline_node_message
 from tg_agent.services.pipeline_nodes import NodeContext
@@ -26,6 +28,8 @@ from tg_agent.services.pipeline_nodes.handlers import (
     SearchQueryTriggerHandler,
     SourceHandler,
 )
+from tg_agent.services.pipeline_result import get_action_counts
+from tg_agent.services.telegram_actions import ForwardMessagesResult
 
 # Shared message factory (deduped into tests/helpers.py).
 _msg = make_pipeline_node_message
@@ -1387,6 +1391,58 @@ async def test_forward_skips_message_processed_in_prior_run():
         {"client_pool": MagicMock(), "telegram_actions": action_service, "db": db, "pipeline_id": 3},
     )
     action_service.forward_messages.assert_not_awaited()
+
+
+# ── #1981 (point 2): a forward nobody confirmed is not a delivered one ────────
+
+
+@pytest.mark.anyio
+async def test_telethon_answers_a_forward_with_a_missing_message_with_none():
+    """The transport answer the handler guard below exists for: an `Updates`
+    without the new message — Telethon logs "missing message mappings" and
+    returns None for the single-id forward the pipeline node sends, instead of
+    raising. A Telethon that starts raising here makes that guard dead code.
+    """
+    client = TelegramClient(MemorySession(), api_id=1, api_hash="0")
+    answer = types.Updates(
+        updates=[types.UpdateChannelTooLong(channel_id=1, pts=1)], users=[], chats=[], date=None, seq=0
+    )
+    with patch.object(TelegramClient, "__call__", AsyncMock(return_value=answer)):
+        forwarded = await client.forward_messages(types.InputPeerSelf(), 42, types.InputPeerUser(1, 2))
+    assert forwarded is None
+
+
+@pytest.mark.anyio
+async def test_forward_without_a_confirmed_message_is_not_logged_as_delivered():
+    """#1981: the handler counted a forward as delivered and logged it for dedup
+    without looking at the answer, so a forward Telegram never confirmed was
+    skipped for good on every later run."""
+    ctx = NodeContext()
+    ctx.set_global(
+        "context_messages", [_msg(channel_id=-100, message_id=9), _msg(channel_id=-100, message_id=10)]
+    )
+    action_service = AsyncMock()
+    # The first forward comes back unconfirmed; the second one is delivered.
+    action_service.forward_messages.side_effect = [
+        ForwardMessagesResult(phone="+1", count=0, message_ids=()),
+        ForwardMessagesResult(phone="+1", count=1, message_ids=(501,)),
+    ]
+    db = _dedup_db(set())
+
+    await ForwardHandler().execute(
+        {"targets": [{"phone": "+1", "dialog_id": 111}]},
+        ctx,
+        {"client_pool": MagicMock(), "telegram_actions": action_service, "db": db, "pipeline_id": 3,
+         "_current_node_id": "fwd_1"},
+    )
+
+    log_action = db.repos.pipeline_action_log.log_action
+    log_action.assert_awaited_once()
+    assert log_action.await_args.args[3:] == (-100, 10)
+    assert get_action_counts(ctx) == {"forward": 1}
+    errors = ctx.get_errors()
+    assert [error["code"] for error in errors] == ["forward_unconfirmed"]
+    assert "message_id=9" in errors[0]["detail"]
 
 
 # ── EditMessageHandler ───────────────────────────────────────────────────────

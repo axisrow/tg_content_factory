@@ -111,9 +111,12 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "list_dm_drafts",
         "List reply drafts for incoming DMs (fresh first). Optional status filter: "
-        "draft/approved/rejected/sending/sent. Then approve_dm_draft or reject_dm_draft.",
+        "draft/approved/rejected/sending/sent/unconfirmed. "
+        "Then approve_dm_draft or reject_dm_draft.",
         {
-            "status": Annotated[str, "Фильтр по статусу (draft/approved/rejected/sending/sent)"],
+            "status": Annotated[
+                str, "Фильтр по статусу (draft/approved/rejected/sending/sent/unconfirmed)"
+            ],
             "limit": Annotated[int, "Максимальное количество черновиков"],
         },
     )
@@ -188,11 +191,11 @@ def register(db, client_pool, embedding_service, **kwargs):
             changed = await db.repos.dm_reply_drafts.decide(int(draft_id), decision)
             if changed:
                 return _text_response(f"Черновик #{draft_id}: {draft.status} → {decision}.")
-            # Идемпотентный no-op: терминальные sending/sent решением владельца
-            # назад не переводятся — двойная отправка исключена.
+            # Идемпотентный no-op: терминальные sending/sent/unconfirmed решением
+            # владельца назад не переводятся — двойная отправка исключена.
             return _text_response(
                 f"Черновик #{draft_id} остался в статусе '{draft.status}' "
-                "(решения не применяются к sending/sent)."
+                "(решения не применяются к sending/sent/unconfirmed)."
             )
         except Exception as e:
             return _text_response(f"Ошибка решения по черновику: {e}")
@@ -260,7 +263,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "approve_dm_draft",
         "Approve a reply draft for sending (draft → approved; no-op once "
-        "sending/sent, so a double send is impossible). draft_id from "
+        "sending/sent/unconfirmed, so a double send is impossible). draft_id from "
         "list_dm_drafts. Actual sending is a separate explicit queue step.",
         {"draft_id": Annotated[int, "ID черновика из list_dm_drafts"]},
     )

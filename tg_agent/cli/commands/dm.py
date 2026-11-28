@@ -109,7 +109,7 @@ async def decide_impl(
             # владельца назад не переводится — двойная отправка исключена.
             print(
                 f"Черновик #{draft_id} остался в статусе '{draft.status}' "
-                f"(решения не применяются к sending/sent)."
+                f"(решения не применяются к sending/sent/unconfirmed)."
             )
     finally:
         await db.close()
@@ -128,6 +128,13 @@ async def send_impl(config_path: str, *, draft_id: int) -> None:
                 f"(message_id={draft.sent_message_id}); повторная отправка исключена."
             )
             return
+        if draft.status == "unconfirmed":
+            # Отправка без подтверждённого id (#1981): ответ мог дойти —
+            # повторная отправка исключена, чат сверяет владелец.
+            cli_error(
+                f"Черновик #{draft_id} отправлен без подтверждения: Telegram не вернул "
+                "id сообщения. Проверь чат вручную — повторная отправка исключена."
+            )
         if draft.status != "approved":
             cli_error(
                 f"Черновик #{draft_id} в статусе '{draft.status}' — "
@@ -324,7 +331,7 @@ def drafts_approve(
     ctx: typer.Context,
     draft_id: int = typer.Argument(..., metavar="id"),
 ) -> None:
-    """Approve a draft for sending (no-op once sending/sent)."""
+    """Approve a draft for sending (no-op once sending/sent/unconfirmed)."""
     apply_startup(ctx)
     run_async(decide_impl(ctx.obj.config, draft_id=draft_id, decision="approved"))
 

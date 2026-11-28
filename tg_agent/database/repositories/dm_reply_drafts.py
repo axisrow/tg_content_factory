@@ -3,16 +3,21 @@
 Статусная машина по образцу ``generation_runs.moderation_status``:
 
     draft ──approve──▶ approved ──claim──▶ sending ──mark_sent──▶ sent
-      │  ▲                │                   │
-      │  └── re-decision ─┴──◀── release ─────┘  (только с ``sending``,
-      └─── reject ──▶ rejected                   и не затирает ``sent``)
+      │  ▲                │                   │    │
+      │  └── re-decision ─┴──◀── release ─────┘    └─no message id─▶ unconfirmed
+      └─── reject ──▶ rejected
+
+(``release`` — только с ``sending``, и не затирает ``sent``.)
 
 Ключевой инвариант — двойная отправка невозможна: ``sending`` ставится
 атомарным ``UPDATE ... WHERE status = 'approved'`` и успех определяется
 ``rowcount == 1``, поэтому два конкурентных потребителя клеймят ровно один
 раз (паттерн ``claim_for_publish`` из #1036). Решения владельца
-(approve/reject) не трогают терминальные ``sending``/``sent`` — апрув после
-отправки — no-op, отклонённый черновик никогда не клеймится.
+(approve/reject) не трогают терминальные ``sending``/``sent``/``unconfirmed``
+— апрув после отправки — no-op, отклонённый черновик никогда не клеймится.
+``unconfirmed`` (#1981): Telegram ответил на отправку без id сообщения — ответ
+мог дойти, поэтому черновик терминален, как ``sent``, но статус называет
+неподтверждённую доставку.
 
 ``phone``/``chat_id`` копируются из входящего сообщения: журнальная строка
 ``incoming_dms`` живёт 24ч, а апрувнутый черновик может ждать отправки дольше.
@@ -144,17 +149,17 @@ class DmReplyDraftsRepository:
         """Решение владельца: ``draft``/другое решение → ``decision``.
 
         Идемпотентно: повтор того же решения и решение на терминальных
-        ``sending``/``sent`` — no-op (гард в WHERE, атомарно с записью), поэтому
-        апрув после отправки не возвращает черновик в очередь и не может
-        вызвать повторную отправку, а переход ``rejected → approved`` (владелец
-        передумал) остаётся возможен. True — статус изменился.
+        ``sending``/``sent``/``unconfirmed`` — no-op (гард в WHERE, атомарно с
+        записью), поэтому апрув после отправки не возвращает черновик в очередь
+        и не может вызвать повторную отправку, а переход ``rejected →
+        approved`` (владелец передумал) остаётся возможен. True — статус изменился.
         """
         assert self._database is not None, (
             "DmReplyDraftsRepository.decide requires a Database reference"
         )
         cur = await self._database.execute_write(
             "UPDATE dm_reply_drafts SET status = ?, updated_at = datetime('now') "
-            "WHERE id = ? AND status NOT IN ('sending', 'sent') AND status != ?",
+            "WHERE id = ? AND status NOT IN ('sending', 'sent', 'unconfirmed') AND status != ?",
             (decision, draft_id, decision),
         )
         return bool(cur.rowcount)
@@ -201,8 +206,12 @@ class DmReplyDraftsRepository:
         )
         return bool(cur.rowcount)
 
-    async def mark_sent(self, draft_id: int, sent_message_id: int | None) -> bool:
-        """Завершить отправку: ``sending`` → ``sent`` + Telegram message_id."""
+    async def mark_sent(self, draft_id: int, sent_message_id: int) -> bool:
+        """Завершить отправку: ``sending`` → ``sent`` + Telegram message_id.
+
+        Id обязателен — ``sent`` означает «воркер получил id». Отправка без
+        подтверждённого id завершается в ``unconfirmed`` (#1981).
+        """
         assert self._database is not None, (
             "DmReplyDraftsRepository.mark_sent requires a Database reference"
         )
@@ -210,6 +219,22 @@ class DmReplyDraftsRepository:
             "UPDATE dm_reply_drafts SET status = 'sent', sent_message_id = ?, "
             "updated_at = datetime('now') WHERE id = ? AND status = 'sending'",
             (sent_message_id, draft_id),
+        )
+        return bool(cur.rowcount)
+
+    async def mark_unconfirmed(self, draft_id: int) -> bool:
+        """Отправка без подтверждённого id: ``sending`` → ``unconfirmed`` (#1981).
+
+        Ответ мог дойти, поэтому повторная отправка исключена так же, как после
+        ``sent``; статус называет неподтверждённую доставку владельцу.
+        """
+        assert self._database is not None, (
+            "DmReplyDraftsRepository.mark_unconfirmed requires a Database reference"
+        )
+        cur = await self._database.execute_write(
+            "UPDATE dm_reply_drafts SET status = 'unconfirmed', updated_at = datetime('now') "
+            "WHERE id = ? AND status = 'sending'",
+            (draft_id,),
         )
         return bool(cur.rowcount)
 
