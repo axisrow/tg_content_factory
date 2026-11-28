@@ -680,6 +680,9 @@ async def test_warm_single_phone_timeout(real_pool_harness_factory, monkeypatch,
         "warning must carry exc_info — TimeoutError() prints as an empty string"
     )
     assert failed[0].exc_info[0] is asyncio.TimeoutError
+    # … and the line itself names the failure: "failed for +…: " with nothing
+    # after the colon was the whole reason in the worker log (2026-11-28).
+    assert failed[0].getMessage().rstrip().endswith(": TimeoutError")
 
 
 @pytest.mark.anyio
