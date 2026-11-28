@@ -19,6 +19,7 @@ import struct
 import sys
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 from telethon import errors, functions, types
@@ -690,6 +691,108 @@ async def test_wait_messages_op_ends_by_its_window_and_detaches():
         )
         assert result == {"listened": True}
         assert owner_client.removed == [owner_client.added[0]]
+
+
+async def test_wait_messages_keeps_the_handler_while_the_burst_runs():
+    """The window follows the burst, not the clock of the subscription (#1981).
+
+    A newer CLI names the two deadlines of the burst contract — the wait for the
+    first match and the settle tail every match re-arms — and the owner holds the
+    handler exactly that long. One fixed ``timeout + settle`` window counted from
+    the subscription cut a long burst and lost its tail.
+    """
+    owner_client = ListeningOwnerClient()
+    pushes: list[dict] = []
+    async with running({PHONE: owner_client}) as (_server, connection):
+        connection.on_push(pushes.append)
+        op = asyncio.create_task(
+            connection.call(
+                "wait.messages", phone=PHONE, chat_id=-100123, timeout_sec=0.1,
+                first_wait_sec=0.3, settle_sec=0.2,
+            )
+        )
+        handler = await _attached_handler(owner_client)
+        # Each arrival lands after the fixed window an older CLI is cut off at,
+        # inside the settle tail of the previous one. A removed handler is not
+        # called, as on a live client.
+        for message_id in (7, 8, 9):
+            await asyncio.sleep(0.12)
+            if handler not in owner_client.removed:
+                await handler(_wait_event(-100123, message_id, "в серии"))
+        # The burst outran every fixed window: 3 × 0.12 s > 0.3 + 0.2 s.
+        assert handler not in owner_client.removed
+        op.cancel()
+        await asyncio.gather(op, return_exceptions=True)
+
+    assert [push["message_id"] for push in pushes] == [7, 8, 9]
+
+
+async def test_wait_messages_ends_once_the_burst_goes_quiet():
+    """After the first match only the settle tail holds the handler (#1981)."""
+    from tg_agent.telegram import incoming_wait
+
+    owner_client = ListeningOwnerClient()
+    pushes: list[dict] = []
+    async with running({PHONE: owner_client}) as (_server, connection):
+        connection.on_push(pushes.append)
+        with patch.object(incoming_wait, "RELAY_GRACE_SEC", 0.05):
+            op = asyncio.create_task(
+                connection.call(
+                    "wait.messages", phone=PHONE, chat_id=-100123, timeout_sec=5.0,
+                    first_wait_sec=5.0, settle_sec=0.2,
+                )
+            )
+            handler = await _attached_handler(owner_client)
+            await handler(_wait_event(-100123, 7, "одно"))
+            result = await asyncio.wait_for(op, timeout=5)
+    assert result == {"listened": True}
+    assert len(pushes) == 1
+    assert owner_client.removed == [owner_client.added[0]]
+
+
+async def test_wait_messages_hold_survives_a_push_in_flight():
+    """The settle tail is re-armed at the match, not after its push (#1981).
+
+    ``peer.push`` holds the peer lock and a ``writer.drain()`` (up to 30 s); a
+    tail counted only after the push returns expires while it is still in
+    flight, and the next match finds the handler already detached.
+    """
+    from tg_agent.telegram import incoming_wait
+    from tg_agent.telegram import relay as relay_module
+
+    real_push = relay_module.RelayPeer.push
+
+    async def slow_push(self: Any, kind: str, **fields: Any) -> None:
+        await asyncio.sleep(0.1)
+        await real_push(self, kind, **fields)
+
+    owner_client = ListeningOwnerClient()
+    pushes: list[dict] = []
+    async with running({PHONE: owner_client}) as (_server, connection):
+        connection.on_push(pushes.append)
+        with patch.object(incoming_wait, "RELAY_GRACE_SEC", 0.05), \
+                patch.object(relay_module.RelayPeer, "push", slow_push):
+            op = asyncio.create_task(
+                connection.call(
+                    "wait.messages", phone=PHONE, chat_id=-100123, timeout_sec=5.0,
+                    first_wait_sec=0.5, settle_sec=0.2,
+                )
+            )
+            handler = await _attached_handler(owner_client)
+            # A match at the edge of the first wait: its 0.1 s push outlives the
+            # hold an after-the-push re-arm would have left (0.5 s window).
+            await asyncio.sleep(0.45)
+            await handler(_wait_event(-100123, 7, "первое"))
+            # The next match lands near the old window's death: only a hold
+            # re-armed at the match keeps the handler. A removed handler is not
+            # called, as on a live client.
+            await asyncio.sleep(0.07)
+            if handler not in owner_client.removed:
+                await handler(_wait_event(-100123, 8, "второе"))
+            result = await asyncio.wait_for(op, timeout=5)
+    assert result == {"listened": True}
+    assert [push["message_id"] for push in pushes] == [7, 8]
+    assert owner_client.removed == [owner_client.added[0]]
 
 
 async def test_wait_messages_unknown_account_is_a_clean_error():

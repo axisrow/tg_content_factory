@@ -338,6 +338,9 @@ async def test_relayed_pool_pushes_bursts_over_wait_messages_op(cli_db, capsys):
     assert fields["chat_id"] == CHAT_ID
     # The owner window covers the CLI timeout plus the settle tail plus grace.
     assert fields["timeout_sec"] == 5 + 0.05 + 5.0
+    # A newer owner follows the burst by the two deadlines instead (#1981).
+    assert fields["first_wait_sec"] == 5
+    assert fields["settle_sec"] == 0.05
 
 
 def test_incoming_timeout_is_machine_readable_and_exits_one(cli_env, cli_db, capsys):

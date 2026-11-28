@@ -615,12 +615,18 @@ class RelayServer:
     # disconnect (process exit, timeout, burst complete) cancels this op task via
     # `_accept`'s cleanup, which detaches the handler; the window is a backstop,
     # not the normal end.
+    #
+    # The window (#1981): a CLI that names the burst's two deadlines — the wait
+    # for the first match, then the settle tail every pushed match re-arms — is
+    # served exactly that long, so a burst longer than any fixed window is not
+    # cut. An older CLI sends one fixed window and gets that one.
 
     async def _wait_messages(self, grant: Any, message: dict, peer: RelayPeer) -> dict:
         from telethon import events
 
         from tg_agent.telegram.incoming_wait import (
             PUSH_KIND,
+            RELAY_GRACE_SEC,
             matches_chat,
             normalize_incoming,
         )
@@ -628,11 +634,18 @@ class RelayServer:
         phone = str(message.get("phone") or "")
         chat_id = message.get("chat_id")
         chat_id = int(chat_id) if chat_id is not None else None
-        timeout_sec = max(float(message.get("timeout_sec") or 0.0), 0.0)
+        hold_sec = max(float(message.get("timeout_sec") or 0.0), 0.0)
+        tail_sec: float | None = None
+        if message.get("settle_sec") is not None:
+            hold_sec = max(float(message.get("first_wait_sec") or 0.0), 0.0)
+            tail_sec = max(float(message["settle_sec"]), 0.0) + RELAY_GRACE_SEC
         client = await self._owner.client(grant, phone)
         new_message = events.NewMessage()
+        clock = asyncio.get_running_loop().time
+        hold_until = clock() + hold_sec
 
         async def _handler(event: Any) -> None:
+            nonlocal hold_until
             # Async callback: telethon awaits every handler unconditionally (#1477);
             # wrapped so nothing escapes into the owner's recv loop.
             try:
@@ -640,13 +653,20 @@ class RelayServer:
                     return
                 item = normalize_incoming(phone, event)
                 if item is not None:
+                    # Re-armed at the match itself, before its push: send holds
+                    # the peer lock and a writer.drain() (up to 30 s), and a tail
+                    # counted after the push expires while it is still in flight —
+                    # the burst after it is lost, the #1981 symptom again.
+                    if tail_sec is not None:
+                        hold_until = clock() + tail_sec
                     await peer.push(PUSH_KIND, **item.as_item())
             except Exception:
                 logger.exception("relay: wait.messages handler failed for %s", mask_phone(phone))
 
         client.add_event_handler(_handler, new_message)
         try:
-            await asyncio.sleep(timeout_sec)
+            while (remaining := hold_until - clock()) > 0:
+                await asyncio.sleep(remaining)
         finally:
             client.remove_event_handler(_handler, new_message)
         return {"listened": True}

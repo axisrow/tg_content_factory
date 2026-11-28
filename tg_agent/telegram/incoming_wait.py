@@ -10,7 +10,9 @@ Two producers feed the same collector:
 - **Session-owner relay** (worker daemon or gateway live): the CLI never sees
   updates — only the owner's connection receives them. A ``wait.messages``
   relay op attaches a temporary Telethon handler on the owner's client and
-  pushes matches over the existing relay push channel.
+  pushes matches over the existing relay push channel. The op's window follows
+  the same two deadlines as the collector (``first_wait_sec``, then the settle
+  tail re-armed by every pushed match), so a long burst is not cut short.
 - **No daemon**: this process holds the only connection, so the handler is
   attached to its own client directly (the ``dm_listener`` pattern: async
   callback, exceptions never escape into the recv loop).
@@ -34,6 +36,11 @@ DEFAULT_SETTLE_MS = 6000
 DEFAULT_WAIT_TIMEOUT_SEC = 60
 
 PUSH_KIND = "wait.message"
+
+#: How much longer than the waiting CLI's own deadline the session owner keeps
+#: a relayed wait alive (#1981): a push still has to reach the CLI. The CLI's
+#: disconnect ends the op first whenever it is done waiting.
+RELAY_GRACE_SEC = 5.0
 
 
 class WaitTimeoutError(Exception):
