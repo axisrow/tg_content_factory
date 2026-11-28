@@ -15,7 +15,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from telethon_floodgate import TelegramRateLimitGate
+from telethon import functions, types
+from telethon_floodgate import RpcDispatchPolicy, TelegramRateLimitGate
 from telethon_floodgate import rate_limit_gate as _fg_rate_limit_gate
 
 from tg_agent.telegram.backends import (
@@ -155,3 +156,55 @@ def test_consumer_rows_use_real_gate_categories() -> None:
             f"{tag}: {category!r} is not a configured gate bucket — it would "
             "silently price at 'default'"
         )
+
+
+# --- RPC dispatch boundary: transfers own their buckets (#1985) ----------------
+
+
+def test_transfer_rpcs_are_priced_outside_the_default_bucket() -> None:
+    """#1985: upload and download RPCs were priced in ``default`` — the bucket
+    the account's connect path (``users.getUsers``) is priced in too. Its
+    sustained tier then refused the sixth small photo of an album, and for
+    minutes the account could not connect at all. floodgate 0.1.12 gives
+    transfers buckets of their own (#1928's forum-topics row ships with it).
+    """
+    assert PACKAGE_OPERATION_CATEGORIES["rpc_upload"] == "upload"
+    assert PACKAGE_OPERATION_CATEGORIES["rpc_download"] == "download"
+    assert PACKAGE_OPERATION_CATEGORIES["rpc:GetForumTopicsRequest"] == "history"
+    gate = TelegramRateLimitGate()
+    configured = gate.snapshot("+15551230001")["categories"]
+    assert isinstance(configured, dict)
+    assert {"upload", "download"} <= set(configured)
+
+
+def test_upload_media_request_is_classified_at_the_boundary() -> None:
+    """``messages.uploadMedia`` closes every media upload. Without a row it took
+    the ``rpc:UploadMediaRequest`` fallback: a warn-once line on the first
+    album, and a refusal under ``strict_categories``."""
+    request = functions.messages.UploadMediaRequest(
+        peer=types.InputPeerSelf(),
+        media=types.InputMediaUploadedPhoto(
+            file=types.InputFile(id=1, parts=1, name="a.png", md5_checksum="abc")
+        ),
+    )
+
+    operation = RpcDispatchPolicy().operation_for(request)
+
+    assert operation == "rpc_upload"
+    assert TelegramRateLimitGate(strict_categories=True).category_for(operation) == "upload"
+
+
+def test_spent_upload_hour_leaves_the_connect_path_admitted() -> None:
+    """The second half of #1985: a spent transfer budget must not lock the
+    account out of the bucket its connect path is priced in."""
+    clock = [1000.0]
+    gate = TelegramRateLimitGate(time_func=lambda: clock[0], jitter_func=lambda low, high: 0.0)
+    spec = TelegramRateLimitGate.TRANSFER_SPEC
+    assert spec.sustained_max_calls is not None
+    for _ in range(spec.sustained_max_calls // spec.max_calls):
+        for _ in range(spec.max_calls):
+            assert gate.try_acquire("+15551230001", "upload") == 0.0
+        clock[0] += spec.window_sec
+
+    assert gate.try_acquire("+15551230001", "upload") > 60.0
+    assert gate.try_acquire("+15551230001", "default") == 0.0
