@@ -4,6 +4,7 @@ import importlib
 from typing import Any, cast
 
 import click
+from telethon_floodgate import HandledFloodWaitError, TelegramRateLimitedError
 
 try:
     from typer.exceptions import Abort as TyperAbort
@@ -94,6 +95,16 @@ def main() -> None:
         click_exc = cast("click.ClickException", exc)
         click_exc.show()
         raise SystemExit(click_exc.exit_code) from None
+    except (HandledFloodWaitError, TelegramRateLimitedError) as exc:
+        # A refusal that no command caught closer to the call — a transfer the
+        # flood gate deferred, a spent history hour, a Telegram FloodWait — is
+        # a reason, not a crash: the curated line `dialogs send` prints, and
+        # exit 1 (#1985: a deferred upload left `photo-loader send` as a
+        # traceback).
+        from tg_agent.telegram.rpc_guard import describe_rpc_failure
+
+        click.echo(f"Refused: {describe_rpc_failure(exc)}", err=True)
+        raise SystemExit(1) from None
     except (click.exceptions.Abort, TyperAbort):
         # Ctrl-C / abort — Click prints "Aborted!" in standalone mode; match the
         # conventional non-zero exit so an interrupted CLI run is distinguishable.

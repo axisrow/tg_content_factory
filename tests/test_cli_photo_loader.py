@@ -320,6 +320,51 @@ def test_send_action(tmp_path, cli_init_patch, capsys):
     assert "Sent photo item #1" in out
 
 
+def test_photo_loader_send_reports_a_gate_refusal(tmp_path, cli_init_patch, capsys):
+    """#1985: a photo upload the flood gate deferred left ``photo-loader send``
+    as a Python traceback. It is a refusal with a reason: the curated line on
+    stderr, exit 1."""
+    from telethon_floodgate import TelegramRpcDeferredError
+
+    from tg_agent.cli.main import main
+
+    db_path = str(tmp_path / "photo_send_refused.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _setup_photo_db(db)
+
+    async def fake_init_pool(_config, _db):
+        pool = MagicMock()
+        pool.disconnect_all = AsyncMock()
+        return MagicMock(), pool
+
+    refusal = TelegramRpcDeferredError(
+        "+100", "rpc_upload", 192.2, "UploadMediaRequest", category="upload"
+    )
+    fake_task, fake_auto = _create_fake_services(
+        task_methods={"send_now": AsyncMock(side_effect=refusal)}
+    )
+
+    with (
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
+        patch("tg_agent.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
+        patch("tg_agent.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("tg_agent.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
+        patch(
+            "sys.argv",
+            ["main.py", "photo-loader", "send", "--phone", "+100", "--target", "100", "--files", "a.jpg"],
+        ),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main()
+
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert "Refused: local throttling by gate, rpc=UploadMediaRequest, not dispatched" in captured.err
+    assert "Traceback" not in captured.err + captured.out
+    assert "Sent photo item" not in captured.out
+
+
 def test_schedule_send_action(tmp_path, cli_init_patch, capsys):
     """Test schedule-send action schedules photo."""
     db_path = str(tmp_path / "photo_schedule.db")
