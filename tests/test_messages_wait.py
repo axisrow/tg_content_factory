@@ -493,6 +493,98 @@ def test_normalize_incoming_drops_own_and_service_messages():
     assert build_burst([kept]).to_json()["event"] is True
 
 
+async def _private_chat_events(client, *user_ids: int) -> list:
+    """Run real ``UpdateShortMessage`` updates through Telethon's own update loop code."""
+    from telethon import events
+    from telethon.tl import types
+
+    seen: list = []
+
+    async def _collect(event):
+        seen.append(event)
+
+    client.add_event_handler(_collect, events.NewMessage())
+    for message_id, user_id in enumerate(user_ids, start=501):
+        update = types.UpdateShortMessage(
+            id=message_id, user_id=user_id, message="привет", date=NOW,
+            pts=message_id, pts_count=1, out=False,
+        )
+        # The same three steps `TelegramClient._update_loop` runs, in order.
+        dispatched: list = []
+        users, chats = client._message_box.process_updates(update, client._mb_entity_cache, dispatched)
+        for ready in await client._preprocess_updates(dispatched, users, chats):
+            await client._dispatch_update(ready)
+    return seen
+
+
+async def test_private_chat_sender_is_named_from_the_session_row():
+    """#1986: Telegram delivers a private-chat message without its sender entity.
+
+    ``UpdateShortMessage`` carries no ``users``, so ``message.sender`` is ``None``
+    whatever the caches hold. The name the account already keeps for the user in
+    its session row — written by every answer that named them — is the only one
+    at hand without a request (#1985: a ``GetUsersRequest`` is what the hourly
+    ``default`` budget is spent on).
+    """
+    from telethon import TelegramClient
+    from telethon.tl import types
+
+    from tg_shared.sessions import FreshEntityStringSession
+
+    anya, boris, stranger = 7, 8, 9
+    client = TelegramClient(FreshEntityStringSession(), api_id=1, api_hash="0")
+    client._mb_entity_cache.set_self_user(42, bot=False, hash=1)
+    # What Telethon itself stores after an answer that named these users.
+    client.session.process_entities(types.contacts.ResolvedPeer(None, [
+        types.User(id=anya, bot=False, access_hash=100, first_name="Аня", username="anya"),
+        types.User(id=boris, bot=False, access_hash=101, first_name="Борис", last_name="Соколов"),
+    ], []))
+
+    calls = AsyncMock(side_effect=AssertionError("a request left the process"))
+    with patch.object(TelegramClient, "__call__", calls):
+        events = await _private_chat_events(client, anya, boris, stranger)
+
+    # The defect's premise, on the real code path: no update carried the sender.
+    assert [event.message.sender for event in events] == [None, None, None]
+    record = build_burst([normalize_incoming(PHONE, event) for event in events]).to_json()
+    # Same naming as `messages read --live`: @username, else the display name.
+    assert record["senders"] == ["@anya", "Борис Соколов", None]
+    assert record["senders_unknown"] == (
+        "the message came without its sender entity and the account's session holds no name for it"
+    )
+    calls.assert_not_called()
+
+
+async def test_no_sender_is_reported_unknown_when_every_sender_is_named():
+    from telethon import TelegramClient
+    from telethon.tl import types
+
+    from tg_shared.sessions import FreshEntityStringSession
+
+    client = TelegramClient(FreshEntityStringSession(), api_id=1, api_hash="0")
+    client._mb_entity_cache.set_self_user(42, bot=False, hash=1)
+    client.session.process_entities(types.contacts.ResolvedPeer(None, [
+        types.User(id=7, bot=False, access_hash=100, first_name="Аня", username="anya"),
+    ], []))
+    events = await _private_chat_events(client, 7)
+    record = build_burst([normalize_incoming(PHONE, event) for event in events]).to_json()
+    assert record["senders"] == ["@anya"]
+    assert "senders_unknown" not in record
+
+
+def test_plain_text_burst_says_why_a_sender_is_unknown(capsys):
+    from tg_agent.cli.commands.messages import _print_incoming_burst
+
+    _print_incoming_burst(build_burst([_item(1, "привет"), dict(_item(2, "второе"), sender_name="Аня")]))
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[1] == (
+        "  #1 sender unknown: the message came without its sender entity "
+        "and the account's session holds no name for it"
+    )
+    assert lines[3] == "  #2 Аня"
+
+
 # --- mode dispatch on the Typer surface ----------------------------------- #
 
 def _invoke_wait(argv):

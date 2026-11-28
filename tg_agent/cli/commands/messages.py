@@ -597,6 +597,8 @@ async def messages_wait_incoming_impl(
 
 
 def _print_incoming_burst(burst) -> None:
+    from tg_agent.telegram.incoming_wait import SENDER_UNKNOWN_REASON
+
     print(
         f"Incoming: chat={burst.chat_id} name={burst.name or '—'} "
         f"via={burst.phone} messages={burst.message_count}"
@@ -605,8 +607,8 @@ def _print_incoming_burst(burst) -> None:
         burst.message_ids, burst.senders, burst.dates, burst.texts, strict=True
     ):
         header = f"  #{message_id}"
-        if sender:
-            header += f" {sender}"
+        # A nameless sender is said, not skipped (#1986).
+        header += f" {sender}" if sender else f" sender unknown: {SENDER_UNKNOWN_REASON}"
         if date:
             header += f" [{date[:19]}]"
         print(header)
