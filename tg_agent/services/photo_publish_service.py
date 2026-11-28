@@ -19,6 +19,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Telegram groups at most this many files into one album. Telethon slices a
+#: longer list the same way and sends the groups one after another.
+ALBUM_MAX_FILES = 10
+
 
 class PhotoPublishService:
     def __init__(self, pool: ClientPool, db: "Database | None" = None):
@@ -76,34 +80,43 @@ class PhotoPublishService:
             # carry another one. The registry holds delivered messages only (#1944).
             register = schedule_at is None
             if send_mode == PhotoSendMode.ALBUM and len(file_paths) > 1:
-                sent = await run_with_flood_wait(
-                    session.publish_files(
-                        entity,
-                        file_paths,
-                        caption=caption,
-                        schedule=schedule_at,
-                    ),
-                    operation="photo_publish_album",
-                    phone=acquired_phone,
-                    pool=self._pool,
-                    logger_=logger,
-                )
-                album_ids = [int(msg.id) for msg in sent]
-                if register:
-                    await record_send(
-                        self._db,
+                album_ids: list[int] = []
+                for start in range(0, len(file_paths), ALBUM_MAX_FILES):
+                    # One Telegram album per request. The groups go out one by
+                    # one here, and each is recorded before the next is tried:
+                    # handed to Telethon whole, a long album raised — or met a
+                    # flood wait — in a later group, losing the progress of the
+                    # groups before it, and a retry published them twice (#1981).
+                    group = file_paths[start : start + ALBUM_MAX_FILES]
+                    sent = await run_with_flood_wait(
+                        session.publish_files(
+                            entity,
+                            group,
+                            # the caption reads on the first album, as it did
+                            caption=caption if start == 0 else None,
+                            schedule=schedule_at,
+                        ),
+                        operation="photo_publish_album",
                         phone=acquired_phone,
-                        entity=entity,
-                        recipient=target_dialog_id,
-                        message_ids=album_ids,
-                        text=caption,
-                        source="photo_publish",
-                        ref=ref,
+                        pool=self._pool,
+                        logger_=logger,
                     )
-                if on_file_sent is not None:
-                    # Atomic album send — record all files only after it succeeds.
-                    for path in file_paths:
-                        await on_file_sent(path, album_ids)
+                    group_ids = [int(msg.id) for msg in sent]
+                    if register:
+                        await record_send(
+                            self._db,
+                            phone=acquired_phone,
+                            entity=entity,
+                            recipient=target_dialog_id,
+                            message_ids=group_ids,
+                            text=caption,
+                            source="photo_publish",
+                            ref=ref,
+                        )
+                    if on_file_sent is not None:
+                        for path in group:
+                            await on_file_sent(path, group_ids)
+                    album_ids.extend(group_ids)
                 return album_ids
 
             message_ids: list[int] = []

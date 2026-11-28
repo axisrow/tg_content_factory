@@ -306,6 +306,12 @@ search-query list | get | add | edit | delete | toggle | run | stats
   `photo-loader run-due` exits 1 — the stdout summary keeps `items=N` counting
   those items and adds `failed=N`, the reasons go to stderr — and the
   `run_photo_due` tool appends `не отправлено=N` (#1969).
+  A photo send that went out only in part fails as well (#1981):
+  `photo-loader send` and `schedule-send` exit 1, and the line on stderr says
+  how many files went out, their message ids and the reason — what went out is
+  live (scheduled: queued on Telegram) and is not to be sent again. An album
+  longer than ten files goes out in groups of ten, each recorded before the
+  next one is tried.
   The destructive `filter` commands check the whole request first: a pk or a
   channel id the store does not hold, or a `--pks` token that is not a number,
   exits 1 before any prompt or deletion, and a channel that failed on the

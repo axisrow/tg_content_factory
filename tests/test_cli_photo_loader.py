@@ -336,7 +336,11 @@ def test_schedule_send_action(tmp_path, cli_init_patch, capsys):
         return MagicMock(), pool
 
     fake_task, fake_auto = _create_fake_services(
-        task_methods={"schedule_send": AsyncMock(return_value=MagicMock(id=2, status="scheduled"))}
+        task_methods={
+            "schedule_send": AsyncMock(
+                return_value=MagicMock(id=2, status="scheduled", error=None, file_paths=["/tmp/test.jpg"])
+            )
+        }
     )
 
     with (
@@ -361,6 +365,61 @@ def test_schedule_send_action(tmp_path, cli_init_patch, capsys):
 
     out = capsys.readouterr().out
     assert "Scheduled photo item #2" in out
+
+
+def test_schedule_send_action_exits_one_on_a_partial_schedule(tmp_path, cli_init_patch, capsys):
+    """#1981: one file was not scheduled. What was is queued on Telegram — a
+    caller that reruns the whole request publishes it twice."""
+    db_path = str(tmp_path / "photo_schedule_partial.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _setup_photo_db(db)
+
+    async def fake_init_pool(_config, _db):
+        pool = MagicMock()
+        pool.disconnect_all = AsyncMock()
+        return MagicMock(), pool
+
+    fake_task, fake_auto = _create_fake_services(
+        task_methods={
+            "schedule_send": AsyncMock(
+                return_value=MagicMock(
+                    id=2,
+                    status="scheduled",
+                    error="partial schedule failure: flood wait",
+                    telegram_message_ids=[501],
+                    file_paths=["/tmp/a.jpg", "/tmp/b.jpg"],
+                )
+            )
+        }
+    )
+
+    with (
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
+        patch("tg_agent.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
+        patch("tg_agent.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("tg_agent.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
+        pytest.raises(typer.Exit) as excinfo,
+    ):
+        from tg_agent.cli.commands.photo_loader import run
+
+        run(
+            _ns(
+                photo_loader_action="schedule-send",
+                phone="+100",
+                target="-100",
+                files=["/tmp/a.jpg", "/tmp/b.jpg"],
+                mode="album",
+                at="2024-12-31T12:00:00",
+                caption=None,
+            )
+        )
+
+    assert excinfo.value.exit_code == 1
+    captured = capsys.readouterr()
+    assert "Scheduled photo item #2" not in captured.out
+    assert "1 of 2 file(s) scheduled, message ids [501]; partial schedule failure: flood wait" in captured.err
+    assert "cancel" in captured.err
 
 
 def test_batch_create_action(tmp_path, cli_init_patch, capsys):
