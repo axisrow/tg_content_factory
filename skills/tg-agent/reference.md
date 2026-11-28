@@ -343,7 +343,10 @@ search-query list | get | add | edit | delete | toggle | run | stats
   (`not dispatched` / `partially dispatched` / `delivery uncertain`) and the
   retry deadline — so a username-resolve flood inside a send never reads as a
   send failure. `delivery uncertain` means the request may have reached
-  Telegram: never retry blindly.
+  Telegram: never retry blindly. The same line, prefixed `Refused:`, with exit
+  1 ends any command where such a refusal is not handled closer to the call
+  (#1985: a photo upload the gate deferred used to end `photo-loader send`
+  as a traceback).
 - `--format json` always emits valid JSON (empty result → `[]`); `--format csv`
   always includes the header row. Errors (e.g. channel not found in DB) go to
   **stderr** with exit code 1. With `--live`, `--format json` emits the #1872

@@ -14,9 +14,11 @@ Per-command flag wiring is covered by the Wave CliRunner suites
 """
 from __future__ import annotations
 
+import datetime
 from unittest.mock import patch
 
 import pytest
+from telethon_floodgate import FloodWaitInfo, HandledFloodWaitError, TelegramRpcDeferredError
 
 from tg_agent.cli.main import main
 
@@ -100,6 +102,48 @@ class TestMainEntryPoint:
             code = _run_main(["--config", "prod.yaml", "serve"])
         assert code == 0
         mock_serve.assert_called_once_with("prod.yaml", web_pass=None, no_worker=False)
+
+    @pytest.mark.parametrize(
+        ("refusal", "line"),
+        (
+            (
+                TelegramRpcDeferredError(
+                    "+15550001", "rpc_upload", 192.2, "UploadMediaRequest", category="upload"
+                ),
+                "Refused: local throttling by gate, rpc=UploadMediaRequest, not dispatched; "
+                "retry in 192s",
+            ),
+            (
+                HandledFloodWaitError(
+                    FloodWaitInfo(
+                        operation="telegram_send_message",
+                        phone="+15550001",
+                        wait_seconds=3600,
+                        next_available_at_utc=datetime.datetime(
+                            2026, 11, 28, 1, tzinfo=datetime.timezone.utc
+                        ),
+                        detail="FLOOD_WAIT_3600",
+                        rpc="SendMessageRequest",
+                        delivery_state="uncertain",
+                    )
+                ),
+                "Refused: Telegram FloodWait, rpc=SendMessageRequest, delivery uncertain; "
+                "retry in 3600s (at 2026-11-28T01:00:00+00:00 UTC)",
+            ),
+        ),
+    )
+    def test_unhandled_flood_refusal_leaves_as_a_reason(self, refusal, line, capsys):
+        """#1985: a flood-guard refusal or a Telegram FloodWait that no command
+        caught closer to the call — a transfer the gate deferred, a spent
+        history hour — leaves the entry point as one curated line on stderr
+        with exit 1, not as a Python traceback."""
+        with patch("tg_agent.cli.typer_commands.serve_cmd.serve_web", side_effect=refusal):
+            code = _run_main(["serve"])
+
+        assert code == 1
+        out = capsys.readouterr()
+        assert line in out.err
+        assert "Traceback" not in out.err + out.out
 
 
 def test_main_is_module_entrypoint():
