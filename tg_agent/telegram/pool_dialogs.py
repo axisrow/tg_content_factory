@@ -61,6 +61,7 @@ from tg_agent.telegram.backends import (
 from tg_agent.telegram.collector_types import AllCollectionClientsFloodedError
 from tg_agent.telegram.dialog_snapshots import DialogSnapshotWriter
 from tg_agent.telegram.utils import normalize_utc
+from tg_agent.utils.errors import error_text
 
 if TYPE_CHECKING:
     from tg_agent.database import Database
@@ -629,7 +630,12 @@ class DialogsMixin:
                     p,
                 )
             except Exception as e:
-                logger.warning("warm_all_dialogs: failed for %s: %s", p, e, exc_info=True)
+                # The line names the failure even when ``str()`` is empty (a
+                # TimeoutError): "failed for +…: " was the whole reason in the
+                # worker log (2026-11-28); the traceback below it is the detail.
+                logger.warning(
+                    "warm_all_dialogs: failed for %s: %s", p, error_text(e), exc_info=True
+                )
             finally:
                 await self.release_client(p)
 
