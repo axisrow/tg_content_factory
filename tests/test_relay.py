@@ -623,13 +623,13 @@ class ListeningOwnerClient(FakeOwnerClient):
         self.removed.append(callback)
 
 
-def _wait_event(chat_id: int, message_id: int, text: str, *, out: bool = False):
-    return SimpleNamespace(
-        chat_id=chat_id,
-        chat=SimpleNamespace(title="Чат"),
-        message=SimpleNamespace(out=out, id=message_id, text=text, action=None,
-                                date=None, sender=None),
-    )
+def _wait_event(chat_id: int, message_id: int, text: str, *, out: bool = False,
+                sender_id: int | None = None, session: Any = None):
+    # No ``sender`` and no ``chat`` entity, as a private-chat update arrives
+    # (#1986); the session is what the owner's client would hold.
+    message = SimpleNamespace(out=out, id=message_id, text=text, action=None, date=None, sender=None,
+                              sender_id=sender_id, _client=SimpleNamespace(session=session))
+    return SimpleNamespace(chat_id=chat_id, chat=SimpleNamespace(title="Чат"), message=message)
 
 
 async def _attached_handler(owner_client: ListeningOwnerClient) -> Any:
@@ -644,6 +644,8 @@ async def test_wait_messages_pushes_matches_and_detaches_on_cancel():
     from tg_agent.telegram.incoming_wait import PUSH_KIND
 
     owner_client = ListeningOwnerClient()
+    # #1986: a private chat, whose messages arrive without the sender entity.
+    peer = 7
     async with running({PHONE: owner_client}) as (_server, connection):
         pushes: list[dict] = []
         first_push = asyncio.Event()
@@ -654,24 +656,29 @@ async def test_wait_messages_pushes_matches_and_detaches_on_cancel():
 
         connection.on_push(on_push)
         op = asyncio.create_task(
-            connection.call("wait.messages", phone=PHONE, chat_id=-100123, timeout_sec=5)
+            connection.call("wait.messages", phone=PHONE, chat_id=peer, timeout_sec=5)
         )
         handler = await _attached_handler(owner_client)
 
-        await handler(_wait_event(-100123, 7, "привет"))
+        # The owner names the sender from its own session row, as the direct
+        # path does.
+        await handler(_wait_event(peer, 7, "привет", sender_id=peer, session=SimpleNamespace(
+            _row_by_id={peer: (peer, 100, "anya", None, "Аня")},
+        )))
         # asyncio.timeout form: the #1840/#1850 unreleased-waiter hang class.
         async with asyncio.timeout(2):
             await first_push.wait()
         # A foreign chat and an own outgoing message must not push.
         await handler(_wait_event(-100999, 8, "чужой"))
-        await handler(_wait_event(-100123, 9, "своё", out=True))
+        await handler(_wait_event(peer, 9, "своё", out=True))
         await asyncio.sleep(0.05)
         assert len(pushes) == 1
         assert pushes[0]["push"] == PUSH_KIND
         assert pushes[0]["phone"] == PHONE
-        assert pushes[0]["chat_id"] == -100123
+        assert pushes[0]["chat_id"] == peer
         assert pushes[0]["message_id"] == 7
         assert pushes[0]["text"] == "привет"
+        assert pushes[0]["sender_name"] == "@anya"
 
         # The CLI is done (burst complete): the process stops reading; the
         # owner-side op is cancelled when the connection drops (or window ends).

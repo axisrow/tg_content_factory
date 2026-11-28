@@ -71,10 +71,20 @@ class NormalizedIncoming:
         }
 
 
+#: Why a burst record lists a sender as unknown (#1986).
+SENDER_UNKNOWN_REASON = (
+    "the message came without its sender entity and the account's session holds no name for it"
+)
+
+#: A session entity row is ``(id, hash, username, phone, name)``: the layout of
+#: Telethon's ``MemorySession``, which ``FreshEntityStringSession`` indexes by id.
+_ROW_USERNAME, _ROW_NAME = 2, 4
+
+
 def sender_name(message: Any) -> str | None:
     sender = getattr(message, "sender", None)
     if sender is None:
-        return None
+        return _session_sender_name(message)
     username = getattr(sender, "username", None)
     if username:
         return f"@{username}"
@@ -84,6 +94,25 @@ def sender_name(message: Any) -> str | None:
         if part
     ).strip()
     return name or getattr(sender, "title", None) or None
+
+
+def _session_sender_name(message: Any) -> str | None:
+    """Name of a sender Telegram sent no entity for (#1986).
+
+    A private-chat message arrives as ``UpdateShortMessage``, without
+    ``users`` — so ``message.sender`` is ``None`` on any cache state, on the
+    direct path and on the owner's alike. The row the account's session keeps
+    for that user (every answer that named them writes one) is the only name at
+    hand without a request. No request is made here: it would be a
+    ``GetUsersRequest`` out of the hourly ``default`` budget (#1985), the same
+    bucket the account connects through.
+    """
+    session = getattr(getattr(message, "_client", None), "session", None)
+    rows = getattr(session, "_row_by_id", None)
+    row = rows.get(getattr(message, "sender_id", None)) if isinstance(rows, dict) else None
+    if row is None:
+        return None
+    return f"@{row[_ROW_USERNAME]}" if row[_ROW_USERNAME] else row[_ROW_NAME] or None
 
 
 def matches_chat(event: Any, chat_id: int | None) -> bool:
@@ -129,7 +158,7 @@ class IncomingBurst:
     dates: list[str | None]
 
     def to_json(self) -> dict:
-        return {
+        record = {
             "event": True,
             "chat_id": self.chat_id,
             "name": self.name,
@@ -142,6 +171,9 @@ class IncomingBurst:
             "senders": self.senders,
             "dates": self.dates,
         }
+        if None in self.senders:
+            record["senders_unknown"] = SENDER_UNKNOWN_REASON
+        return record
 
 
 def _as_incoming(item: Any) -> NormalizedIncoming:

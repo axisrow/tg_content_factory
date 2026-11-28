@@ -250,7 +250,14 @@ search-query list | get | add | edit | delete | toggle | run | stats
   (default 6000, reset on each arrival) joins ONE settled burst — exit **0**
   with the burst record: `{"event": true, "chat_id", "name", "phone",
   "message_count", "first_message_id", "last_message_id", "message_ids",
-  "texts", "senders", "dates"}` — usually no follow-up read is needed. A chat
+  "texts", "senders", "dates"}` — usually no follow-up read is needed.
+  `senders[i]` is the sender as `messages read --live` names it (`@username`,
+  else the display name); `name` is the chat title — `null` in a private
+  chat. Telegram delivers a private-chat message without its sender entity, so
+  the name comes from the account's own session record for that user (#1986):
+  a user the account has not seen in any answer yet stays `null`, and the
+  record carries `"senders_unknown": "<why>"` (plain text: `sender unknown:
+  <why>`) — no Telegram request is spent on naming a sender. A chat
   must be named explicitly (`--chat`), so an unrelated conversation never wakes
   the call. Works both next to the worker daemon/gateway (matches are pushed by
   the owner over the relay; an owner too old for the op asks for a restart) and
